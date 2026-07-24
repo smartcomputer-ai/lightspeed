@@ -369,13 +369,10 @@ impl GatewayAgentApi {
         let fs_tools_enabled = config.builtin.fs.enabled();
         let mut toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
             .map_err(|error| AgentApiError::internal(format!("build session tools: {error}")))?;
-        materialize_workflow_ports(
-            &mut toolset,
-            loaded.state.workflow_ports.controller_bindings.values(),
-        )
-        .map_err(|error| {
-            AgentApiError::invalid_request(format!("materialize workflow port tools: {error}"))
-        })?;
+        materialize_workflow_ports(&mut toolset, loaded.state.workflow_ports.bindings.values())
+            .map_err(|error| {
+                AgentApiError::invalid_request(format!("materialize workflow port tools: {error}"))
+            })?;
         let blobs: Arc<dyn BlobStore> = self.store.clone();
         store_tool_documents(blobs.as_ref(), &toolset.documents).await?;
 
@@ -385,7 +382,7 @@ impl GatewayAgentApi {
         if let Some(colliding) = loaded
             .state
             .workflow_ports
-            .controller_bindings
+            .bindings
             .values()
             .map(|binding| &binding.definition.tool.name)
             .find(|tool_name| desired_mcp.contains_key(*tool_name))

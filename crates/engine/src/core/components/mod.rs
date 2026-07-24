@@ -69,9 +69,10 @@ pub use turn::{
     TurnOutcome, TurnState, TurnStatus,
 };
 pub use workflow_port::{
-    AdmittedControllerWorkflowPorts, ControllerWorkflowPorts, MAX_WORKFLOW_PORT_EMISSIONS_PER_READ,
-    MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN, ReadPortEmissionsError, WORKFLOW_PORT_EMIT_EFFECT_KIND,
-    WorkflowEndpointRef, WorkflowPortConfigEvent, WorkflowPortEvent, WorkflowPortState,
-    WorkflowToolInvocation, WorkflowToolPortBinding, WorkflowToolPortDefinition,
-    read_port_emissions, workflow_port_emit_effect,
+    AdmittedManagedSessionWorkflowPorts, MAX_WORKFLOW_PORT_EMISSIONS_PER_READ,
+    MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN, ManagedSessionWorkflowPorts, ReadPortEmissionsError,
+    WORKFLOW_PORT_EMIT_EFFECT_KIND, WorkflowEndpointRef, WorkflowPortConfigEvent,
+    WorkflowPortEvent, WorkflowPortState, WorkflowToolInvocation, WorkflowToolPortBinding,
+    WorkflowToolPortDeclaration, WorkflowToolPortDefinition, read_port_emissions,
+    workflow_port_emit_effect,
 };

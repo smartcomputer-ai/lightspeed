@@ -11,11 +11,11 @@ use crate::{
     WorkflowToolInvocationId, WorkflowToolPortId, storage::StoredSessionEntry,
 };
 
-const CONTROLLER_PORT_DECLARATION_VERSION: u32 = 1;
-const MAX_CONTROLLER_PORTS: usize = 32;
+const MANAGED_PORT_DECLARATION_VERSION: u32 = 1;
+const MAX_MANAGED_PORTS: usize = 32;
 pub const MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN: u32 = 32;
 pub const MAX_WORKFLOW_PORT_EMISSIONS_PER_READ: usize =
-    MAX_CONTROLLER_PORTS * MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN as usize;
+    MAX_MANAGED_PORTS * MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN as usize;
 const WORKFLOW_ID_MAX_LEN: usize = 512;
 const WORKFLOW_KIND_MAX_LEN: usize = 128;
 const SEMANTIC_TYPE_MAX_LEN: usize = 192;
@@ -232,20 +232,43 @@ impl WorkflowToolPortBinding {
     }
 }
 
-/// Trusted declaration supplied only while a lifecycle controller creates
-/// its managed session. Every declared port is bound to that controller.
+/// One trusted workflow-port declaration supplied when a managed session is
+/// created. The receiver is opaque to the session core and need not be the
+/// lifecycle controller.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ControllerWorkflowPorts {
-    pub version: u32,
-    pub controller: WorkflowEndpointRef,
-    pub ports: Vec<WorkflowToolPortDefinition>,
+pub struct WorkflowToolPortDeclaration {
+    pub definition: WorkflowToolPortDefinition,
+    pub receiver: WorkflowEndpointRef,
 }
 
-impl ControllerWorkflowPorts {
-    pub fn v1(controller: WorkflowEndpointRef, ports: Vec<WorkflowToolPortDefinition>) -> Self {
+impl WorkflowToolPortDeclaration {
+    pub fn new(definition: WorkflowToolPortDefinition, receiver: WorkflowEndpointRef) -> Self {
         Self {
-            version: CONTROLLER_PORT_DECLARATION_VERSION,
-            controller,
+            definition,
+            receiver,
+        }
+    }
+}
+
+/// Trusted creation document supplied by a workflow plugin or other
+/// authorized control-plane caller. The lifecycle controller owns the outer
+/// session loop; each port independently names its receiver.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManagedSessionWorkflowPorts {
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_controller: Option<WorkflowEndpointRef>,
+    pub ports: Vec<WorkflowToolPortDeclaration>,
+}
+
+impl ManagedSessionWorkflowPorts {
+    pub fn v1(
+        lifecycle_controller: Option<WorkflowEndpointRef>,
+        ports: Vec<WorkflowToolPortDeclaration>,
+    ) -> Self {
+        Self {
+            version: MANAGED_PORT_DECLARATION_VERSION,
+            lifecycle_controller,
             ports,
         }
     }
@@ -253,56 +276,59 @@ impl ControllerWorkflowPorts {
     pub fn admit(
         &self,
         session_universe_id: Uuid,
-    ) -> Result<AdmittedControllerWorkflowPorts, DomainError> {
-        if self.version != CONTROLLER_PORT_DECLARATION_VERSION {
+    ) -> Result<AdmittedManagedSessionWorkflowPorts, DomainError> {
+        if self.version != MANAGED_PORT_DECLARATION_VERSION {
             return Err(DomainError::InvariantViolation(format!(
-                "unsupported controller workflow port declaration version {}",
+                "unsupported managed-session workflow port declaration version {}",
                 self.version
             )));
         }
-        self.controller.validate()?;
-        if self.ports.len() > MAX_CONTROLLER_PORTS {
+        if let Some(controller) = &self.lifecycle_controller {
+            controller.validate()?;
+        }
+        if self.ports.len() > MAX_MANAGED_PORTS {
             return Err(DomainError::InvariantViolation(format!(
-                "controller workflow port declaration contains {} ports, max {}",
+                "managed-session workflow port declaration contains {} ports, max {}",
                 self.ports.len(),
-                MAX_CONTROLLER_PORTS
+                MAX_MANAGED_PORTS
             )));
         }
 
-        let mut definitions = self.ports.clone();
-        definitions.sort_by(|left, right| left.port_id.cmp(&right.port_id));
+        let mut declarations = self.ports.clone();
+        declarations.sort_by(|left, right| left.definition.port_id.cmp(&right.definition.port_id));
         let mut port_ids = BTreeSet::new();
         let mut tool_names = BTreeSet::new();
-        let mut bindings = Vec::with_capacity(definitions.len());
-        for definition in definitions {
+        let mut bindings = Vec::with_capacity(declarations.len());
+        for declaration in declarations {
+            let definition = declaration.definition;
             if !port_ids.insert(definition.port_id.clone()) {
                 return Err(DomainError::InvariantViolation(format!(
-                    "controller workflow port declaration contains duplicate port id {}",
+                    "managed-session workflow port declaration contains duplicate port id {}",
                     definition.port_id
                 )));
             }
             if !tool_names.insert(definition.tool.name.clone()) {
                 return Err(DomainError::InvariantViolation(format!(
-                    "controller workflow port declaration contains duplicate tool name {}",
+                    "managed-session workflow port declaration contains duplicate tool name {}",
                     definition.tool.name
                 )));
             }
             bindings.push(WorkflowToolPortBinding::admit(
                 session_universe_id,
                 definition,
-                self.controller.clone(),
+                declaration.receiver,
             )?);
         }
         let creation_fingerprint = creation_fingerprint(
             session_universe_id,
             self.version,
-            &self.controller,
+            self.lifecycle_controller.as_ref(),
             &bindings,
         )?;
-        Ok(AdmittedControllerWorkflowPorts {
+        Ok(AdmittedManagedSessionWorkflowPorts {
             session_universe_id,
             version: self.version,
-            controller: self.controller.clone(),
+            lifecycle_controller: self.lifecycle_controller.clone(),
             creation_fingerprint,
             bindings,
         })
@@ -314,10 +340,10 @@ impl ControllerWorkflowPorts {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AdmittedControllerWorkflowPorts {
+pub struct AdmittedManagedSessionWorkflowPorts {
     pub session_universe_id: Uuid,
     pub version: u32,
-    pub controller: WorkflowEndpointRef,
+    pub lifecycle_controller: Option<WorkflowEndpointRef>,
     pub creation_fingerprint: String,
     pub bindings: Vec<WorkflowToolPortBinding>,
 }
@@ -325,10 +351,10 @@ pub struct AdmittedControllerWorkflowPorts {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowPortConfigEvent {
-    ControllerBindingsAdmitted {
+    ManagedBindingsAdmitted {
         session_universe_id: Uuid,
         declaration_version: u32,
-        controller: WorkflowEndpointRef,
+        lifecycle_controller: Option<WorkflowEndpointRef>,
         creation_fingerprint: String,
         bindings: Vec<WorkflowToolPortBinding>,
     },
@@ -339,13 +365,13 @@ pub struct WorkflowPortState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_universe_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller: Option<WorkflowEndpointRef>,
+    pub lifecycle_controller: Option<WorkflowEndpointRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller_declaration_version: Option<u32>,
+    pub managed_declaration_version: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_creation_fingerprint: Option<String>,
     #[serde(default)]
-    pub controller_bindings: BTreeMap<WorkflowToolPortId, WorkflowToolPortBinding>,
+    pub bindings: BTreeMap<WorkflowToolPortId, WorkflowToolPortBinding>,
     #[serde(default)]
     pub emissions: BTreeMap<WorkflowToolInvocationId, WorkflowToolInvocation>,
     #[serde(default)]
@@ -353,10 +379,10 @@ pub struct WorkflowPortState {
 }
 
 impl WorkflowPortState {
-    pub fn matches_controller_declaration(
+    pub fn matches_managed_declaration(
         &self,
         session_universe_id: Uuid,
-        declaration: &ControllerWorkflowPorts,
+        declaration: &ManagedSessionWorkflowPorts,
     ) -> Result<bool, DomainError> {
         let expected = declaration.creation_fingerprint(session_universe_id)?;
         Ok(self.session_universe_id == Some(session_universe_id)
@@ -364,7 +390,7 @@ impl WorkflowPortState {
     }
 
     pub fn binding_for_tool_name(&self, tool_name: &ToolName) -> Option<&WorkflowToolPortBinding> {
-        self.controller_bindings
+        self.bindings
             .values()
             .find(|binding| &binding.definition.tool.name == tool_name)
     }
@@ -502,31 +528,33 @@ impl WorkflowPortEmissionReadProjection<'_> {
         event: &WorkflowPortConfigEvent,
     ) -> Result<(), ReadPortEmissionsError> {
         match event {
-            WorkflowPortConfigEvent::ControllerBindingsAdmitted {
+            WorkflowPortConfigEvent::ManagedBindingsAdmitted {
                 session_universe_id,
                 declaration_version,
-                controller,
+                lifecycle_controller,
                 creation_fingerprint: observed_creation_fingerprint,
                 bindings,
             } => {
-                if *declaration_version != CONTROLLER_PORT_DECLARATION_VERSION {
+                if *declaration_version != MANAGED_PORT_DECLARATION_VERSION {
                     return Err(ReadPortEmissionsError::InvalidBinding {
                         binding_fingerprint: observed_creation_fingerprint.clone(),
                         message: format!(
-                            "unsupported controller declaration version {declaration_version}"
+                            "unsupported managed-session declaration version {declaration_version}"
                         ),
                     });
                 }
-                controller
-                    .validate()
-                    .map_err(|error| ReadPortEmissionsError::InvalidBinding {
-                        binding_fingerprint: observed_creation_fingerprint.clone(),
-                        message: error.to_string(),
+                if let Some(controller) = lifecycle_controller {
+                    controller.validate().map_err(|error| {
+                        ReadPortEmissionsError::InvalidBinding {
+                            binding_fingerprint: observed_creation_fingerprint.clone(),
+                            message: error.to_string(),
+                        }
                     })?;
+                }
                 let expected_creation_fingerprint = creation_fingerprint(
                     *session_universe_id,
                     *declaration_version,
-                    controller,
+                    lifecycle_controller.as_ref(),
                     bindings,
                 )
                 .map_err(|error| ReadPortEmissionsError::InvalidBinding {
@@ -547,14 +575,11 @@ impl WorkflowPortEmissionReadProjection<'_> {
                             binding_fingerprint: binding.binding_fingerprint.clone(),
                             message: error.to_string(),
                         })?;
-                    if binding.session_universe_id != *session_universe_id
-                        || &binding.receiver != controller
-                    {
+                    if binding.session_universe_id != *session_universe_id {
                         return Err(ReadPortEmissionsError::InvalidBinding {
                             binding_fingerprint: binding.binding_fingerprint.clone(),
-                            message:
-                                "binding source universe or receiver differs from its controller declaration"
-                                    .to_owned(),
+                            message: "binding source universe differs from its managed-session declaration"
+                                .to_owned(),
                         });
                     }
                     if binding.receiver == *self.receiver_endpoint {
@@ -594,34 +619,37 @@ pub(crate) fn apply_config_event(
     event: &WorkflowPortConfigEvent,
 ) -> Result<(), DomainError> {
     match event {
-        WorkflowPortConfigEvent::ControllerBindingsAdmitted {
+        WorkflowPortConfigEvent::ManagedBindingsAdmitted {
             session_universe_id,
             declaration_version,
-            controller,
+            lifecycle_controller,
             creation_fingerprint: observed_creation_fingerprint,
             bindings,
         } => {
             if state.lifecycle.status != crate::CoreAgentStatus::Open {
                 return Err(DomainError::InvariantViolation(
-                    "controller workflow bindings can only be admitted to an open session"
+                    "managed-session workflow bindings can only be admitted to an open session"
                         .to_owned(),
                 ));
             }
             if state.workflow_ports.session_universe_id.is_some()
-                || state.workflow_ports.controller.is_some()
+                || state.workflow_ports.lifecycle_controller.is_some()
                 || state.workflow_ports.managed_creation_fingerprint.is_some()
-                || !state.workflow_ports.controller_bindings.is_empty()
+                || !state.workflow_ports.bindings.is_empty()
             {
                 return Err(DomainError::InvariantViolation(
-                    "controller workflow bindings are immutable after session creation".to_owned(),
+                    "managed-session workflow bindings are immutable after session creation"
+                        .to_owned(),
                 ));
             }
-            if *declaration_version != CONTROLLER_PORT_DECLARATION_VERSION {
+            if *declaration_version != MANAGED_PORT_DECLARATION_VERSION {
                 return Err(DomainError::InvariantViolation(format!(
-                    "unsupported controller workflow port declaration version {declaration_version}"
+                    "unsupported managed-session workflow port declaration version {declaration_version}"
                 )));
             }
-            controller.validate()?;
+            if let Some(controller) = lifecycle_controller {
+                controller.validate()?;
+            }
 
             let mut previous_port_id: Option<&WorkflowToolPortId> = None;
             let mut tool_names = BTreeSet::new();
@@ -630,58 +658,52 @@ pub(crate) fn apply_config_event(
                 binding.validate()?;
                 if binding.session_universe_id != *session_universe_id {
                     return Err(DomainError::InvariantViolation(format!(
-                        "controller workflow port {} source universe does not match the managed session",
-                        binding.definition.port_id
-                    )));
-                }
-                if &binding.receiver != controller {
-                    return Err(DomainError::InvariantViolation(format!(
-                        "controller workflow port {} receiver does not match the lifecycle controller",
+                        "workflow port {} source universe does not match the managed session",
                         binding.definition.port_id
                     )));
                 }
                 if previous_port_id.is_some_and(|previous| previous >= &binding.definition.port_id)
                 {
                     return Err(DomainError::InvariantViolation(
-                        "controller workflow port bindings must be unique and sorted by port id"
+                        "managed-session workflow port bindings must be unique and sorted by port id"
                             .to_owned(),
                     ));
                 }
                 previous_port_id = Some(&binding.definition.port_id);
                 if !tool_names.insert(binding.definition.tool.name.clone()) {
                     return Err(DomainError::InvariantViolation(format!(
-                        "controller workflow port bindings contain duplicate tool name {}",
+                        "managed-session workflow port bindings contain duplicate tool name {}",
                         binding.definition.tool.name
                     )));
                 }
                 binding_map.insert(binding.definition.port_id.clone(), binding.clone());
             }
-            if bindings.len() > MAX_CONTROLLER_PORTS {
+            if bindings.len() > MAX_MANAGED_PORTS {
                 return Err(DomainError::InvariantViolation(format!(
-                    "controller workflow binding event contains {} ports, max {}",
+                    "managed-session workflow binding event contains {} ports, max {}",
                     bindings.len(),
-                    MAX_CONTROLLER_PORTS
+                    MAX_MANAGED_PORTS
                 )));
             }
             let expected_creation_fingerprint = creation_fingerprint(
                 *session_universe_id,
                 *declaration_version,
-                controller,
+                lifecycle_controller.as_ref(),
                 bindings,
             )?;
             if observed_creation_fingerprint != &expected_creation_fingerprint {
                 return Err(DomainError::InvariantViolation(
-                    "managed-session creation fingerprint does not match its durable controller bindings"
+                    "managed-session creation fingerprint does not match its durable workflow bindings"
                         .to_owned(),
                 ));
             }
 
             state.workflow_ports.session_universe_id = Some(*session_universe_id);
-            state.workflow_ports.controller = Some(controller.clone());
-            state.workflow_ports.controller_declaration_version = Some(*declaration_version);
+            state.workflow_ports.lifecycle_controller = lifecycle_controller.clone();
+            state.workflow_ports.managed_declaration_version = Some(*declaration_version);
             state.workflow_ports.managed_creation_fingerprint =
                 Some(observed_creation_fingerprint.clone());
-            state.workflow_ports.controller_bindings = binding_map;
+            state.workflow_ports.bindings = binding_map;
             Ok(())
         }
     }
@@ -930,7 +952,7 @@ pub(crate) fn validate_emit_effect(
         })?;
     let binding = state
         .workflow_ports
-        .controller_bindings
+        .bindings
         .get(&invocation.port_id)
         .expect("binding was validated above");
     if call.call.tool_name != binding.definition.tool.name
@@ -973,7 +995,7 @@ fn validate_invocation_binding(
 ) -> Result<(), DomainError> {
     let binding = state
         .workflow_ports
-        .controller_bindings
+        .bindings
         .get(&invocation.port_id)
         .ok_or_else(|| {
             DomainError::InvariantViolation(format!(
@@ -1062,7 +1084,7 @@ fn validate_invocation_against_state(
         })?;
     let binding = state
         .workflow_ports
-        .controller_bindings
+        .bindings
         .get(&invocation.port_id)
         .expect("binding was validated above");
     if call.call.tool_name != binding.definition.tool.name
@@ -1184,13 +1206,13 @@ fn binding_fingerprint(
 fn creation_fingerprint(
     session_universe_id: Uuid,
     version: u32,
-    controller: &WorkflowEndpointRef,
+    controller: Option<&WorkflowEndpointRef>,
     bindings: &[WorkflowToolPortBinding],
 ) -> Result<String, DomainError> {
     let mut hasher = canonical_fingerprint_hasher(CREATION_FINGERPRINT_DOMAIN);
     update_digest_part(&mut hasher, session_universe_id.as_bytes());
     update_digest_part(&mut hasher, &version.to_be_bytes());
-    update_endpoint_fingerprint(&mut hasher, controller);
+    update_optional_endpoint_fingerprint(&mut hasher, controller);
     update_digest_part(&mut hasher, &(bindings.len() as u64).to_be_bytes());
     for binding in bindings {
         binding.validate()?;
@@ -1257,6 +1279,19 @@ fn update_definition_fingerprint(
 fn update_endpoint_fingerprint(hasher: &mut Sha256, endpoint: &WorkflowEndpointRef) {
     update_digest_part(hasher, endpoint.workflow_id.as_bytes());
     update_digest_part(hasher, endpoint.workflow_kind.as_bytes());
+}
+
+fn update_optional_endpoint_fingerprint(
+    hasher: &mut Sha256,
+    endpoint: Option<&WorkflowEndpointRef>,
+) {
+    match endpoint {
+        Some(endpoint) => {
+            update_digest_part(hasher, b"some");
+            update_endpoint_fingerprint(hasher, endpoint);
+        }
+        None => update_digest_part(hasher, b"none"),
+    }
 }
 
 fn update_optional_text(hasher: &mut Sha256, value: Option<&str>) {
@@ -1334,6 +1369,13 @@ mod tests {
                 target_requirement: ToolTargetRequirement::None,
             },
         }
+    }
+
+    fn port_declaration(
+        definition: WorkflowToolPortDefinition,
+        receiver: WorkflowEndpointRef,
+    ) -> WorkflowToolPortDeclaration {
+        WorkflowToolPortDeclaration::new(definition, receiver)
     }
 
     fn session_config() -> SessionConfig {
@@ -1433,7 +1475,10 @@ mod tests {
         let controller = endpoint("controller::work-1");
         let session_id = SessionId::new("managed-session");
         let definition = definition("report", "work_report");
-        let declaration = ControllerWorkflowPorts::v1(controller.clone(), vec![definition.clone()]);
+        let declaration = ManagedSessionWorkflowPorts::v1(
+            Some(controller.clone()),
+            vec![port_declaration(definition.clone(), controller.clone())],
+        );
         let mut drive =
             CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
         let mut log = Vec::new();
@@ -1443,7 +1488,7 @@ mod tests {
                 CoreAgentCommand::OpenManagedSession {
                     config: session_config(),
                     session_universe_id: universe_id,
-                    controller_ports: declaration,
+                    workflow_ports: declaration,
                 },
                 10,
             )
@@ -1525,7 +1570,7 @@ mod tests {
         let binding = drive
             .state()
             .workflow_ports
-            .controller_bindings
+            .bindings
             .get(&definition.port_id)
             .cloned()
             .expect("durable workflow-port binding");
@@ -1622,36 +1667,58 @@ mod tests {
     }
 
     #[test]
-    fn controller_admission_is_order_independent_and_binds_every_port() {
+    fn managed_admission_is_order_independent_and_binds_each_receiver() {
         let universe_id = Uuid::from_u128(1);
         let controller = endpoint("controller::work-1");
-        let left = ControllerWorkflowPorts::v1(
-            controller.clone(),
+        let service = endpoint("plugin::approval-1");
+        let left = ManagedSessionWorkflowPorts::v1(
+            Some(controller.clone()),
             vec![
-                definition("status", "work_status"),
-                definition("report", "work_report"),
+                port_declaration(definition("status", "work_status"), service.clone()),
+                port_declaration(definition("report", "work_report"), controller.clone()),
             ],
         )
         .admit(universe_id)
-        .expect("admit controller ports");
-        let right = ControllerWorkflowPorts::v1(
-            controller.clone(),
+        .expect("admit managed-session ports");
+        let right = ManagedSessionWorkflowPorts::v1(
+            Some(controller.clone()),
             vec![
-                definition("report", "work_report"),
-                definition("status", "work_status"),
+                port_declaration(definition("report", "work_report"), controller.clone()),
+                port_declaration(definition("status", "work_status"), service.clone()),
             ],
         )
         .admit(universe_id)
-        .expect("admit controller ports");
-        let other_universe = ControllerWorkflowPorts::v1(
-            controller.clone(),
+        .expect("admit managed-session ports");
+        let other_universe = ManagedSessionWorkflowPorts::v1(
+            Some(controller.clone()),
             vec![
-                definition("report", "work_report"),
-                definition("status", "work_status"),
+                port_declaration(definition("report", "work_report"), controller.clone()),
+                port_declaration(definition("status", "work_status"), service.clone()),
             ],
         )
         .admit(Uuid::from_u128(2))
-        .expect("admit controller ports for another source universe");
+        .expect("admit managed-session ports for another source universe");
+        let plugin_only = ManagedSessionWorkflowPorts::v1(
+            None,
+            vec![port_declaration(
+                definition("status", "work_status"),
+                service.clone(),
+            )],
+        )
+        .admit(universe_id)
+        .expect("admit plugin port without lifecycle controller");
+        let retargeted = ManagedSessionWorkflowPorts::v1(
+            Some(controller.clone()),
+            vec![
+                port_declaration(definition("report", "work_report"), controller.clone()),
+                port_declaration(
+                    definition("status", "work_status"),
+                    endpoint("plugin::approval-2"),
+                ),
+            ],
+        )
+        .admit(universe_id)
+        .expect("admit retargeted plugin port");
 
         assert_eq!(left.creation_fingerprint, right.creation_fingerprint);
         assert_eq!(left.bindings, right.bindings);
@@ -1663,11 +1730,15 @@ mod tests {
             left.bindings[0].binding_fingerprint,
             other_universe.bindings[0].binding_fingerprint
         );
+        assert_ne!(left.creation_fingerprint, retargeted.creation_fingerprint);
+        assert_eq!(left.bindings[0].receiver, controller);
+        assert_eq!(left.bindings[1].receiver, service);
+        assert_eq!(plugin_only.lifecycle_controller, None);
+        assert_eq!(plugin_only.bindings[0].receiver, service);
         assert!(
             left.bindings
                 .iter()
-                .all(|binding| binding.receiver == controller
-                    && binding.session_universe_id == universe_id)
+                .all(|binding| binding.session_universe_id == universe_id)
         );
         // Golden values pin the explicit v1 field encoding. Serde field order
         // and JSON formatting must never participate in these identities.
@@ -1677,7 +1748,7 @@ mod tests {
         );
         assert_eq!(
             left.creation_fingerprint,
-            "msc:sha256:9ebf15bf066b3102289828a0e327944e84a52d52be813956f1b769c1111e4909"
+            "msc:sha256:1ef80ce536738850b0a4968e0ad88bd1d5e643bc6268104cda04567428cd18a2"
         );
     }
 
@@ -1685,11 +1756,11 @@ mod tests {
     fn declaration_rejects_duplicate_tool_names_and_reserved_semantic_type() {
         let universe_id = Uuid::from_u128(1);
         let controller = endpoint("controller::work-1");
-        let duplicate = ControllerWorkflowPorts::v1(
-            controller.clone(),
+        let duplicate = ManagedSessionWorkflowPorts::v1(
+            Some(controller.clone()),
             vec![
-                definition("report", "work_report"),
-                definition("status", "work_report"),
+                port_declaration(definition("report", "work_report"), controller.clone()),
+                port_declaration(definition("status", "work_report"), controller.clone()),
             ],
         );
         assert!(duplicate.admit(universe_id).is_err());
@@ -1697,9 +1768,12 @@ mod tests {
         let mut reserved = definition("report", "work_report");
         reserved.semantic_type = RESERVED_RUN_TERMINAL_SEMANTIC_TYPE.to_owned();
         assert!(
-            ControllerWorkflowPorts::v1(controller, vec![reserved])
-                .admit(universe_id)
-                .is_err()
+            ManagedSessionWorkflowPorts::v1(
+                Some(controller.clone()),
+                vec![port_declaration(reserved, controller)],
+            )
+            .admit(universe_id)
+            .is_err()
         );
     }
 
@@ -1810,9 +1884,14 @@ mod tests {
     #[test]
     fn managed_open_admits_lifecycle_and_bindings_in_one_batch() {
         let universe_id = Uuid::from_u128(1);
-        let declaration = ControllerWorkflowPorts::v1(
-            endpoint("controller::work-1"),
-            vec![definition("report", "work_report")],
+        let controller = endpoint("controller::work-1");
+        let receiver = endpoint("plugin::reporter-1");
+        let declaration = ManagedSessionWorkflowPorts::v1(
+            Some(controller),
+            vec![port_declaration(
+                definition("report", "work_report"),
+                receiver.clone(),
+            )],
         );
         let expected_fingerprint = declaration
             .creation_fingerprint(universe_id)
@@ -1822,7 +1901,7 @@ mod tests {
             CoreAgentCommand::OpenManagedSession {
                 config: session_config(),
                 session_universe_id: universe_id,
-                controller_ports: declaration,
+                workflow_ports: declaration,
             },
             10,
         )
@@ -1835,21 +1914,21 @@ mod tests {
         assert!(matches!(
             proposals[1].event,
             CoreAgentEvent::WorkflowPortConfig(
-                WorkflowPortConfigEvent::ControllerBindingsAdmitted { .. }
+                WorkflowPortConfigEvent::ManagedBindingsAdmitted { .. }
             )
         ));
         let codec = CoreAgentCodec;
         let encoded = codec
             .encode_event(&proposals[1].event)
-            .expect("encode controller binding event");
+            .expect("encode managed binding event");
         assert_eq!(
             encoded.kind,
-            "lightspeed.core.workflow_port_config.controller_bindings_admitted"
+            "lightspeed.core.workflow_port_config.managed_bindings_admitted"
         );
         assert_eq!(
             codec
                 .decode_event(&encoded)
-                .expect("decode controller binding event"),
+                .expect("decode managed binding event"),
             proposals[1].event
         );
 
@@ -1873,6 +1952,16 @@ mod tests {
             state.workflow_ports.managed_creation_fingerprint.as_deref(),
             Some(expected_fingerprint.as_str())
         );
-        assert_eq!(state.workflow_ports.controller_bindings.len(), 1);
+        assert_eq!(state.workflow_ports.bindings.len(), 1);
+        assert_eq!(
+            state
+                .workflow_ports
+                .bindings
+                .values()
+                .next()
+                .expect("durable binding")
+                .receiver,
+            receiver
+        );
     }
 }

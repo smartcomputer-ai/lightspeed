@@ -1525,13 +1525,13 @@ impl SessionTools {
         let state = replay_core_agent_state(&entries).map_err(io_error)?;
         let bindings = state
             .workflow_ports
-            .controller_bindings
+            .bindings
             .values()
             .map(|binding| (binding.definition.tool.name.clone(), binding.clone()))
             .collect();
         let emitted_counts = state
             .workflow_ports
-            .controller_bindings
+            .bindings
             .keys()
             .map(|port_id| {
                 (
@@ -2518,17 +2518,21 @@ mod tests {
                 target_requirement: ToolTargetRequirement::None,
             },
         };
-        let controller_ports = engine::ControllerWorkflowPorts::v1(
-            WorkflowEndpointRef {
-                workflow_id: "opaque work workflow id".to_owned(),
-                workflow_kind: "agent_work".to_owned(),
-            },
-            vec![definition.clone()],
+        let receiver = WorkflowEndpointRef {
+            workflow_id: "opaque work workflow id".to_owned(),
+            workflow_kind: "agent_work".to_owned(),
+        };
+        let workflow_ports = engine::ManagedSessionWorkflowPorts::v1(
+            Some(receiver.clone()),
+            vec![engine::WorkflowToolPortDeclaration::new(
+                definition.clone(),
+                receiver,
+            )],
         );
         let universe_id = uuid::Uuid::from_u128(1);
-        let binding = controller_ports
+        let binding = workflow_ports
             .admit(universe_id)
-            .expect("admit controller ports")
+            .expect("admit managed-session ports")
             .bindings
             .into_iter()
             .next()
@@ -2551,7 +2555,7 @@ mod tests {
             engine::CoreAgentCommand::OpenManagedSession {
                 config,
                 session_universe_id: universe_id,
-                controller_ports,
+                workflow_ports,
             },
             2,
         )

@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    BlobRef, CommandRejection, ContextEntryInput, ControllerWorkflowPorts, CoreAgentCommand,
-    CoreAgentState, EmissionEnvelope, RunStatus, SessionConfig, SessionId, SessionPosition,
-    SubmissionId, ToolBatchId,
+    BlobRef, CommandRejection, ContextEntryInput, CoreAgentCommand, CoreAgentState,
+    EmissionEnvelope, ManagedSessionWorkflowPorts, RunStatus, SessionConfig, SessionId,
+    SessionPosition, SubmissionId, ToolBatchId,
     storage::{SessionRecord, UncommittedStoredEvent},
 };
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ pub struct AgentSessionArgs {
     /// declaration is validated against `universe_id` and recorded as an
     /// immutable creation fact on the first append.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller_ports: Option<ControllerWorkflowPorts>,
+    pub workflow_ports: Option<ManagedSessionWorkflowPorts>,
     pub max_steps_per_input: Option<u32>,
     pub continue_as_new_history_threshold: Option<u32>,
     #[serde(default)]

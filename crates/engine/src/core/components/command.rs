@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    ContextEntryInput, ContextEntryKey, ControllerWorkflowPorts, PromiseId, PromiseResolution,
+    ContextEntryInput, ContextEntryKey, ManagedSessionWorkflowPorts, PromiseId, PromiseResolution,
     ResumeAwaitCommand, RunId, RunRequestCommand, SessionConfig, SubmitMessageCommand,
     ToolExecutionTarget, ToolName, ToolPatch, ToolSpec,
 };
@@ -15,12 +15,13 @@ pub enum CoreAgentCommand {
     OpenSession {
         config: SessionConfig,
     },
-    /// Trusted managed-session creation path. Controller identity and ports
-    /// are admitted once, atomically with the lifecycle open event.
+    /// Trusted managed-session creation path. The lifecycle controller and
+    /// independently addressed workflow ports are admitted once, atomically
+    /// with the lifecycle open event.
     OpenManagedSession {
         config: SessionConfig,
         session_universe_id: Uuid,
-        controller_ports: ControllerWorkflowPorts,
+        workflow_ports: ManagedSessionWorkflowPorts,
     },
     /// Replace the session config with a complete document. The previous
     /// config is not consulted beyond validation (api-kind pinning) and the

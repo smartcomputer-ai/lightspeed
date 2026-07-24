@@ -90,10 +90,11 @@ use auth::{
 };
 use engine::{
     BlobRef, CompactionPolicy, ContextEntry, ContextEntryInput, ContextEntryKey, ContextEntryKind,
-    ContextMessageRole, ControllerWorkflowPorts, CoreAgentCommand, CoreAgentStatus, ModelSelection,
-    ProviderApiKind, RunConfig, RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
-    SKILL_ACTIVATION_PROVIDER_KIND_SESSION, SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionId,
-    SkillId, SubmissionId, ToolChoice, ToolName, skill_activation_context_key,
+    ContextMessageRole, CoreAgentCommand, CoreAgentStatus, ManagedSessionWorkflowPorts,
+    ModelSelection, ProviderApiKind, RunConfig, RunId, RunStatus,
+    SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
+    SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionId, SkillId, SubmissionId, ToolChoice,
+    ToolName, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
 use llm_clients::{anthropic::messages as anthropic, openai::responses as openai};
@@ -924,7 +925,7 @@ impl GatewayAgentApi {
         session_id: SessionId,
         display_name: Option<String>,
         session_config: SessionConfig,
-        controller_ports: Option<ControllerWorkflowPorts>,
+        workflow_ports: Option<ManagedSessionWorkflowPorts>,
         close_on_terminal: bool,
     ) -> AgentSessionArgs {
         AgentSessionArgs {
@@ -932,7 +933,7 @@ impl GatewayAgentApi {
             session_id,
             display_name,
             session_config,
-            controller_ports,
+            workflow_ports,
             max_steps_per_input: self.max_steps_per_input,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             close_on_terminal,
@@ -959,14 +960,14 @@ impl GatewayAgentApi {
         Ok(())
     }
 
-    /// Trusted controller entry point. Public session APIs never accept
-    /// controller endpoints or raw workflow port bindings.
-    pub async fn start_managed_session_for_controller_with_profile(
+    /// Trusted workflow-plugin entry point. Public session APIs never accept
+    /// lifecycle-controller endpoints or raw workflow port bindings.
+    pub async fn start_managed_session_for_workflow_with_profile(
         &self,
         session_id: &SessionId,
         close_on_terminal: bool,
         profile: Option<ProfileSource>,
-        controller_ports: ControllerWorkflowPorts,
+        workflow_ports: ManagedSessionWorkflowPorts,
     ) -> Result<(), AgentApiError> {
         self.start_session_internal(
             SessionStartParams {
@@ -976,7 +977,7 @@ impl GatewayAgentApi {
                 profile,
             },
             close_on_terminal,
-            Some(controller_ports),
+            Some(workflow_ports),
         )
         .await?;
         Ok(())
@@ -1185,7 +1186,7 @@ impl GatewayAgentApi {
         &self,
         params: SessionStartParams,
         close_on_terminal: bool,
-        controller_ports: Option<ControllerWorkflowPorts>,
+        workflow_ports: Option<ManagedSessionWorkflowPorts>,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
         let SessionStartParams {
             session_id,
@@ -1200,28 +1201,28 @@ impl GatewayAgentApi {
             })?,
             None => self.allocate_session_id(),
         };
-        if let Some(controller_ports) = controller_ports.as_ref() {
-            self.validate_managed_session_declaration(controller_ports)?;
+        if let Some(workflow_ports) = workflow_ports.as_ref() {
+            self.validate_managed_session_declaration(workflow_ports)?;
         }
         if client_supplied_id {
             match self.load_session_state(&session_id).await {
                 Ok(loaded) if loaded.state.lifecycle.status == CoreAgentStatus::Closed => {
-                    if let Some(controller_ports) = controller_ports.as_ref() {
+                    if let Some(workflow_ports) = workflow_ports.as_ref() {
                         validate_managed_session_retry(
                             &loaded.state,
                             self.universe_id(),
-                            controller_ports,
+                            workflow_ports,
                         )?;
                     }
                     let session = self.project_session_by_id(&session_id).await?;
                     return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
                 }
                 Ok(loaded) => {
-                    if let Some(controller_ports) = controller_ports.as_ref() {
+                    if let Some(workflow_ports) = workflow_ports.as_ref() {
                         validate_managed_session_retry(
                             &loaded.state,
                             self.universe_id(),
-                            controller_ports,
+                            workflow_ports,
                         )?;
                     }
                 }
@@ -1240,8 +1241,8 @@ impl GatewayAgentApi {
             config,
         );
         let session_config = self.session_config_for_start(start_config).await?;
-        if let Some(controller_ports) = controller_ports.as_ref() {
-            self.validate_managed_session_materialization(&session_config, controller_ports)
+        if let Some(workflow_ports) = workflow_ports.as_ref() {
+            self.validate_managed_session_materialization(&session_config, workflow_ports)
                 .await?;
         }
         let started = self
@@ -1252,7 +1253,7 @@ impl GatewayAgentApi {
                     session_id.clone(),
                     display_name,
                     session_config,
-                    controller_ports.clone(),
+                    workflow_ports.clone(),
                     close_on_terminal,
                 ),
                 WorkflowStartOptions::new(
@@ -1269,11 +1270,11 @@ impl GatewayAgentApi {
                 if matches!(error.kind, AgentApiErrorKind::Conflict) && client_supplied_id =>
             {
                 let loaded = self.load_session_state(&session_id).await?;
-                if let Some(controller_ports) = controller_ports.as_ref() {
+                if let Some(workflow_ports) = workflow_ports.as_ref() {
                     validate_managed_session_retry(
                         &loaded.state,
                         self.universe_id(),
-                        controller_ports,
+                        workflow_ports,
                     )?;
                 }
                 if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
@@ -1287,8 +1288,8 @@ impl GatewayAgentApi {
         }
         self.wait_for_open_session(&session_id).await?;
         let loaded = self.load_session_state(&session_id).await?;
-        if let Some(controller_ports) = controller_ports.as_ref() {
-            validate_managed_session_retry(&loaded.state, self.universe_id(), controller_ports)?;
+        if let Some(workflow_ports) = workflow_ports.as_ref() {
+            validate_managed_session_retry(&loaded.state, self.universe_id(), workflow_ports)?;
         }
         let _ = self.configure_session_toolset(&session_id, &loaded).await?;
         if let Some(profile) = resolved_profile {
@@ -1303,30 +1304,26 @@ impl GatewayAgentApi {
 
     fn validate_managed_session_declaration(
         &self,
-        controller_ports: &ControllerWorkflowPorts,
+        workflow_ports: &ManagedSessionWorkflowPorts,
     ) -> Result<(), AgentApiError> {
-        controller_ports
-            .admit(self.universe_id())
-            .map_err(|error| {
-                AgentApiError::invalid_request(format!(
-                    "invalid managed-session controller declaration: {error}"
-                ))
-            })?;
+        workflow_ports.admit(self.universe_id()).map_err(|error| {
+            AgentApiError::invalid_request(format!(
+                "invalid managed-session workflow-port declaration: {error}"
+            ))
+        })?;
         Ok(())
     }
 
     async fn validate_managed_session_materialization(
         &self,
         session_config: &SessionConfig,
-        controller_ports: &ControllerWorkflowPorts,
+        workflow_ports: &ManagedSessionWorkflowPorts,
     ) -> Result<(), AgentApiError> {
-        let admitted = controller_ports
-            .admit(self.universe_id())
-            .map_err(|error| {
-                AgentApiError::invalid_request(format!(
-                    "invalid managed-session controller declaration: {error}"
-                ))
-            })?;
+        let admitted = workflow_ports.admit(self.universe_id()).map_err(|error| {
+            AgentApiError::invalid_request(format!(
+                "invalid managed-session workflow-port declaration: {error}"
+            ))
+        })?;
         for binding in &admitted.bindings {
             validate_workflow_port_definition_documents(self.store.as_ref(), &binding.definition)
                 .await
@@ -1446,13 +1443,13 @@ pub(super) struct LoadedSession {
 fn validate_managed_session_retry(
     state: &engine::CoreAgentState,
     session_universe_id: uuid::Uuid,
-    controller_ports: &ControllerWorkflowPorts,
+    workflow_ports: &ManagedSessionWorkflowPorts,
 ) -> Result<(), AgentApiError> {
-    let expected = controller_ports
+    let expected = workflow_ports
         .creation_fingerprint(session_universe_id)
         .map_err(|error| {
             AgentApiError::invalid_request(format!(
-                "invalid managed-session controller declaration: {error}"
+                "invalid managed-session workflow-port declaration: {error}"
             ))
         })?;
     match (
@@ -1465,7 +1462,7 @@ fn validate_managed_session_retry(
             Ok(())
         }
         (Some(_), Some(_)) => Err(AgentApiError::conflict(
-            "managed-session controller or port declaration conflicts with durable creation state",
+            "managed-session controller, receiver, or port declaration conflicts with durable creation state",
         )),
         _ => Err(AgentApiError::conflict(
             "existing standalone session cannot be reopened as a managed session",

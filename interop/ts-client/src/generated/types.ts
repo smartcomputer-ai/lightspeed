@@ -325,10 +325,10 @@ export type SessionEventKindView =
       type: "sessionConfigChanged";
     }
   | {
-      controllerWorkflowKind: string;
       creationFingerprint: string;
+      lifecycleControllerWorkflowKind?: string | null;
       portIds: string[];
-      type: "workflowControllerPortsConfigured";
+      type: "workflowPortsConfigured";
     }
   | {
       argumentsRef: string;

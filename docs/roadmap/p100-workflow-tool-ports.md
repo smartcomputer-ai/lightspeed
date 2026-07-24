@@ -14,14 +14,14 @@
   run-terminal and environment-job source resolutions now use the single
   `deliver_emission` signal; both promise-specific signal/DTO families and
   the promise-named outbound queue are deleted.
-- Slice 2 controller-contract milestone implemented 2026-07-24: validated
+- Slice 2 plugin-admission milestone implemented 2026-07-24: validated
   opaque workflow endpoints, port/invocation ids, source-universe-scoped
-  controller declarations and fingerprints, durable
+  managed-session declarations and fingerprints, durable
   `WorkflowPortConfigEvent` / `WorkflowPortState`, atomic managed-session
   opening, trusted gateway start/retry checks, and bounded event projection
-  are in place. Endpoint-registry/service bindings remain the unfinished
-  half of slice 2.
-- Slice 3 tool/event integration implemented 2026-07-24: admitted controller
+  are in place. Each declaration carries its own opaque receiver, so new
+  workflow plugins do not require a registry entry or session-worker change.
+- Slice 3 tool/event integration implemented 2026-07-24: admitted managed
   ports materialize into the derived provider toolset and a distinct
   `WorkflowPort` runtime binding; the runtime validates CAS-backed schemas
   and arguments, returns a stable acknowledgement, and enforces a
@@ -45,7 +45,8 @@
   explicit domain arguments rather than defining a wire DTO; P101 owns the
   actual reconciliation activity request/result in `temporal-workflow`.
 - Implementation review and hardening 2026-07-24 (slices 1-4 verified
-  against this spec; affected Rust suites green). Confirmed: both
+  against this spec; engine, API/projection, and Temporal suites green).
+  Confirmed: both
   promise-specific signal families are grep-clean with no transitional dual
   funnel; envelope/ids are deterministic, domain-separated, and
   substrate-neutral (`engine` gained no transport or Temporal dependency);
@@ -54,10 +55,10 @@
   so durable binding, canonical id, joins, arguments ref, and successful
   call invariants are rechecked before projection; duplicate receiver
   delivery is proven to resolve once and become an end-to-end no-op. The
-  endpoint-registry/service half of slice 2 remains structurally absent
-  (`WorkflowPortState` has no service bindings and invocation lookup consults
-  controller bindings only), which blocks the service-specific parts of
-  slices 6/7 but not P101's controller port or independent failure coverage.
+  managed-session admission now supports multiple independent opaque
+  receivers in one immutable declaration; the earlier built-in endpoint
+  registry proposal was removed because extending a compiled registry for
+  every workflow plugin would violate the stable session-worker goal.
   The spec's named projection summary views were superseded by bounded
   event-stream variants — recorded in the API section with the port-summary
   read kept as an open item. The worker-level pull wrapper is
@@ -76,8 +77,8 @@
   there is exactly one signal era, never a transitional third. Everything
   that is *new capability* — push port delivery, request/reply,
   workflow-as-tool — waits for its first consumer, but its seams (envelope
-  fields, registry shape, and workflow-substrate adapter boundary) are fixed
-  here and now.
+  fields, generic trusted binding admission, and workflow-substrate adapter
+  boundary) are fixed here and now.
 - First consumer: **P101 (Durable Work)**, which declares `work_report` when
   it creates its managed session and consumes emissions by **pull** at run
   reconciliation.
@@ -100,12 +101,12 @@ already exist; P100 names the third and builds it:
   by admissions, suspended on by `await`.
 
 P100 owns the emission primitive and adds its first tool-triggered producer:
-**workflow-bound tool ports** — schema-defined function tools the trusted
-runtime declares on behalf of a lifecycle controller or registered workflow
-service, with one fixed receiver per binding:
+**workflow-bound tool ports** — schema-defined function tools a trusted
+workflow plugin or control-plane caller declares when creating a managed
+session, with one fixed opaque receiver per binding:
 
 ```text
-lifecycle controller / workflow service
+workflow plugin / lifecycle controller
   -> declares port {
        tool: "work_report",
        input_schema: WorkReportV1,
@@ -271,10 +272,11 @@ This is a singular extension point without becoming arbitrary pub/sub.
 - **Lifecycle controller** — the optional durable workflow that owns the
   session's higher-level objective or lifecycle, such as `AgentWorkWorkflow`.
 - **Receiver workflow** — the durable workflow named by one admitted port
-  binding. It may be the lifecycle controller or a shared workflow service.
-- **Workflow service** — a registered receiver such as a future approval
-  service whose endpoint is resolved by trusted runtime policy rather than
-  supplied by the model or raw profile config.
+  binding. It may be the lifecycle controller or an independent workflow
+  plugin.
+- **Workflow plugin** — workflow-owned code that supplies its endpoint and
+  port schemas through the generic trusted managed-session creation boundary;
+  the session worker does not contain plugin-specific routing or semantics.
 - **Port** — one model-visible function tool plus an immutable receiver
   binding.
 - **Port definition** — tool name, description, JSON Schema refs, semantic
@@ -310,15 +312,16 @@ independent relationships.
 
 A Work-managed session has one `AgentWorkWorkflow` controller and binds
 `work_report` to it. The same session may independently bind other ports to
-registered service workflows. A standalone session has no lifecycle
-controller and no controller ports.
+other workflow plugins. A trusted creator may also admit plugin ports with no
+lifecycle controller; ordinary public session creation admits neither.
 
-The session's source universe and the resolved receiver are recorded
+The session's source universe and each supplied receiver are recorded
 durably. The receiver may itself be universe-scoped or deployment-scoped;
-the trusted controller capability or endpoint resolver authorizes it for the
-source universe. No receiver identity is accepted from model arguments.
+the trusted creation boundary is responsible for admitting it. No receiver
+identity is accepted from model arguments or ordinary session/profile
+configuration.
 
-### Workflow endpoint identity and the endpoint registry
+### Workflow endpoint identity and plugin admission
 
 Use a small, opaque, durable reference:
 
@@ -330,66 +333,60 @@ pub struct WorkflowEndpointRef {
 ```
 
 `workflow_kind` is diagnostic and admission metadata, not a dynamic signal
-name. Every receiver implements the same fixed P100 signal. Routing policy,
-sharding, protocol versioning, start arguments, and ensure-start behavior
-are **resolver concerns**, not fields on the durable ref — the first draft's
-`WorkflowEndpointClass`/`routing_key`/`protocol_version` fields froze
-transport policy into an identity type and are dropped.
+name. Every push-capable receiver implements the same fixed P100 signal.
+Routing policy, sharding, protocol versioning, start arguments, and
+ensure-start behavior are **plugin concerns**, not fields on the durable ref
+— the first draft's `WorkflowEndpointClass`/`routing_key`/
+`protocol_version` fields froze deployment policy into an identity type and
+are dropped.
 
 `workflow_id` is an opaque identifier chosen by the owning workflow. P100
 requires only that it is non-empty and bounded; it does not infer tenancy,
 kind, routing, or structure from a prefix. The workflow id remains stable
 across continue-as-new. The binding never contains a substrate run id.
 
-Endpoint resolution lives in one **workflow endpoint registry** with two
-consumers by design, even though P100 implements only the first:
+P100 deliberately has **no built-in endpoint registry**. A compiled mapping
+from feature or service kinds to workflow ids would require changing the
+session deployment for every new workflow, defeating the purpose of ports.
+Instead, a trusted workflow plugin or control-plane caller supplies already
+resolved per-port endpoints to the generic managed-session start operation.
+The session boundary validates the bounded declarations, schemas, collisions,
+and fingerprints, then copies the optional controller, endpoints, and
+bindings into the session log atomically with creation.
 
-1. **Port receivers** — mapping a lifecycle-controller capability or a known
-   feature grant to a receiver endpoint authorized for the session's source
-   universe.
-2. **Startable workflow kinds** (follow-on) — the catalog a session tool
-   consults to start an admitted workflow as durable work and hold a
-   `PromiseSource::Workflow` promise on its completion. This is P86's job
-   pattern generalized; building the registry port-receiver-only would force
-   a second registry later.
-
-For lifecycle controllers, the receiver must already exist because it created
-or owns the managed session. For built-in services, the registry owns
-workflow-id composition, routing policy, start args, and ensure-start
-behavior. A profile selects a feature; it never selects a workflow shard.
-
-Resolution is an admission-time operation, not a replay-time lookup. The
-resolved endpoint and binding fingerprint are copied into the session log.
-Registry policy may change for later sessions without silently retargeting an
-existing binding.
+The core does not start receivers, compose their ids, or know whether they
+are universe-scoped, deployment-scoped, sharded, or already running. The
+plugin owns those choices before admission. If product-level plugin discovery
+is later required, it belongs in a generic data-driven plugin catalog outside
+the session worker; P100 neither requires nor defines one.
 
 ### Who may declare ports
 
-P100 admits bindings only through trusted runtime materialization:
+P100 admits bindings only through the trusted internal managed-session
+creation operation:
 
-- a managed-session controller may declare controller-bound ports when it
-  creates the session; in P100, those bindings are immutable for that
-  session's lifetime;
-- a built-in feature resolver may materialize ports to a registered workflow
-  service endpoint;
-- public/profile config may grant a known feature but never contain a raw
-  workflow id;
-- ordinary public `session/config/put` callers cannot invent, retarget, or
-  widen a resolved receiver binding;
+- an authorized workflow plugin or control-plane caller supplies one
+  optional lifecycle controller plus a bounded list of port
+  definition/receiver declarations;
+- each receiver is independent and need not equal the lifecycle controller;
+- this trusted operation is not part of the ordinary public session API;
+- public/profile config and `session/config/put` cannot contain a workflow
+  endpoint, invent a port, or retarget an admitted binding;
 - session read projections expose bounded port summaries separately from the
   public config document;
 - a model cannot create or mutate a port.
 
-P100 needs only a small built-in endpoint registry, not a public one. A
-future workflow SDK may expose custom endpoint registration behind an
-authenticated capability. Dynamic controller-port replacement may be added
-only when a real controller needs it.
+A future workflow SDK may expose this same operation behind an authenticated
+workflow capability. That authentication belongs at the server/control-plane
+boundary, before the substrate-neutral `CoreAgentCommand`; it does not add
+plugin kinds to the session reducer. Dynamic port replacement may be added
+only when a real plugin needs it.
 
-Known limitation, accepted deliberately: immutable controller bindings mean a
+Known limitation, accepted deliberately: immutable creation bindings mean a
 long-lived managed session cannot take a port schema upgrade in place — a new
-schema revision requires a new managed session. This is fine for per-Work
-sessions and revisited only if a controller with an indefinite session
-lifetime appears.
+schema revision or receiver requires a new managed session. This is fine for
+per-Work sessions and revisited only if a controller with an indefinite
+session lifetime appears.
 
 ## Port Definition
 
@@ -470,21 +467,17 @@ At binding admission:
 - input and optional output schemas are supported JSON Schema documents;
 - semantic type and revision are non-empty and versioned;
 - the managed session's source universe is recorded in the binding;
-- the trusted controller capability or endpoint resolver authorizes the
-  receiver for that source universe;
-- the receiver came from the lifecycle-controller capability or the endpoint
-  registry, never an untrusted raw workflow id;
+- the receiver came through the trusted managed-session creation boundary,
+  never model arguments or ordinary public/profile configuration;
 - binding size and total port count stay below deployment limits.
 
 The managed-session creation fingerprint includes the session's source
-universe, its optional lifecycle controller, and controller-bound port
-definitions. Retrying with the same session id and fingerprint reopens it;
-retrying with a different source universe, controller, or controller-port
-set is a conflict. The fingerprint is a durable creation fact in the session
-log; it is not inferred only from Temporal start args. Service-bound port
-fingerprints derive from the source universe, admitted feature/config
-revision, and resolved registered service endpoint, and the resolved binding
-is likewise snapshotted in the log.
+universe, its optional lifecycle controller, and every definition/receiver
+binding.
+Retrying with the same session id and fingerprint reopens it; retrying with a
+different source universe, controller, port, or receiver is a conflict. The
+fingerprint is a durable creation fact in the session log; it is not inferred
+only from Temporal start args.
 
 Fingerprint-input stability hardened 2026-07-24: binding and creation
 fingerprints use an explicit versioned, length-prefixed field encoding.
@@ -508,38 +501,37 @@ emission and never turns a model error into a workflow invariant failure.
 
 ## Config And Toolset Integration
 
-P95 made the installed toolset derived state. P100 preserves that invariant
-by resolving workflow-bound tools from two trusted declaration sources:
+P95 made the installed toolset derived state. P100 preserves that invariant:
 
 ```text
 effective tool declaration
-  = public/profile SessionConfig features
-      -> built-in workflow-service ports
-  + immutable lifecycle-controller port declarations
+  = ordinary tools derived from public/profile SessionConfig
+  + immutable workflow ports admitted at managed-session creation
 ```
 
 Illustrative internal declarations:
 
 ```rust
-pub struct ControllerWorkflowPorts {
+pub struct ManagedSessionWorkflowPorts {
     pub version: u32,
-    pub controller: WorkflowEndpointRef,
-    pub ports: Vec<WorkflowToolPortDefinition>,
+    pub lifecycle_controller: Option<WorkflowEndpointRef>,
+    pub ports: Vec<WorkflowToolPortDeclaration>,
 }
 
-pub struct ResolvedWorkflowServicePort {
-    pub service_id: String,
-    pub binding: WorkflowToolPortBinding,
+pub struct WorkflowToolPortDeclaration {
+    pub definition: WorkflowToolPortDefinition,
+    pub receiver: WorkflowEndpointRef,
 }
 ```
 
 The distinction is authority:
 
-- public/profile feature blocks are changed through the existing config path;
-- the feature resolver maps known capabilities to registered service
-  endpoints;
-- lifecycle-controller ports are admitted only from trusted managed-session
-  creation args and are immutable in P100.
+- public/profile feature blocks continue through the existing config path and
+  cannot express workflow endpoints;
+- workflow ports enter only through trusted managed-session creation args and
+  are immutable in P100;
+- the creator, not the session worker, owns receiver resolution and plugin
+  deployment policy.
 
 Toolset reconciliation consumes both sections and still produces one
 `ToolPatch` and one toolset revision. It installs each port as:
@@ -549,11 +541,9 @@ Toolset reconciliation consumes both sections and still produces one
   `ToolDispatchMode::WorkflowPort { port_id, binding_fingerprint }`.
 
 This is not a return to an externally writable `session/tools/update` API.
-Callers declare capabilities; the runtime still materializes tools.
-
-Later public config changes may add or remove built-in service ports through
-their normal feature blocks and existing idle/toolset-revision rules, while
-preserving immutable lifecycle-controller ports. There is no second toolset
+The trusted creator declares capabilities; the runtime still materializes
+tools. Later public config changes reconcile ordinary feature tools while
+preserving immutable workflow-port bindings. There is no second toolset
 writer and no model-controlled endpoint.
 
 ## Session Event Vocabulary
@@ -595,26 +585,20 @@ controller, receiver endpoint, port id, or binding fingerprint:
 
 ```rust
 pub enum WorkflowPortConfigEvent {
-    ControllerBindingsAdmitted {
+    ManagedBindingsAdmitted {
         session_universe_id: Uuid,
         declaration_version: u32,
-        controller: WorkflowEndpointRef,
+        lifecycle_controller: Option<WorkflowEndpointRef>,
         creation_fingerprint: String,
         bindings: Vec<WorkflowToolPortBinding>,
-    },
-    ServiceBindingsReconciled {
-        base_revision: u64,
-        bindings: Vec<ResolvedWorkflowServicePort>,
     },
 }
 ```
 
 The exact command/event batching may follow existing config reconciliation,
 but these facts and their corresponding `WorkflowPortState` are in the
-session log. Controller admission is appended atomically with session open.
-Service reconciliation snapshots the resolved authorized endpoints and
-source universe and is coordinated with its ordinary `ToolPatch`; replay
-never consults the live endpoint registry to reconstruct an old binding.
+session log. All managed bindings are appended atomically with session open.
+Replay reads only those durable facts and never performs endpoint discovery.
 
 The invocation envelope is bounded:
 
@@ -786,7 +770,7 @@ read_port_emissions(receiver_endpoint, session_id, run_id | after_log_seq)
 
 The operation authorizes the supplied receiver endpoint and returns only
 invocations whose durable binding targets that receiver. A lifecycle
-controller cannot read a service receiver's payloads merely because both
+controller cannot read another plugin receiver's payloads merely because both
 ports belong to the same session, and vice versa.
 
 The read **fails closed** and first replays every entry through the ordinary
@@ -806,7 +790,7 @@ Emissions consumed by pull never enter transport state at all.
 ### Push (deferred slice — first mid-run receiver)
 
 Push earns its complexity only for receivers with no boundary subscription
-that must react mid-run — an approval service, request/reply ports. When the
+that must react mid-run — an approval plugin, request/reply ports. When the
 first such consumer exists, port emissions join the **existing** delivery
 spine (the generalized run-terminal pump), not a new one:
 
@@ -936,12 +920,12 @@ overload notify acknowledgements with domain results. The
 cannot ossify notify-only.
 
 The sibling seam, **workflow-as-tool**: a tool call that *starts* an
-admitted workflow kind (deterministic workflow id derived from
+authorized workflow plugin (deterministic workflow id derived from
 session/run/turn/call identity, exactly like Fleet and job ids today) and
 returns a `PromiseSource::Workflow` promise resolved by the workflow's
-terminal emission. It consumes the same endpoint registry and the same
-spine; it is P86's job pattern with the provider replaced by a durable
-workflow. Deferred, but the registry and envelope are designed for it now.
+terminal emission. The start recipe and authorization belong to the plugin
+control plane, while completion uses the same envelope and spine; it is P86's
+job pattern with the provider replaced by a durable workflow. Deferred.
 
 P101 Work needs notify only: `work_report` declares the agent's disposition;
 the Work workflow does not return information through that call.
@@ -1011,8 +995,8 @@ messaging orchestration responsibility emerges that outbox rows cannot own
 (cross-message conversation policy, channel-level delivery orchestration
 with timers), the migration reopens with that responsibility named first.
 
-The multi-receiver proof in the implementation plan uses a minimal synthetic
-service receiver instead.
+The multi-receiver proof in the implementation plan uses a second minimal
+workflow-plugin declaration instead.
 
 ## Scope
 
@@ -1026,12 +1010,12 @@ P100 includes:
 3. Any bounded number of fixed receiver endpoints authorized for the
    session's source universe; receivers may be universe- or
    deployment-scoped.
-4. A generic internal managed-session start operation usable by any
-   registered lifecycle controller, not only Work.
+4. A generic internal managed-session start operation usable by any trusted
+   workflow plugin, not only Work.
 5. Schema-defined, model-visible function tools derived into the normal
    session toolset.
-6. Immutable controller-bound ports admitted at managed-session creation and
-   built-in service ports resolved from known feature grants.
+6. Immutable per-port receivers admitted together at managed-session
+   creation without plugin-specific session-worker code.
 7. Notify-only invocation semantics with deterministic per-run/per-port
    emission caps.
 8. A typed `WorkflowPortEvent` family (`Emitted`, terminal
@@ -1070,7 +1054,7 @@ P100 does not add:
 - the messaging migration;
 - arbitrary receiver-defined reducer events;
 - model-authored tool schemas or runtime port creation;
-- adding or retargeting controller-declared ports after managed-session
+- adding or retargeting creation-time ports after managed-session
   creation;
 - a public endpoint that lets ordinary session callers target workflows;
 - a durable product database for port invocations;
@@ -1085,7 +1069,7 @@ RPCs.
 Implemented shape (2026-07-24, supersedes this section's earlier named
 summary structs): port declarations, emissions, and delivery failures are
 projected as bounded **session event-stream variants**
-(`WorkflowControllerPortsConfigured`, `WorkflowPortEmitted`,
+(`WorkflowPortsConfigured`, `WorkflowPortEmitted`,
 `WorkflowPortDeliveryFailed`) carrying ids, refs, and metadata only; the
 internal emit effect is stripped from tool-call effect views so the trusted
 carrier never leaks. Contract artifacts and the TypeScript client are
@@ -1094,10 +1078,10 @@ regenerated.
 Still open from the original intent: a **bounded current-port summary**
 on session reads (the earlier `WorkflowToolPortView` idea) — "which ports
 does this session have right now, bound to which receiver kind" — answerable
-today only by replaying config events. Land it together with the endpoint
-registry work, when service bindings make the answer non-trivial. Session
-reads are already universe-scoped, so the source universe need not be
-repeated unless a future cross-universe operator view requires it.
+today only by replaying config events. Land it when a concrete operator or
+plugin SDK consumer needs it. Session reads are already universe-scoped, so
+the source universe need not be repeated unless a future cross-universe
+operator view requires it.
 
 Full arguments remain behind the existing CAS/event authorization boundary.
 Do not copy payloads into summary views.
@@ -1132,10 +1116,8 @@ crates/temporal-workflow/
   receiver workflow integration
 
 crates/temporal-server/
-  controller-authorized managed-session creation path
-  workflow endpoint registry (built-in resolver)
+  trusted workflow-plugin managed-session creation path
   effective config/toolset materialization
-  Temporal endpoint resolution and ensure-start policy
   delivery retry/failure projection
 
 crates/api/ and api-projection/
@@ -1179,7 +1161,7 @@ change so no transitional dual-funnel state ever ships.
 - [x] Preserve all Fleet Promise, duplicate delivery, cancellation, and
       continue-as-new tests.
 
-### Slice 2: Port, endpoint, and controller contracts
+### Slice 2: Port, endpoint, and plugin-admission contracts
 
 - [x] Add validated workflow endpoint, port, and invocation ids.
 - [x] Add durable `WorkflowPortConfigEvent` facts and `WorkflowPortState` for
@@ -1191,16 +1173,12 @@ change so no transitional dual-funnel state ever ships.
 - [x] Add `WorkflowToolPortDefinition`, semantic type/revision, and binding
       fingerprint validation.
 - [x] Bind every port to one admitted `WorkflowEndpointRef`.
-- [x] Admit immutable controller ports atomically with managed-session
-      creation.
-- [ ] Add the workflow endpoint registry (built-in resolver) with the
-      documented two-consumer shape; snapshot every resolved endpoint into
-      the durable binding facts. Structural note (review 2026-07-24): this
-      half also extends the reducer and invocation path —
-      `WorkflowPortState` has no service-binding map yet and
-      `binding_for_tool_name`/the runtime lookup consult controller
-      bindings only, so service ports need a second durable config event
-      plus a widened lookup, not just a resolver.
+- [x] Admit immutable per-port receiver declarations atomically with
+      managed-session creation; receivers need not equal the lifecycle
+      controller.
+- [x] Keep plugin discovery, workflow-id composition, start policy, and
+      plugin semantics out of the session core and worker. No built-in
+      endpoint registry is part of P100.
 - [x] Reject raw receiver creation or retargeting from ordinary public
       config writes.
 
@@ -1228,7 +1206,7 @@ change so no transitional dual-funnel state ever ships.
 
 ### Slice 5: Push delivery on the shared spine (deferred)
 
-Gated on the first mid-run receiver (approval service or request/reply
+Gated on the first mid-run receiver (approval plugin or request/reply
 ports). Not required for P101.
 
 - [ ] Enqueue `PortInvocation` envelopes on the `Emitted` transition into
@@ -1242,13 +1220,12 @@ ports). Not required for P101.
 - [ ] Receiver-side high-water dedup exercised under duplicate and restart
       conditions.
 
-### Slice 6: Prove multiple receivers and Work
+### Slice 6: Prove plugin receivers and Work
 
-- [ ] Register a minimal synthetic service receiver with a different port
-      schema (this replaces the first draft's messaging topology as the
-      second-receiver proof).
-- [ ] Bind controller and service ports to the same session and prove each
-      emission resolves to only its fixed receiver.
+- [x] Admit controller and independent plugin receivers in the same generic
+      managed-session declaration without changing session-worker routing.
+- [ ] Exercise two differently addressed plugin ports in one session and
+      prove each receiver can read only its own emissions.
 - [ ] Have P101 declare `work_report` when it creates its managed session.
 - [ ] Prove Work consumes `WorkReportV1` by pull at the run-terminal
       boundary with no port-specific transport.
@@ -1264,9 +1241,7 @@ ports). Not required for P101.
       `ResolvePromise` first-writer-wins appends one resolution.
 - [ ] Test pull reads are complete at the run-terminal boundary across
       worker restart and session continue-as-new.
-- [ ] Test public config cannot retarget controller or service bindings.
-- [ ] Test ordinary feature reconciliation can add/remove its own built-in
-      service ports at an idle boundary.
+- [ ] Test public config cannot retarget immutable managed-session bindings.
 - [ ] With slice 5: crash before signal, crash after signal/before receiver
       apply, duplicate delivery, receiver absent, terminal delivery
       failure, both sides' continue-as-new independently.
@@ -1284,9 +1259,10 @@ P100 is complete when:
    fact — run-terminal notifications to session and non-session receivers
    alike, and env-job source resolutions; both promise-specific signals are
    gone and the session workflow has exactly one inbound funnel.
-2. A trusted controller workflow can create/own a session with a typed
-   port, while a known feature can independently add a port bound to a
-   registered service workflow.
+2. A trusted workflow plugin or control-plane caller can provision a managed
+   session with typed ports bound to one or more opaque receivers, with or
+   without a lifecycle controller, without adding plugin-specific code to
+   the session core or worker.
 3. The model sees only the declared tool name, description, and schema; it
    cannot choose the receiver or transport.
 4. A valid call atomically produces an ordinary successful tool result and
@@ -1297,12 +1273,12 @@ P100 is complete when:
    continue-as-new.
 6. Invalid arguments, cap violations, and unauthorized port
    declaration/mutation fail without emitting.
-7. Toolset derivation remains capability-driven and no public
-   `session/tools/update` surface returns.
+7. Toolset derivation remains capability-driven, managed-session ports remain
+   immutable, and no public `session/tools/update` surface returns.
 8. P101 implements `work_report` only as a schema and a pull-consuming Work
    handler over this substrate, with no Work-specific transport.
-9. One session can bind controller and service ports to two different fixed
-   receiver workflows without changing the session engine.
+9. One session can bind ports to two different fixed workflow-plugin
+   receivers without changing the session engine or worker.
 10. The session log contains no successful-delivery bookkeeping events;
     `Emitted` is the v1 semantic invocation event. When deferred push lands,
     terminal `DeliveryFailed` is the only additional port event.
@@ -1316,17 +1292,18 @@ P100 intentionally leaves these seams, designed-for but unbuilt:
 - **Request/reply ports**: `Promise::Created` in the same append as
   `Emitted`, `reply_promise_id` in the envelope, resolution through the
   ordinary spine; subject to the re-entrancy law.
-- **Workflow-as-tool**: start an admitted workflow kind from the endpoint
-  registry with a deterministic id and a `PromiseSource::Workflow` promise
-  resolved by its terminal emission.
+- **Workflow-as-tool**: start an authorized workflow plugin with a
+  deterministic id and a `PromiseSource::Workflow` promise resolved by its
+  terminal emission. Any discovery/catalog layer stays outside the session
+  worker.
 - **Push delivery** for mid-run receivers (slice 5).
-- An authenticated workflow SDK exposing custom endpoint registration and
-  controller-owned managed-session creation.
+- An authenticated workflow SDK exposing the generic trusted managed-session
+  creation capability.
 - The messaging migration, if a MessagingWorkflow responsibility that outbox
   rows cannot own is ever named.
 - Port emission projections feeding mission control or evals.
 - Hardened deterministic workflows exposing request ports as agent tools.
-- External systems starting controller workflows through a separate ingress
+- External systems starting workflow plugins through a separate ingress
   plane.
 
 Those extensions must reuse the fixed envelope, emission identity, event

@@ -47,11 +47,11 @@ fn admission_failure_mapping_uses_gateway_error_kinds() {
 #[test]
 fn managed_session_retry_requires_the_durable_creation_fingerprint() {
     let universe_id = uuid::Uuid::from_u128(1);
-    let declaration = engine::ControllerWorkflowPorts::v1(
-        engine::WorkflowEndpointRef {
+    let declaration = engine::ManagedSessionWorkflowPorts::v1(
+        Some(engine::WorkflowEndpointRef {
             workflow_id: "global controller/work-1".to_owned(),
             workflow_kind: "agent_work".to_owned(),
-        },
+        }),
         Vec::new(),
     );
     let mut state = engine::CoreAgentState::new();
@@ -63,11 +63,11 @@ fn managed_session_retry_requires_the_durable_creation_fingerprint() {
     );
     validate_managed_session_retry(&state, universe_id, &declaration).expect("matching retry");
 
-    let conflicting = engine::ControllerWorkflowPorts::v1(
-        engine::WorkflowEndpointRef {
+    let conflicting = engine::ManagedSessionWorkflowPorts::v1(
+        Some(engine::WorkflowEndpointRef {
             workflow_id: "another controller".to_owned(),
             workflow_kind: "agent_work".to_owned(),
-        },
+        }),
         Vec::new(),
     );
     assert_eq!(

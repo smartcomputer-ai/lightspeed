@@ -343,7 +343,7 @@ fn agent_session_args_with_close_on_terminal(close_on_terminal: bool) -> AgentSe
             provider_id: "openai".to_owned(),
             model: "gpt-test".to_owned(),
         }),
-        controller_ports: None,
+        workflow_ports: None,
         max_steps_per_input: None,
         continue_as_new_history_threshold: None,
         close_on_terminal,
@@ -354,19 +354,19 @@ fn test_universe() -> uuid::Uuid {
     uuid::Uuid::from_u128(1)
 }
 
-fn controller_ports(controller_workflow_id: &str) -> engine::ControllerWorkflowPorts {
-    engine::ControllerWorkflowPorts::v1(
-        engine::WorkflowEndpointRef {
+fn managed_workflow_ports(controller_workflow_id: &str) -> engine::ManagedSessionWorkflowPorts {
+    engine::ManagedSessionWorkflowPorts::v1(
+        Some(engine::WorkflowEndpointRef {
             workflow_id: controller_workflow_id.to_owned(),
             workflow_kind: "agent_work".to_owned(),
-        },
+        }),
         Vec::new(),
     )
 }
 
 #[test]
 fn bootstrap_creation_identity_records_source_universe_and_is_immutable() {
-    let declaration = controller_ports("deployment-global work controller 🔧");
+    let declaration = managed_workflow_ports("deployment-global work controller 🔧");
     bootstrap::validate_session_creation_identity(
         test_universe(),
         &CoreAgentState::new(),
@@ -394,7 +394,7 @@ fn bootstrap_creation_identity_records_source_universe_and_is_immutable() {
             test_universe(),
             &existing,
             false,
-            Some(&controller_ports("another arbitrary controller id")),
+            Some(&managed_workflow_ports("another arbitrary controller id")),
         )
         .is_err()
     );

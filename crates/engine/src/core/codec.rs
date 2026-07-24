@@ -177,8 +177,8 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             PromiseEvent::Detached { .. } => "lightspeed.core.promise.detached",
         },
         CoreAgentEvent::WorkflowPortConfig(event) => match event {
-            WorkflowPortConfigEvent::ControllerBindingsAdmitted { .. } => {
-                "lightspeed.core.workflow_port_config.controller_bindings_admitted"
+            WorkflowPortConfigEvent::ManagedBindingsAdmitted { .. } => {
+                "lightspeed.core.workflow_port_config.managed_bindings_admitted"
             }
         },
         CoreAgentEvent::WorkflowPort(event) => match event {

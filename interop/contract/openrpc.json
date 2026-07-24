@@ -7948,11 +7948,14 @@
           },
           {
             "properties": {
-              "controllerWorkflowKind": {
-                "type": "string"
-              },
               "creationFingerprint": {
                 "type": "string"
+              },
+              "lifecycleControllerWorkflowKind": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "portIds": {
                 "items": {
@@ -7961,13 +7964,12 @@
                 "type": "array"
               },
               "type": {
-                "const": "workflowControllerPortsConfigured",
+                "const": "workflowPortsConfigured",
                 "type": "string"
               }
             },
             "required": [
               "type",
-              "controllerWorkflowKind",
               "creationFingerprint",
               "portIds"
             ],

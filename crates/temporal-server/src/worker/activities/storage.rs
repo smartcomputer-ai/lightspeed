@@ -633,10 +633,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn port_emission_read_is_complete_after_terminal_boundary_across_pages() {
         use engine::{
-            ContextEntryInput, ContextEntryKind, ContextMessageRole, ControllerWorkflowPorts,
-            CoreAgentCommand, FunctionToolSpec, RunConfig, RunRequestCommand, RunRequestSource,
-            ToolKind, ToolParallelism, ToolSpec, ToolTargetRequirement, WorkflowEndpointRef,
-            WorkflowToolPortDefinition, WorkflowToolPortId,
+            ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
+            FunctionToolSpec, ManagedSessionWorkflowPorts, RunConfig, RunRequestCommand,
+            RunRequestSource, ToolKind, ToolParallelism, ToolSpec, ToolTargetRequirement,
+            WorkflowEndpointRef, WorkflowToolPortDeclaration, WorkflowToolPortDefinition,
+            WorkflowToolPortId,
         };
         use test_support::{DriveCommand, RunnerStores, SessionRunner};
         use uuid::Uuid;
@@ -648,26 +649,29 @@ mod tests {
             workflow_id: "work-controller".to_owned(),
             workflow_kind: "agent_work".to_owned(),
         };
-        let declaration = ControllerWorkflowPorts::v1(
-            receiver.clone(),
-            vec![WorkflowToolPortDefinition {
-                port_id: WorkflowToolPortId::new("work-report"),
-                revision: 1,
-                semantic_type: "lightspeed.work.report.v1".to_owned(),
-                tool: ToolSpec {
-                    name: ToolName::new("work_report"),
-                    kind: ToolKind::Function(FunctionToolSpec {
-                        model_name: None,
-                        description_ref: None,
-                        input_schema_ref: BlobRef::from_bytes(b"work-report-schema"),
-                        output_schema_ref: None,
-                        strict: Some(true),
-                        provider_options_ref: None,
-                    }),
-                    parallelism: ToolParallelism::ParallelSafe,
-                    target_requirement: ToolTargetRequirement::None,
+        let declaration = ManagedSessionWorkflowPorts::v1(
+            Some(receiver.clone()),
+            vec![WorkflowToolPortDeclaration::new(
+                WorkflowToolPortDefinition {
+                    port_id: WorkflowToolPortId::new("work-report"),
+                    revision: 1,
+                    semantic_type: "lightspeed.work.report.v1".to_owned(),
+                    tool: ToolSpec {
+                        name: ToolName::new("work_report"),
+                        kind: ToolKind::Function(FunctionToolSpec {
+                            model_name: None,
+                            description_ref: None,
+                            input_schema_ref: BlobRef::from_bytes(b"work-report-schema"),
+                            output_schema_ref: None,
+                            strict: Some(true),
+                            provider_options_ref: None,
+                        }),
+                        parallelism: ToolParallelism::ParallelSafe,
+                        target_requirement: ToolTargetRequirement::None,
+                    },
                 },
-            }],
+                receiver.clone(),
+            )],
         );
         let admitted = declaration.admit(universe_id).expect("admit controller");
         let binding = admitted.bindings[0].clone();
@@ -691,7 +695,7 @@ mod tests {
                 command: CoreAgentCommand::OpenManagedSession {
                     config: volume_session_config(),
                     session_universe_id: universe_id,
-                    controller_ports: declaration,
+                    workflow_ports: declaration,
                 },
                 max_steps: None,
             })

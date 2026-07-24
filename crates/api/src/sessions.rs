@@ -827,8 +827,8 @@ pub enum SessionEventKindView {
         model: Option<ModelConfig>,
         revision: u64,
     },
-    WorkflowControllerPortsConfigured {
-        controller_workflow_kind: String,
+    WorkflowPortsConfigured {
+        lifecycle_controller_workflow_kind: Option<String>,
         creation_fingerprint: String,
         port_ids: Vec<String>,
     },

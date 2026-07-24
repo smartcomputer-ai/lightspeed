@@ -4314,19 +4314,23 @@ mod tests {
             semantic_type: "lightspeed.work.report.v1".to_owned(),
             tool: test_tool_spec("work_report"),
         };
-        let declaration = crate::ControllerWorkflowPorts::v1(
-            WorkflowEndpointRef {
-                workflow_id: "opaque work workflow id".to_owned(),
-                workflow_kind: "agent_work".to_owned(),
-            },
-            vec![definition.clone()],
+        let controller = WorkflowEndpointRef {
+            workflow_id: "opaque work workflow id".to_owned(),
+            workflow_kind: "agent_work".to_owned(),
+        };
+        let declaration = crate::ManagedSessionWorkflowPorts::v1(
+            Some(controller.clone()),
+            vec![crate::WorkflowToolPortDeclaration::new(
+                definition.clone(),
+                controller,
+            )],
         );
         let open = drive
             .admit_command(
                 CoreAgentCommand::OpenManagedSession {
                     config: config(),
                     session_universe_id: universe_id,
-                    controller_ports: declaration,
+                    workflow_ports: declaration,
                 },
                 10,
             )
@@ -4339,7 +4343,7 @@ mod tests {
         let binding = drive
             .state()
             .workflow_ports
-            .controller_bindings
+            .bindings
             .get(&definition.port_id)
             .cloned()
             .expect("durable binding");

@@ -38,7 +38,7 @@ pub(super) async fn initialize(
         args.universe_id,
         &core_state,
         is_fresh_session,
-        args.controller_ports.as_ref(),
+        args.workflow_ports.as_ref(),
     )?;
     let run_submissions = loaded.run_submissions;
     let head = loaded.head;
@@ -75,11 +75,11 @@ async fn open_new_session(
     let session_config = args.session_config;
 
     let mut drive = drive_from_state(ctx)?;
-    let open_command = match args.controller_ports {
-        Some(controller_ports) => CoreAgentCommand::OpenManagedSession {
+    let open_command = match args.workflow_ports {
+        Some(workflow_ports) => CoreAgentCommand::OpenManagedSession {
             config: session_config,
             session_universe_id: args.universe_id,
-            controller_ports,
+            workflow_ports,
         },
         None => CoreAgentCommand::OpenSession {
             config: session_config,
@@ -103,9 +103,9 @@ pub(super) fn validate_session_creation_identity(
     universe_id: uuid::Uuid,
     state: &CoreAgentState,
     is_fresh_session: bool,
-    controller_ports: Option<&engine::ControllerWorkflowPorts>,
+    workflow_ports: Option<&engine::ManagedSessionWorkflowPorts>,
 ) -> anyhow::Result<()> {
-    let admitted = controller_ports
+    let admitted = workflow_ports
         .map(|ports| ports.admit(universe_id))
         .transpose()?;
     if is_fresh_session {
@@ -124,7 +124,7 @@ pub(super) fn validate_session_creation_identity(
             Ok(())
         }
         (Some(_), None) => {
-            anyhow::bail!("managed session restart is missing its controller declaration")
+            anyhow::bail!("managed session restart is missing its workflow-port declaration")
         }
         (None, Some(_)) => {
             anyhow::bail!("existing standalone session cannot be reopened as a managed session")

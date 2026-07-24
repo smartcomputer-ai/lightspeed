@@ -36,7 +36,7 @@ pub fn admit_command(
         CoreAgentCommand::OpenManagedSession {
             config,
             session_universe_id,
-            controller_ports,
+            workflow_ports,
         } => {
             if state.lifecycle.status != CoreAgentStatus::New {
                 return reject(
@@ -45,7 +45,7 @@ pub fn admit_command(
                 );
             }
             config.validate().map_err(command_rejection_from_domain)?;
-            let admitted = controller_ports
+            let admitted = workflow_ports
                 .admit(session_universe_id)
                 .map_err(command_rejection_from_domain)?;
             Ok(vec![
@@ -56,10 +56,10 @@ pub fn admit_command(
                 CoreAgentEventProposal::new(
                     CoreAgentJoins::default(),
                     CoreAgentEvent::WorkflowPortConfig(
-                        WorkflowPortConfigEvent::ControllerBindingsAdmitted {
+                        WorkflowPortConfigEvent::ManagedBindingsAdmitted {
                             session_universe_id: admitted.session_universe_id,
                             declaration_version: admitted.version,
-                            controller: admitted.controller,
+                            lifecycle_controller: admitted.lifecycle_controller,
                             creation_fingerprint: admitted.creation_fingerprint,
                             bindings: admitted.bindings,
                         },

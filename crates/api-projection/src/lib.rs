@@ -261,13 +261,15 @@ impl<'a> CoreAgentProjector<'a> {
                 CoreAgentLifecycleEvent::Closed => Ok(SessionEventKindView::SessionClosed),
             },
             CoreAgentEvent::WorkflowPortConfig(event) => match event {
-                engine::WorkflowPortConfigEvent::ControllerBindingsAdmitted {
-                    controller,
+                engine::WorkflowPortConfigEvent::ManagedBindingsAdmitted {
+                    lifecycle_controller,
                     creation_fingerprint,
                     bindings,
                     ..
-                } => Ok(SessionEventKindView::WorkflowControllerPortsConfigured {
-                    controller_workflow_kind: controller.workflow_kind.clone(),
+                } => Ok(SessionEventKindView::WorkflowPortsConfigured {
+                    lifecycle_controller_workflow_kind: lifecycle_controller
+                        .as_ref()
+                        .map(|controller| controller.workflow_kind.clone()),
                     creation_fingerprint: creation_fingerprint.clone(),
                     port_ids: bindings
                         .iter()
@@ -1992,16 +1994,16 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn controller_port_config_projects_bounded_diagnostics() {
+    async fn managed_port_config_projects_bounded_diagnostics() {
         let blobs = InMemoryBlobStore::new();
         let projector = CoreAgentProjector::new(&blobs);
         let universe_id = "00000000-0000-0000-0000-000000000001";
         let config_event: engine::WorkflowPortConfigEvent =
             serde_json::from_value(serde_json::json!({
-                "controller_bindings_admitted": {
+                "managed_bindings_admitted": {
                     "session_universe_id": universe_id,
                     "declaration_version": 1,
-                    "controller": {
+                    "lifecycle_controller": {
                         "workflow_id": "global controller/work-1",
                         "workflow_kind": "agent_work",
                     },
@@ -2013,12 +2015,12 @@ mod tests {
         let projected = projector
             .project_event_kind(&CoreAgentEvent::WorkflowPortConfig(config_event))
             .await
-            .expect("project controller ports");
+            .expect("project managed-session ports");
 
         assert_eq!(
             projected,
-            SessionEventKindView::WorkflowControllerPortsConfigured {
-                controller_workflow_kind: "agent_work".to_owned(),
+            SessionEventKindView::WorkflowPortsConfigured {
+                lifecycle_controller_workflow_kind: Some("agent_work".to_owned()),
                 creation_fingerprint: "msc:sha256:test".to_owned(),
                 port_ids: Vec::new(),
             }
