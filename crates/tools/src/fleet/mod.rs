@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::{
     error::{ToolError, ToolResult},
-    runtime::{ToolBinding, ToolDocument, ToolExecutionMode, ToolSpecBundle},
+    runtime::{ToolBinding, ToolDispatchMode, ToolDocument, ToolSpecBundle},
 };
 
 pub const AGENT_SPAWN_TOOL_NAME: &str = "agent_spawn";
@@ -21,8 +21,6 @@ pub const PROFILE_LIST_TOOL_NAME: &str = "profile_list";
 pub const PROFILE_READ_TOOL_NAME: &str = "profile_read";
 
 pub const FLEET_LOGICAL_ID_PREFIX: &str = "fleet.";
-pub const FLEET_ACTIVITY_TYPE: &str = "lightspeed.fleet";
-
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FleetToolsetConfig {
     #[serde(default)]
@@ -446,7 +444,7 @@ pub fn fleet_tool_bundles(config: &FleetToolsetConfig) -> ToolResult<Vec<ToolSpe
     Ok(bundles)
 }
 
-pub fn fleet_tool_bindings(execution: ToolExecutionMode) -> Vec<ToolBinding> {
+pub fn fleet_tool_bindings(dispatch: ToolDispatchMode) -> Vec<ToolBinding> {
     [
         AGENT_SPAWN_TOOL_NAME,
         AGENT_REQUEST_TOOL_NAME,
@@ -457,16 +455,15 @@ pub fn fleet_tool_bindings(execution: ToolExecutionMode) -> Vec<ToolBinding> {
         PROFILE_READ_TOOL_NAME,
     ]
     .into_iter()
-    .map(|tool_name| fleet_tool_binding(tool_name, execution.clone()))
+    .map(|tool_name| fleet_tool_binding(tool_name, dispatch.clone()))
     .collect()
 }
 
-fn fleet_tool_binding(tool_name: &str, execution: ToolExecutionMode) -> ToolBinding {
+fn fleet_tool_binding(tool_name: &str, dispatch: ToolDispatchMode) -> ToolBinding {
     ToolBinding::new(
         ToolName::new(tool_name),
         format!("{FLEET_LOGICAL_ID_PREFIX}{tool_name}"),
-        FLEET_ACTIVITY_TYPE,
-        execution,
+        dispatch,
         ToolParallelism::Exclusive,
     )
 }
@@ -1111,7 +1108,7 @@ mod tests {
             .iter()
             .map(|bundle| bundle.spec.name.clone())
             .collect();
-        let binding_names: Vec<_> = fleet_tool_bindings(ToolExecutionMode::Inline)
+        let binding_names: Vec<_> = fleet_tool_bindings(ToolDispatchMode::Local)
             .into_iter()
             .map(|binding| binding.tool_name)
             .collect();

@@ -56,6 +56,7 @@ use tools::{
     runtime::{ToolCatalog, ToolTarget},
     toolset::{EnvironmentToolsetConfig, ToolsetConfig, ToolsetEnvironment, resolve_toolset},
     web::fetch::WebFetchToolConfig,
+    workflow_port::invoke_workflow_port,
 };
 use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore, VfsWorkspaceStore};
 
@@ -71,6 +72,12 @@ use crate::{
 const DEFAULT_JOB_LIST_LIMIT: usize = 20;
 const MAX_JOB_LIST_LIMIT: usize = 200;
 const PROMISE_JOB_OUTPUT_BYTES: usize = 16 * 1024;
+
+#[derive(Default)]
+struct WorkflowPortBatchRuntime {
+    bindings: BTreeMap<engine::ToolName, engine::WorkflowToolPortBinding>,
+    emitted_counts: BTreeMap<engine::WorkflowToolPortId, u32>,
+}
 
 #[derive(Clone)]
 struct EnvironmentJobWorkflowRuntime {
@@ -1503,6 +1510,85 @@ impl SessionTools {
             .map_err(|error| io_error(format!("invalid JSON tool arguments: {error}")))
     }
 
+    async fn workflow_port_batch_runtime(
+        &self,
+        session_id: &SessionId,
+        run_id: engine::RunId,
+    ) -> Result<WorkflowPortBatchRuntime, CoreAgentIoError> {
+        let Some(sessions) = self.sessions.as_ref() else {
+            return Ok(WorkflowPortBatchRuntime::default());
+        };
+        let entries =
+            read_all_session_entries(sessions.as_ref(), session_id, MAX_EVENT_PAGE_LIMIT as usize)
+                .await
+                .map_err(io_error)?;
+        let state = replay_core_agent_state(&entries).map_err(io_error)?;
+        let bindings = state
+            .workflow_ports
+            .controller_bindings
+            .values()
+            .map(|binding| (binding.definition.tool.name.clone(), binding.clone()))
+            .collect();
+        let emitted_counts = state
+            .workflow_ports
+            .controller_bindings
+            .keys()
+            .map(|port_id| {
+                (
+                    port_id.clone(),
+                    state.workflow_ports.emission_count(run_id, port_id),
+                )
+            })
+            .collect();
+        Ok(WorkflowPortBatchRuntime {
+            bindings,
+            emitted_counts,
+        })
+    }
+
+    async fn invoke_workflow_port_call(
+        &self,
+        request: &ToolInvocationBatchRequest,
+        call: &engine::ToolInvocationRequest,
+        binding: &engine::WorkflowToolPortBinding,
+        emitted_count: u32,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        if emitted_count >= engine::MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN {
+            return failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                format!(
+                    "workflow port {} reached its per-run emission cap of {}",
+                    binding.definition.port_id,
+                    engine::MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN
+                ),
+            )
+            .await;
+        }
+        match invoke_workflow_port(
+            self.blobs.as_ref(),
+            binding,
+            &request.session_id,
+            request.run_id,
+            request.turn_id,
+            request.batch_id,
+            call,
+        )
+        .await
+        {
+            Ok(output) => {
+                let mut result = self
+                    .succeeded_tool_result(call, &output.output_json, output.model_visible_text)
+                    .await?;
+                result.effects = output.effects;
+                Ok(result)
+            }
+            Err(error) => {
+                failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string()).await
+            }
+        }
+    }
+
     async fn succeeded_tool_result<T: serde::Serialize>(
         &self,
         call: &engine::ToolInvocationRequest,
@@ -2119,10 +2205,14 @@ impl CoreAgentTools for SessionTools {
         }
         let duplicate_fleet_message_call_ids =
             self.duplicate_fleet_message_call_ids(&request).await?;
+        let mut workflow_ports = self
+            .workflow_port_batch_runtime(&request.session_id, request.run_id)
+            .await?;
         let has_generic_runtime_call = request.calls.iter().any(|call| {
             !is_messaging_tool(&call.tool_name)
                 && !is_fleet_tool(&call.tool_name)
                 && !is_concurrency_tool(&call.tool_name)
+                && !workflow_ports.bindings.contains_key(&call.tool_name)
         });
         if !has_generic_runtime_call {
             // Messaging/Fleet/concurrency-only batches skip generic VFS/runtime setup entirely.
@@ -2137,6 +2227,22 @@ impl CoreAgentTools for SessionTools {
                         )
                         .await?,
                     );
+                } else if let Some(binding) = workflow_ports.bindings.get(&call.tool_name).cloned()
+                {
+                    let count = workflow_ports
+                        .emitted_counts
+                        .get(&binding.definition.port_id)
+                        .copied()
+                        .unwrap_or(0);
+                    let result = self
+                        .invoke_workflow_port_call(&request, call, &binding, count)
+                        .await?;
+                    if result.status == ToolCallStatus::Succeeded {
+                        workflow_ports
+                            .emitted_counts
+                            .insert(binding.definition.port_id.clone(), count.saturating_add(1));
+                    }
+                    results.push(result);
                 } else if is_messaging_tool(&call.tool_name) {
                     results.push(
                         self.invoke_messaging_call(&request.session_id, request.run_id, call)
@@ -2182,6 +2288,21 @@ impl CoreAgentTools for SessionTools {
                     )
                     .await?,
                 );
+            } else if let Some(binding) = workflow_ports.bindings.get(&call.tool_name).cloned() {
+                let count = workflow_ports
+                    .emitted_counts
+                    .get(&binding.definition.port_id)
+                    .copied()
+                    .unwrap_or(0);
+                let result = self
+                    .invoke_workflow_port_call(&request, call, &binding, count)
+                    .await?;
+                if result.status == ToolCallStatus::Succeeded {
+                    workflow_ports
+                        .emitted_counts
+                        .insert(binding.definition.port_id.clone(), count.saturating_add(1));
+                }
+                results.push(result);
             } else if is_messaging_tool(&call.tool_name) {
                 results.push(
                     self.invoke_messaging_call(&request.session_id, request.run_id, call)
@@ -2330,8 +2451,13 @@ mod tests {
 
     use crate::environment::RuntimeEnvironment;
     use engine::{
-        BlobRef, ContextEntryKind, RunId, SessionId, ToolBatchId, ToolCallId, ToolName, TurnId,
-        storage::{CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
+        BlobRef, ContextEntryKind, FunctionToolSpec, RunId, SessionId, ToolBatchId, ToolCallId,
+        ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement, TurnId,
+        WorkflowEndpointRef, WorkflowToolPortDefinition, WorkflowToolPortId,
+        storage::{
+            AppendSessionEvents, CreateSession, InMemoryBlobStore, InMemorySessionStore,
+            SessionStore,
+        },
     };
     use tools::environment::{
         EnvironmentToolContext,
@@ -2360,6 +2486,186 @@ mod tests {
                     .then(|| entry.content_ref.clone())
             })
             .expect("visible ref")
+    }
+
+    async fn workflow_port_session(
+        blobs: &dyn BlobStore,
+        sessions: &InMemorySessionStore,
+    ) -> (SessionId, engine::WorkflowToolPortBinding) {
+        let session_id = SessionId::new("workflow-port-session");
+        let schema_ref = blobs
+            .put_bytes(
+                br#"{"type":"object","properties":{"status":{"type":"string"}},"required":["status"],"additionalProperties":false}"#
+                    .to_vec(),
+            )
+            .await
+            .expect("put schema");
+        let definition = WorkflowToolPortDefinition {
+            port_id: WorkflowToolPortId::new("report"),
+            revision: 1,
+            semantic_type: "lightspeed.work.report.v1".to_owned(),
+            tool: ToolSpec {
+                name: ToolName::new("work_report"),
+                kind: ToolKind::Function(FunctionToolSpec {
+                    model_name: None,
+                    description_ref: None,
+                    input_schema_ref: schema_ref,
+                    output_schema_ref: None,
+                    strict: Some(true),
+                    provider_options_ref: None,
+                }),
+                parallelism: ToolParallelism::ParallelSafe,
+                target_requirement: ToolTargetRequirement::None,
+            },
+        };
+        let controller_ports = engine::ControllerWorkflowPorts::v1(
+            WorkflowEndpointRef {
+                workflow_id: "opaque work workflow id".to_owned(),
+                workflow_kind: "agent_work".to_owned(),
+            },
+            vec![definition.clone()],
+        );
+        let universe_id = uuid::Uuid::from_u128(1);
+        let binding = controller_ports
+            .admit(universe_id)
+            .expect("admit controller ports")
+            .bindings
+            .into_iter()
+            .next()
+            .expect("binding");
+        sessions
+            .create_session(CreateSession {
+                session_id: session_id.clone(),
+                display_name: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        let config = crate::worker::default_session_config(engine::ModelSelection {
+            api_kind: engine::ProviderApiKind::OpenAiResponses,
+            provider_id: "test".to_owned(),
+            model: "test-model".to_owned(),
+        });
+        let proposals = engine::admit_command(
+            &engine::CoreAgentState::new(),
+            engine::CoreAgentCommand::OpenManagedSession {
+                config,
+                session_universe_id: universe_id,
+                controller_ports,
+            },
+            2,
+        )
+        .expect("open managed session");
+        let events = proposals
+            .into_iter()
+            .map(|proposal| {
+                engine::CoreAgentCodec
+                    .encode_uncommitted(&proposal.into_uncommitted(2))
+                    .expect("encode opening event")
+            })
+            .collect();
+        sessions
+            .append(AppendSessionEvents {
+                session_id: session_id.clone(),
+                expected_head: None,
+                events,
+            })
+            .await
+            .expect("append opening events");
+        (session_id, binding)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn workflow_port_calls_validate_schema_ack_and_per_run_cap() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let catalog = Arc::new(TestCatalog::default());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let (session_id, binding) = workflow_port_session(blobs.as_ref(), sessions.as_ref()).await;
+        let valid_arguments = blobs
+            .put_bytes(br#"{"status":"complete"}"#.to_vec())
+            .await
+            .expect("put arguments");
+        let invalid_arguments = blobs
+            .put_bytes(br#"{"status":4}"#.to_vec())
+            .await
+            .expect("put invalid arguments");
+        let session_store: Arc<dyn SessionStore> = sessions;
+        let tools = SessionTools::new(blobs.clone(), catalog.clone(), catalog)
+            .with_session_store(session_store);
+        let mut calls = vec![engine::ToolInvocationRequest {
+            call_id: ToolCallId::new("call-invalid-schema"),
+            tool_name: binding.definition.tool.name.clone(),
+            arguments_ref: invalid_arguments,
+            execution_target: None,
+        }];
+        calls.extend(
+            (0..engine::MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN).map(|index| {
+                engine::ToolInvocationRequest {
+                    call_id: ToolCallId::new(format!("call-{index}")),
+                    tool_name: binding.definition.tool.name.clone(),
+                    arguments_ref: valid_arguments.clone(),
+                    execution_target: None,
+                }
+            }),
+        );
+        calls.push(engine::ToolInvocationRequest {
+            call_id: ToolCallId::new("call-over-cap"),
+            tool_name: binding.definition.tool.name.clone(),
+            arguments_ref: valid_arguments,
+            execution_target: None,
+        });
+        let result = tools
+            .invoke_batch(ToolInvocationBatchRequest {
+                session_id,
+                run_id: RunId::new(9),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
+                calls,
+            })
+            .await
+            .expect("invoke workflow ports")
+            .completed_result()
+            .expect("completed batch");
+
+        let successful = result
+            .results
+            .iter()
+            .filter(|result| result.status == ToolCallStatus::Succeeded)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            successful.len(),
+            engine::MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN as usize
+        );
+        assert!(successful.iter().all(|result| {
+            result.effects.len() == 1
+                && result.effects[0].kind == engine::WORKFLOW_PORT_EMIT_EFFECT_KIND
+        }));
+        let acknowledgement = blobs
+            .read_text(
+                successful[0]
+                    .output_ref
+                    .as_ref()
+                    .expect("acknowledgement ref"),
+            )
+            .await
+            .expect("read acknowledgement");
+        assert!(acknowledgement.contains("\"accepted\":true"));
+
+        let over_cap = result
+            .results
+            .iter()
+            .find(|result| result.call_id.as_str() == "call-over-cap")
+            .expect("cap result");
+        let invalid = result
+            .results
+            .iter()
+            .find(|result| result.call_id.as_str() == "call-invalid-schema")
+            .expect("schema result");
+        assert_eq!(over_cap.status, ToolCallStatus::Failed);
+        assert_eq!(invalid.status, ToolCallStatus::Failed);
+        assert!(over_cap.effects.is_empty());
+        assert!(invalid.effects.is_empty());
     }
 
     #[derive(Default)]

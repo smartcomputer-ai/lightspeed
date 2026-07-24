@@ -275,6 +275,29 @@ impl<'a> CoreAgentProjector<'a> {
                         .collect(),
                 }),
             },
+            CoreAgentEvent::WorkflowPort(event) => match event {
+                engine::WorkflowPortEvent::Emitted { invocation } => {
+                    Ok(SessionEventKindView::WorkflowPortEmitted {
+                        invocation_id: invocation.invocation_id.as_str().to_owned(),
+                        port_id: invocation.port_id.as_str().to_owned(),
+                        semantic_type: invocation.semantic_type.clone(),
+                        schema_revision: invocation.schema_revision,
+                        binding_fingerprint: invocation.binding_fingerprint.clone(),
+                        run_id: api_run_id(invocation.run_id),
+                        turn_id: api_turn_id(invocation.turn_id),
+                        batch_id: api_tool_batch_id(invocation.tool_batch_id),
+                        call_id: invocation.tool_call_id.as_str().to_owned(),
+                        arguments_ref: invocation.arguments_ref.as_str().to_owned(),
+                    })
+                }
+                engine::WorkflowPortEvent::DeliveryFailed {
+                    invocation_id,
+                    error_ref,
+                } => Ok(SessionEventKindView::WorkflowPortDeliveryFailed {
+                    invocation_id: invocation_id.as_str().to_owned(),
+                    error_ref: error_ref.as_str().to_owned(),
+                }),
+            },
             CoreAgentEvent::Run(event) => match event {
                 RunEvent::Accepted(accepted) => Ok(SessionEventKindView::RunAccepted {
                     run_id: api_run_id(accepted.run_id),
@@ -1583,6 +1606,7 @@ fn tool_effects_for_run(
 fn tool_effects_to_api(effects: &[engine::ToolEffect]) -> Vec<ToolEffectView> {
     effects
         .iter()
+        .filter(|effect| effect.kind != engine::WORKFLOW_PORT_EMIT_EFFECT_KIND)
         .map(|effect| ToolEffectView {
             kind: effect.kind.clone(),
             data: effect.data.clone(),
@@ -1999,6 +2023,93 @@ mod tests {
                 port_ids: Vec::new(),
             }
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn workflow_port_events_project_refs_without_inlining_arguments() {
+        let blobs = InMemoryBlobStore::new();
+        let projector = CoreAgentProjector::new(&blobs);
+        let arguments_ref = BlobRef::from_bytes(br#"{"status":"complete"}"#);
+        let error_ref = BlobRef::from_bytes(b"delivery failed");
+        let invocation_id = format!("wpi:sha256:{}", "a".repeat(64));
+        let emitted: engine::WorkflowPortEvent = serde_json::from_value(serde_json::json!({
+            "emitted": {
+                "invocation": {
+                    "invocation_id": invocation_id,
+                    "port_id": "report",
+                    "semantic_type": "lightspeed.work.report.v1",
+                    "schema_revision": 1,
+                    "binding_fingerprint": "wpb:sha256:test",
+                    "session_universe_id": "00000000-0000-0000-0000-000000000001",
+                    "session_id": "session-1",
+                    "run_id": 2,
+                    "turn_id": 3,
+                    "tool_batch_id": 4,
+                    "tool_call_id": "call-5",
+                    "arguments_ref": arguments_ref,
+                }
+            }
+        }))
+        .expect("decode emitted event");
+        let projected = projector
+            .project_event_kind(&CoreAgentEvent::WorkflowPort(emitted))
+            .await
+            .expect("project emitted event");
+        assert_eq!(
+            projected,
+            SessionEventKindView::WorkflowPortEmitted {
+                invocation_id: invocation_id.clone(),
+                port_id: "report".to_owned(),
+                semantic_type: "lightspeed.work.report.v1".to_owned(),
+                schema_revision: 1,
+                binding_fingerprint: "wpb:sha256:test".to_owned(),
+                run_id: api_run_id(RunId::new(2)),
+                turn_id: "turn_3".to_owned(),
+                batch_id: "tool_batch_4".to_owned(),
+                call_id: "call-5".to_owned(),
+                arguments_ref: arguments_ref.as_str().to_owned(),
+            }
+        );
+
+        let failed = engine::WorkflowPortEvent::DeliveryFailed {
+            invocation_id: engine::WorkflowToolInvocationId::new(invocation_id.clone()),
+            error_ref: error_ref.clone(),
+        };
+        let projected = projector
+            .project_event_kind(&CoreAgentEvent::WorkflowPort(failed))
+            .await
+            .expect("project failed delivery");
+        assert_eq!(
+            projected,
+            SessionEventKindView::WorkflowPortDeliveryFailed {
+                invocation_id,
+                error_ref: error_ref.as_str().to_owned(),
+            }
+        );
+
+        let completed = projector
+            .project_event_kind(&CoreAgentEvent::Tool(ToolEvent::CallCompleted {
+                run_id: RunId::new(2),
+                turn_id: TurnId::new(3),
+                batch_id: ToolBatchId::new(4),
+                result: engine::ToolCallResult {
+                    call_id: engine::ToolCallId::new("call-5"),
+                    status: engine::ToolCallStatus::Succeeded,
+                    output_ref: None,
+                    model_visible_context_entries: Vec::new(),
+                    error_ref: None,
+                    effects: vec![engine::ToolEffect {
+                        kind: engine::WORKFLOW_PORT_EMIT_EFFECT_KIND.to_owned(),
+                        data: Default::default(),
+                    }],
+                },
+            }))
+            .await
+            .expect("project tool completion");
+        assert!(matches!(
+            completed,
+            SessionEventKindView::ToolCallCompleted { effects, .. } if effects.is_empty()
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]

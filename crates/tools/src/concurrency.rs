@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::{
     error::{ToolError, ToolResult},
-    runtime::{ToolBinding, ToolDocument, ToolExecutionMode, ToolSpecBundle},
+    runtime::{ToolBinding, ToolDispatchMode, ToolDocument, ToolSpecBundle},
 };
 
 pub const AWAIT_TOOL_NAME: &str = "await";
@@ -17,8 +17,6 @@ pub const DETACH_TOOL_NAME: &str = "detach";
 pub const SLEEP_TOOL_NAME: &str = "sleep";
 
 pub const CONCURRENCY_LOGICAL_ID_PREFIX: &str = "concurrency.";
-pub const CONCURRENCY_ACTIVITY_TYPE: &str = "lightspeed.concurrency";
-
 pub const MAX_AWAIT_PROMISES: usize = 32;
 pub const MAX_CANCEL_PROMISES: usize = 32;
 pub const MAX_DETACH_PROMISES: usize = 32;
@@ -248,7 +246,7 @@ pub fn concurrency_tool_bundles(
 }
 
 pub fn concurrency_tool_bindings(
-    execution: ToolExecutionMode,
+    dispatch: ToolDispatchMode,
     config: &ConcurrencyToolsetConfig,
 ) -> Vec<ToolBinding> {
     if !config.enabled_or_timer() {
@@ -260,16 +258,15 @@ pub fn concurrency_tool_bindings(
     }
     tool_names
         .into_iter()
-        .map(|tool_name| concurrency_tool_binding(tool_name, execution.clone()))
+        .map(|tool_name| concurrency_tool_binding(tool_name, dispatch.clone()))
         .collect()
 }
 
-fn concurrency_tool_binding(tool_name: &str, execution: ToolExecutionMode) -> ToolBinding {
+fn concurrency_tool_binding(tool_name: &str, dispatch: ToolDispatchMode) -> ToolBinding {
     ToolBinding::new(
         ToolName::new(tool_name),
         format!("{CONCURRENCY_LOGICAL_ID_PREFIX}{tool_name}"),
-        CONCURRENCY_ACTIVITY_TYPE,
-        execution,
+        dispatch,
         ToolParallelism::Exclusive,
     )
 }

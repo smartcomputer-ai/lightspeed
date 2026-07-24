@@ -181,6 +181,12 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
                 "lightspeed.core.workflow_port_config.controller_bindings_admitted"
             }
         },
+        CoreAgentEvent::WorkflowPort(event) => match event {
+            crate::WorkflowPortEvent::Emitted { .. } => "lightspeed.core.workflow_port.emitted",
+            crate::WorkflowPortEvent::DeliveryFailed { .. } => {
+                "lightspeed.core.workflow_port.delivery_failed"
+            }
+        },
     }
 }
 

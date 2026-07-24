@@ -5,7 +5,10 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::{BlobRef, EventSeq, PromiseId, PromiseResolution, RunId, RunStatus, SessionId};
+use crate::{
+    BlobRef, EventSeq, PromiseId, PromiseResolution, RunId, RunStatus, SessionId,
+    WorkflowToolInvocation, WorkflowToolInvocationId,
+};
 
 const EMISSION_ID_PREFIX: &str = "emission:sha256:";
 const EMISSION_ID_HEX_LEN: usize = 64;
@@ -80,6 +83,12 @@ impl EmissionId {
             ],
         )
     }
+
+    /// Port delivery uses the durable invocation id directly so receiver
+    /// dedup and session-log identity share one stable key.
+    pub fn for_port_invocation(invocation_id: &WorkflowToolInvocationId) -> Self {
+        Self(invocation_id.as_str().to_owned())
+    }
 }
 
 impl fmt::Display for EmissionId {
@@ -109,7 +118,9 @@ impl<'de> Deserialize<'de> for EmissionId {
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum EmissionIdError {
-    #[error("emission id must use emission:sha256:<64 lowercase hex> format: {value}")]
+    #[error(
+        "emission id must use emission:sha256:<64 lowercase hex> or wpi:sha256:<64 lowercase hex> format: {value}"
+    )]
     InvalidFormat { value: String },
 }
 
@@ -160,6 +171,9 @@ pub enum EmissionBody {
     SourceResolution {
         promise_id: PromiseId,
         resolution: PromiseResolution,
+    },
+    PortInvocation {
+        invocation: WorkflowToolInvocation,
     },
 }
 
@@ -221,6 +235,24 @@ impl EmissionEnvelope {
             },
         }
     }
+
+    pub fn port_invocation(
+        universe_id: Uuid,
+        session_id: SessionId,
+        log_seq: EventSeq,
+        invocation: WorkflowToolInvocation,
+    ) -> Self {
+        let emission_id = EmissionId::for_port_invocation(&invocation.invocation_id);
+        Self {
+            emission_id,
+            producer: EmissionProducer::Session {
+                universe_id,
+                session_id,
+                log_seq,
+            },
+            body: EmissionBody::PortInvocation { invocation },
+        }
+    }
 }
 
 fn update_digest_part(digest: &mut Sha256, value: &[u8]) {
@@ -229,13 +261,15 @@ fn update_digest_part(digest: &mut Sha256, value: &[u8]) {
 }
 
 fn is_canonical_emission_id(value: &str) -> bool {
-    let Some(hex) = value.strip_prefix(EMISSION_ID_PREFIX) else {
-        return false;
-    };
-    hex.len() == EMISSION_ID_HEX_LEN
-        && hex
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    let hex = value
+        .strip_prefix(EMISSION_ID_PREFIX)
+        .or_else(|| value.strip_prefix("wpi:sha256:"));
+    hex.is_some_and(|hex| {
+        hex.len() == EMISSION_ID_HEX_LEN
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
 }
 
 #[cfg(test)]
@@ -281,6 +315,18 @@ mod tests {
 
         assert_ne!(first, other_source);
         assert_ne!(first, other_promise);
+    }
+
+    #[test]
+    fn port_invocation_reuses_the_durable_invocation_id() {
+        let invocation_id = WorkflowToolInvocationId::new(format!("wpi:sha256:{}", "a".repeat(64)));
+        let emission_id = EmissionId::for_port_invocation(&invocation_id);
+
+        assert_eq!(emission_id.as_str(), invocation_id.as_str());
+        assert_eq!(
+            EmissionId::parse(emission_id.to_string()).expect("parse port emission id"),
+            emission_id
+        );
     }
 
     #[test]

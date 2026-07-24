@@ -42,6 +42,13 @@ impl AgentSessionWorkflow {
                 promise_id,
                 resolution,
             } => (promise_id, resolution),
+            engine::EmissionBody::PortInvocation { invocation } => {
+                self.last_error = Some(format!(
+                    "session workflow cannot receive workflow port invocation {}",
+                    invocation.invocation_id
+                ));
+                return;
+            }
         };
         self.pending_admissions.push(AgentAdmission {
             command: CoreAgentCommand::ResolvePromise {

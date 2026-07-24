@@ -4419,6 +4419,7 @@ dependencies = [
  "glob",
  "host-client",
  "host-protocol",
+ "jsonschema",
  "messaging",
  "regex",
  "reqwest",
@@ -4427,6 +4428,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "uuid",
  "vfs",
 ]
 

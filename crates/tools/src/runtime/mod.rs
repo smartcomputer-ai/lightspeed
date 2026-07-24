@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use engine::{BlobRef, ToolEffect, ToolName, ToolParallelism};
+use engine::{BlobRef, ToolEffect, ToolName, ToolParallelism, WorkflowToolPortId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -78,8 +78,7 @@ impl ToolCatalog {
 pub struct ToolBinding {
     pub tool_name: ToolName,
     pub logical_id: String,
-    pub activity_type: String,
-    pub execution: ToolExecutionMode,
+    pub dispatch: ToolDispatchMode,
     pub parallelism: ToolParallelism,
 }
 
@@ -87,24 +86,25 @@ impl ToolBinding {
     pub fn new(
         tool_name: ToolName,
         logical_id: impl Into<String>,
-        activity_type: impl Into<String>,
-        execution: ToolExecutionMode,
+        dispatch: ToolDispatchMode,
         parallelism: ToolParallelism,
     ) -> Self {
         Self {
             tool_name,
             logical_id: logical_id.into(),
-            activity_type: activity_type.into(),
-            execution,
+            dispatch,
             parallelism,
         }
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ToolExecutionMode {
-    Inline,
-    Activity,
+pub enum ToolDispatchMode {
+    Local,
+    WorkflowPort {
+        port_id: WorkflowToolPortId,
+        binding_fingerprint: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

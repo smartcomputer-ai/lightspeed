@@ -55,8 +55,12 @@
   remain provider-neutral; surface modules own model-visible schemas, argument
   adapters, and output shaping.
 - Added `InlineHostToolRuntime` for direct in-process invocation. The catalog
-  binding records an activity type and execution mode so a Temporal activity
-  dispatcher can use the same resolved toolset without changing tool modules.
+  binding records the logical tool and its dispatch mode so the same resolved
+  toolset can be used by local runners and the hosted tool-batch activity.
+- Later correction (P100): hosted tools execute inside the enclosing
+  `tool_invoke_batch` Temporal activity. The unused per-tool `Activity`
+  dispatch mode and `activity_type` metadata were removed in favor of
+  `ToolDispatchMode::{Local, WorkflowPort}`.
 
 **Design correction**
 - `lightspeed-agent-tools` should not be a filesystem/process crate. It should be an
@@ -73,7 +77,7 @@
 - Tool invocation dispatch is a profile/catalog concern. The Lightspeed core persists
   tool specs and `ToolInvocationIntent` values; the tools crate supplies a
   sidecar `ToolCatalog` that maps a visible `ToolName` to a logical tool and
-  activity type.
+  dispatch mode.
 
 ## Goal
 
@@ -630,8 +634,9 @@ The first refactor has moved the implementation in place:
    `tools::toolset`.
 6. Keep inline execution as one runtime implementation through
    `InlineHostToolRuntime`.
-7. Keep activity dispatch pluggable by recording `ToolBinding.activity_type` and
-   `ToolBinding.execution`.
+7. Keep routing explicit through `ToolBinding.dispatch`; local handlers run
+   within the current tool runner, while specialized routes such as workflow
+   ports carry their own admitted dispatch metadata.
 
 Do not preserve root-jail behavior inside `LocalFileSystem`; that belongs in
 `ScopedFileSystem`. `LocalFileSystem` should be the direct full-access local
@@ -822,9 +827,10 @@ Agent tool execution should:
 - treat write tools and process tools as exclusive unless the implementation
   proves narrower resource safety
 
-The crate should provide inline handlers for in-process runners and tests. Future
-Temporal integration should wrap the same per-tool operation functions as
-separate activities, not call a mega tool activity.
+The crate should provide inline handlers for in-process runners and tests.
+The hosted runtime now calls those same operations inside one
+`tool_invoke_batch` Temporal activity; per-tool activity dispatch was not
+retained.
 
 The inline executor is allowed to implement `EffectExecutor` by handling only
 `AgentEffectIntent::ToolInvoke`. It should return `Unsupported` for LLM effects

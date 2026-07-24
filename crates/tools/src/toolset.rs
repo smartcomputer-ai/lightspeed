@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use engine::{ProviderApiKind, ToolName, ToolSpec};
+use engine::{ProviderApiKind, ToolName, ToolSpec, WorkflowToolPortBinding};
 
 use crate::{
     builtin::{BuiltinTool, BuiltinToolOperation, BuiltinToolSurface},
@@ -10,12 +10,13 @@ use crate::{
     error::{ToolError, ToolResult},
     fleet::{FleetToolsetConfig, fleet_tool_bindings, fleet_tool_bundles},
     messaging::{MessagingToolsetConfig, messaging_tool_bindings, messaging_tool_bundles},
-    runtime::{ToolCatalog, ToolDocument, ToolExecutionMode, ToolSpecBundle, ToolTarget},
+    runtime::{ToolCatalog, ToolDispatchMode, ToolDocument, ToolSpecBundle, ToolTarget},
     web::fetch::{WebFetchToolConfig, web_fetch_tool_binding, web_fetch_tool_bundle},
     web::search::{
         OpenAiResponsesWebSearchConfig, apply_openai_responses_web_search_includes,
         openai_responses_web_search_tool_bundle,
     },
+    workflow_port::workflow_port_tool_binding,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,7 +60,7 @@ pub struct BuiltinToolsetConfig {
     pub presentation: BuiltinToolPresentation,
     pub fs: FilesystemToolsetConfig,
     pub process: EnvironmentToolsetConfig,
-    pub execution: ToolExecutionMode,
+    pub dispatch: ToolDispatchMode,
 }
 
 impl BuiltinToolsetConfig {
@@ -68,7 +69,7 @@ impl BuiltinToolsetConfig {
             presentation: BuiltinToolPresentation::ProviderDefault,
             fs: FilesystemToolsetConfig::disabled(),
             process: EnvironmentToolsetConfig::disabled(),
-            execution: ToolExecutionMode::Inline,
+            dispatch: ToolDispatchMode::Local,
         }
     }
 
@@ -331,6 +332,38 @@ pub struct ResolvedToolset {
     pub provider_params_patch: ProviderParamsPatch,
 }
 
+/// Merge trusted, already-admitted workflow ports into the effective
+/// provider-facing toolset and runtime catalog.
+pub fn materialize_workflow_ports<'a>(
+    toolset: &mut ResolvedToolset,
+    bindings: impl IntoIterator<Item = &'a WorkflowToolPortBinding>,
+) -> ToolResult<()> {
+    for binding in bindings {
+        binding
+            .validate()
+            .map_err(|error| ToolError::InvalidRequest {
+                message: format!(
+                    "invalid workflow port {} binding: {error}",
+                    binding.definition.port_id
+                ),
+            })?;
+        let tool_name = binding.definition.tool.name.clone();
+        if toolset.tools.contains_key(&tool_name) {
+            return Err(ToolError::InvalidRequest {
+                message: format!(
+                    "workflow port {} tool name {} collides with another effective tool",
+                    binding.definition.port_id, tool_name
+                ),
+            });
+        }
+        toolset
+            .tools
+            .insert(tool_name, binding.definition.tool.clone());
+        toolset.catalog.insert(workflow_port_tool_binding(binding));
+    }
+    Ok(())
+}
+
 pub fn resolve_toolset(
     env: ToolsetEnvironment<'_>,
     config: &ToolsetConfig,
@@ -428,7 +461,7 @@ impl ToolsetBuilder {
                 Err(ToolError::UnsupportedCapability { .. }) if omit_unsupported => continue,
                 Err(error) => return Err(error),
             };
-            let binding = tool.binding(target, config.execution.clone());
+            let binding = tool.binding(target, config.dispatch.clone());
             self.add_bundle(bundle);
             self.catalog.insert(binding);
         }
@@ -442,14 +475,14 @@ impl ToolsetBuilder {
     fn add_web_fetch(&mut self, bundle: ToolSpecBundle) {
         self.add_bundle(bundle);
         self.catalog
-            .insert(web_fetch_tool_binding(ToolExecutionMode::Inline));
+            .insert(web_fetch_tool_binding(ToolDispatchMode::Local));
     }
 
     fn add_messaging(&mut self, bundles: Vec<ToolSpecBundle>) {
         for bundle in bundles {
             self.add_bundle(bundle);
         }
-        for binding in messaging_tool_bindings(ToolExecutionMode::Inline) {
+        for binding in messaging_tool_bindings(ToolDispatchMode::Local) {
             self.catalog.insert(binding);
         }
     }
@@ -458,7 +491,7 @@ impl ToolsetBuilder {
         for bundle in concurrency_tool_bundles(config)? {
             self.add_bundle(bundle);
         }
-        for binding in concurrency_tool_bindings(ToolExecutionMode::Inline, config) {
+        for binding in concurrency_tool_bindings(ToolDispatchMode::Local, config) {
             self.catalog.insert(binding);
         }
         Ok(())
@@ -468,7 +501,7 @@ impl ToolsetBuilder {
         for bundle in bundles {
             self.add_bundle(bundle);
         }
-        for binding in fleet_tool_bindings(ToolExecutionMode::Inline) {
+        for binding in fleet_tool_bindings(ToolDispatchMode::Local) {
             self.catalog.insert(binding);
         }
     }

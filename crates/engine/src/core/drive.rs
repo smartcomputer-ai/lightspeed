@@ -6,7 +6,7 @@
 //! substrates fulfill emitted actions and resume the drive with committed
 //! entries or execution results.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -162,7 +162,8 @@ impl CoreAgentDrive {
         result: ToolInvocationBatchResult,
         observed_at_ms: u64,
     ) -> Result<CoreAgentAction, CoreAgentDriveError> {
-        let proposals = tool_batch_result_proposals(&self.state, result)?;
+        let proposals =
+            tool_batch_result_proposals_for_session(&self.session_id, &self.state, result)?;
         self.append_action(proposals, observed_at_ms)
     }
 
@@ -192,8 +193,14 @@ impl CoreAgentDrive {
         spec: AwaitSpec,
         observed_at_ms: u64,
     ) -> Result<CoreAgentAction, CoreAgentDriveError> {
-        let proposals =
-            tool_batch_deferred_proposals(&self.state, batch_id, call_id, completed_results, spec)?;
+        let proposals = tool_batch_deferred_proposals(
+            &self.session_id,
+            &self.state,
+            batch_id,
+            call_id,
+            completed_results,
+            spec,
+        )?;
         self.append_action(proposals, observed_at_ms)
     }
 
@@ -671,6 +678,7 @@ pub fn next_tool_batch_request(
 }
 
 pub fn tool_batch_deferred_proposals(
+    session_id: &SessionId,
     state: &CoreAgentState,
     batch_id: ToolBatchId,
     call_id: ToolCallId,
@@ -790,7 +798,7 @@ pub fn tool_batch_deferred_proposals(
         tool_batch_id: Some(batch.batch_id),
         ..CoreAgentJoins::default()
     };
-    let mut proposals = tool_call_completed_proposals(state, completed_result)?;
+    let mut proposals = tool_call_completed_proposals(state, Some(session_id), completed_result)?;
     proposals.push(CoreAgentEventProposal::new(
         joins,
         CoreAgentEvent::Tool(ToolEvent::BatchDeferred {
@@ -808,9 +816,25 @@ pub fn tool_batch_result_proposals(
     state: &CoreAgentState,
     result: ToolInvocationBatchResult,
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
+    tool_batch_result_proposals_inner(None, state, result)
+}
+
+fn tool_batch_result_proposals_for_session(
+    session_id: &SessionId,
+    state: &CoreAgentState,
+    result: ToolInvocationBatchResult,
+) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
+    tool_batch_result_proposals_inner(Some(session_id), state, result)
+}
+
+fn tool_batch_result_proposals_inner(
+    session_id: Option<&SessionId>,
+    state: &CoreAgentState,
+    result: ToolInvocationBatchResult,
+) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     validate_tool_batch_result(&result)?;
     validate_result_matches_active_tool_batch(state, &result, false)?;
-    tool_call_completed_proposals(state, result)
+    tool_call_completed_proposals(state, session_id, result)
 }
 
 pub fn resume_await_proposals(
@@ -874,7 +898,7 @@ pub fn resume_await_proposals(
             ));
         }
     }
-    proposals.extend(tool_call_completed_proposals(state, result)?);
+    proposals.extend(tool_call_completed_proposals(state, None, result)?);
     Ok(proposals)
 }
 
@@ -1044,10 +1068,12 @@ fn invalid_await_tool_result(call_id: ToolCallId, _message: String) -> ToolInvoc
 
 fn tool_call_completed_proposals(
     state: &CoreAgentState,
+    session_id: Option<&SessionId>,
     result: ToolInvocationBatchResult,
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     let mut proposals = Vec::new();
     let mut resolved_promises = BTreeSet::new();
+    let mut pending_port_emissions = BTreeMap::<crate::WorkflowToolPortId, u32>::new();
     for result_item in result.results {
         let call_id = result_item.call_id.clone();
         let joins = CoreAgentJoins {
@@ -1061,6 +1087,8 @@ fn tool_call_completed_proposals(
         // log event in the same append as the call completion, so promise
         // state is rebuilt from the log like everything else.
         let mut promise_proposals = Vec::new();
+        let mut port_proposals = Vec::new();
+        let mut saw_port_effect = false;
         for effect in &result_item.effects {
             if let Some(promise) =
                 crate::core::components::promise::promise_from_create_effect(effect, result.run_id)?
@@ -1114,6 +1142,49 @@ fn tool_call_completed_proposals(
                     CoreAgentEvent::Promise(PromiseEvent::Detached { promise_id }),
                 ));
             }
+            if let Some(invocation) =
+                crate::core::components::workflow_port::invocation_from_emit_effect(effect)?
+            {
+                if saw_port_effect {
+                    return Err(DomainError::InvariantViolation(format!(
+                        "tool call {} produced more than one workflow port emission effect",
+                        call_id
+                    )));
+                }
+                saw_port_effect = true;
+                if result_item.status != ToolCallStatus::Succeeded {
+                    return Err(DomainError::InvariantViolation(format!(
+                        "failed tool call {} produced a workflow port emission effect",
+                        call_id
+                    )));
+                }
+                let session_id = session_id.ok_or_else(|| {
+                    DomainError::InvariantViolation(
+                        "workflow port emission effect was admitted without session identity"
+                            .to_owned(),
+                    )
+                })?;
+                let pending = pending_port_emissions
+                    .get(&invocation.port_id)
+                    .copied()
+                    .unwrap_or(0);
+                crate::core::components::workflow_port::validate_emit_effect(
+                    state,
+                    session_id,
+                    result.run_id,
+                    result.turn_id,
+                    result.batch_id,
+                    &call_id,
+                    &invocation,
+                    pending,
+                )?;
+                pending_port_emissions
+                    .insert(invocation.port_id.clone(), pending.saturating_add(1));
+                port_proposals.push(CoreAgentEventProposal::new(
+                    joins.clone(),
+                    CoreAgentEvent::WorkflowPort(crate::WorkflowPortEvent::Emitted { invocation }),
+                ));
+            }
         }
         proposals.push(CoreAgentEventProposal::new(
             joins,
@@ -1125,6 +1196,7 @@ fn tool_call_completed_proposals(
             }),
         ));
         proposals.extend(promise_proposals);
+        proposals.extend(port_proposals);
     }
     Ok(proposals)
 }
@@ -1240,7 +1312,8 @@ mod tests {
         SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SkillId,
         SubmitMessageCommand, TokenEstimate, TokenEstimateQuality, ToolBatchOutcome, ToolChoice,
         ToolEffect, ToolInvocationResult, ToolKind, ToolName, ToolParallelism, ToolSpec,
-        ToolTargetRequirement, TurnStatus, skill_activation_context_key,
+        ToolTargetRequirement, TurnStatus, WorkflowEndpointRef, WorkflowToolInvocation,
+        WorkflowToolPortDefinition, WorkflowToolPortId, skill_activation_context_key,
     };
 
     fn config() -> SessionConfig {
@@ -4227,6 +4300,95 @@ mod tests {
             None,
         )];
         result
+    }
+
+    #[test]
+    fn workflow_port_effect_atomically_records_successful_call_and_emission() {
+        let session_id = SessionId::new("session-port");
+        let universe_id = uuid::Uuid::from_u128(7);
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let definition = WorkflowToolPortDefinition {
+            port_id: WorkflowToolPortId::new("report"),
+            revision: 1,
+            semantic_type: "lightspeed.work.report.v1".to_owned(),
+            tool: test_tool_spec("work_report"),
+        };
+        let declaration = crate::ControllerWorkflowPorts::v1(
+            WorkflowEndpointRef {
+                workflow_id: "opaque work workflow id".to_owned(),
+                workflow_kind: "agent_work".to_owned(),
+            },
+            vec![definition.clone()],
+        );
+        let open = drive
+            .admit_command(
+                CoreAgentCommand::OpenManagedSession {
+                    config: config(),
+                    session_universe_id: universe_id,
+                    controller_ports: declaration,
+                },
+                10,
+            )
+            .expect("open managed session");
+        commit_action(&mut drive, open);
+        install_test_tool(&mut drive, "work_report");
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let generation = drive_until_generate(&mut drive);
+        let request = drive_until_tool_batch_request(&mut drive, generation, "work_report");
+        let binding = drive
+            .state()
+            .workflow_ports
+            .controller_bindings
+            .get(&definition.port_id)
+            .cloned()
+            .expect("durable binding");
+        let call = &request.calls[0];
+        let invocation_id = crate::WorkflowToolInvocationId::for_call(
+            universe_id,
+            &session_id,
+            request.run_id,
+            request.turn_id,
+            request.batch_id,
+            &call.call_id,
+            &binding.binding_fingerprint,
+        );
+        let invocation = WorkflowToolInvocation {
+            invocation_id: invocation_id.clone(),
+            port_id: definition.port_id,
+            semantic_type: definition.semantic_type,
+            schema_revision: definition.revision,
+            binding_fingerprint: binding.binding_fingerprint,
+            session_universe_id: universe_id,
+            session_id,
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            tool_batch_id: request.batch_id,
+            tool_call_id: call.call_id.clone(),
+            arguments_ref: call.arguments_ref.clone(),
+            reply_promise_id: None,
+        };
+        let mut result = completed_tool_result(&request);
+        result.results[0].effects = vec![crate::workflow_port_emit_effect(&invocation)];
+
+        let resumed = drive
+            .resume_tool_batch(result, 90)
+            .expect("resume port tool");
+        let CoreAgentAction::AppendEvents { events, .. } = &resumed else {
+            panic!("expected append");
+        };
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event.kind, "lightspeed.core.tool.call_completed");
+        assert_eq!(
+            events[1].event.kind,
+            "lightspeed.core.workflow_port.emitted"
+        );
+
+        commit_action(&mut drive, resumed);
+        assert_eq!(
+            drive.state().workflow_ports.emissions.get(&invocation_id),
+            Some(&invocation)
+        );
     }
 
     #[test]

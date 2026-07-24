@@ -367,14 +367,33 @@ impl GatewayAgentApi {
             self.session_has_job_environment(session_id).await?,
         );
         let fs_tools_enabled = config.builtin.fs.enabled();
-        let toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
+        let mut toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
             .map_err(|error| AgentApiError::internal(format!("build session tools: {error}")))?;
+        materialize_workflow_ports(
+            &mut toolset,
+            loaded.state.workflow_ports.controller_bindings.values(),
+        )
+        .map_err(|error| {
+            AgentApiError::invalid_request(format!("materialize workflow port tools: {error}"))
+        })?;
         let blobs: Arc<dyn BlobStore> = self.store.clone();
         store_tool_documents(blobs.as_ref(), &toolset.documents).await?;
 
         // Remote MCP tools are derived from the config's declared links,
         // exactly like the standard toolset is derived from the features.
         let desired_mcp = self.desired_mcp_tools(&session_config.features).await?;
+        if let Some(colliding) = loaded
+            .state
+            .workflow_ports
+            .controller_bindings
+            .values()
+            .map(|binding| &binding.definition.tool.name)
+            .find(|tool_name| desired_mcp.contains_key(*tool_name))
+        {
+            return Err(AgentApiError::invalid_request(format!(
+                "workflow port tool name {colliding} collides with a remote MCP tool"
+            )));
+        }
         let mut expected_tools = toolset.tools.keys().cloned().collect::<BTreeSet<_>>();
         expected_tools.extend(desired_mcp.keys().cloned());
         let patch = toolset_reconcile_patch(&loaded.state.tooling.tools, toolset, desired_mcp);

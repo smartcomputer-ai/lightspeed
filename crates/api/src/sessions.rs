@@ -832,6 +832,22 @@ pub enum SessionEventKindView {
         creation_fingerprint: String,
         port_ids: Vec<String>,
     },
+    WorkflowPortEmitted {
+        invocation_id: String,
+        port_id: String,
+        semantic_type: String,
+        schema_revision: u32,
+        binding_fingerprint: String,
+        run_id: RunId,
+        turn_id: String,
+        batch_id: String,
+        call_id: String,
+        arguments_ref: String,
+    },
+    WorkflowPortDeliveryFailed {
+        invocation_id: String,
+        error_ref: String,
+    },
     SessionClosed,
     RunAccepted {
         run_id: RunId,

@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use crate::{
     error::{ToolError, ToolResult},
     runtime::{
-        ToolBinding, ToolDocument, ToolExecutionMode, ToolInvocationOutput, ToolSpecBundle,
+        ToolBinding, ToolDispatchMode, ToolDocument, ToolInvocationOutput, ToolSpecBundle,
         decode_args, encode_output,
     },
 };
@@ -31,8 +31,6 @@ pub const MESSAGE_EDIT_TOOL_NAME: &str = "message_edit";
 pub const MESSAGE_NOOP_TOOL_NAME: &str = "message_noop";
 
 pub const MESSAGING_LOGICAL_ID_PREFIX: &str = "messaging.";
-pub const MESSAGING_ACTIVITY_TYPE: &str = "lightspeed.messaging";
-
 /// Default per-session enqueue cap per minute, enforced at outbox admission.
 pub const DEFAULT_MESSAGES_PER_MINUTE: u32 = 30;
 
@@ -199,7 +197,7 @@ pub fn messaging_tool_bundles(config: &MessagingToolsetConfig) -> ToolResult<Vec
     ])
 }
 
-pub fn messaging_tool_bindings(execution: ToolExecutionMode) -> Vec<ToolBinding> {
+pub fn messaging_tool_bindings(dispatch: ToolDispatchMode) -> Vec<ToolBinding> {
     [
         MESSAGE_SEND_TOOL_NAME,
         MESSAGE_REACT_TOOL_NAME,
@@ -211,8 +209,7 @@ pub fn messaging_tool_bindings(execution: ToolExecutionMode) -> Vec<ToolBinding>
         ToolBinding::new(
             ToolName::new(tool_name),
             format!("{MESSAGING_LOGICAL_ID_PREFIX}{tool_name}"),
-            MESSAGING_ACTIVITY_TYPE,
-            execution.clone(),
+            dispatch.clone(),
             ToolParallelism::Exclusive,
         )
     })

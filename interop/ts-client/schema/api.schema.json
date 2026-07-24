@@ -7975,6 +7975,80 @@
         },
         {
           "properties": {
+            "argumentsRef": {
+              "type": "string"
+            },
+            "batchId": {
+              "type": "string"
+            },
+            "bindingFingerprint": {
+              "type": "string"
+            },
+            "callId": {
+              "type": "string"
+            },
+            "invocationId": {
+              "type": "string"
+            },
+            "portId": {
+              "type": "string"
+            },
+            "runId": {
+              "type": "string"
+            },
+            "schemaRevision": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "semanticType": {
+              "type": "string"
+            },
+            "turnId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "workflowPortEmitted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "invocationId",
+            "portId",
+            "semanticType",
+            "schemaRevision",
+            "bindingFingerprint",
+            "runId",
+            "turnId",
+            "batchId",
+            "callId",
+            "argumentsRef"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "errorRef": {
+              "type": "string"
+            },
+            "invocationId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "workflowPortDeliveryFailed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "invocationId",
+            "errorRef"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
             "type": {
               "const": "sessionClosed",
               "type": "string"

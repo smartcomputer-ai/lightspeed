@@ -114,9 +114,13 @@ use tools::{
         skill_catalog_context_input,
     },
     targets::ToolTargets,
-    toolset::{ResolvedToolset, ToolsetConfig, ToolsetEnvironment, resolve_toolset},
+    toolset::{
+        ResolvedToolset, ToolsetConfig, ToolsetEnvironment, materialize_workflow_ports,
+        resolve_toolset,
+    },
     web::fetch::WebFetchToolConfig,
     web::search::OpenAiResponsesWebSearchConfig,
+    workflow_port::validate_workflow_port_definition_documents,
 };
 use vfs::{
     CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountAccess,
@@ -1236,6 +1240,10 @@ impl GatewayAgentApi {
             config,
         );
         let session_config = self.session_config_for_start(start_config).await?;
+        if let Some(controller_ports) = controller_ports.as_ref() {
+            self.validate_managed_session_materialization(&session_config, controller_ports)
+                .await?;
+        }
         let started = self
             .client
             .start_workflow(
@@ -1304,6 +1312,52 @@ impl GatewayAgentApi {
                     "invalid managed-session controller declaration: {error}"
                 ))
             })?;
+        Ok(())
+    }
+
+    async fn validate_managed_session_materialization(
+        &self,
+        session_config: &SessionConfig,
+        controller_ports: &ControllerWorkflowPorts,
+    ) -> Result<(), AgentApiError> {
+        let admitted = controller_ports
+            .admit(self.universe_id())
+            .map_err(|error| {
+                AgentApiError::invalid_request(format!(
+                    "invalid managed-session controller declaration: {error}"
+                ))
+            })?;
+        for binding in &admitted.bindings {
+            validate_workflow_port_definition_documents(self.store.as_ref(), &binding.definition)
+                .await
+                .map_err(|error| {
+                    AgentApiError::invalid_request(format!(
+                        "invalid workflow port {} documents: {error}",
+                        binding.definition.port_id
+                    ))
+                })?;
+        }
+
+        let target = ToolTarget::from(&session_config.model);
+        let config = self.session_toolset_config(session_config, false, false);
+        let mut toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
+            .map_err(|error| {
+                AgentApiError::invalid_request(format!("build session tools: {error}"))
+            })?;
+        materialize_workflow_ports(&mut toolset, admitted.bindings.iter()).map_err(|error| {
+            AgentApiError::invalid_request(format!("materialize workflow port tools: {error}"))
+        })?;
+        let desired_mcp = self.desired_mcp_tools(&session_config.features).await?;
+        if let Some(colliding) = admitted
+            .bindings
+            .iter()
+            .map(|binding| &binding.definition.tool.name)
+            .find(|tool_name| desired_mcp.contains_key(*tool_name))
+        {
+            return Err(AgentApiError::invalid_request(format!(
+                "workflow port tool name {colliding} collides with a remote MCP tool"
+            )));
+        }
         Ok(())
     }
 

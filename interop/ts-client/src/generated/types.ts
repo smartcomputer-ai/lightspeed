@@ -331,6 +331,24 @@ export type SessionEventKindView =
       type: "workflowControllerPortsConfigured";
     }
   | {
+      argumentsRef: string;
+      batchId: string;
+      bindingFingerprint: string;
+      callId: string;
+      invocationId: string;
+      portId: string;
+      runId: string;
+      schemaRevision: number;
+      semanticType: string;
+      turnId: string;
+      type: "workflowPortEmitted";
+    }
+  | {
+      errorRef: string;
+      invocationId: string;
+      type: "workflowPortDeliveryFailed";
+    }
+  | {
       type: "sessionClosed";
     }
   | {

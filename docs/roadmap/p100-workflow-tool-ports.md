@@ -20,7 +20,19 @@
   `WorkflowPortConfigEvent` / `WorkflowPortState`, atomic managed-session
   opening, trusted gateway start/retry checks, and bounded event projection
   are in place. Endpoint-registry/service bindings remain the unfinished
-  half of slice 2; port tool materialization begins in slice 3.
+  half of slice 2.
+- Slice 3 tool/event integration implemented 2026-07-24: admitted controller
+  ports materialize into the derived provider toolset and a distinct
+  `WorkflowPort` runtime binding; the runtime validates CAS-backed schemas
+  and arguments, returns a stable acknowledgement, and enforces a
+  32-emission per-run/per-port cap; the engine validates the typed internal
+  effect and atomically records the ordinary successful tool result plus the
+  bounded `WorkflowPort::Emitted` fact. Public event projection exposes
+  declaration, invocation metadata/refs, and delivery failures without
+  inlining arguments or leaking the internal effect. Runtime routing now uses
+  `ToolDispatchMode::{Local, WorkflowPort}`; the unused per-tool `Activity`
+  mode and `activity_type` metadata were removed because hosted tools already
+  execute inside the enclosing `tool_invoke_batch` Temporal activity.
 - Greenfield: internal workflow protocols and engine event vocabulary change
   without compatibility aliases. Replaced surfaces (the `resolve_promise` /
   `resolve_promise_source` signal split, promise-specific notification DTO
@@ -1079,7 +1091,7 @@ crates/engine/
   session-log projections and emission reads
 
 crates/tools/
-  WorkflowPort ToolExecutionMode/binding
+  WorkflowPort ToolDispatchMode/binding
   generic inline invocation adapter
   schema validation and stable acknowledgement
 
@@ -1159,14 +1171,14 @@ change so no transitional dual-funnel state ever ships.
 
 ### Slice 3: Toolset and event-log integration
 
-- [ ] Materialize port definitions as ordinary `FunctionToolSpec` entries
+- [x] Materialize port definitions as ordinary `FunctionToolSpec` entries
       plus `WorkflowPort` runtime bindings.
-- [ ] Validate call arguments against the admitted schema; enforce the
+- [x] Validate call arguments against the admitted schema; enforce the
       deterministic per-run/per-port cap before proposing a successful tool
       result.
-- [ ] Add typed internal emission effect handling.
-- [ ] Atomically append tool completion and `WorkflowPort::Emitted`.
-- [ ] Project declarations, emissions, and failure without inlining
+- [x] Add typed internal emission effect handling.
+- [x] Atomically append tool completion and `WorkflowPort::Emitted`.
+- [x] Project declarations, emissions, and failure without inlining
       payloads.
 
 ### Slice 4: Pull reconciliation reads
@@ -1210,7 +1222,7 @@ ports). Not required for P101.
 
 ### Slice 7: Failure and compatibility coverage
 
-- [ ] Test schema-invalid and cap-exceeding calls create no emission.
+- [x] Test schema-invalid and cap-exceeding calls create no emission.
 - [ ] Test duplicate tool-result admission creates one emission.
 - [ ] Test pull reads are complete at the run-terminal boundary across
       worker restart and session continue-as-new.

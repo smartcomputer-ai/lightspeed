@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use crate::{
     error::{ToolError, ToolResult},
     runtime::{
-        ToolBinding, ToolDocument, ToolExecutionMode, ToolInvocationOutput, ToolSpecBundle,
+        ToolBinding, ToolDispatchMode, ToolDocument, ToolInvocationOutput, ToolSpecBundle,
         decode_args, encode_output,
     },
 };
@@ -29,8 +29,6 @@ use super::{
 
 pub const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
 pub const WEB_FETCH_LOGICAL_ID: &str = "web.fetch";
-pub const WEB_FETCH_ACTIVITY_TYPE: &str = "lightspeed.web.fetch";
-
 const DEFAULT_MAX_CHARS: u32 = 20_000;
 const MAX_MAX_CHARS: u32 = 20_000;
 const DEFAULT_MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
@@ -146,12 +144,11 @@ pub fn web_fetch_tool_bundle(config: &WebFetchToolConfig) -> ToolResult<Option<T
     }))
 }
 
-pub fn web_fetch_tool_binding(execution: ToolExecutionMode) -> ToolBinding {
+pub fn web_fetch_tool_binding(dispatch: ToolDispatchMode) -> ToolBinding {
     ToolBinding::new(
         ToolName::new(WEB_FETCH_TOOL_NAME),
         WEB_FETCH_LOGICAL_ID,
-        WEB_FETCH_ACTIVITY_TYPE,
-        execution,
+        dispatch,
         ToolParallelism::ParallelSafe,
     )
 }

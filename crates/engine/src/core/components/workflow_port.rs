@@ -5,12 +5,13 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    DomainError, RunId, SessionId, ToolBatchId, ToolCallId, ToolKind, ToolSpec, TurnId,
-    WorkflowToolInvocationId, WorkflowToolPortId,
+    BlobRef, DomainError, PromiseId, RunId, SessionId, ToolBatchId, ToolCallId, ToolEffect,
+    ToolKind, ToolName, ToolSpec, TurnId, WorkflowToolInvocationId, WorkflowToolPortId,
 };
 
 const CONTROLLER_PORT_DECLARATION_VERSION: u32 = 1;
 const MAX_CONTROLLER_PORTS: usize = 32;
+pub const MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN: u32 = 32;
 const WORKFLOW_ID_MAX_LEN: usize = 512;
 const WORKFLOW_KIND_MAX_LEN: usize = 128;
 const SEMANTIC_TYPE_MAX_LEN: usize = 192;
@@ -18,6 +19,21 @@ const BINDING_FINGERPRINT_DOMAIN: &str = "lightspeed.workflow-port.binding.v1";
 const CREATION_FINGERPRINT_DOMAIN: &str = "lightspeed.managed-session.creation.v1";
 const INVOCATION_ID_DOMAIN: &str = "lightspeed.workflow-port.invocation.v1";
 const RESERVED_RUN_TERMINAL_SEMANTIC_TYPE: &str = "lightspeed.run.terminal.v1";
+pub const WORKFLOW_PORT_EMIT_EFFECT_KIND: &str = "lightspeed.core.workflow_port.emit";
+
+const EFFECT_INVOCATION_ID: &str = "invocation_id";
+const EFFECT_PORT_ID: &str = "port_id";
+const EFFECT_SEMANTIC_TYPE: &str = "semantic_type";
+const EFFECT_SCHEMA_REVISION: &str = "schema_revision";
+const EFFECT_BINDING_FINGERPRINT: &str = "binding_fingerprint";
+const EFFECT_SESSION_UNIVERSE_ID: &str = "session_universe_id";
+const EFFECT_SESSION_ID: &str = "session_id";
+const EFFECT_RUN_ID: &str = "run_id";
+const EFFECT_TURN_ID: &str = "turn_id";
+const EFFECT_TOOL_BATCH_ID: &str = "tool_batch_id";
+const EFFECT_TOOL_CALL_ID: &str = "tool_call_id";
+const EFFECT_ARGUMENTS_REF: &str = "arguments_ref";
+const EFFECT_REPLY_PROMISE_ID: &str = "reply_promise_id";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowEndpointRef {
@@ -93,6 +109,40 @@ pub struct WorkflowToolPortBinding {
     pub definition: WorkflowToolPortDefinition,
     pub receiver: WorkflowEndpointRef,
     pub binding_fingerprint: String,
+}
+
+/// Bounded durable record of one successful workflow-port tool call.
+///
+/// The model arguments remain in CAS and are referenced by `arguments_ref`.
+/// Receiver-specific interpretation belongs to the receiving workflow.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowToolInvocation {
+    pub invocation_id: WorkflowToolInvocationId,
+    pub port_id: WorkflowToolPortId,
+    pub semantic_type: String,
+    pub schema_revision: u32,
+    pub binding_fingerprint: String,
+    pub session_universe_id: Uuid,
+    pub session_id: SessionId,
+    pub run_id: RunId,
+    pub turn_id: TurnId,
+    pub tool_batch_id: ToolBatchId,
+    pub tool_call_id: ToolCallId,
+    pub arguments_ref: BlobRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_promise_id: Option<PromiseId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowPortEvent {
+    Emitted {
+        invocation: WorkflowToolInvocation,
+    },
+    DeliveryFailed {
+        invocation_id: WorkflowToolInvocationId,
+        error_ref: BlobRef,
+    },
 }
 
 impl WorkflowToolPortBinding {
@@ -241,6 +291,10 @@ pub struct WorkflowPortState {
     pub managed_creation_fingerprint: Option<String>,
     #[serde(default)]
     pub controller_bindings: BTreeMap<WorkflowToolPortId, WorkflowToolPortBinding>,
+    #[serde(default)]
+    pub emissions: BTreeMap<WorkflowToolInvocationId, WorkflowToolInvocation>,
+    #[serde(default)]
+    pub delivery_failures: BTreeMap<WorkflowToolInvocationId, BlobRef>,
 }
 
 impl WorkflowPortState {
@@ -252,6 +306,21 @@ impl WorkflowPortState {
         let expected = declaration.creation_fingerprint(session_universe_id)?;
         Ok(self.session_universe_id == Some(session_universe_id)
             && self.managed_creation_fingerprint.as_deref() == Some(expected.as_str()))
+    }
+
+    pub fn binding_for_tool_name(&self, tool_name: &ToolName) -> Option<&WorkflowToolPortBinding> {
+        self.controller_bindings
+            .values()
+            .find(|binding| &binding.definition.tool.name == tool_name)
+    }
+
+    pub fn emission_count(&self, run_id: RunId, port_id: &WorkflowToolPortId) -> u32 {
+        self.emissions
+            .values()
+            .filter(|invocation| invocation.run_id == run_id && &invocation.port_id == port_id)
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX)
     }
 }
 
@@ -351,6 +420,387 @@ pub(crate) fn apply_config_event(
             Ok(())
         }
     }
+}
+
+pub(crate) fn apply_event(
+    state: &mut crate::CoreAgentState,
+    event: &WorkflowPortEvent,
+) -> Result<(), DomainError> {
+    match event {
+        WorkflowPortEvent::Emitted { invocation } => {
+            validate_invocation_against_state(state, invocation)?;
+            if state
+                .workflow_ports
+                .emissions
+                .contains_key(&invocation.invocation_id)
+            {
+                return Err(DomainError::InvariantViolation(format!(
+                    "workflow port invocation {} was already emitted",
+                    invocation.invocation_id
+                )));
+            }
+            if state
+                .workflow_ports
+                .emission_count(invocation.run_id, &invocation.port_id)
+                >= MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN
+            {
+                return Err(DomainError::InvariantViolation(format!(
+                    "workflow port {} exceeded its per-run emission cap",
+                    invocation.port_id
+                )));
+            }
+            state
+                .workflow_ports
+                .emissions
+                .insert(invocation.invocation_id.clone(), invocation.clone());
+            Ok(())
+        }
+        WorkflowPortEvent::DeliveryFailed {
+            invocation_id,
+            error_ref,
+        } => {
+            if !state.workflow_ports.emissions.contains_key(invocation_id) {
+                return Err(DomainError::InvariantViolation(format!(
+                    "workflow port delivery failure references unknown invocation {invocation_id}"
+                )));
+            }
+            match state.workflow_ports.delivery_failures.get(invocation_id) {
+                Some(existing) if existing == error_ref => Ok(()),
+                Some(_) => Err(DomainError::InvariantViolation(format!(
+                    "workflow port invocation {invocation_id} already has a different delivery failure"
+                ))),
+                None => {
+                    state
+                        .workflow_ports
+                        .delivery_failures
+                        .insert(invocation_id.clone(), error_ref.clone());
+                    Ok(())
+                }
+            }
+        }
+    }
+}
+
+pub fn workflow_port_emit_effect(invocation: &WorkflowToolInvocation) -> ToolEffect {
+    let mut data = BTreeMap::new();
+    data.insert(
+        EFFECT_INVOCATION_ID.to_owned(),
+        invocation.invocation_id.as_str().to_owned(),
+    );
+    data.insert(
+        EFFECT_PORT_ID.to_owned(),
+        invocation.port_id.as_str().to_owned(),
+    );
+    data.insert(
+        EFFECT_SEMANTIC_TYPE.to_owned(),
+        invocation.semantic_type.clone(),
+    );
+    data.insert(
+        EFFECT_SCHEMA_REVISION.to_owned(),
+        invocation.schema_revision.to_string(),
+    );
+    data.insert(
+        EFFECT_BINDING_FINGERPRINT.to_owned(),
+        invocation.binding_fingerprint.clone(),
+    );
+    data.insert(
+        EFFECT_SESSION_UNIVERSE_ID.to_owned(),
+        invocation.session_universe_id.to_string(),
+    );
+    data.insert(
+        EFFECT_SESSION_ID.to_owned(),
+        invocation.session_id.as_str().to_owned(),
+    );
+    data.insert(EFFECT_RUN_ID.to_owned(), invocation.run_id.to_string());
+    data.insert(EFFECT_TURN_ID.to_owned(), invocation.turn_id.to_string());
+    data.insert(
+        EFFECT_TOOL_BATCH_ID.to_owned(),
+        invocation.tool_batch_id.to_string(),
+    );
+    data.insert(
+        EFFECT_TOOL_CALL_ID.to_owned(),
+        invocation.tool_call_id.as_str().to_owned(),
+    );
+    data.insert(
+        EFFECT_ARGUMENTS_REF.to_owned(),
+        invocation.arguments_ref.as_str().to_owned(),
+    );
+    if let Some(reply_promise_id) = &invocation.reply_promise_id {
+        data.insert(
+            EFFECT_REPLY_PROMISE_ID.to_owned(),
+            reply_promise_id.as_str().to_owned(),
+        );
+    }
+    ToolEffect {
+        kind: WORKFLOW_PORT_EMIT_EFFECT_KIND.to_owned(),
+        data,
+    }
+}
+
+pub(crate) fn invocation_from_emit_effect(
+    effect: &ToolEffect,
+) -> Result<Option<WorkflowToolInvocation>, DomainError> {
+    if effect.kind != WORKFLOW_PORT_EMIT_EFFECT_KIND {
+        return Ok(None);
+    }
+    let field = |key: &str| {
+        effect.data.get(key).cloned().ok_or_else(|| {
+            DomainError::InvariantViolation(format!("workflow port emit effect is missing `{key}`"))
+        })
+    };
+    let parse_u64 = |key: &str, value: String| {
+        value.parse::<u64>().map_err(|_| {
+            DomainError::InvariantViolation(format!(
+                "workflow port emit effect `{key}` is not a u64"
+            ))
+        })
+    };
+    let invocation_id =
+        WorkflowToolInvocationId::try_new(field(EFFECT_INVOCATION_ID)?).map_err(|error| {
+            DomainError::InvariantViolation(format!(
+                "workflow port emit effect has invalid invocation id: {error}"
+            ))
+        })?;
+    let port_id = WorkflowToolPortId::try_new(field(EFFECT_PORT_ID)?).map_err(|error| {
+        DomainError::InvariantViolation(format!(
+            "workflow port emit effect has invalid port id: {error}"
+        ))
+    })?;
+    let session_universe_id =
+        Uuid::parse_str(&field(EFFECT_SESSION_UNIVERSE_ID)?).map_err(|error| {
+            DomainError::InvariantViolation(format!(
+                "workflow port emit effect has invalid source universe: {error}"
+            ))
+        })?;
+    let session_id = SessionId::try_new(field(EFFECT_SESSION_ID)?).map_err(|error| {
+        DomainError::InvariantViolation(format!(
+            "workflow port emit effect has invalid session id: {error}"
+        ))
+    })?;
+    let tool_call_id = ToolCallId::try_new(field(EFFECT_TOOL_CALL_ID)?).map_err(|error| {
+        DomainError::InvariantViolation(format!(
+            "workflow port emit effect has invalid tool call id: {error}"
+        ))
+    })?;
+    let arguments_ref = BlobRef::parse(field(EFFECT_ARGUMENTS_REF)?).map_err(|error| {
+        DomainError::InvariantViolation(format!(
+            "workflow port emit effect has invalid arguments ref: {error}"
+        ))
+    })?;
+    let reply_promise_id = effect
+        .data
+        .get(EFFECT_REPLY_PROMISE_ID)
+        .map(|value| PromiseId::new(value.clone()));
+
+    Ok(Some(WorkflowToolInvocation {
+        invocation_id,
+        port_id,
+        semantic_type: field(EFFECT_SEMANTIC_TYPE)?,
+        schema_revision: parse_u64(EFFECT_SCHEMA_REVISION, field(EFFECT_SCHEMA_REVISION)?)?
+            .try_into()
+            .map_err(|_| {
+                DomainError::InvariantViolation(
+                    "workflow port emit effect schema revision exceeds u32".to_owned(),
+                )
+            })?,
+        binding_fingerprint: field(EFFECT_BINDING_FINGERPRINT)?,
+        session_universe_id,
+        session_id,
+        run_id: RunId::new(parse_u64(EFFECT_RUN_ID, field(EFFECT_RUN_ID)?)?),
+        turn_id: TurnId::new(parse_u64(EFFECT_TURN_ID, field(EFFECT_TURN_ID)?)?),
+        tool_batch_id: ToolBatchId::new(parse_u64(
+            EFFECT_TOOL_BATCH_ID,
+            field(EFFECT_TOOL_BATCH_ID)?,
+        )?),
+        tool_call_id,
+        arguments_ref,
+        reply_promise_id,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_emit_effect(
+    state: &crate::CoreAgentState,
+    expected_session_id: &SessionId,
+    expected_run_id: RunId,
+    expected_turn_id: TurnId,
+    expected_batch_id: ToolBatchId,
+    expected_call_id: &ToolCallId,
+    invocation: &WorkflowToolInvocation,
+    pending_emissions_for_port: u32,
+) -> Result<(), DomainError> {
+    if &invocation.session_id != expected_session_id
+        || invocation.run_id != expected_run_id
+        || invocation.turn_id != expected_turn_id
+        || invocation.tool_batch_id != expected_batch_id
+        || &invocation.tool_call_id != expected_call_id
+    {
+        return Err(DomainError::InvariantViolation(
+            "workflow port emit effect does not match its session/run/turn/batch/call joins"
+                .to_owned(),
+        ));
+    }
+    validate_invocation_binding(state, invocation)?;
+    let active_run = state.runs.active.as_ref().ok_or_else(|| {
+        DomainError::InvariantViolation(
+            "workflow port emit effect requires an active run".to_owned(),
+        )
+    })?;
+    let batch = active_run
+        .tool_batches
+        .get(&expected_batch_id)
+        .ok_or_else(|| {
+            DomainError::InvariantViolation(format!(
+                "workflow port emit effect references missing tool batch {expected_batch_id}"
+            ))
+        })?;
+    let call = batch
+        .calls
+        .iter()
+        .find(|call| &call.call.call_id == expected_call_id)
+        .ok_or_else(|| {
+            DomainError::InvariantViolation(format!(
+                "workflow port emit effect references missing tool call {expected_call_id}"
+            ))
+        })?;
+    let binding = state
+        .workflow_ports
+        .controller_bindings
+        .get(&invocation.port_id)
+        .expect("binding was validated above");
+    if call.call.tool_name != binding.definition.tool.name
+        || call.call.arguments_ref != invocation.arguments_ref
+    {
+        return Err(DomainError::InvariantViolation(
+            "workflow port emit effect does not match its admitted tool name and arguments"
+                .to_owned(),
+        ));
+    }
+    let expected_id = WorkflowToolInvocationId::for_call(
+        invocation.session_universe_id,
+        &invocation.session_id,
+        invocation.run_id,
+        invocation.turn_id,
+        invocation.tool_batch_id,
+        &invocation.tool_call_id,
+        &invocation.binding_fingerprint,
+    );
+    if invocation.invocation_id != expected_id {
+        return Err(DomainError::InvariantViolation(
+            "workflow port invocation id does not match its durable call identity".to_owned(),
+        ));
+    }
+    let existing = state
+        .workflow_ports
+        .emission_count(invocation.run_id, &invocation.port_id);
+    if existing.saturating_add(pending_emissions_for_port) >= MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN {
+        return Err(DomainError::InvariantViolation(format!(
+            "workflow port {} exceeded its per-run emission cap",
+            invocation.port_id
+        )));
+    }
+    Ok(())
+}
+
+fn validate_invocation_binding(
+    state: &crate::CoreAgentState,
+    invocation: &WorkflowToolInvocation,
+) -> Result<(), DomainError> {
+    let binding = state
+        .workflow_ports
+        .controller_bindings
+        .get(&invocation.port_id)
+        .ok_or_else(|| {
+            DomainError::InvariantViolation(format!(
+                "workflow port invocation references unknown port {}",
+                invocation.port_id
+            ))
+        })?;
+    if invocation.session_universe_id != binding.session_universe_id
+        || invocation.semantic_type != binding.definition.semantic_type
+        || invocation.schema_revision != binding.definition.revision
+        || invocation.binding_fingerprint != binding.binding_fingerprint
+    {
+        return Err(DomainError::InvariantViolation(format!(
+            "workflow port invocation {} does not match its durable binding",
+            invocation.invocation_id
+        )));
+    }
+    if invocation.reply_promise_id.is_some() {
+        return Err(DomainError::InvariantViolation(
+            "notify-only workflow port invocation must not include a reply promise".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_invocation_against_state(
+    state: &crate::CoreAgentState,
+    invocation: &WorkflowToolInvocation,
+) -> Result<(), DomainError> {
+    validate_invocation_binding(state, invocation)?;
+    let expected_id = WorkflowToolInvocationId::for_call(
+        invocation.session_universe_id,
+        &invocation.session_id,
+        invocation.run_id,
+        invocation.turn_id,
+        invocation.tool_batch_id,
+        &invocation.tool_call_id,
+        &invocation.binding_fingerprint,
+    );
+    if invocation.invocation_id != expected_id {
+        return Err(DomainError::InvariantViolation(
+            "workflow port emitted event has a non-canonical invocation id".to_owned(),
+        ));
+    }
+    let active_run = state.runs.active.as_ref().ok_or_else(|| {
+        DomainError::InvariantViolation(
+            "workflow port invocation can only be emitted for an active run".to_owned(),
+        )
+    })?;
+    if active_run.run_id != invocation.run_id {
+        return Err(DomainError::InvariantViolation(
+            "workflow port invocation does not match the active run".to_owned(),
+        ));
+    }
+    let batch = active_run
+        .tool_batches
+        .get(&invocation.tool_batch_id)
+        .ok_or_else(|| {
+            DomainError::InvariantViolation(format!(
+                "workflow port invocation references missing tool batch {}",
+                invocation.tool_batch_id
+            ))
+        })?;
+    if batch.turn_id != invocation.turn_id {
+        return Err(DomainError::InvariantViolation(
+            "workflow port invocation does not match its tool batch turn".to_owned(),
+        ));
+    }
+    let call = batch
+        .calls
+        .iter()
+        .find(|call| call.call.call_id == invocation.tool_call_id)
+        .ok_or_else(|| {
+            DomainError::InvariantViolation(format!(
+                "workflow port invocation references missing tool call {}",
+                invocation.tool_call_id
+            ))
+        })?;
+    let binding = state
+        .workflow_ports
+        .controller_bindings
+        .get(&invocation.port_id)
+        .expect("binding was validated above");
+    if call.call.tool_name != binding.definition.tool.name
+        || call.call.arguments_ref != invocation.arguments_ref
+        || call.status != crate::ToolCallStatus::Succeeded
+    {
+        return Err(DomainError::InvariantViolation(
+            "workflow port invocation does not match a successful durable tool call".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 impl WorkflowToolInvocationId {

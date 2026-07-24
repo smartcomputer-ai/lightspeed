@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::{
     error::{ToolError, ToolResult},
     runtime::{
-        ToolBinding, ToolDocument, ToolExecutionMode, ToolInvocationOutput, ToolSpecBundle,
+        ToolBinding, ToolDispatchMode, ToolDocument, ToolInvocationOutput, ToolSpecBundle,
         ToolTarget,
     },
     targets::{ENV_TARGET_NAMESPACE, FS_TARGET_NAMESPACE, ResolvedToolContext},
@@ -146,23 +146,6 @@ impl BuiltinTool {
             (BuiltinToolSurface::ClaudeCodeLike, BuiltinToolOperation::JobRead) => {
                 "env.claude.job_read"
             }
-        }
-    }
-
-    pub const fn activity_type(self) -> &'static str {
-        match self.operation {
-            BuiltinToolOperation::ReadFile => "lightspeed.fs.read_file",
-            BuiltinToolOperation::WriteFile => "lightspeed.fs.write_file",
-            BuiltinToolOperation::EditFile => "lightspeed.fs.edit_file",
-            BuiltinToolOperation::ApplyPatch => "lightspeed.fs.apply_patch",
-            BuiltinToolOperation::Grep => "lightspeed.fs.grep",
-            BuiltinToolOperation::Glob => "lightspeed.fs.glob",
-            BuiltinToolOperation::ListDir => "lightspeed.fs.list_dir",
-            BuiltinToolOperation::RunProcess => "lightspeed.env.run_process",
-            BuiltinToolOperation::WriteProcessStdin => "lightspeed.env.write_process_stdin",
-            BuiltinToolOperation::JobStart => "lightspeed.env.job_start",
-            BuiltinToolOperation::JobList => "lightspeed.env.job_list",
-            BuiltinToolOperation::JobRead => "lightspeed.env.job_read",
         }
     }
 
@@ -410,12 +393,11 @@ impl BuiltinTool {
         }
     }
 
-    pub fn binding(self, target: &ToolTarget, execution: ToolExecutionMode) -> ToolBinding {
+    pub fn binding(self, target: &ToolTarget, dispatch: ToolDispatchMode) -> ToolBinding {
         ToolBinding::new(
             self.name(target),
             self.logical_id(),
-            self.activity_type(),
-            execution,
+            dispatch,
             self.parallelism(),
         )
     }

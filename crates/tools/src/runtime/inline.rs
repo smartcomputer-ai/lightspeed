@@ -15,7 +15,7 @@ use crate::{
     error::{ToolError, ToolResult},
     fs::FsToolContext,
     limits::ToolLimits,
-    runtime::{ToolBinding, ToolCatalog, ToolExecutionMode, ToolInvocationOutput, ToolRuntime},
+    runtime::{ToolBinding, ToolCatalog, ToolDispatchMode, ToolInvocationOutput, ToolRuntime},
     targets::{ResolvedToolContext, SESSION_FS_TARGET_ID, ToolTargets},
     web::fetch::{WEB_FETCH_LOGICAL_ID, invoke_web_fetch},
 };
@@ -320,12 +320,9 @@ impl InlineToolRuntime {
         tool_name: &ToolName,
         arguments: Value,
     ) -> ToolResult<ToolInvocationOutput> {
-        if binding.execution != ToolExecutionMode::Inline {
+        if binding.dispatch != ToolDispatchMode::Local {
             return Err(ToolError::UnsupportedCapability {
-                message: format!(
-                    "tool {} is configured for {} and cannot be invoked inline",
-                    tool_name, binding.activity_type
-                ),
+                message: format!("tool {tool_name} is not configured for local dispatch"),
             });
         }
         if binding.logical_id == WEB_FETCH_LOGICAL_ID {
