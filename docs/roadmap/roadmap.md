@@ -2,12 +2,12 @@
 
 ## Work
 - [ ] [P100](p100-workflow-tool-ports.md) — the workflow emission substrate:
-  one envelope and one fixed `deliver_emission` signal for all
-  session-to-workflow facts (run-terminal notifications generalize onto it),
-  plus workflow-bound tool ports — schema-validated function tools whose
-  calls become log-backed emissions for a fixed receiver per binding;
-  pull-consumed first (Work), push delivery deferred to the first mid-run
-  receiver
+  one envelope and one fixed `deliver_emission` signal for all cross-workflow
+  facts (run-terminal notifications and env-job source resolutions fold on in
+  a single push, deleting both promise-specific signals), plus workflow-bound
+  tool ports — schema-validated function tools whose calls become log-backed
+  emissions for a fixed receiver per binding; pull-consumed first (Work),
+  push delivery deferred to the first mid-run receiver with seams fixed now
 - [ ] [P101](p101-durable-work-workflow.md) — durable Work as a Temporal-owned
   goal loop over one managed session and many execution runs; explicit
   completion/blockage reports over P100 ports, automatic continuation, caller

@@ -13,6 +13,13 @@
   without compatibility aliases. Replaced surfaces (the `resolve_promise` /
   `resolve_promise_source` signal split, promise-specific notification DTO
   names) are deleted in the same change that lands their replacement.
+- Staging principle (settled 2026-07-24): **refactor fully, extend lazily.**
+  Everything that unifies *existing* transports lands in one push — slice 1
+  deletes both promise-specific signals, including the env-job fold, so
+  there is exactly one signal era, never a transitional third. Everything
+  that is *new capability* — push port delivery, request/reply,
+  workflow-as-tool — waits for its first consumer, but its seams (envelope
+  fields, registry shape, transport trait) are fixed here and now.
 - First consumer: **P101 (Durable Work)**, which declares `work_report` when
   it creates its managed session and consumes emissions by **pull** at run
   reconciliation.
@@ -106,12 +113,13 @@ Consequences P100 commits to:
    admits `ResolvePromise`; `AgentWorkWorkflow` maps the same body to its
    execution cycle. The promise-specific `resolve_promise` signal name and
    DTOs are deleted, not aliased.
-2. **The env-job path folds in.** `EnvironmentJobWorkflow`'s
+2. **The env-job path folds in — in the same push.** `EnvironmentJobWorkflow`'s
    `resolve_promise_source` push is the same primitive produced by a
-   non-session workflow; it migrates onto the shared envelope/signal as a
-   cleanup item. The emission spine is producer-neutral: sessions back their
-   emissions with the session log; other producers keep their own durable
-   source of truth.
+   non-session workflow; slice 1 migrates it onto the shared envelope/signal
+   in the same change that deletes `resolve_promise`, so the session
+   workflow never carries two inbound funnels. The emission spine is
+   producer-neutral: sessions back their emissions with the session log;
+   other producers keep their own durable source of truth.
 3. **Fleet stays admission-based.** `agent_spawn`/`agent_request`/
    `agent_send` are commands into peer sessions and do not become ports.
    Fleet participates in this unification only through its terminal
@@ -172,9 +180,10 @@ This is a singular extension point without becoming arbitrary pub/sub.
 4. **The receiver workflow is authoritative for what the emission means.**
    The session does not interpret `work_report`, `request_approval`, or
    future domain payloads.
-5. **Delivery is at least once and, per receiver, in session-log order.**
-   Receivers deduplicate with a per-session high-water mark over the
-   emission's log sequence, not an unbounded id set.
+5. **Delivery is at least once and, per session producer, in log order.**
+   Receivers deduplicate session-produced emissions with a per-session
+   high-water mark over the emission's log sequence, not an unbounded id
+   set; non-session producers rely on emission-id idempotency.
 6. **A successful tool result means "durably recorded," not "the receiver
    completed handling it."**
 7. **Ports do not wake or steer arbitrary sessions.** Session-to-session
@@ -189,9 +198,10 @@ This is a singular extension point without becoming arbitrary pub/sub.
 
 ## Vocabulary
 
-- **Emission** — one durable typed fact from a producer workflow to one
-  admitted receiver, identified by a deterministic emission id and the
-  producer's log sequence.
+- **Emission** — one durable typed fact from a producer (a session or
+  another durable workflow) to one admitted receiver, identified by a
+  deterministic emission id and, for session producers, the emitting
+  event's log sequence.
 - **Emission envelope** — the bounded wire shape delivered to receivers; the
   payload body is a closed enum, not open JSON.
 - **Delivery spine** — the shared per-workflow pump plus the single fixed
@@ -574,17 +584,25 @@ invocation joins, receiver, or binding fingerprint.
 
 ## The Emission Envelope
 
-One envelope, one fixed signal, a closed body enum:
+One envelope, one fixed signal, a closed body enum, a producer-neutral
+source:
 
 ```rust
 pub struct EmissionEnvelope {
     pub emission_id: EmissionId,
-    pub session_id: SessionId,
-    /// Session-log sequence of the emitting event. Receivers dedup with a
-    /// per-session high-water mark because per-receiver delivery preserves
-    /// log order.
-    pub log_seq: u64,
+    pub producer: EmissionProducer,
     pub body: EmissionBody,
+}
+
+pub enum EmissionProducer {
+    /// Session-log-backed producer. `log_seq` is the sequence of the
+    /// emitting event; receivers dedup with a per-session high-water mark
+    /// because per-receiver delivery preserves log order.
+    Session { session_id: SessionId, log_seq: u64 },
+    /// Non-session durable workflow (EnvironmentJobWorkflow today). Dedup
+    /// is by emission id; for source resolutions the first-writer-wins
+    /// ResolvePromise funnel already makes duplicates no-ops.
+    Workflow { workflow_id: String },
 }
 
 pub enum EmissionBody {
@@ -595,6 +613,12 @@ pub enum EmissionBody {
         output_ref: Option<BlobRef>,
         failure_message_ref: Option<BlobRef>,
     },
+    /// Non-run promise-source resolutions (environment jobs today);
+    /// replaces PromiseSourceResolutionSignal / resolve_promise_source.
+    SourceResolution {
+        promise_id: PromiseId,
+        resolution: PromiseResolution,
+    },
     PortInvocation {
         invocation: WorkflowToolInvocation,
     },
@@ -602,15 +626,17 @@ pub enum EmissionBody {
 ```
 
 - For port invocations, `emission_id` equals the invocation id. For
-  run-terminal emissions it derives from session, run, and intent token.
+  run-terminal emissions it derives from session, run, and intent token; for
+  source resolutions from the source identity and promise id.
 - The body is a closed internal enum, not open JSON: receivers are trusted
   internal workflows, new emission kinds extend the enum, and the substrate
   stays deterministic. Domain openness lives inside `PortInvocation` via
   `semantic_type` + CAS payload, exactly one level down.
 - `AgentSessionWorkflow` receives the same envelope as everyone else: a
-  `RunTerminal` body maps token → `PromiseId` → `ResolvePromise` admission.
-  This deletes the promise-specific signal vocabulary rather than
-  generalizing around it.
+  `RunTerminal` body maps token → `PromiseId` → `ResolvePromise` admission;
+  a `SourceResolution` body admits `ResolvePromise` directly. This deletes
+  the promise-specific signal vocabulary rather than generalizing around
+  it.
 
 ## Consumption: Pull First, Push When Needed
 
@@ -861,9 +887,10 @@ service receiver instead.
 
 P100 includes:
 
-1. The unified emission envelope and fixed `deliver_emission` signal, with
-   run-terminal as the first semantic type — replacing the promise-specific
-   signal vocabulary.
+1. The unified emission envelope and fixed `deliver_emission` signal
+   carrying run-terminal notifications and env-job source resolutions —
+   replacing the entire promise-specific signal vocabulary
+   (`resolve_promise` and `resolve_promise_source`) in one push.
 2. Zero or one immutable lifecycle-controller reference on a session.
 3. Any bounded number of fixed, same-universe receiver endpoints across that
    session's ports.
@@ -966,7 +993,7 @@ crates/tools/
   schema validation, rate caps, and stable acknowledgement
 
 crates/temporal-workflow/
-  EmissionEnvelope / EmissionBody / deliver_emission signal DTOs
+  EmissionEnvelope / EmissionProducer / EmissionBody / deliver_emission DTOs
   optional lifecycle-controller and resolved receiver bindings
   shared delivery-spine pump (generalized from promise notifications)
   receiver-side envelope/dedup helper (substrate-neutral module)
@@ -987,29 +1014,35 @@ the envelope type and owns its typed payload DTO.
 
 ## Implementation Plan
 
-### Slice 1: Emission envelope and delivery signal
+### Slice 1: Emission envelope and delivery signal — the whole transport
+refactor, one push
 
-Generalizes the existing run-terminal transport; prerequisite for P101
-slice 1. This is a rename-and-wrap of a working mechanism, not new
-machinery.
+Generalizes and unifies the existing transports; prerequisite for P101
+slice 1. This is a rename-and-fold of working mechanisms, not new
+machinery, and it deletes **both** promise-specific signals in the same
+change so no transitional dual-funnel state ever ships.
 
-- [ ] Add `EmissionEnvelope`, `EmissionBody`, and deterministic
-      `EmissionId` derivation.
+- [ ] Add `EmissionEnvelope`, `EmissionProducer`, `EmissionBody`, and
+      deterministic `EmissionId` derivation.
 - [ ] Replace the `resolve_promise` signal with the fixed generic
       `deliver_emission` signal carrying `RunTerminal` bodies; delete the
       promise-specific DTO/signal names.
+- [ ] Fold the env-job push in the same change: `EnvironmentJobWorkflow`
+      emits `SourceResolution` bodies through `deliver_emission`; delete
+      `resolve_promise_source` and `PromiseSourceResolutionSignal`; preserve
+      the P86/P92 env-job live coverage.
 - [ ] Include the observed `run_id` and producer `log_seq` in the
       run-terminal body/envelope.
-- [ ] `AgentSessionWorkflow` maps `RunTerminal` tokens into its existing
-      `ResolvePromise` admission.
+- [ ] `AgentSessionWorkflow` maps `RunTerminal` tokens and
+      `SourceResolution` bodies into its existing `ResolvePromise`
+      admission.
 - [ ] Provide the substrate-neutral receiver helper (envelope decode,
-      per-session high-water dedup).
+      per-session high-water dedup, emission-id idempotency for workflow
+      producers).
 - [ ] Prove in a protocol test that a non-session workflow receives the same
       envelope through the same signal.
 - [ ] Preserve all Fleet Promise, duplicate delivery, cancellation, and
       continue-as-new tests.
-- [ ] Follow-on cleanup (may land after P101): fold
-      `resolve_promise_source` / the env-job push onto the same envelope.
 
 ### Slice 2: Port, endpoint, and controller contracts
 
@@ -1096,9 +1129,10 @@ Live Temporal tests must source `local/env.sh` and run serially with
 
 P100 is complete when:
 
-1. One envelope and one fixed signal carry run-terminal notifications to
-   session and non-session receivers alike; the promise-specific signal
-   vocabulary is gone.
+1. One envelope and one fixed signal carry every inbound cross-workflow
+   fact — run-terminal notifications to session and non-session receivers
+   alike, and env-job source resolutions; both promise-specific signals are
+   gone and the session workflow has exactly one inbound funnel.
 2. A trusted controller workflow can create/own a session with a typed
    port, while a known feature can independently add a port bound to a
    registered service workflow.
@@ -1135,7 +1169,6 @@ P100 intentionally leaves these seams, designed-for but unbuilt:
 - **Push delivery** for mid-run receivers (slice 5).
 - An authenticated workflow SDK exposing custom endpoint registration and
   controller-owned managed-session creation.
-- The env-job push folding onto the shared envelope.
 - The messaging migration, if a MessagingWorkflow responsibility that outbox
   rows cannot own is ever named.
 - Port emission projections feeding mission control or evals.
