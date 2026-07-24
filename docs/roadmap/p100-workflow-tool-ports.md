@@ -1,25 +1,43 @@
-# P100: Workflow-Bound Tool Ports — Typed Agent-to-Workflow Signals
+# P100: Workflow Emissions And Tool Ports — Typed Session-to-Workflow Facts
 
 **Status**
 - Proposed 2026-07-23.
-- Greenfield: internal workflow protocols and engine event vocabulary may
-  change without compatibility aliases.
+- Revised 2026-07-24 after design review: reframed from a standalone port
+  transport into the general **emission** substrate that also carries the
+  existing run-terminal notifications; port consumption is pull-first with
+  push delivery deferred to the first mid-run receiver; the `Delivered`
+  session event was dropped for P92 transport-philosophy consistency; the
+  messaging migration was demoted from committed second topology to a
+  candidate with an explicit burden of proof.
+- Greenfield: internal workflow protocols and engine event vocabulary change
+  without compatibility aliases. Replaced surfaces (the `resolve_promise` /
+  `resolve_promise_source` signal split, promise-specific notification DTO
+  names) are deleted in the same change that lands their replacement.
 - First consumer: **P101 (Durable Work)**, which declares `work_report` when
-  it creates its managed session.
-- Second intended topology: message mutation tools bound to a shared
-  `MessagingWorkflow`; the full P71 migration is a follow-on and does not
-  block P101.
+  it creates its managed session and consumes emissions by **pull** at run
+  reconciliation.
 - Builds on **P92 (Unified Suspension)**, **P95 (Config Redesign)**, the
-  existing tool-result/effect path, CAS-backed tool arguments, and Temporal
-  cross-workflow signaling.
+  existing tool-result/effect path, CAS-backed tool arguments, and the
+  run-terminal notify-intent machinery it generalizes.
 
 ## Decision
 
-Add **workflow-bound tool ports** as the one generic extension point for an
-agent session to emit typed facts to admitted durable workflows.
+Lightspeed's cross-workflow communication reduces to three primitives. Two
+already exist; P100 names the third and builds it:
 
-The trusted runtime may declare a schema-defined function tool on behalf of a
-lifecycle controller or built-in workflow service, with one fixed receiver:
+- **Admission** — a command entering a session (`RequestRun`,
+  `DeliverMessage`, `ResolvePromise`). One inbound funnel, unified by P92.
+- **Emission** — a typed fact leaving a durable workflow for one admitted
+  receiver: deterministic identity, durably recorded at the source,
+  delivered at least once, deduplicated by the receiver. The session log is
+  the source of truth for session-produced emissions.
+- **Promise** — the awaitable join (P92): created by tool effects, resolved
+  by admissions, suspended on by `await`.
+
+P100 owns the emission primitive and adds its first tool-triggered producer:
+**workflow-bound tool ports** — schema-defined function tools the trusted
+runtime declares on behalf of a lifecycle controller or registered workflow
+service, with one fixed receiver per binding:
 
 ```text
 lifecycle controller / workflow service
@@ -37,10 +55,10 @@ session
   -> validates the call against the declared schema
   -> appends a typed WorkflowPort::Emitted event
   -> returns a small accepted result to the model
-  -> delivers one generic workflow_tool_invoked signal to the port receiver
 
 receiver workflow
-  -> deduplicates invocation_id
+  -> consumes the emission (pull at a boundary, or push delivery later)
+  -> deduplicates by emission identity
   -> interprets WorkReportV1
   -> updates its own state machine
 ```
@@ -49,30 +67,70 @@ The model chooses a registered tool and supplies only that tool's declared
 arguments. It cannot choose:
 
 - a workflow id;
-- a Temporal signal name;
+- a transport signal name;
 - a universe;
 - a port id or schema revision;
 - a delivery mode.
 
 Those are fixed by the admitted port binding.
 
-P100 implements **notify-only** ports. Calling a port records and eventually
-delivers a fact; it does not synchronously execute the receiver's handler or
-return a semantic response from that workflow. A later request/reply mode
-should create a Promise and reuse `await` rather than invent a second waiting
-primitive.
+The critical reframing versus the first draft: **the run-terminal
+notification is already an emission.** `RunTerminalNotifyIntent` is a
+log-backed intent admitted atomically with the run, carrying a fixed holder
+workflow id and a deterministic token, delivered at least once by a
+workflow-state pump, deduplicated by the receiver. That is this substrate
+with `semantic_type = lightspeed.run.terminal.v1` and a lifecycle transition
+instead of a tool call as the producer. P100 therefore does not add a third
+delivery mechanism beside the promise-notification pump and the env-job
+`resolve_promise_source` push; it defines the one envelope and one fixed
+signal they all converge on.
+
+P100 implements **notify-only** ports. Calling a port records a fact; it does
+not synchronously execute the receiver's handler or return a semantic
+response. A later request/reply mode creates a Promise per invocation and
+reuses `await` — never a second waiting primitive.
+
+## The Unified Communication Model
+
+| Primitive | Direction | Existing instances | P100 instances |
+|---|---|---|---|
+| Admission | into a session | `RequestRun`, `DeliverMessage`, `ResolvePromise` | unchanged |
+| Emission | out of a workflow, one fixed receiver | run-terminal notify (Fleet/Work), env-job terminal push | port invocations |
+| Promise | awaitable join | `Run`, `EnvJob`, `Timer` sources | later: `WorkflowToolInvocation`, `Workflow` sources |
+
+Consequences P100 commits to:
+
+1. **One envelope, one fixed inbound signal** (`deliver_emission`) for every
+   cross-workflow fact. `AgentSessionWorkflow` is itself just another
+   receiver: it maps `lightspeed.run.terminal.v1` tokens to promises and
+   admits `ResolvePromise`; `AgentWorkWorkflow` maps the same body to its
+   execution cycle. The promise-specific `resolve_promise` signal name and
+   DTOs are deleted, not aliased.
+2. **The env-job path folds in.** `EnvironmentJobWorkflow`'s
+   `resolve_promise_source` push is the same primitive produced by a
+   non-session workflow; it migrates onto the shared envelope/signal as a
+   cleanup item. The emission spine is producer-neutral: sessions back their
+   emissions with the session log; other producers keep their own durable
+   source of truth.
+3. **Fleet stays admission-based.** `agent_spawn`/`agent_request`/
+   `agent_send` are commands into peer sessions and do not become ports.
+   Fleet participates in this unification only through its terminal
+   notifications riding the shared spine.
+4. **The P92 concurrency surface is untouched.** `await`, `cancel`, and
+   `detach` remain the only suspension vocabulary; ports never grow a wait
+   mode of their own.
 
 ## Why This Is The Right Abstraction
 
-Lightspeed already has several communication mechanisms, but each has a
-specific destination and lifecycle:
+Lightspeed's communication mechanisms each have a specific destination and
+lifecycle:
 
 | Mechanism | Meaning |
 |---|---|
-| `message_send` | deliver content to an external messaging channel |
+| `message_send` | deliver content to an external messaging channel via the durable outbox |
 | `agent_send` | place content in another session's mailbox |
 | `agent_request` + Promise | ask another session to run and await its result |
-| `RunTerminalNotifyIntent` | tell a holder workflow that one admitted run terminated |
+| run-terminal emission | tell a holder workflow that one admitted run terminated |
 | workflow-bound tool port | let the agent emit a schema-validated semantic fact to one admitted receiver workflow |
 
 The missing primitive is not another general mailbox. It is a safe way for a
@@ -80,7 +138,8 @@ workflow to lend an agent a small part of its command vocabulary.
 
 Without ports, every workflow-backed product feature faces two bad choices:
 
-1. add a bespoke tool, effect kind, signal DTO, delivery loop, and retry policy;
+1. add a bespoke tool, effect kind, signal DTO, delivery loop, and retry
+   policy;
 2. expose a raw tool such as
    `signal(workflow_id, signal_name, arbitrary_json)`.
 
@@ -96,9 +155,9 @@ generic, owned by P100              domain-specific, owned by consumer
 port declaration                    tool name and description
 JSON Schema validation              payload DTO
 fixed receiver destination          interpretation
-invocation identity                 state transition
+emission identity                   state transition
 session-log emission                business invariants
-at-least-once Temporal delivery     duplicate handling result
+shared at-least-once delivery       duplicate handling result
 ```
 
 This is a singular extension point without becoming arbitrary pub/sub.
@@ -109,45 +168,54 @@ This is a singular extension point without becoming arbitrary pub/sub.
    Providers need no workflow-specific vocabulary.
 2. **The destination is capability-bound, never argument-bound.**
 3. **The session log is authoritative for what the agent emitted.**
-   Temporal signal history is delivery evidence, not the sole copy of the
-   invocation.
+   Delivery evidence is transport state, never the sole copy of the fact.
 4. **The receiver workflow is authoritative for what the emission means.**
-   The session does not interpret `work_report`, `request_approval`, or future
-   domain payloads.
-5. **Delivery is at least once.** Receivers deduplicate by a deterministic
-   invocation id.
-6. **A successful tool result means “recorded for delivery,” not “the
-   receiver completed handling it.”**
+   The session does not interpret `work_report`, `request_approval`, or
+   future domain payloads.
+5. **Delivery is at least once and, per receiver, in session-log order.**
+   Receivers deduplicate with a per-session high-water mark over the
+   emission's log sequence, not an unbounded id set.
+6. **A successful tool result means "durably recorded," not "the receiver
+   completed handling it."**
 7. **Ports do not wake or steer arbitrary sessions.** Session-to-session
    communication remains Fleet/mailbox behavior.
-8. **Ports do not create opaque reducer branches.** The engine understands the
-   generic port lifecycle; only the receiver understands the payload.
+8. **Ports do not create opaque reducer branches.** The engine understands
+   the generic emission lifecycle; only the receiver understands the payload.
+9. **Emissions are rate-capped at admission.** A looping model cannot flood a
+   receiver; exceeding a cap is an ordinary failed tool call that emits
+   nothing.
+10. **Receivers must never require new work in the emitting session to
+    process an emission** (the re-entrancy law below).
 
 ## Vocabulary
 
+- **Emission** — one durable typed fact from a producer workflow to one
+  admitted receiver, identified by a deterministic emission id and the
+  producer's log sequence.
+- **Emission envelope** — the bounded wire shape delivered to receivers; the
+  payload body is a closed enum, not open JSON.
+- **Delivery spine** — the shared per-workflow pump plus the single fixed
+  `deliver_emission` signal all emissions travel on.
 - **Lifecycle controller** — the optional durable workflow that owns the
-  session's higher-level objective or lifecycle, such as
-  `AgentWorkWorkflow`.
+  session's higher-level objective or lifecycle, such as `AgentWorkWorkflow`.
 - **Receiver workflow** — the durable workflow named by one admitted port
   binding. It may be the lifecycle controller or a shared workflow service.
-- **Workflow service** — a registered receiver such as Messaging whose
-  endpoint is resolved by trusted runtime policy rather than supplied by the
-  model or raw profile config.
+- **Workflow service** — a registered receiver such as a future approval
+  service whose endpoint is resolved by trusted runtime policy rather than
+  supplied by the model or raw profile config.
 - **Port** — one model-visible function tool plus an immutable receiver
   binding.
 - **Port definition** — tool name, description, JSON Schema refs, semantic
   type, and schema revision.
 - **Port binding** — the admitted association between a port definition, one
   session, and one receiver workflow.
-- **Invocation** — one observed model tool call of a declared port.
-- **Emission** — the durable session-log fact created from a valid invocation.
-- **Delivery** — the generic Temporal signal attempt from the session workflow
-  to the bound receiver workflow.
-- **Handler** — receiver-owned deterministic logic that interprets a delivered
-  payload.
+- **Invocation** — one observed model tool call of a declared port; its
+  emission id is the invocation id.
+- **Handler** — receiver-owned deterministic logic that interprets a
+  consumed emission.
 
-“Signal” in this document means the fixed Temporal transport signal. A port is
-not a dynamically named Temporal signal and is not a general subscription.
+"Signal" in this document means the fixed transport signal. A port is not a
+dynamically named signal and is not a general subscription.
 
 ## Ownership And Authority
 
@@ -161,57 +229,58 @@ Session
 
   ports:
     work_report      -> AgentWorkWorkflow
-    message_send     -> MessagingWorkflow
-    message_edit     -> MessagingWorkflow
     request_approval -> ApprovalWorkflow          // later
 ```
 
-The lifecycle controller answers “who owns this session's outer loop?” Each
-port receiver answers “which workflow owns this semantic operation?” They are
+The lifecycle controller answers "who owns this session's outer loop?" Each
+port receiver answers "which workflow owns this semantic operation?" They are
 independent relationships.
 
 A Work-managed session has one `AgentWorkWorkflow` controller and binds
-`work_report` to it. The same session may bind messaging tools to a
-`MessagingWorkflow`. A standalone bridge session has no lifecycle controller
-but may still receive Messaging service ports through its admitted messaging
-feature.
+`work_report` to it. The same session may independently bind other ports to
+registered service workflows. A standalone session has no lifecycle
+controller and no controller ports.
 
 Every receiver is validated to belong to the session's universe and recorded
 durably. No receiver identity is accepted from model arguments.
 
-### Workflow endpoint identity
+### Workflow endpoint identity and the endpoint registry
 
-Use a typed, versioned reference:
+Use a small, opaque, durable reference:
 
 ```rust
 pub struct WorkflowEndpointRef {
     pub universe_id: Uuid,
     pub workflow_id: String,
     pub workflow_kind: String,
-    pub protocol_version: u32,
-    pub class: WorkflowEndpointClass,
-}
-
-pub enum WorkflowEndpointClass {
-    LifecycleController,
-    Service {
-        service_id: String,
-        routing_key: String,
-    },
 }
 ```
 
 `workflow_kind` is diagnostic and admission metadata, not a dynamic signal
-name. Every receiver implements the same fixed P100 signal.
+name. Every receiver implements the same fixed P100 signal. Routing policy,
+sharding, protocol versioning, start arguments, and ensure-start behavior
+are **resolver concerns**, not fields on the durable ref — the first draft's
+`WorkflowEndpointClass`/`routing_key`/`protocol_version` fields froze
+transport policy into an identity type and are dropped.
 
 The workflow id remains stable across continue-as-new. The binding never
-contains a Temporal run id.
+contains a substrate run id.
+
+Endpoint resolution lives in one **workflow endpoint registry** with two
+consumers by design, even though P100 implements only the first:
+
+1. **Port receivers** — mapping a lifecycle-controller capability or a known
+   feature grant to a same-universe receiver endpoint.
+2. **Startable workflow kinds** (follow-on) — the catalog a session tool
+   consults to start an admitted workflow as durable work and hold a
+   `PromiseSource::Workflow` promise on its completion. This is P86's job
+   pattern generalized; building the registry port-receiver-only would force
+   a second registry later.
 
 For lifecycle controllers, the receiver must already exist because it created
-or owns the managed session. For built-in services, the trusted service
-resolver owns workflow-id composition, sharding/routing policy, start args,
-and signal-with-start/ensure-start behavior. A profile selects
-`features.messaging`; it does not select a Messaging workflow shard.
+or owns the managed session. For built-in services, the registry owns
+workflow-id composition, routing policy, start args, and ensure-start
+behavior. A profile selects a feature; it never selects a workflow shard.
 
 ### Who may declare ports
 
@@ -221,20 +290,25 @@ P100 admits bindings only through trusted runtime materialization:
   creates the session; in P100, those bindings are immutable for that
   session's lifetime;
 - a built-in feature resolver may materialize ports to a registered workflow
-  service, for example `features.messaging` to the canonical same-universe
-  Messaging endpoint;
+  service endpoint;
 - public/profile config may grant a known feature but never contain a raw
-  Temporal workflow id;
+  workflow id;
 - ordinary public `session/config/put` callers cannot invent, retarget, or
   widen a resolved receiver binding;
 - session read projections expose bounded port summaries separately from the
   public config document;
 - a model cannot create or mutate a port.
 
-P100 needs only a small built-in workflow-service resolver, not a public
-registry. A future workflow SDK may expose custom service registration behind
-an authenticated endpoint capability. Dynamic controller-port replacement may
-be added only when a real controller needs it.
+P100 needs only a small built-in endpoint registry, not a public one. A
+future workflow SDK may expose custom endpoint registration behind an
+authenticated capability. Dynamic controller-port replacement may be added
+only when a real controller needs it.
+
+Known limitation, accepted deliberately: immutable controller bindings mean a
+long-lived managed session cannot take a port schema upgrade in place — a new
+schema revision requires a new managed session. This is fine for per-Work
+sessions and revisited only if a controller with an indefinite session
+lifetime appears.
 
 ## Port Definition
 
@@ -263,8 +337,8 @@ pub struct WorkflowToolPortBinding {
 - optional output JSON Schema ref;
 - strictness and provider options.
 
-For notify-only ports, the runtime owns the output. The model-visible result is
-a stable acknowledgement such as:
+For notify-only ports, the runtime owns the output. The model-visible result
+is a stable acknowledgement such as:
 
 ```json
 {
@@ -273,8 +347,8 @@ a stable acknowledgement such as:
 }
 ```
 
-Consumers should not use the optional function output schema to imply that the
-receiver has processed the emission.
+Consumers should not use the optional function output schema to imply that
+the receiver has processed the emission.
 
 ### Semantic type and revision
 
@@ -286,13 +360,19 @@ lightspeed.approval.request.v1
 acme.invoice.triage.v3
 ```
 
+Reserved by the substrate itself:
+
+```text
+lightspeed.run.terminal.v1
+```
+
 It lets the receiver select a typed decoder and makes traces intelligible. It
 does not select a destination or handler in the session.
 
 The definition revision and the schema/document fingerprints are copied into
 every emission. Replacing a port creates a new immutable binding fingerprint.
-An in-flight call continues to use the toolset revision against which the turn
-was planned.
+An in-flight call continues to use the toolset revision against which the
+turn was planned.
 
 ### Validation
 
@@ -305,31 +385,33 @@ At binding admission:
 - input and optional output schemas are supported JSON Schema documents;
 - semantic type and revision are non-empty and versioned;
 - receiver universe equals session universe;
-- the receiver came from the lifecycle-controller capability or a registered
-  workflow-service resolver, never an untrusted raw workflow id;
+- the receiver came from the lifecycle-controller capability or the endpoint
+  registry, never an untrusted raw workflow id;
 - binding size and total port count stay below deployment limits.
 
 The managed-session creation fingerprint includes its optional lifecycle
 controller and controller-bound port definitions. Retrying with the same
-session id and fingerprint reopens it; retrying with a different controller or
-controller-port set is a conflict. Service-bound port fingerprints derive from
-the admitted feature/config revision and the registered service endpoint.
+session id and fingerprint reopens it; retrying with a different controller
+or controller-port set is a conflict. Service-bound port fingerprints derive
+from the admitted feature/config revision and the registered service
+endpoint.
 
 At invocation:
 
 - the call resolves to the exact binding from its planned toolset revision;
 - arguments validate against that binding's input schema;
+- per-port rate and per-session pending-emission caps are enforced;
 - the runtime, not the model, supplies receiver and binding metadata;
 - oversized arguments remain CAS-backed through the existing observed tool
   call.
 
-A schema-invalid invocation is an ordinary failed tool call. It creates no
-port emission.
+A schema-invalid or cap-exceeding invocation is an ordinary failed tool
+call. It creates no emission.
 
 ## Config And Toolset Integration
 
-P95 made the installed toolset derived state. P100 preserves that invariant by
-resolving workflow-bound tools from two trusted declaration sources:
+P95 made the installed toolset derived state. P100 preserves that invariant
+by resolving workflow-bound tools from two trusted declaration sources:
 
 ```text
 effective tool declaration
@@ -357,7 +439,7 @@ The distinction is authority:
 
 - public/profile feature blocks are changed through the existing config path;
 - the feature resolver maps known capabilities to registered service
-  endpoints—for example `features.messaging` to MessagingWorkflow bindings;
+  endpoints;
 - lifecycle-controller ports are admitted only from trusted managed-session
   creation args and are immutable in P100.
 
@@ -378,30 +460,40 @@ writer and no model-controlled endpoint.
 
 ## Session Event Vocabulary
 
-P100 adds a closed generic event family:
+P100 adds a closed generic event family — deliberately smaller than the
+first draft:
 
 ```rust
 pub enum WorkflowPortEvent {
     Emitted {
         invocation: WorkflowToolInvocation,
     },
-    Delivered {
-        invocation_id: WorkflowToolInvocationId,
-    },
     DeliveryFailed {
         invocation_id: WorkflowToolInvocationId,
         error_ref: BlobRef,
-        retryable: bool,
     },
 }
 ```
 
+`Emitted` is semantic: the agent stated this fact. Terminal `DeliveryFailed`
+is semantic in the operator sense: this fact is permanently undeliverable
+and someone should know. There is **no `Delivered` event**. P92 §6 settled
+the split this substrate must follow: semantic state lives in the session
+log; transport state is transient and recomputable in the workflow. The
+run-terminal path already works exactly this way — notifications enqueue on
+the terminal *transition*, the flush queue is rebuilt by replay, and
+quiescence gates continue-as-new — and it carries no delivered-fact events.
+The first draft's mandatory `Emitted`/`Delivered`/`DeliveryFailed` outbox
+took the opposite position for the same problem; this revision resolves the
+contradiction in P92's favor. A substrate whose replay cannot rebuild the
+flush queue may keep a durable delivery cursor in its own transport state;
+the session log stays free of transport bookkeeping either way, and receiver
+dedup makes conservative re-sends harmless.
+
 Controller-port declarations are durable managed-session creation facts.
 Service-port declarations are reproducibly derived from the admitted session
-config and registered same-universe service endpoint. Both may reuse existing
-config/tool events rather than add a second event family. `Emitted`,
-`Delivered`, and terminal `DeliveryFailed` are not optional: they form the
-durable outbox.
+config and registered same-universe service endpoint. Both reuse existing
+config/tool events rather than adding a second event family.
 
 The invocation envelope is bounded:
 
@@ -418,11 +510,13 @@ pub struct WorkflowToolInvocation {
     pub tool_batch_id: ToolBatchId,
     pub tool_call_id: ToolCallId,
     pub arguments_ref: BlobRef,
+    /// Reserved for request/reply ports; always None in notify mode.
+    pub reply_promise_id: Option<PromiseId>,
 }
 ```
 
-The receiver endpoint is copied into durable delivery state but need not
-be repeated in the receiver-facing envelope because the signal target is
+The receiver endpoint is copied into durable binding state but need not be
+repeated in the receiver-facing envelope because the delivery target is
 already fixed.
 
 `invocation_id` is deterministically derived from:
@@ -441,28 +535,27 @@ continue-as-new.
 
 ### Payload access
 
-The Temporal signal carries the bounded envelope and `arguments_ref`, not an
+Emission envelopes carry the bounded invocation and `arguments_ref`, not an
 unbounded copy of model arguments. A receiving workflow:
 
-1. validates envelope metadata and deduplicates `invocation_id`;
-2. buffers the envelope in workflow state;
+1. validates envelope metadata and deduplicates by emission identity;
+2. records the bounded envelope in its own durable state;
 3. uses a consumer-owned activity to load the CAS blob and decode its typed
    payload;
-4. records that bounded activity result in Temporal history before branching.
+4. records that bounded activity result durably before branching.
 
-P100 may provide a generic CAS-load/schema-check activity helper, but it does
-not dynamically interpret the consumer's semantic type. This keeps workflow
-code deterministic and avoids duplicating large arguments into both session
-and receiver histories.
+P100 may provide a generic CAS-load/schema-check activity helper, but it
+does not dynamically interpret the consumer's semantic type. This keeps
+workflow code deterministic and avoids duplicating large arguments into both
+session and receiver histories.
 
 ### Relationship to `ToolEffect`
 
-Existing tools may return generic `ToolEffect` values, and Promise tools decode
-recognized effects into typed Promise events/state because the session must
-branch on them.
+Existing tools may return generic `ToolEffect` values, and Promise tools
+decode recognized effects into typed Promise events/state because the
+session must branch on them.
 
-Workflow ports follow the same convergence but do not leave receiver
-delivery as an opaque consumer convention:
+Workflow ports follow the same convergence:
 
 ```text
 tool runtime recognizes WorkflowPort binding
@@ -470,98 +563,112 @@ tool runtime recognizes WorkflowPort binding
   -> engine validates it against the active binding and call joins
   -> same command append records Tool::CallCompleted
      and WorkflowPort::Emitted
-  -> reducer adds invocation to pending port deliveries
 ```
 
 The generic `ToolEffect` carrier may be reused internally to avoid changing
-the tool runtime trait, but the durable contract is `WorkflowPortEvent`, not a
-magic string that every product independently scans.
+the tool runtime trait, but the durable contract is `WorkflowPortEvent`, not
+a magic string that every product independently scans.
 
 The model supplies only arguments. It cannot forge the internal effect,
 invocation joins, receiver, or binding fingerprint.
 
-## The Event Log As A Graph
+## The Emission Envelope
 
-The session log remains a linear, totally ordered event stream. Typed ids form
-causal edges over that stream:
-
-```mermaid
-flowchart LR
-    R[Run] --> T[Turn]
-    T --> B[Tool batch]
-    B --> C[Tool call]
-    C --> E[WorkflowPort::Emitted]
-    E --> D[WorkflowPort::Delivered]
-    E -. invocation_id .-> H[Receiver workflow state]
-    R --> X[Run terminal]
-```
-
-This is the same pattern already used by runs, turns, tool calls, submission
-ids, correlations, and Promises:
-
-```text
-physical storage:  append-only event sequence
-logical shape:     typed causal graph projected from stable ids
-```
-
-P100 does not turn the event log into an arbitrary graph database. It adds one
-closed edge type: a tool call emitted a workflow-bound invocation, and that
-invocation was delivered.
-
-Product workflows may build their own state graphs in Temporal history:
-
-```mermaid
-flowchart TB
-    W[Work workflow] --> S[Managed session]
-    W --> C1[Cycle 1 / Run]
-    W --> C2[Cycle 2 / Run]
-    C2 --> WR[work_report invocation]
-    WR --> WS[Work status transition]
-```
-
-The session log proves what the agent did and emitted. The receiver history
-proves how its domain state machine interpreted those facts.
-
-## Delivery Protocol
-
-Every compatible receiver workflow exposes one fixed signal:
-
-```text
-workflow_tool_invoked(WorkflowToolInvocation)
-```
-
-There are no dynamic Temporal signal names.
-
-The session workflow owns a log-backed delivery pump:
-
-1. reduce `WorkflowPort::Emitted` into `pending_port_deliveries`;
-2. for a built-in service endpoint, apply its registered ensure-start policy;
-3. send `workflow_tool_invoked` to that invocation's admitted receiver
-   workflow id;
-4. on accepted signal operation, append `WorkflowPort::Delivered`;
-5. retry transient transport failures with deterministic policy;
-6. surface a bounded terminal failure without dropping the invocation.
-
-Delivery is **at least once**. A crash after the signal is accepted but before
-`Delivered` is appended may send the invocation again.
-
-The receiver keeps a bounded deduplication set keyed by `invocation_id`, or
-incorporates the id into its domain transition:
+One envelope, one fixed signal, a closed body enum:
 
 ```rust
-if handled_invocations.insert(invocation.invocation_id.clone()) {
-    apply_typed_handler(invocation);
+pub struct EmissionEnvelope {
+    pub emission_id: EmissionId,
+    pub session_id: SessionId,
+    /// Session-log sequence of the emitting event. Receivers dedup with a
+    /// per-session high-water mark because per-receiver delivery preserves
+    /// log order.
+    pub log_seq: u64,
+    pub body: EmissionBody,
+}
+
+pub enum EmissionBody {
+    RunTerminal {
+        token: String,
+        run_id: RunId,
+        status: RunStatus,
+        output_ref: Option<BlobRef>,
+        failure_message_ref: Option<BlobRef>,
+    },
+    PortInvocation {
+        invocation: WorkflowToolInvocation,
+    },
 }
 ```
 
-The receiver must not infer ordering across different sessions. Within one
-session, event order is available through run/turn/batch/call joins, but
-duplicate delivery remains possible.
+- For port invocations, `emission_id` equals the invocation id. For
+  run-terminal emissions it derives from session, run, and intent token.
+- The body is a closed internal enum, not open JSON: receivers are trusted
+  internal workflows, new emission kinds extend the enum, and the substrate
+  stays deterministic. Domain openness lives inside `PortInvocation` via
+  `semantic_type` + CAS payload, exactly one level down.
+- `AgentSessionWorkflow` receives the same envelope as everyone else: a
+  `RunTerminal` body maps token → `PromiseId` → `ResolvePromise` admission.
+  This deletes the promise-specific signal vocabulary rather than
+  generalizing around it.
+
+## Consumption: Pull First, Push When Needed
+
+The first draft assumed push delivery from day one. Its own first consumer
+disproves the need: **P101 Work buffers reports and acts only at the
+run-terminal boundary, and its reconciliation activity reads the session log
+anyway.** The run-terminal emission already wakes Work; a port-delivery pump
+would hand it envelopes it must ignore until reconciliation reads the log
+regardless.
+
+So consumption has two modes, and P100 ships them in order:
+
+### Pull (P100 v1 — sufficient for P101)
+
+A boundary-subscribed receiver (one that already receives the run-terminal
+emission for the runs it cares about) reads port emissions through one
+internal read operation:
+
+```text
+read_port_emissions(session_id, run_id | after_log_seq)
+  -> bounded Vec<WorkflowToolInvocation>
+```
+
+The run-terminal boundary guarantees every prior emission for that run is
+durable, so a pull at the boundary is complete by construction. No pump, no
+delivery events, no receiver dedup set, no continue-as-new outbox concerns.
+Emissions consumed by pull never enter transport state at all.
+
+### Push (deferred slice — first mid-run receiver)
+
+Push earns its complexity only for receivers with no boundary subscription
+that must react mid-run — an approval service, request/reply ports. When the
+first such consumer exists, port emissions join the **existing** delivery
+spine (the generalized run-terminal pump), not a new one:
+
+1. the `Emitted` transition enqueues the envelope into the workflow's
+   transient flush queue (replay-rebuilt, exactly like promise
+   notifications today);
+2. the pump delivers per receiver in session-log order via the fixed
+   `deliver_emission` signal; head-of-line retry with deterministic bounded
+   backoff preserves order;
+3. bounded retries exhausted or a non-retryable determination appends
+   terminal `DeliveryFailed`, drops the entry, and surfaces the failure in
+   projections — so a dead receiver cannot block the queue or
+   continue-as-new indefinitely;
+4. flush-queue quiescence gates continue-as-new, exactly as P92 §6 already
+   specifies for promise notifications.
+
+Receiver dedup rule, stated precisely because "bounded dedup set" is not a
+spec: per producer session, the receiver stores the highest `log_seq` it has
+applied. Because per-receiver delivery is FIFO in log order, any envelope
+with `log_seq` at or below the mark is a duplicate. This is O(1) per
+producer and never evicts too early.
 
 ### Tool completion versus delivery
 
-The port tool call completes when `Emitted` is durable. It does not wait for
-Temporal signal acceptance.
+In both modes, the port tool call completes when `Emitted` is durable. It
+does not wait for consumption.
 
 This keeps tool execution from coupling model latency to an arbitrarily
 long-lived receiver and avoids a deadlock where:
@@ -572,63 +679,76 @@ receiver waits for run terminal or another external event
 run cannot terminate because tool call is waiting
 ```
 
-The session workflow should flush pending emissions promptly, but domain
-workflows must tolerate either ordering between port delivery and the separate
-run-terminal notification. P101 Work buffers `work_report` invocations and
-reconciles them only at the matching run-terminal boundary.
+Receivers must tolerate either ordering between port consumption and the
+run-terminal emission. P101 Work reconciles only at the matching
+run-terminal boundary.
 
-## Failure Semantics
+## Delivery Protocol Is Substrate-Neutral
 
-### Crash after emission, before signal
+The first draft specified Temporal signals normatively. The contract is
+narrower than Temporal and must be stated that way, because the engine and
+this substrate are meant to outlive any single durable-workflow engine:
 
-The invocation remains in `pending_port_deliveries` after rehydration and is
-sent.
+- **Engine (substrate-neutral, `crates/engine`):** port/binding DTOs, the
+  `WorkflowPortEvent` family, deterministic emission identity, the pending
+  invariants above. The engine holds no transport state.
+- **Transport contract (substrate-neutral trait):**
 
-### Crash after signal, before delivered append
+```rust
+pub trait EmissionTransport {
+    /// Deliver one envelope to one admitted endpoint.
+    fn deliver(
+        &self,
+        endpoint: &WorkflowEndpointRef,
+        envelope: &EmissionEnvelope,
+    ) -> DeliveryOutcome;
+}
 
-The signal may be repeated. Receiver deduplication prevents a second domain
-transition.
+pub enum DeliveryOutcome {
+    Accepted,
+    Retryable(TransportError),
+    Terminal(TransportError),
+}
+```
 
-### Receiver is temporarily unavailable
+  plus an endpoint-resolution trait behind the registry. Receiver-side
+  helpers (envelope decode, high-water dedup) are plain library code with no
+  workflow-substrate dependency.
+- **Temporal adapter (reference implementation, `temporal-workflow` /
+  `temporal-server`):** the fixed `deliver_emission` signal, ensure-start
+  policy for service endpoints, replay-rebuilt flush queues, continue-as-new
+  gating. Signals target the stable workflow id, never a run id.
 
-Retry delivery with bounded backoff. The tool call remains successful because
-the emission is durable. Pending delivery gates unsafe session
-continue-as-new unless all required outbox state is carried forward.
+A different durable engine implements `EmissionTransport` and the admission
+funnel; nothing in the engine crate or the port contract changes.
 
-### Receiver does not exist or rejects the protocol
+## Re-entrancy And Edge Direction
 
-After a bounded non-retryable determination, append `DeliveryFailed` and make
-the failure visible in session projection/diagnostics. P100 does not
-automatically fail or cancel the session; the owning product or operator
-decides how a lost receiver is repaired.
+The combined topology the product needs — a controller managing a session,
+that session emitting ports upward, the same session holding promises on
+sub-workflows and child sessions — is safe only under explicit
+edge-direction rules. They are law, not guidance:
 
-### Public config tries to mutate a port
-
-Admission rejects any raw receiver or retarget attempt. Controller-bound ports
-are immutable after managed-session creation. Built-in service ports may be
-added or removed only by changing their owning feature through the existing
-config/toolset revision path.
-
-### Duplicate tool-result admission
-
-Existing tool-call admission idempotency prevents a second `Emitted` event for
-the same call. Receiver deduplication remains required for transport retries.
-
-### Malformed payload
-
-Schema validation fails before emission. If CAS content later cannot be read,
-the receiver records a domain-visible malformed/unreadable invocation and must
-not invent a successful interpretation.
-
-### Receiver continue-as-new
-
-Signals target the stable workflow id, never a run id. The receiver carries
-its dedupe/domain state across continue-as-new.
-
-### Session continue-as-new
-
-Pending delivery state and receiver bindings are carried forward. The stored
-session events remain the source for reconstruction.
+1. **Notify emissions are non-blocking by construction.** The emitting run
+   never waits on them, so notify edges can never form a cycle.
+2. **A receiver's handler must never require new work in the emitting
+   session in order to process that session's emission.** Handlers branch on
+   their own state plus the delivered fact. A handler that schedules a run
+   in the emitting session must do so as an independent consequence, never
+   as a precondition of consuming the emission.
+3. **Request/reply ports (future) create an upward wait edge** — the session
+   parks awaiting a promise its receiver resolves. The dangerous shape:
+   the receiver's handler needs a new run in the emitting session to
+   compute the reply, while that session's active run is parked on the
+   request — deadlock. Rule 2 forbids it, and binding admission should
+   conservatively reject request-mode ports bound to the session's own
+   lifecycle controller until a concrete use case demonstrates a safe
+   pattern. `await { mailbox: true }` softens head-of-line blocking but does
+   not repeal the rule.
+4. **Workflow-as-tool promises create downward wait edges** (session waits
+   on a sub-workflow it started), mirroring Fleet spawn edges. Downward wait
+   edges plus upward notify edges keep the graph a DAG; the P92 cycle
+   residual stays unconstructible.
 
 ## Notify Now, Promise Later
 
@@ -643,15 +763,28 @@ notify:
 
 request/reply (later):
   agent calls workflow-backed request port
-  -> emission creates Promise
-  -> receiver eventually resolves Promise
+  -> same append: WorkflowPort::Emitted + Promise::Created
+     (promise_create_effect, PromiseSource::WorkflowToolInvocation)
+  -> envelope carries reply_promise_id
+  -> receiver eventually resolves the promise through the ordinary
+     RunTerminal-style emission -> ResolvePromise admission path
   -> agent uses await/cancel/detach
 ```
 
-The later mode should add a `PromiseSource::WorkflowToolInvocation` and use the
-P92 suspension machinery. It should not keep a tool activity open, add
-`workflow_port_wait`, or overload notify delivery acknowledgements with domain
-results.
+The later mode adds no new machinery: an emission plus a promise effect in
+the same append, resolved through the same spine and funnel everything else
+uses. It must not keep a tool activity open, add a `workflow_port_wait`, or
+overload notify acknowledgements with domain results. The
+`reply_promise_id` field exists in the envelope from day one so the shape
+cannot ossify notify-only.
+
+The sibling seam, **workflow-as-tool**: a tool call that *starts* an
+admitted workflow kind (deterministic workflow id derived from
+session/run/turn/call identity, exactly like Fleet and job ids today) and
+returns a `PromiseSource::Workflow` promise resolved by the workflow's
+terminal emission. It consumes the same endpoint registry and the same
+spine; it is P86's job pattern with the provider replaced by a durable
+workflow. Deferred, but the registry and envelope are designed for it now.
 
 P101 Work needs notify only: `work_report` declares the agent's disposition;
 the Work workflow does not return information through that call.
@@ -665,6 +798,7 @@ tool name:        work_report
 semantic type:    lightspeed.work.report.v1
 schema revision:  1
 receiver:         the AgentWorkWorkflow that created the session
+consumption:      pull at run reconciliation
 ```
 
 Illustrative payload:
@@ -677,12 +811,12 @@ pub struct WorkReportV1 {
 }
 ```
 
-P100 guarantees only that a valid invocation is durably emitted and delivered.
-P101 owns:
+P100 guarantees only that a valid invocation is durably emitted and readable
+at the run boundary. P101 owns:
 
 - whether `complete` or `blocked` is valid in its current state;
 - conflicting-report policy;
-- buffering until the matching run terminates;
+- reconciliation at the matching run-terminal boundary;
 - result construction;
 - whether another execution cycle is scheduled.
 
@@ -690,93 +824,91 @@ This division is the proof that the abstraction is useful: a later approval,
 triage, escalation, or workflow-specific control tool reuses P100 without
 adding another session delivery protocol.
 
-## Second Topology: Messaging As A Workflow Service
+## Messaging: A Candidate, Not A Commitment
 
-P100 must support this shape even though the complete messaging migration need
-not block P101:
+The first draft committed to `message_send`/`message_edit`/`message_react`
+migrating onto ports bound to a `MessagingWorkflow`. Demoted on review; the
+migration must first meet a burden of proof it currently fails:
 
-```text
-Work-managed session
-  lifecycle controller: AgentWorkWorkflow
+- **What state would MessagingWorkflow authoritatively own?** Retry
+  attempts, status, ack results, and rate accounting already live on
+  durable outbox rows; the bridge acks and re-pends; `message_send` is
+  already a synchronous, idempotent, durable enqueue through a worker
+  activity. A workflow between tool and outbox adds a hop and a dedup layer
+  and, per the first draft's own constraint ("must not become an
+  independent second business-state authority"), owns nothing the rows do
+  not.
+- **Hot-workflow hazard.** A canonical per-universe Messaging endpoint
+  funnels every message in a universe through one workflow's history —
+  continue-as-new churn and per-workflow signal-throughput limits. Sharding
+  policy is exactly the speculative generality the endpoint type no longer
+  carries.
+- **The genuine future need doesn't require a workflow receiver.** "Agent
+  waits for actual channel delivery" is a bridge ack resolving a
+  `Promise` through the existing spine — no MessagingWorkflow involved.
 
-  work_report   -> AgentWorkWorkflow
-  message_send  -> MessagingWorkflow
-  message_edit  -> MessagingWorkflow
-  message_react -> MessagingWorkflow
-```
+Messaging tools therefore stay on their current inline/outbox path, on the
+same side of the line as `message_noop`: pure or already-durable bounded
+tools do not become workflows merely because ports exist. If a real
+messaging orchestration responsibility emerges that outbox rows cannot own
+(cross-message conversation policy, channel-level delivery orchestration
+with timers), the migration reopens with that responsibility named first.
 
-`features.messaging` remains the public/profile capability. Its trusted
-materializer resolves the model-visible message tools to a canonical
-same-universe Messaging service endpoint; neither the config document nor the
-model contains that workflow id.
-
-The eventual message path is:
-
-```text
-message_send call
-  -> WorkflowPort::Emitted in the session log
-  -> workflow_tool_invoked to MessagingWorkflow
-  -> deduplicate by invocation_id
-  -> enqueue/update the bridge-facing outbox through an idempotent activity
-  -> receive or observe delivery acknowledgement
-  -> retain delivery lifecycle in MessagingWorkflow state/history
-```
-
-The invocation id deterministically derives the message/outbox id. Notify mode
-returns `accepted` once the session emission is durable. If the agent must wait
-for actual channel delivery, the future request/reply mode creates a Promise.
-
-The existing PostgreSQL outbox remains useful as the bridge-facing delivery
-queue and query projection. If messaging moves behind a workflow, it must not
-become an independent second business-state authority: the workflow owns
-orchestration and retry state, while outbox writes and acknowledgements are
-idempotent transport operations.
-
-`message_noop` has no external lifecycle and may remain inline. Pure,
-bounded tools do not become workflows merely because ports exist.
+The multi-receiver proof in the implementation plan uses a minimal synthetic
+service receiver instead.
 
 ## Scope
 
 P100 includes:
 
-1. Zero or one immutable lifecycle-controller reference on a session.
-2. Any bounded number of fixed, same-universe receiver endpoints across that
+1. The unified emission envelope and fixed `deliver_emission` signal, with
+   run-terminal as the first semantic type — replacing the promise-specific
+   signal vocabulary.
+2. Zero or one immutable lifecycle-controller reference on a session.
+3. Any bounded number of fixed, same-universe receiver endpoints across that
    session's ports.
-3. A generic internal managed-session start operation usable by any registered
-   lifecycle controller, not only Work.
-4. Schema-defined, model-visible function tools derived into the normal
+4. A generic internal managed-session start operation usable by any
+   registered lifecycle controller, not only Work.
+5. Schema-defined, model-visible function tools derived into the normal
    session toolset.
-5. Immutable controller-bound ports admitted at managed-session creation and
+6. Immutable controller-bound ports admitted at managed-session creation and
    built-in service ports resolved from known feature grants.
-6. Notify-only invocation semantics.
-7. A typed `WorkflowPortEvent` family and reducer-owned pending-delivery state.
-8. One fixed `workflow_tool_invoked` Temporal signal.
-9. Deterministic invocation identity and receiver deduplication guidance.
-10. At-least-once, log-backed delivery across retry, restart, and
-   continue-as-new.
-11. Session/API projections sufficient to inspect declared ports, emissions,
-    pending delivery, and terminal delivery failure.
-12. Protocol, reducer, runtime, and live Temporal tests.
-13. P101's `work_report` plus a second receiver/service binding in the same
-    session as the proof that routing is not controller-specific.
+7. Notify-only invocation semantics with per-port rate caps.
+8. A typed `WorkflowPortEvent` family (`Emitted`, terminal
+   `DeliveryFailed`).
+9. Pull-based emission reads for boundary-subscribed receivers.
+10. Deterministic emission identity, log-order delivery, and the high-water
+    dedup rule.
+11. Push delivery on the shared spine as a defined, deferrable slice gated
+    on the first mid-run receiver.
+12. Session/API projections sufficient to inspect declared ports, emissions,
+    and terminal delivery failure.
+13. Protocol, reducer, runtime, and live Temporal tests.
+14. P101's `work_report` plus a second receiver binding in the same session
+    as the proof that routing is not controller-specific.
 
 ## Explicit Non-Goals
 
 P100 does not add:
 
 - `signal(workflow_id, signal_name, json)` or any model-selectable routing;
-- global topics, broadcast, wildcard subscriptions, or a pub/sub registry;
+- global topics, broadcast, wildcard subscriptions, or a pub/sub registry —
+  observers read projections and the session log; they do not receive
+  deliveries;
 - multiple lifecycle controllers per session;
 - external webhook, schedule, email, or bridge ingress;
 - session-to-session messaging or replacement of Fleet;
 - synchronous handler completion;
-- request/reply ports or a second waiting primitive;
+- request/reply ports or a second waiting primitive (the envelope seam
+  exists; the mode does not);
+- a `Delivered` session event or any transport bookkeeping in the session
+  log;
+- the messaging migration;
 - arbitrary receiver-defined reducer events;
 - model-authored tool schemas or runtime port creation;
 - adding or retargeting controller-declared ports after managed-session
   creation;
-- a public endpoint that lets ordinary session callers target Temporal
-  workflows;
+- a public endpoint that lets ordinary session callers target workflows;
 - a durable product database for port invocations;
 - Work status, goal-loop, approval, or other consumer semantics;
 - dynamic tool registration while a turn or tool batch is active.
@@ -798,12 +930,12 @@ pub struct WorkflowToolPortView {
     pub binding_fingerprint: String,
 }
 
-pub struct WorkflowPortDeliveryView {
+pub struct WorkflowPortEmissionView {
     pub invocation_id: WorkflowToolInvocationId,
     pub port_id: WorkflowToolPortId,
     pub run_id: RunId,
     pub tool_call_id: ToolCallId,
-    pub status: WorkflowPortDeliveryStatus,
+    pub delivery_failed: bool,
     pub error_ref: Option<BlobRef>,
 }
 ```
@@ -824,29 +956,30 @@ Expected changes:
 ```text
 crates/engine/
   workflow-port ids, endpoint/binding DTOs
-  WorkflowPortEvent and deterministic reducer state
+  WorkflowPortEvent (Emitted, DeliveryFailed) and deterministic reducer state
   validation of typed internal emission effects
-  session-log projections
+  session-log projections and emission reads
 
 crates/tools/
   WorkflowPort ToolExecutionMode/binding
   generic inline invocation adapter
-  schema validation and stable acknowledgement
+  schema validation, rate caps, and stable acknowledgement
 
 crates/temporal-workflow/
+  EmissionEnvelope / EmissionBody / deliver_emission signal DTOs
   optional lifecycle-controller and resolved receiver bindings
-  workflow_tool_invoked signal DTO
-  pending-delivery pump state
+  shared delivery-spine pump (generalized from promise notifications)
+  receiver-side envelope/dedup helper (substrate-neutral module)
 
 crates/temporal-server/
   controller-authorized managed-session creation path
-  built-in workflow-service endpoint resolver
+  workflow endpoint registry (built-in resolver)
   effective config/toolset materialization
-  cross-workflow signal operation
+  EmissionTransport Temporal adapter
   delivery retry/failure projection
 
 crates/api/ and api-projection/
-  read-only port and delivery views if exposed through session reads
+  read-only port and emission views if exposed through session reads
 ```
 
 P100 does not add domain handlers to `engine`. A receiver workflow imports
@@ -854,9 +987,35 @@ the envelope type and owns its typed payload DTO.
 
 ## Implementation Plan
 
-### Slice 1: Port, endpoint, and controller contracts
+### Slice 1: Emission envelope and delivery signal
+
+Generalizes the existing run-terminal transport; prerequisite for P101
+slice 1. This is a rename-and-wrap of a working mechanism, not new
+machinery.
+
+- [ ] Add `EmissionEnvelope`, `EmissionBody`, and deterministic
+      `EmissionId` derivation.
+- [ ] Replace the `resolve_promise` signal with the fixed generic
+      `deliver_emission` signal carrying `RunTerminal` bodies; delete the
+      promise-specific DTO/signal names.
+- [ ] Include the observed `run_id` and producer `log_seq` in the
+      run-terminal body/envelope.
+- [ ] `AgentSessionWorkflow` maps `RunTerminal` tokens into its existing
+      `ResolvePromise` admission.
+- [ ] Provide the substrate-neutral receiver helper (envelope decode,
+      per-session high-water dedup).
+- [ ] Prove in a protocol test that a non-session workflow receives the same
+      envelope through the same signal.
+- [ ] Preserve all Fleet Promise, duplicate delivery, cancellation, and
+      continue-as-new tests.
+- [ ] Follow-on cleanup (may land after P101): fold
+      `resolve_promise_source` / the env-job push onto the same envelope.
+
+### Slice 2: Port, endpoint, and controller contracts
 
 - [ ] Add validated workflow endpoint, port, and invocation ids.
+- [ ] Add the workflow endpoint registry (built-in resolver) with the
+      documented two-consumer shape.
 - [ ] Add the optional immutable same-universe lifecycle controller to the
       trusted managed-session start path.
 - [ ] Add `WorkflowToolPortDefinition`, semantic type/revision, and binding
@@ -864,56 +1023,71 @@ the envelope type and owns its typed payload DTO.
 - [ ] Bind every port to one admitted `WorkflowEndpointRef`.
 - [ ] Admit immutable controller ports atomically with managed-session
       creation.
-- [ ] Add a built-in service resolver that maps known feature grants to
-      same-universe endpoints without exposing workflow ids in config.
-- [ ] Reject raw receiver creation or retargeting from ordinary public config
-      writes.
+- [ ] Reject raw receiver creation or retargeting from ordinary public
+      config writes.
 
-### Slice 2: Toolset and event-log integration
+### Slice 3: Toolset and event-log integration
 
-- [ ] Materialize port definitions as ordinary `FunctionToolSpec` entries plus
-      `WorkflowPort` runtime bindings.
-- [ ] Validate call arguments against the admitted schema.
+- [ ] Materialize port definitions as ordinary `FunctionToolSpec` entries
+      plus `WorkflowPort` runtime bindings.
+- [ ] Validate call arguments against the admitted schema; enforce per-port
+      rate and pending caps.
 - [ ] Add typed internal emission effect handling.
 - [ ] Atomically append tool completion and `WorkflowPort::Emitted`.
-- [ ] Reduce emitted invocations into pending delivery state.
-- [ ] Project declarations, emissions, delivery, and failure without inlining
+- [ ] Project declarations, emissions, and failure without inlining
       payloads.
 
-### Slice 3: Temporal delivery
+### Slice 4: Pull reconciliation reads
 
-- [ ] Add the fixed `workflow_tool_invoked` signal and envelope.
-- [ ] Send each pending emission to its immutable bound receiver id.
-- [ ] Append delivered/terminal-failure facts.
-- [ ] Make retry safe across the signal-accepted/append gap.
-- [ ] Carry binding and outbox state through session continue-as-new.
-- [ ] Provide a reusable receiver-side invocation deduper/helper.
+- [ ] Add the internal `read_port_emissions(session_id, run_id)` operation
+      over the session log/projection.
+- [ ] Guarantee boundary completeness: every emission of a run is readable
+      once that run's terminal emission is delivered.
+- [ ] This is the operation P101's `read_work_cycle_result` builds on.
 
-### Slice 4: Prove multiple receivers and Work
+### Slice 5: Push delivery on the shared spine (deferred)
 
-- [ ] Register a minimal service receiver with a different port schema.
+Gated on the first mid-run receiver (approval service or request/reply
+ports). Not required for P101.
+
+- [ ] Enqueue `PortInvocation` envelopes on the `Emitted` transition into
+      the same flush queue as run-terminal emissions.
+- [ ] Per-receiver FIFO in log order; deterministic bounded retry;
+      head-of-line semantics.
+- [ ] Terminal `DeliveryFailed` append on exhausted/non-retryable delivery;
+      queue entry dropped; projection updated.
+- [ ] Flush-queue quiescence gates continue-as-new (existing P92 rule, no
+      new gate).
+- [ ] Receiver-side high-water dedup exercised under duplicate and restart
+      conditions.
+
+### Slice 6: Prove multiple receivers and Work
+
+- [ ] Register a minimal synthetic service receiver with a different port
+      schema (this replaces the first draft's messaging topology as the
+      second-receiver proof).
 - [ ] Bind controller and service ports to the same session and prove each
-      invocation reaches only its fixed receiver.
+      emission resolves to only its fixed receiver.
 - [ ] Have P101 declare `work_report` when it creates its managed session.
-- [ ] Deliver `WorkReportV1` through `workflow_tool_invoked`.
-- [ ] Buffer delivery before run terminal and reconcile only after the exact
-      run terminates.
-- [ ] Prove no Work-specific tool effect, Temporal signal, or delivery loop is
+- [ ] Prove Work consumes `WorkReportV1` by pull at the run-terminal
+      boundary with no port-specific transport.
+- [ ] Prove no Work-specific tool effect, signal, or delivery loop is
       required.
 
-### Slice 5: Failure and compatibility coverage
+### Slice 7: Failure and compatibility coverage
 
-- [ ] Test schema-invalid calls create no emission.
+- [ ] Test schema-invalid and cap-exceeding calls create no emission.
 - [ ] Test duplicate tool-result admission creates one emission.
-- [ ] Test crash before signal and crash after signal/before delivered append.
-- [ ] Test duplicate receiver delivery.
+- [ ] Test pull reads are complete at the run-terminal boundary across
+      worker restart and session continue-as-new.
 - [ ] Test public config cannot retarget controller or service bindings.
 - [ ] Test ordinary feature reconciliation can add/remove its own built-in
       service ports at an idle boundary.
-- [ ] Test each receiver and the session continue-as-new independently.
-- [ ] Test receiver absent, protocol mismatch, and terminal delivery failure.
-- [ ] Confirm Fleet, Promises, messaging bridges, MCP, and standalone sessions
-      are unchanged.
+- [ ] With slice 5: crash before signal, crash after signal/before receiver
+      apply, duplicate delivery, receiver absent, terminal delivery
+      failure, both sides' continue-as-new independently.
+- [ ] Confirm Fleet, Promises, messaging bridges, MCP, and standalone
+      sessions are unchanged.
 
 Live Temporal tests must source `local/env.sh` and run serially with
 `--test-threads=1`.
@@ -922,45 +1096,53 @@ Live Temporal tests must source `local/env.sh` and run serially with
 
 P100 is complete when:
 
-1. A trusted controller workflow can create/own a session with a typed port,
-   while a known feature can independently add a port bound to a registered
-   service workflow.
-2. The model sees only the declared tool name, description, and schema; it
+1. One envelope and one fixed signal carry run-terminal notifications to
+   session and non-session receivers alike; the promise-specific signal
+   vocabulary is gone.
+2. A trusted controller workflow can create/own a session with a typed
+   port, while a known feature can independently add a port bound to a
+   registered service workflow.
+3. The model sees only the declared tool name, description, and schema; it
    cannot choose the receiver or transport.
-3. A valid call atomically produces an ordinary successful tool result and one
-   typed, CAS-backed `WorkflowPort::Emitted` fact linked to the exact
+4. A valid call atomically produces an ordinary successful tool result and
+   one typed, CAS-backed `WorkflowPort::Emitted` fact linked to the exact
    run/turn/batch/call.
-4. The session delivers the invocation through one fixed generic Temporal
-   signal with at-least-once semantics.
-5. Retry, duplicate delivery, worker restart, and both workflows'
-   continue-as-new do not lose an invocation or apply one receiver transition
-   twice.
-6. Invalid arguments and unauthorized port declaration/mutation fail without
-   emitting or signaling.
+5. A boundary-subscribed receiver can read a run's complete emissions at
+   the run-terminal boundary across retry, restart, and continue-as-new.
+6. Invalid arguments, cap violations, and unauthorized port
+   declaration/mutation fail without emitting.
 7. Toolset derivation remains capability-driven and no public
    `session/tools/update` surface returns.
-8. P101 implements `work_report` only as a schema and Work handler over this
-   substrate, with no Work-specific transport.
-9. One session can deliver controller and service port invocations to two
-   different fixed receiver workflows without changing the session engine or
-   delivery pump.
-10. Existing Fleet, Promise, external messaging, MCP, and run-terminal behavior
-   remains unchanged.
+8. P101 implements `work_report` only as a schema and a pull-consuming Work
+   handler over this substrate, with no Work-specific transport.
+9. One session can bind controller and service ports to two different fixed
+   receiver workflows without changing the session engine.
+10. The session log contains no transport bookkeeping events; `Emitted` and
+    terminal `DeliveryFailed` are the only port events.
+11. Existing Fleet, Promise, external messaging, MCP, and run-terminal
+    behavior remains semantically unchanged (renamed, not re-implemented).
 
 ## Follow-On Boundary
 
-P100 intentionally leaves these seams:
+P100 intentionally leaves these seams, designed-for but unbuilt:
 
-- request/reply ports may create Promises;
-- an authenticated workflow SDK may expose custom endpoint registration and
-  controller-owned managed-session creation;
-- the existing messaging tools may migrate to a MessagingWorkflow using the
-  topology defined here;
-- port invocation projections may feed mission control or evals;
-- hardened deterministic workflows may expose request ports as agent tools;
-- external systems may start controller workflows through a separate ingress
+- **Request/reply ports**: `Promise::Created` in the same append as
+  `Emitted`, `reply_promise_id` in the envelope, resolution through the
+  ordinary spine; subject to the re-entrancy law.
+- **Workflow-as-tool**: start an admitted workflow kind from the endpoint
+  registry with a deterministic id and a `PromiseSource::Workflow` promise
+  resolved by its terminal emission.
+- **Push delivery** for mid-run receivers (slice 5).
+- An authenticated workflow SDK exposing custom endpoint registration and
+  controller-owned managed-session creation.
+- The env-job push folding onto the shared envelope.
+- The messaging migration, if a MessagingWorkflow responsibility that outbox
+  rows cannot own is ever named.
+- Port emission projections feeding mission control or evals.
+- Hardened deterministic workflows exposing request ports as agent tools.
+- External systems starting controller workflows through a separate ingress
   plane.
 
-Those extensions should reuse the fixed envelope, invocation identity, event
-family, and authority model. They should not weaken the central rule: the
+Those extensions must reuse the fixed envelope, emission identity, event
+family, and authority model. They must not weaken the central rule: the
 agent chooses a granted semantic operation, never an arbitrary destination.

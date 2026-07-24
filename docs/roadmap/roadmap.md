@@ -1,11 +1,13 @@
 # Lightspeed Roadmap
 
 ## Work
-- [ ] [P100](p100-workflow-tool-ports.md) — workflow-bound typed function
-  tools that turn agent calls into log-backed, schema-validated,
-  at-least-once signals to a fixed receiver per binding; supports both
-  lifecycle controllers and shared workflow services, and is used first by
-  Work
+- [ ] [P100](p100-workflow-tool-ports.md) — the workflow emission substrate:
+  one envelope and one fixed `deliver_emission` signal for all
+  session-to-workflow facts (run-terminal notifications generalize onto it),
+  plus workflow-bound tool ports — schema-validated function tools whose
+  calls become log-backed emissions for a fixed receiver per binding;
+  pull-consumed first (Work), push delivery deferred to the first mid-run
+  receiver
 - [ ] [P101](p101-durable-work-workflow.md) — durable Work as a Temporal-owned
   goal loop over one managed session and many execution runs; explicit
   completion/blockage reports over P100 ports, automatic continuation, caller
@@ -56,9 +58,11 @@
   compaction: watermarked drop-oldest pruning via `context/remove`, then
   summarize-and-replace, so always-on group sessions stay bounded
 - [x] Password/code-based login in channel (instead of whitelisting)
-- [ ] Move `message_send`/`message_edit`/`message_react` behind a P100
-  MessagingWorkflow while retaining the outbox as the bridge-facing delivery
-  queue/projection
+- [ ] (candidate, demoted 2026-07-24) `MessagingWorkflow` behind P100 ports —
+  reopens only if a messaging orchestration responsibility that outbox rows
+  cannot own is named; delivery-confirmation promises need only a bridge ack
+  resolving a P92 Promise (see P100 "Messaging: A Candidate, Not A
+  Commitment")
 - [ ] Support Slack
 
 ## Security Auth
@@ -78,6 +82,9 @@
 - [ ] External Temporal workflow SDK: authenticated P100 endpoint
   registration plus managed-session start/control operations
 - [ ] Request/reply workflow tools over P100 ports + P92 Promises
+  (`reply_promise_id` seam reserved in the P100 envelope)
+- [ ] Workflow-as-tool: start admitted workflow kinds from the P100 endpoint
+  registry with deterministic ids and `PromiseSource::Workflow` promises
 - [x] [P90](p90-multi-tenancy.md) — multi-tenant worker: multiple universes
       per deployment, composed workflow ids, per-request universe resolution
       (`single` / `trusted-header` / `api-key` modes), principal pass-through,

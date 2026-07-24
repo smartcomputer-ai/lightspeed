@@ -8,10 +8,17 @@
   sections for what shipped).
 - G3 second cut (document input: PDF + text-based documents) and bridge
   typing indicators implemented 2026-06-12.
-- P100 follow-on: migrate `message_send`, `message_edit`, and `message_react`
-  from direct tool activities to workflow-bound ports targeting a
-  same-universe `MessagingWorkflow`. Keep the PostgreSQL outbox as the
-  bridge-facing delivery queue/projection; `message_noop` may remain inline.
+- P100 relationship (revised 2026-07-24): the earlier plan to migrate
+  `message_send`/`message_edit`/`message_react` onto P100 workflow ports
+  behind a `MessagingWorkflow` is **demoted to a candidate**. The messaging
+  tools stay on the direct idempotent outbox-write path: retry, status, ack,
+  and rate state already live on durable outbox rows, and a workflow between
+  tool and outbox would own no additional state while adding a hot
+  per-universe workflow. The migration reopens only if a real orchestration
+  responsibility that outbox rows cannot own is named first; "wait for
+  actual channel delivery" needs only a bridge ack resolving a P92 Promise,
+  not a workflow receiver. See P100's "Messaging: A Candidate, Not A
+  Commitment".
 - Builds on the P70 external integration surface (schema export, TS client,
   idempotent `run/start`, long-poll `session/events/read`), the first-cut
   Telegram/WhatsApp bridge in `interop/messaging/`, and the timers/triggers
@@ -72,14 +79,15 @@ session log (or buffered and attached to the next activated run) with no LLM
 call. Only an explicit per-chat `always` activation mode runs turns on
 unaddressed messages, and then debounced.
 
-**Side effects stay outside the engine.** Today `message_send` executes as a
-worker activity that appends a durable outbox row. The P100 follow-on moves
-message mutation lifecycle into a `MessagingWorkflow`: the session records a
-generic workflow-port invocation, and the receiver workflow appends/updates
-the outbox through idempotent activities. Channel connections (grammY,
-Baileys) stay in the bridge process; the gateway keeps only channel-neutral
-methods (`context/append`, `outbox/read`, `outbox/ack`), preserving the P70
-rule that the bridge adds no channel-specific endpoints to Lightspeed.
+**Side effects stay outside the engine.** `message_send` executes as a
+worker activity that appends a durable outbox row — a synchronous,
+idempotent, durable enqueue. This remains the settled shape (the 2026-07-24
+P100 revision demoted the `MessagingWorkflow` port migration to a candidate;
+the outbox row is the delivery-lifecycle authority). Channel connections
+(grammY, Baileys) stay in the bridge process; the gateway keeps only
+channel-neutral methods (`context/append`, `outbox/read`, `outbox/ack`),
+preserving the P70 rule that the bridge adds no channel-specific endpoints
+to Lightspeed.
 
 **Worker never calls the bridge.** Tool execution must not depend on bridge
 liveness or reachability. The outbox decouples them: the tool durably

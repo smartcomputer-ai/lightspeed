@@ -6,10 +6,14 @@
   the durable objective-achievement loop.
 - Renumbered from P100 when its generic workflow-tool port substrate was split
   into the new P100 proposal.
+- Revised 2026-07-24 with the P100 revision: run-terminal notifications ride
+  P100's generic emission envelope and fixed `deliver_emission` signal, and
+  Work consumes `work_report` emissions by **pull** at run reconciliation —
+  Work needs no push delivery pump and keeps no signal-buffering state.
 - Greenfield: wire and internal workflow protocol changes may be breaking. Do
   not retain promise-specific compatibility aliases when extracting an already
   generic run-terminal transport.
-- Builds on **P100 (Workflow-Bound Tool Ports)**, **P92 (Unified
+- Builds on **P100 (Workflow Emissions And Tool Ports)**, **P92 (Unified
   Suspension)**, and the Fleet `agent_request`/run-promise machinery.
 
 ## Decision
@@ -48,12 +52,14 @@ work_report(outcome = complete | blocked, ...)
 
 P100 admits that port with the managed session and gives it the fixed
 `AgentWorkWorkflow` controller. A valid call becomes a typed, log-backed
-workflow-port emission and is delivered through P100's single generic
-`workflow_tool_invoked` Temporal signal.
+workflow-port emission in the managed session's log.
 
-The Work workflow buffers the report but does not act on it until the existing
-run-terminal notification arrives. It then reconciles the exact completed run
-and decides what to do next.
+Work does not receive report deliveries mid-run at all. When the existing
+run-terminal emission arrives, Work reconciles the exact completed run —
+reading that run's durable port emissions through P100's pull operation —
+and decides what to do next. The run-terminal boundary guarantees every
+prior emission for that run is durable, so the pull is complete by
+construction.
 
 P101 therefore adds no Work-specific message bus, subscription system, signal,
 tool transport, or caller-selected workflow address.
@@ -95,8 +101,8 @@ caller
 AgentWorkWorkflow
   -> create/reopen one managed session
   -> start cycle 1 with objective + Work instructions
-  <- existing run-terminal notification
-  -> reconcile buffered and log-backed port reports
+  <- existing run-terminal emission
+  -> pull and reconcile the run's log-backed port reports
 
   if work_report(complete)
     -> publish completed Work result
@@ -170,8 +176,8 @@ different jobs:
 | `message_send` and bridge tools | outbound delivery to WhatsApp, Telegram, and other external channels through the messaging outbox |
 | `agent_send` | fire-and-forget content delivery into another session's mailbox |
 | `agent_request` + Promise | ask another session to run and create an awaitable result |
-| `RunTerminalNotifyIntent` | log-backed completion edge that wakes a holder workflow when one specific run terminates |
-| P100 workflow-bound tool port | schema-validated semantic fact emitted by a session to one fixed admitted receiver workflow |
+| run-terminal emission (`RunTerminalNotifyIntent`) | log-backed completion edge, delivered on P100's emission spine, that wakes a holder workflow when one specific run terminates |
+| P100 workflow-bound tool port | schema-validated semantic fact emitted by a session for one fixed admitted receiver workflow |
 
 P101 must compose these primitives rather than create a Work-specific
 transport.
@@ -200,30 +206,29 @@ is a workflow consumer of the same lower-level substrate.
 
 ### Session to Work
 
-The managed session uses the existing run-terminal notification edge. P101 may
-rename promise-specific receiver DTOs and signal names to reflect their already
-generic semantics:
+The managed session uses the existing run-terminal notification edge, which
+P100 slice 1 generalizes into the emission envelope:
 
 ```rust
-pub struct RunTerminalNotification {
-    pub token: String,
-    pub run_id: RunId,
-    pub status: RunStatus,
-    pub output_ref: Option<BlobRef>,
-    pub failure_message_ref: Option<BlobRef>,
+EmissionBody::RunTerminal {
+    token: String,
+    run_id: RunId,
+    status: RunStatus,
+    output_ref: Option<BlobRef>,
+    failure_message_ref: Option<BlobRef>,
 }
 ```
 
 Both sessions holding run-backed Promises and Work workflows receive the same
-fixed `run_terminal` signal:
+fixed `deliver_emission` signal:
 
 - `AgentSessionWorkflow` maps the opaque token to its local `PromiseId` and
   admits the existing `ResolvePromise` command.
 - `AgentWorkWorkflow` maps the opaque token to its current execution cycle.
 
-This is a generalization of the existing transport, not another transport.
-There is still one log-backed notify-intent, one fixed terminal signal, and no
-subscription table.
+This is the existing transport under its generic name, not another
+transport. There is still one log-backed notify-intent, one fixed signal,
+and no subscription table.
 
 ### Agent to Work
 
@@ -239,28 +244,29 @@ schema revision:  1
 receiver:         this session's AgentWorkWorkflow
 ```
 
-P100 validates the arguments, atomically records the tool result and
-`WorkflowPort::Emitted` fact, and delivers a bounded
-`WorkflowToolInvocation` envelope to Work. Work deduplicates by invocation id
-and buffers matching envelopes by run id. Payload decoding occurs through the
-run-reconciliation activity because the Temporal workflow does not read CAS
-directly.
+P100 validates the arguments and atomically records the tool result and the
+`WorkflowPort::Emitted` fact in the session log. Nothing is pushed to Work
+mid-run: Work is a boundary-subscribed receiver in P100's terms, and pull
+consumption is complete by construction once the run-terminal emission
+arrives.
 
-Port delivery and run-terminal delivery are independent, so either may arrive
-first. Work acts only after it has the terminal boundary for the matching run.
-It then reads the exact completed run through an activity/runtime adapter and
-reconciles:
+At that boundary, Work reads the exact completed run through the
+run-reconciliation activity (the Temporal workflow does not read CAS or the
+session log directly) and reconciles:
 
-- buffered `lightspeed.work.report.v1` invocations for that run;
-- matching port emission facts from the session log as a recovery source;
+- the run's `lightspeed.work.report.v1` port emissions, read through P100's
+  `read_port_emissions` operation;
 - the terminal assistant output ref;
 - whether any non-control tool was invoked;
 - any malformed or conflicting reports.
 
-The run-terminal boundary guarantees that all prior port emissions for that
-run are durable. P101 adds only the Work payload and handler; declaration,
-schema validation, log events, retries, and the Temporal signal belong to
-P100.
+Because reports are consumed only by pull, Work keeps no invocation buffer
+and no dedupe set for port signals; reconciliation is idempotent because the
+activity result is recorded once per cycle and repeated reconciliation of an
+already-reconciled cycle is a no-op. P101 adds only the Work payload and
+handler; declaration, schema validation, log events, and the pull read
+belong to P100. If Work ever needs mid-run reports (it should not), that is
+P100's deferred push slice, not a Work-specific transport.
 
 ### Caller to Work
 
@@ -281,9 +287,10 @@ P101 includes:
 3. Multiple sequential execution cycles in that session.
 4. Named-profile execution with P100's `work_report` port declared by the
    managed-session setup path.
-5. A Work-owned payload schema and handler for that generic port.
-6. Reuse/generalization of `RunTerminalNotifyIntent` and its fixed terminal
-   notification signal.
+5. A Work-owned payload schema and pull-consuming handler for that generic
+   port.
+6. Reuse of `RunTerminalNotifyIntent` and P100's fixed `deliver_emission`
+   signal for run-terminal delivery to a non-session receiver.
 7. A shared internal run-request operation used by Fleet and Work.
 8. Automatic continuation when a run terminates without a disposition.
 9. Blocked Work that resumes when caller input arrives.
@@ -356,11 +363,13 @@ replace the behavior or run a second system beside it.
 
 P100 supplies the other reusable substrate:
 
+- the generic emission envelope and fixed `deliver_emission` signal carrying
+  run-terminal notifications to session and non-session receivers alike;
 - an optional trusted lifecycle-controller reference on the managed session;
 - function-tool ports with a fixed admitted receiver per binding;
-- typed `WorkflowPort::Emitted` session events;
-- a fixed `workflow_tool_invoked` Temporal signal;
-- at-least-once delivery and deterministic invocation identity.
+- typed `WorkflowPort::Emitted` session events with deterministic invocation
+  identity;
+- the boundary-complete `read_port_emissions` pull operation.
 
 P101 consumes that substrate and must not fork or specialize it.
 
@@ -373,7 +382,8 @@ tool name:         work_report
 semantic type:     lightspeed.work.report.v1
 schema revision:   1
 receiver:          the creating AgentWorkWorkflow
-delivery:          notify
+mode:              notify
+consumption:       pull at run reconciliation
 ```
 
 The tool is present because of Work's controller-bound port declaration, not a
@@ -473,8 +483,6 @@ pub struct AgentWorkWorkflow {
     status: WorkStatus,
     attempt: Option<WorkAttempt>,
     pending_terminal: Option<RunTerminalNotification>,
-    pending_port_invocations: BTreeMap<RunId, Vec<WorkflowToolInvocation>>,
-    handled_port_invocations: BTreeSet<WorkflowToolInvocationId>,
     pending_input: Vec<ContextEntryInput>,
     result: Option<WorkResult>,
     cancel_requested: bool,
@@ -512,8 +520,11 @@ pub struct WorkReportInvocation {
 }
 ```
 
-`WorkReportInvocation` is a bounded, decoded activity result. Workflow signal
-handlers store the generic P100 envelope and never perform CAS I/O.
+`WorkReportInvocation` is a bounded, decoded activity result produced by run
+reconciliation. `RunTerminalNotification` names the buffered
+`EmissionBody::RunTerminal` payload. The workflow's signal handler stores
+only that bounded terminal body; port reports never arrive by signal and the
+workflow never performs CAS or session-log I/O.
 
 The first status vocabulary is semantic rather than a mirror of run status:
 
@@ -548,12 +559,11 @@ initialize
   -> Working
 
 Working with active cycle
-  -> wait for workflow_tool_invoked, run_terminal, caller input, or cancellation
-  -> matching work_report envelopes are deduplicated and buffered
+  -> wait for the run-terminal emission, caller input, or cancellation
   -> caller input is queued; it does not create a parallel run
 
 run_terminal
-  -> reconcile buffered reports plus exact completed run
+  -> reconcile the exact completed run, pulling its port emissions
 
   cancelled/failed run
     -> map to terminal Work outcome in P101
@@ -591,11 +601,10 @@ Only one cycle may be active at a time. The Work workflow writes the
 `WorkCycle` record before scheduling the retryable start/enqueue operation so a
 very fast run can safely notify Work before the operation returns.
 
-`workflow_tool_invoked` may arrive before or after `run_terminal`. Work does
-not transition from a report alone. If terminal arrives first, reconciliation
-reads the session log for the exact run and includes any durable port emission
-whose signal has not yet been handled. A later duplicate signal is discarded
-by invocation id.
+Work never transitions from a report alone: reports are visible to Work only
+through reconciliation at the terminal boundary, which reads the run's
+durable port emissions by pull. A duplicate terminal emission for an
+already-reconciled cycle is a no-op.
 
 ## Initial And Continuation Inputs
 
@@ -675,10 +684,11 @@ pub struct WorkCycleResult {
 }
 ```
 
-The activity validates that each report is a P100 port emission from the
-admitted `work_report` binding and belongs to the requested run. The workflow
-merges those log-backed reports with already buffered signal deliveries by
-`invocation_id`, then derives at most one `WorkDisposition`.
+The activity reads the run's port emissions through P100's
+`read_port_emissions` operation and validates that each report comes from the
+admitted `work_report` binding and belongs to the requested run. The
+workflow derives at most one `WorkDisposition` from the returned reports,
+deduplicated by `invocation_id`.
 
 The activity performs I/O; the workflow records its returned facts in Temporal
 history. The deterministic Work state machine branches only on that result.
@@ -829,34 +839,35 @@ diagnostics.
 
 ### Work disposition is committed before terminal delivery
 
-This is the normal ordering in the session log. The port signal and terminal
-signal may reach Work in either order. Work reads and interprets the report only
-after the matching terminal boundary is known.
+This is the normal ordering in the session log. Work reads and interprets the
+report only after the matching terminal boundary is known, and the boundary
+guarantees the emission is readable then.
 
-### Duplicate or stale port invocation
+### Duplicate or stale port emission
 
-Duplicate `workflow_tool_invoked` delivery is ignored by invocation id. A
-report from another session, unknown binding, terminal cycle, or unrelated run
-does not mutate Work and is retained only as a bounded diagnostic.
+Reconciliation deduplicates reports by invocation id. A report from another
+session, unknown binding, terminal cycle, or unrelated run does not mutate
+Work and is retained only as a bounded diagnostic.
 
 ### Tool activity retries
 
 The tool call id and normal session tool-result admission remain idempotency
-anchors. P100 emits one deterministic workflow-port invocation and may deliver
-its signal more than once; Work's invocation deduper applies the disposition
-once.
+anchors. P100 emits one deterministic workflow-port invocation; repeated
+reconciliation reads return the same emission and derive the same
+disposition.
 
 ### Session continues as new
 
-The notify-intent lives on the stored run record and is rebuilt. P100 carries
-pending port delivery state forward. Pending outbound delivery gates session
-continue-as-new.
+The notify-intent lives on the stored run record and is rebuilt. Port
+emissions are ordinary session-log facts and need no carried delivery state;
+only the run-terminal emission's transient flush queue gates session
+continue-as-new, per P92 §6.
 
 ### Work continues as new
 
 The workflow id remains stable. Objective, attempt, active cycle, pending
-terminal notification, buffered port reports, invocation dedupe state, queued
-input, and result state are carried into the next run.
+terminal notification, queued input, and result state are carried into the
+next run.
 
 ### Caller input races terminal completion
 
@@ -921,33 +932,30 @@ state, while `AgentWorkWorkflow` interprets `WorkReportV1`.
 
 ## Implementation Plan
 
-### Slice 1: Extract and prove the shared run-completion substrate
+### Slice 1: Consume the shared run-completion substrate
 
-- [ ] Rename promise-specific terminal DTO/signal names to
-      `RunTerminalNotification` / `run_terminal`.
-- [ ] Include the observed `run_id` in the notification.
+P100 slice 1 owns the emission envelope, the fixed `deliver_emission`
+signal, and the deletion of the promise-specific vocabulary. P101 consumes
+it:
+
 - [ ] Keep `RunTerminalNotifyIntent` log-backed on run admission.
-- [ ] Adapt `AgentSessionWorkflow` to map the token into its existing Promise
-      resolution admission.
+- [ ] Register the fixed `deliver_emission` handler on `AgentWorkWorkflow`
+      and map `RunTerminal` tokens to execution cycles.
 - [ ] Factor the retry-safe lower-level session run-request operation from
       Fleet so Work can supply a non-session holder workflow id/token.
 - [ ] Preserve all Fleet Promise, duplicate delivery, cancellation, and
       continue-as-new tests.
-- [ ] Prove in a protocol test that a non-session workflow receives the same
-      terminal notification.
 
 ### Slice 2: Bind Work to the P100 port substrate
 
 - [ ] Start the managed session with Work as its P100 controller.
 - [ ] Declare the `work_report` function schema with semantic type
       `lightspeed.work.report.v1`.
-- [ ] Decode and validate the typed payload through a Work-owned activity, not
-      in the session core or deterministic workflow code.
-- [ ] Buffer and deduplicate port signals by invocation id and run id.
-- [ ] Add exact-run reconciliation that merges signal deliveries with durable
-      session port emissions.
-- [ ] Test signal-before-terminal, terminal-before-signal, duplicate,
-      malformed, stale, and conflicting reports.
+- [ ] Decode and validate the typed payload through the Work-owned
+      reconciliation activity over P100's `read_port_emissions`, not in the
+      session core or deterministic workflow code.
+- [ ] Test report-before-terminal ordering, duplicate terminal emissions,
+      repeated reconciliation, malformed, stale, and conflicting reports.
 
 ### Slice 3: Work workflow and goal loop
 
