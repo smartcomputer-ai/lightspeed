@@ -1,8 +1,8 @@
 use super::*;
 use engine::{
-    ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentJoins, EventSeq,
-    PromiseScope, PromiseSource, PromiseStatus, RunId, RunRecord, RunStatus,
-    RunTerminalNotifyIntent, ToolBatchId, ToolCallId, TurnId,
+    ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentEntry, CoreAgentJoins,
+    EventSeq, PromiseScope, PromiseSource, PromiseStatus, RunId, RunRecord, RunStatus,
+    RunTerminalNotifyIntent, SessionPosition, ToolBatchId, ToolCallId, TurnId,
 };
 
 #[test]
@@ -139,6 +139,66 @@ fn source_resolution_emission_queues_direct_promise_resolution() {
             },
         } if promise_id.as_str() == "p1" && actual == &payload_ref
     ));
+}
+
+#[test]
+fn duplicate_source_resolution_delivery_is_an_end_to_end_noop() {
+    let mut workflow = AgentSessionWorkflow::default();
+    workflow.core_state.lifecycle.status = CoreAgentStatus::Open;
+    workflow.core_state.promises.promises.insert(
+        engine::PromiseId::new("p1"),
+        promise("p1", PromiseStatus::Pending),
+    );
+    let payload_ref = engine::BlobRef::from_bytes(b"job output");
+    let envelope = engine::EmissionEnvelope::source_resolution(
+        test_universe(),
+        "universe/envjob-job_1".to_owned(),
+        engine::PromiseId::new("p1"),
+        engine::PromiseResolution::Resolved {
+            payload_ref: Some(payload_ref.clone()),
+        },
+    );
+    workflow.queue_emission(test_universe(), envelope.clone());
+    workflow.queue_emission(test_universe(), envelope);
+
+    let admissions = std::mem::take(&mut workflow.pending_admissions);
+    assert_eq!(admissions.len(), 2);
+    let mut appended = 0u64;
+    for (index, admission) in admissions.into_iter().enumerate() {
+        let proposals =
+            engine::admit_command(&workflow.core_state, admission.command, index as u64 + 1)
+                .expect("admit duplicate emission");
+        appended += proposals.len() as u64;
+        for proposal in proposals {
+            let seq = workflow
+                .core_state
+                .reduced_to
+                .as_ref()
+                .map_or(1, |position| position.seq.as_u64() + 1);
+            engine::apply_event(
+                &mut workflow.core_state,
+                &CoreAgentEntry {
+                    position: SessionPosition {
+                        seq: EventSeq::new(seq),
+                    },
+                    observed_at_ms: index as u64 + 1,
+                    joins: proposal.joins,
+                    event: proposal.event,
+                },
+            )
+            .expect("apply first promise resolution");
+        }
+    }
+
+    assert_eq!(appended, 1);
+    let promise = workflow
+        .core_state
+        .promises
+        .promises
+        .get(&engine::PromiseId::new("p1"))
+        .expect("resolved promise");
+    assert_eq!(promise.status, PromiseStatus::Resolved);
+    assert_eq!(promise.payload_ref.as_ref(), Some(&payload_ref));
 }
 
 #[test]

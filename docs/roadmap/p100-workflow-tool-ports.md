@@ -34,8 +34,9 @@
   mode and `activity_type` metadata were removed because hosted tools already
   execute inside the enclosing `tool_invoke_batch` Temporal activity.
 - Slice 4 pull reconciliation reads implemented 2026-07-24: the engine
-  projects one run's invocations in log order, authorizes by exact durable
-  receiver binding, rejects malformed or unbound reads, and keeps inherited
+  replays the complete log through the ordinary reducer, then projects one
+  run's invocations in log order, authorizes by exact durable receiver
+  binding, rejects malformed or unbound reads, and keeps inherited
   source-session emissions out of fork reads; the Temporal worker wraps that
   projection with its existing universe-scoped, paginated session store.
   Protocol coverage proves an emission preceding a durable run-terminal
@@ -43,6 +44,28 @@
   `read_work_cycle_result` on this internal operation. The projection takes
   explicit domain arguments rather than defining a wire DTO; P101 owns the
   actual reconciliation activity request/result in `temporal-workflow`.
+- Implementation review and hardening 2026-07-24 (slices 1-4 verified
+  against this spec; affected Rust suites green). Confirmed: both
+  promise-specific signal families are grep-clean with no transitional dual
+  funnel; envelope/ids are deterministic, domain-separated, and
+  substrate-neutral (`engine` gained no transport or Temporal dependency);
+  binding and creation fingerprints now use an explicit canonical v1 field
+  encoding rather than serde output; pull reads replay the ordinary reducer,
+  so durable binding, canonical id, joins, arguments ref, and successful
+  call invariants are rechecked before projection; duplicate receiver
+  delivery is proven to resolve once and become an end-to-end no-op. The
+  endpoint-registry/service half of slice 2 remains structurally absent
+  (`WorkflowPortState` has no service bindings and invocation lookup consults
+  controller bindings only), which blocks the service-specific parts of
+  slices 6/7 but not P101's controller port or independent failure coverage.
+  The spec's named projection summary views were superseded by bounded
+  event-stream variants — recorded in the API section with the port-summary
+  read kept as an open item. The worker-level pull wrapper is
+  `#[allow(dead_code)]` until P101 lands its reconciliation activity —
+  intentional under "refactor fully, extend lazily", noted so it is not
+  mistaken for wired-through coverage. Temporal signal calls correctly stay
+  in the Temporal workflow adapter; a runtime-neutral async transport trait
+  is not a slice-1 requirement.
 - Greenfield: internal workflow protocols and engine event vocabulary change
   without compatibility aliases. Replaced surfaces (the `resolve_promise` /
   `resolve_promise_source` signal split, promise-specific notification DTO
@@ -53,7 +76,8 @@
   there is exactly one signal era, never a transitional third. Everything
   that is *new capability* — push port delivery, request/reply,
   workflow-as-tool — waits for its first consumer, but its seams (envelope
-  fields, registry shape, transport trait) are fixed here and now.
+  fields, registry shape, and workflow-substrate adapter boundary) are fixed
+  here and now.
 - First consumer: **P101 (Durable Work)**, which declares `work_report` when
   it creates its managed session and consumes emissions by **pull** at run
   reconciliation.
@@ -462,6 +486,13 @@ fingerprints derive from the source universe, admitted feature/config
 revision, and resolved registered service endpoint, and the resolved binding
 is likewise snapshotted in the log.
 
+Fingerprint-input stability hardened 2026-07-24: binding and creation
+fingerprints use an explicit versioned, length-prefixed field encoding.
+Serde field order, JSON formatting, and unrelated DTO representation changes
+do not participate in identity. Golden digest tests pin the v1 encoding;
+adding a new identity-bearing field requires an explicit encoding-version
+decision.
+
 At invocation:
 
 - the call resolves to the exact binding from its planned toolset revision;
@@ -514,8 +545,8 @@ Toolset reconciliation consumes both sections and still produces one
 `ToolPatch` and one toolset revision. It installs each port as:
 
 - a normal `ToolKind::Function(FunctionToolSpec)` for provider presentation;
-- a runtime `ToolBinding` whose execution mode is
-  `WorkflowPort { port_id, binding_fingerprint }`.
+- a runtime `ToolBinding` whose dispatch mode is
+  `ToolDispatchMode::WorkflowPort { port_id, binding_fingerprint }`.
 
 This is not a return to an externally writable `session/tools/update` API.
 Callers declare capabilities; the runtime still materializes tools.
@@ -758,6 +789,15 @@ invocations whose durable binding targets that receiver. A lifecycle
 controller cannot read a service receiver's payloads merely because both
 ports belong to the same session, and vice versa.
 
+The read **fails closed** and first replays every entry through the ordinary
+engine reducer. An unknown binding, a non-canonical or duplicate invocation
+id, a join mismatch, a tampered durable binding, a mismatched arguments ref,
+or an emission without its successful tool call fails the entire read rather
+than silently skipping the bad entry — a poisoned log is an operational
+error, never an empty result. Receivers must treat a read failure as a
+cycle-level fault (P101: the reconciliation activity errors and the Work
+state machine surfaces it), not as "no reports".
+
 The run-terminal boundary guarantees every prior emission for that run is
 durable, so a pull at the boundary is complete by construction. No pump, no
 delivery events, no receiver dedup set, no continue-as-new outbox concerns.
@@ -821,38 +861,23 @@ this substrate are meant to outlive any single durable-workflow engine:
   `WorkflowPortConfigEvent` families, deterministic reducer state, and the
   invariants above. The engine holds no transport state and performs no
   delivery I/O.
-- **Transport contract (runtime-neutral async trait):**
-
-```rust
-#[async_trait]
-pub trait EmissionTransport {
-    /// Deliver one envelope to one admitted endpoint.
-    async fn deliver(
-        &self,
-        endpoint: &WorkflowEndpointRef,
-        envelope: &EmissionEnvelope,
-    ) -> DeliveryOutcome;
-}
-
-pub enum DeliveryOutcome {
-    Accepted,
-    Retryable(TransportError),
-    Terminal(TransportError),
-}
-```
-
-  plus an endpoint-resolution trait behind the registry. The async transport
-  trait belongs at the runtime boundary, not in deterministic reducer code.
-  Receiver-side envelope helpers are plain library code with no
-  workflow-substrate dependency; the high-water helper lands only with the
+- **Workflow-substrate adapter:** each durable-workflow substrate owns the
+  deterministic command that delivers one envelope to one resolved endpoint.
+  This boundary does not require a shared async trait: workflow SDK contexts
+  are themselves substrate-specific deterministic APIs, not ordinary runtime
+  I/O adapters. Receiver-side envelope helpers remain plain library code with
+  no workflow-substrate dependency; the high-water helper lands only with the
   deferred push slice.
-- **Temporal adapter (reference implementation, `temporal-workflow` /
-  `temporal-server`):** the fixed `deliver_emission` signal, ensure-start
-  policy for service endpoints, replay-rebuilt flush queues, continue-as-new
-  gating. Signals target the stable workflow id, never a run id.
-
-A different durable engine implements `EmissionTransport` and the admission
-funnel; nothing in the neutral envelope or port contract changes.
+- **Temporal adapter (`temporal-workflow` / `temporal-server`):** the fixed
+  `deliver_emission` signal, endpoint resolution/ensure-start policy,
+  replay-rebuilt flush queues, and continue-as-new gating. Signals target the
+  stable workflow id, never a run id. A shared Temporal helper or pump may
+  centralize producer behavior when slice 5 generalizes delivery, but inline
+  `WorkflowContext::external_workflow().signal()` calls inside
+  `temporal-workflow` do not compromise engine neutrality.
+- **Another substrate:** implements its own deterministic delivery command
+  and admission funnel over the same neutral envelope, endpoint, identity,
+  and receiver semantics.
 
 ## Re-entrancy And Edge Direction
 
@@ -1057,27 +1082,22 @@ P100 does not add:
 P100 is primarily an internal workflow protocol. It adds no public mutation
 RPCs.
 
-Existing session reads should project bounded diagnostics:
+Implemented shape (2026-07-24, supersedes this section's earlier named
+summary structs): port declarations, emissions, and delivery failures are
+projected as bounded **session event-stream variants**
+(`WorkflowControllerPortsConfigured`, `WorkflowPortEmitted`,
+`WorkflowPortDeliveryFailed`) carrying ids, refs, and metadata only; the
+internal emit effect is stripped from tool-call effect views so the trusted
+carrier never leaks. Contract artifacts and the TypeScript client are
+regenerated.
 
-```rust
-pub struct WorkflowToolPortView {
-    pub port_id: WorkflowToolPortId,
-    pub tool_name: ToolName,
-    pub semantic_type: String,
-    pub revision: u32,
-    pub receiver_workflow_kind: String,
-    pub binding_fingerprint: String,
-}
-
-pub struct WorkflowPortEmissionView {
-    pub invocation_id: WorkflowToolInvocationId,
-    pub port_id: WorkflowToolPortId,
-    pub run_id: RunId,
-    pub tool_call_id: ToolCallId,
-    pub delivery_failed: bool,
-    pub error_ref: Option<BlobRef>,
-}
-```
+Still open from the original intent: a **bounded current-port summary**
+on session reads (the earlier `WorkflowToolPortView` idea) — "which ports
+does this session have right now, bound to which receiver kind" — answerable
+today only by replaying config events. Land it together with the endpoint
+registry work, when service bindings make the answer non-trivial. Session
+reads are already universe-scoped, so the source universe need not be
+repeated unless a future cross-universe operator view requires it.
 
 Full arguments remain behind the existing CAS/event authorization boundary.
 Do not copy payloads into summary views.
@@ -1115,7 +1135,7 @@ crates/temporal-server/
   controller-authorized managed-session creation path
   workflow endpoint registry (built-in resolver)
   effective config/toolset materialization
-  EmissionTransport Temporal adapter
+  Temporal endpoint resolution and ensure-start policy
   delivery retry/failure projection
 
 crates/api/ and api-projection/
@@ -1175,7 +1195,12 @@ change so no transitional dual-funnel state ever ships.
       creation.
 - [ ] Add the workflow endpoint registry (built-in resolver) with the
       documented two-consumer shape; snapshot every resolved endpoint into
-      the durable binding facts.
+      the durable binding facts. Structural note (review 2026-07-24): this
+      half also extends the reducer and invocation path —
+      `WorkflowPortState` has no service-binding map yet and
+      `binding_for_tool_name`/the runtime lookup consult controller
+      bindings only, so service ports need a second durable config event
+      plus a widened lookup, not just a resolver.
 - [x] Reject raw receiver creation or retargeting from ordinary public
       config writes.
 
@@ -1234,6 +1259,9 @@ ports). Not required for P101.
 
 - [x] Test schema-invalid and cap-exceeding calls create no emission.
 - [ ] Test duplicate tool-result admission creates one emission.
+- [x] Test duplicate `deliver_emission` receiver delivery is an end-to-end
+      no-op: both copies enter the ordinary admission funnel, but
+      `ResolvePromise` first-writer-wins appends one resolution.
 - [ ] Test pull reads are complete at the run-terminal boundary across
       worker restart and session continue-as-new.
 - [ ] Test public config cannot retarget controller or service bindings.

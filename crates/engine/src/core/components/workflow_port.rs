@@ -21,6 +21,7 @@ const WORKFLOW_KIND_MAX_LEN: usize = 128;
 const SEMANTIC_TYPE_MAX_LEN: usize = 192;
 const BINDING_FINGERPRINT_DOMAIN: &str = "lightspeed.workflow-port.binding.v1";
 const CREATION_FINGERPRINT_DOMAIN: &str = "lightspeed.managed-session.creation.v1";
+const FINGERPRINT_ENCODING_VERSION: u32 = 1;
 const INVOCATION_ID_DOMAIN: &str = "lightspeed.workflow-port.invocation.v1";
 const RESERVED_RUN_TERMINAL_SEMANTIC_TYPE: &str = "lightspeed.run.terminal.v1";
 pub const WORKFLOW_PORT_EMIT_EFFECT_KIND: &str = "lightspeed.core.workflow_port.emit";
@@ -144,6 +145,9 @@ pub enum ReadPortEmissionsError {
 
     #[error("decode workflow-port session entry: {0}")]
     Decode(#[from] CodecError),
+
+    #[error("reduce workflow-port session log: {message}")]
+    InvalidSessionLog { message: String },
 
     #[error("invalid durable workflow-port binding {binding_fingerprint}: {message}")]
     InvalidBinding {
@@ -404,8 +408,14 @@ pub fn read_port_emissions(
         seen_invocations: BTreeSet::new(),
         emissions: Vec::new(),
     };
+    let mut reduced = crate::CoreAgentState::new();
     for entry in entries {
         let decoded = CoreAgentCodec.decode_entry(entry)?;
+        crate::apply_event(&mut reduced, &decoded).map_err(|error| {
+            ReadPortEmissionsError::InvalidSessionLog {
+                message: error.to_string(),
+            }
+        })?;
         projection.observe(&decoded)?;
     }
     projection.finish()
@@ -1164,16 +1174,11 @@ fn binding_fingerprint(
     definition: &WorkflowToolPortDefinition,
     receiver: &WorkflowEndpointRef,
 ) -> Result<String, DomainError> {
-    let encoded =
-        serde_json::to_vec(&(session_universe_id, definition, receiver)).map_err(|error| {
-            DomainError::InvariantViolation(format!(
-                "failed to encode workflow port binding fingerprint input: {error}"
-            ))
-        })?;
-    Ok(format!(
-        "wpb:sha256:{}",
-        hex::encode(digest_fields(BINDING_FINGERPRINT_DOMAIN, &[&encoded]))
-    ))
+    let mut hasher = canonical_fingerprint_hasher(BINDING_FINGERPRINT_DOMAIN);
+    update_digest_part(&mut hasher, session_universe_id.as_bytes());
+    update_definition_fingerprint(&mut hasher, definition)?;
+    update_endpoint_fingerprint(&mut hasher, receiver);
+    Ok(format!("wpb:sha256:{}", hex::encode(hasher.finalize())))
 }
 
 fn creation_fingerprint(
@@ -1182,25 +1187,109 @@ fn creation_fingerprint(
     controller: &WorkflowEndpointRef,
     bindings: &[WorkflowToolPortBinding],
 ) -> Result<String, DomainError> {
-    let encoded = serde_json::to_vec(&(session_universe_id, version, controller, bindings))
-        .map_err(|error| {
-            DomainError::InvariantViolation(format!(
-                "failed to encode managed-session creation fingerprint input: {error}"
-            ))
-        })?;
-    Ok(format!(
-        "msc:sha256:{}",
-        hex::encode(digest_fields(CREATION_FINGERPRINT_DOMAIN, &[&encoded]))
-    ))
+    let mut hasher = canonical_fingerprint_hasher(CREATION_FINGERPRINT_DOMAIN);
+    update_digest_part(&mut hasher, session_universe_id.as_bytes());
+    update_digest_part(&mut hasher, &version.to_be_bytes());
+    update_endpoint_fingerprint(&mut hasher, controller);
+    update_digest_part(&mut hasher, &(bindings.len() as u64).to_be_bytes());
+    for binding in bindings {
+        binding.validate()?;
+        update_digest_part(&mut hasher, binding.binding_fingerprint.as_bytes());
+    }
+    Ok(format!("msc:sha256:{}", hex::encode(hasher.finalize())))
+}
+
+fn canonical_fingerprint_hasher(domain: &str) -> Sha256 {
+    let mut hasher = Sha256::new();
+    update_digest_part(&mut hasher, domain.as_bytes());
+    update_digest_part(&mut hasher, &FINGERPRINT_ENCODING_VERSION.to_be_bytes());
+    hasher
+}
+
+fn update_definition_fingerprint(
+    hasher: &mut Sha256,
+    definition: &WorkflowToolPortDefinition,
+) -> Result<(), DomainError> {
+    update_digest_part(hasher, definition.port_id.as_str().as_bytes());
+    update_digest_part(hasher, &definition.revision.to_be_bytes());
+    update_digest_part(hasher, definition.semantic_type.as_bytes());
+    update_digest_part(hasher, definition.tool.name.as_str().as_bytes());
+
+    let ToolKind::Function(function) = &definition.tool.kind else {
+        return Err(DomainError::InvariantViolation(format!(
+            "workflow port {} fingerprint requires a function tool",
+            definition.port_id
+        )));
+    };
+    update_digest_part(hasher, b"function");
+    update_optional_text(hasher, function.model_name.as_ref().map(ToolName::as_str));
+    update_optional_text(
+        hasher,
+        function.description_ref.as_ref().map(BlobRef::as_str),
+    );
+    update_digest_part(hasher, function.input_schema_ref.as_str().as_bytes());
+    update_optional_text(
+        hasher,
+        function.output_schema_ref.as_ref().map(BlobRef::as_str),
+    );
+    update_optional_bool(hasher, function.strict);
+    update_optional_text(
+        hasher,
+        function.provider_options_ref.as_ref().map(BlobRef::as_str),
+    );
+    update_digest_part(
+        hasher,
+        match definition.tool.parallelism {
+            crate::ToolParallelism::Exclusive => b"exclusive",
+            crate::ToolParallelism::ParallelSafe => b"parallel_safe",
+        },
+    );
+    if definition.tool.target_requirement != crate::ToolTargetRequirement::None {
+        return Err(DomainError::InvariantViolation(format!(
+            "workflow port {} fingerprint does not support an execution target requirement",
+            definition.port_id
+        )));
+    }
+    update_digest_part(hasher, b"target_none");
+    Ok(())
+}
+
+fn update_endpoint_fingerprint(hasher: &mut Sha256, endpoint: &WorkflowEndpointRef) {
+    update_digest_part(hasher, endpoint.workflow_id.as_bytes());
+    update_digest_part(hasher, endpoint.workflow_kind.as_bytes());
+}
+
+fn update_optional_text(hasher: &mut Sha256, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            update_digest_part(hasher, b"some");
+            update_digest_part(hasher, value.as_bytes());
+        }
+        None => update_digest_part(hasher, b"none"),
+    }
+}
+
+fn update_optional_bool(hasher: &mut Sha256, value: Option<bool>) {
+    update_digest_part(
+        hasher,
+        match value {
+            None => b"none",
+            Some(false) => b"false",
+            Some(true) => b"true",
+        },
+    );
+}
+
+fn update_digest_part(hasher: &mut Sha256, field: &[u8]) {
+    hasher.update((field.len() as u64).to_be_bytes());
+    hasher.update(field);
 }
 
 fn digest_fields(domain: &str, fields: &[&[u8]]) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update((domain.len() as u64).to_be_bytes());
-    hasher.update(domain.as_bytes());
+    update_digest_part(&mut hasher, domain.as_bytes());
     for field in fields {
-        hasher.update((field.len() as u64).to_be_bytes());
-        hasher.update(field);
+        update_digest_part(&mut hasher, field);
     }
     hasher.finalize().into()
 }
@@ -1209,10 +1298,14 @@ fn digest_fields(domain: &str, fields: &[&[u8]]) -> [u8; 32] {
 mod tests {
     use super::*;
     use crate::{
-        BlobRef, ContextConfig, CoreAgentCodec, CoreAgentCommand, CoreAgentEntry, CoreAgentEvent,
-        CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, EventSeq, FunctionToolSpec,
-        ModelSelection, ProviderApiKind, RunEvent, SessionConfig, SessionPosition, ToolName,
-        ToolParallelism, ToolTargetRequirement, storage::StoredSessionEntry,
+        BlobRef, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
+        CoreAgentAction, CoreAgentCodec, CoreAgentCommand, CoreAgentDrive, CoreAgentEntry,
+        CoreAgentEvent, CoreAgentLifecycleEvent, CoreAgentState, EventSeq, FunctionToolSpec,
+        LlmFinish, LlmGenerationFacts, LlmGenerationResult, LlmGenerationStatus, ModelSelection,
+        ObservedToolCall, ProviderApiKind, RunConfig, RunRequestCommand, RunRequestSource,
+        SessionConfig, SessionPosition, ToolCallStatus, ToolInvocationBatchRequest,
+        ToolInvocationBatchResult, ToolInvocationResult, ToolName, ToolParallelism,
+        ToolTargetRequirement, storage::StoredSessionEntry,
     };
 
     fn endpoint(workflow_id: &str) -> WorkflowEndpointRef {
@@ -1257,85 +1350,262 @@ mod tests {
         }
     }
 
-    fn stored_entry(seq: u64, joins: CoreAgentJoins, event: CoreAgentEvent) -> StoredSessionEntry {
-        CoreAgentCodec
-            .encode_entry(&CoreAgentEntry {
-                position: SessionPosition {
+    fn commit_action(
+        drive: &mut CoreAgentDrive,
+        log: &mut Vec<StoredSessionEntry>,
+        action: CoreAgentAction,
+    ) {
+        let CoreAgentAction::AppendEvents {
+            expected_head,
+            events,
+        } = action
+        else {
+            panic!("expected append action");
+        };
+        assert_eq!(expected_head, drive.head().cloned());
+        let mut head = expected_head;
+        let entries = events
+            .into_iter()
+            .map(|event| {
+                let seq = head
+                    .as_ref()
+                    .map_or(1, |position| position.seq.as_u64() + 1);
+                let position = SessionPosition {
                     seq: EventSeq::new(seq),
-                },
-                observed_at_ms: seq,
-                joins,
-                event,
+                };
+                head = Some(position.clone());
+                StoredSessionEntry {
+                    position,
+                    observed_at_ms: event.observed_at_ms,
+                    joins: event.joins,
+                    event: event.event,
+                }
             })
-            .expect("encode stored workflow-port fixture")
+            .collect::<Vec<_>>();
+        drive
+            .resume_appended(entries.clone())
+            .expect("resume valid workflow-port log");
+        log.extend(entries);
     }
 
-    fn admitted_controller(
-        universe_id: Uuid,
-        controller: WorkflowEndpointRef,
-    ) -> AdmittedControllerWorkflowPorts {
-        ControllerWorkflowPorts::v1(controller, vec![definition("report", "work_report")])
-            .admit(universe_id)
-            .expect("admit controller fixture")
-    }
-
-    fn controller_binding_event(admitted: &AdmittedControllerWorkflowPorts) -> CoreAgentEvent {
-        CoreAgentEvent::WorkflowPortConfig(WorkflowPortConfigEvent::ControllerBindingsAdmitted {
-            session_universe_id: admitted.session_universe_id,
-            declaration_version: admitted.version,
-            controller: admitted.controller.clone(),
-            creation_fingerprint: admitted.creation_fingerprint.clone(),
-            bindings: admitted.bindings.clone(),
-        })
-    }
-
-    fn invocation(
-        binding: &WorkflowToolPortBinding,
-        session_id: &SessionId,
-        run_id: RunId,
-        turn_id: u64,
-        call_id: &str,
-    ) -> WorkflowToolInvocation {
-        let turn_id = TurnId::new(turn_id);
-        let tool_batch_id = ToolBatchId::new(turn_id.as_u64());
-        let tool_call_id = ToolCallId::new(call_id);
-        WorkflowToolInvocation {
-            invocation_id: WorkflowToolInvocationId::for_call(
-                binding.session_universe_id,
-                session_id,
-                run_id,
-                turn_id,
-                tool_batch_id,
-                &tool_call_id,
-                &binding.binding_fingerprint,
-            ),
-            port_id: binding.definition.port_id.clone(),
-            semantic_type: binding.definition.semantic_type.clone(),
-            schema_revision: binding.definition.revision,
-            binding_fingerprint: binding.binding_fingerprint.clone(),
-            session_universe_id: binding.session_universe_id,
-            session_id: session_id.clone(),
-            run_id,
-            turn_id,
-            tool_batch_id,
-            tool_call_id,
-            arguments_ref: BlobRef::from_bytes(call_id.as_bytes()),
-            reply_promise_id: None,
+    fn next_generation(
+        drive: &mut CoreAgentDrive,
+        log: &mut Vec<StoredSessionEntry>,
+    ) -> crate::LlmGenerationRequest {
+        for observed_at_ms in 21..80 {
+            match drive.next_action(observed_at_ms, 64).expect("next action") {
+                CoreAgentAction::GenerateLlm { request } => return request,
+                action @ CoreAgentAction::AppendEvents { .. } => {
+                    commit_action(drive, log, action);
+                }
+                other => panic!("unexpected action before generation: {other:?}"),
+            }
         }
+        panic!("drive did not request generation");
     }
 
-    fn invocation_entry(seq: u64, invocation: WorkflowToolInvocation) -> StoredSessionEntry {
-        stored_entry(
-            seq,
-            CoreAgentJoins {
-                run_id: Some(invocation.run_id),
-                turn_id: Some(invocation.turn_id),
-                tool_batch_id: Some(invocation.tool_batch_id),
-                tool_call_id: Some(invocation.tool_call_id.clone()),
-                ..CoreAgentJoins::default()
-            },
-            CoreAgentEvent::WorkflowPort(WorkflowPortEvent::Emitted { invocation }),
-        )
+    fn next_tool_batch(
+        drive: &mut CoreAgentDrive,
+        log: &mut Vec<StoredSessionEntry>,
+    ) -> ToolInvocationBatchRequest {
+        for observed_at_ms in 81..120 {
+            match drive.next_action(observed_at_ms, 64).expect("next action") {
+                CoreAgentAction::InvokeTools { request } => return request,
+                action @ CoreAgentAction::AppendEvents { .. } => {
+                    commit_action(drive, log, action);
+                }
+                other => panic!("unexpected action before tool batch: {other:?}"),
+            }
+        }
+        panic!("drive did not request tool invocation");
+    }
+
+    fn valid_port_log(
+        call_ids: &[&str],
+    ) -> (
+        Vec<StoredSessionEntry>,
+        WorkflowEndpointRef,
+        SessionId,
+        RunId,
+        Vec<WorkflowToolInvocation>,
+    ) {
+        let universe_id = Uuid::from_u128(1);
+        let controller = endpoint("controller::work-1");
+        let session_id = SessionId::new("managed-session");
+        let definition = definition("report", "work_report");
+        let declaration = ControllerWorkflowPorts::v1(controller.clone(), vec![definition.clone()]);
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut log = Vec::new();
+
+        let open = drive
+            .admit_command(
+                CoreAgentCommand::OpenManagedSession {
+                    config: session_config(),
+                    session_universe_id: universe_id,
+                    controller_ports: declaration,
+                },
+                10,
+            )
+            .expect("open managed session");
+        commit_action(&mut drive, &mut log, open);
+
+        let replace_tools = drive
+            .admit_command(
+                CoreAgentCommand::ReplaceTools {
+                    expected_revision: Some(0),
+                    tools: BTreeMap::from([(
+                        definition.tool.name.clone(),
+                        definition.tool.clone(),
+                    )]),
+                },
+                15,
+            )
+            .expect("install workflow-port tool");
+        commit_action(&mut drive, &mut log, replace_tools);
+
+        let request_run = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun(RunRequestCommand {
+                    notify_on_terminal: Vec::new(),
+                    submission_id: None,
+                    source: RunRequestSource::Input {
+                        input: vec![ContextEntryInput {
+                            kind: ContextEntryKind::Message {
+                                role: ContextMessageRole::User,
+                            },
+                            content_ref: BlobRef::from_bytes(b"input"),
+                            media_type: None,
+                            preview: None,
+                            provider_kind: None,
+                            provider_item_id: None,
+                            token_estimate: None,
+                        }],
+                    },
+                    run_config: RunConfig::default(),
+                }),
+                20,
+            )
+            .expect("request run");
+        commit_action(&mut drive, &mut log, request_run);
+
+        let generation = next_generation(&mut drive, &mut log);
+        let calls = call_ids
+            .iter()
+            .map(|call_id| ObservedToolCall {
+                call_id: ToolCallId::new(*call_id),
+                tool_name: definition.tool.name.clone(),
+                provider_kind: None,
+                arguments_ref: BlobRef::from_bytes(call_id.as_bytes()),
+                native_call_ref: None,
+            })
+            .collect::<Vec<_>>();
+        let generation_completed = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: generation.run_id,
+                    turn_id: generation.turn_id,
+                    status: LlmGenerationStatus::Succeeded,
+                    failure_ref: None,
+                    context_entries: Vec::new(),
+                    facts: LlmGenerationFacts {
+                        provider_response_id: Some("response-port".to_owned()),
+                        finish: LlmFinish::ToolCalls,
+                        usage: None,
+                        tool_calls: calls,
+                        context_token_estimate: None,
+                    },
+                },
+                80,
+            )
+            .expect("complete generation");
+        commit_action(&mut drive, &mut log, generation_completed);
+
+        let request = next_tool_batch(&mut drive, &mut log);
+        let binding = drive
+            .state()
+            .workflow_ports
+            .controller_bindings
+            .get(&definition.port_id)
+            .cloned()
+            .expect("durable workflow-port binding");
+        let invocations = request
+            .calls
+            .iter()
+            .map(|call| WorkflowToolInvocation {
+                invocation_id: WorkflowToolInvocationId::for_call(
+                    universe_id,
+                    &session_id,
+                    request.run_id,
+                    request.turn_id,
+                    request.batch_id,
+                    &call.call_id,
+                    &binding.binding_fingerprint,
+                ),
+                port_id: definition.port_id.clone(),
+                semantic_type: definition.semantic_type.clone(),
+                schema_revision: definition.revision,
+                binding_fingerprint: binding.binding_fingerprint.clone(),
+                session_universe_id: universe_id,
+                session_id: session_id.clone(),
+                run_id: request.run_id,
+                turn_id: request.turn_id,
+                tool_batch_id: request.batch_id,
+                tool_call_id: call.call_id.clone(),
+                arguments_ref: call.arguments_ref.clone(),
+                reply_promise_id: None,
+            })
+            .collect::<Vec<_>>();
+        let results = invocations
+            .iter()
+            .map(|invocation| ToolInvocationResult {
+                call_id: invocation.tool_call_id.clone(),
+                status: ToolCallStatus::Succeeded,
+                output_ref: Some(BlobRef::from_bytes(b"accepted")),
+                model_visible_context_entries: vec![
+                    ToolInvocationResult::tool_result_context_entry(
+                        &invocation.tool_call_id,
+                        ToolCallStatus::Succeeded,
+                        BlobRef::from_bytes(b"accepted"),
+                    ),
+                ],
+                error_ref: None,
+                effects: vec![workflow_port_emit_effect(invocation)],
+            })
+            .collect();
+        let tool_completed = drive
+            .resume_tool_batch(
+                ToolInvocationBatchResult {
+                    run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    batch_id: request.batch_id,
+                    results,
+                },
+                90,
+            )
+            .expect("complete workflow-port tool batch");
+        commit_action(&mut drive, &mut log, tool_completed);
+
+        (log, controller, session_id, request.run_id, invocations)
+    }
+
+    fn rewrite_emission(
+        entries: &mut [StoredSessionEntry],
+        rewrite: impl FnOnce(&mut WorkflowToolInvocation),
+    ) {
+        let codec = CoreAgentCodec;
+        let entry = entries
+            .iter_mut()
+            .find(|entry| entry.event.kind == "lightspeed.core.workflow_port.emitted")
+            .expect("workflow-port emission entry");
+        let mut decoded = codec.decode_entry(entry).expect("decode emission");
+        let CoreAgentEvent::WorkflowPort(WorkflowPortEvent::Emitted { invocation }) =
+            &mut decoded.event
+        else {
+            panic!("expected emitted workflow-port event");
+        };
+        rewrite(invocation);
+        *entry = codec.encode_entry(&decoded).expect("re-encode emission");
     }
 
     #[test]
@@ -1398,6 +1668,16 @@ mod tests {
                 .iter()
                 .all(|binding| binding.receiver == controller
                     && binding.session_universe_id == universe_id)
+        );
+        // Golden values pin the explicit v1 field encoding. Serde field order
+        // and JSON formatting must never participate in these identities.
+        assert_eq!(
+            left.bindings[0].binding_fingerprint,
+            "wpb:sha256:ee15bc93d0286ef9a79be389f9b80e73928447e47554388baf20da832c214ff4"
+        );
+        assert_eq!(
+            left.creation_fingerprint,
+            "msc:sha256:9ebf15bf066b3102289828a0e327944e84a52d52be813956f1b769c1111e4909"
         );
     }
 
@@ -1466,49 +1746,23 @@ mod tests {
 
     #[test]
     fn pull_read_is_receiver_authorized_run_scoped_and_log_ordered() {
-        let universe_id = Uuid::from_u128(1);
-        let controller = endpoint("controller::work-1");
-        let admitted = admitted_controller(universe_id, controller.clone());
-        let binding = &admitted.bindings[0];
-        let session_id = SessionId::new("managed-session");
-        let requested_run = RunId::new(7);
-        let other_run = invocation(binding, &session_id, RunId::new(6), 1, "other-run");
-        let first = invocation(binding, &session_id, requested_run, 2, "z-first");
-        let second = invocation(binding, &session_id, requested_run, 3, "a-second");
-        let inherited = invocation(
-            binding,
-            &SessionId::new("source-session"),
-            requested_run,
-            4,
-            "inherited",
-        );
-        let entries = vec![
-            stored_entry(
-                1,
-                CoreAgentJoins::default(),
-                controller_binding_event(&admitted),
-            ),
-            invocation_entry(2, other_run),
-            invocation_entry(3, first.clone()),
-            invocation_entry(4, inherited),
-            invocation_entry(5, second.clone()),
-            stored_entry(
-                6,
-                CoreAgentJoins {
-                    run_id: Some(requested_run),
-                    ..CoreAgentJoins::default()
-                },
-                CoreAgentEvent::Run(RunEvent::Completed {
-                    run_id: requested_run,
-                    output_ref: None,
-                }),
-            ),
-        ];
+        let (entries, controller, session_id, requested_run, invocations) =
+            valid_port_log(&["z-first", "a-second"]);
 
         let emissions = read_port_emissions(&entries, &controller, &session_id, requested_run)
             .expect("authorized pull read");
 
-        assert_eq!(emissions, vec![first, second]);
+        assert_eq!(emissions, invocations);
+        assert!(
+            read_port_emissions(
+                &entries,
+                &controller,
+                &session_id,
+                RunId::new(requested_run.as_u64() + 1),
+            )
+            .expect("other run read")
+            .is_empty()
+        );
 
         let error = read_port_emissions(
             &entries,
@@ -1525,28 +1779,31 @@ mod tests {
 
     #[test]
     fn pull_read_rejects_invocation_whose_durable_binding_metadata_was_changed() {
-        let universe_id = Uuid::from_u128(1);
-        let controller = endpoint("controller::work-1");
-        let admitted = admitted_controller(universe_id, controller.clone());
-        let binding = &admitted.bindings[0];
-        let session_id = SessionId::new("managed-session");
-        let run_id = RunId::new(7);
-        let mut forged = invocation(binding, &session_id, run_id, 2, "forged");
-        forged.semantic_type = "lightspeed.work.other.v1".to_owned();
-        let entries = vec![
-            stored_entry(
-                1,
-                CoreAgentJoins::default(),
-                controller_binding_event(&admitted),
-            ),
-            invocation_entry(2, forged),
-        ];
+        let (mut entries, controller, session_id, run_id, _) = valid_port_log(&["forged"]);
+        rewrite_emission(&mut entries, |invocation| {
+            invocation.semantic_type = "lightspeed.work.other.v1".to_owned();
+        });
 
         let error = read_port_emissions(&entries, &controller, &session_id, run_id)
             .expect_err("changed binding metadata must fail");
         assert!(matches!(
             error,
-            ReadPortEmissionsError::InvocationBindingMismatch { .. }
+            ReadPortEmissionsError::InvalidSessionLog { .. }
+        ));
+    }
+
+    #[test]
+    fn pull_read_replays_tool_success_and_arguments_invariants() {
+        let (mut entries, controller, session_id, run_id, _) = valid_port_log(&["forged"]);
+        rewrite_emission(&mut entries, |invocation| {
+            invocation.arguments_ref = BlobRef::from_bytes(b"different arguments");
+        });
+
+        let error = read_port_emissions(&entries, &controller, &session_id, run_id)
+            .expect_err("arguments mismatch must fail full replay");
+        assert!(matches!(
+            error,
+            ReadPortEmissionsError::InvalidSessionLog { .. }
         ));
     }
 

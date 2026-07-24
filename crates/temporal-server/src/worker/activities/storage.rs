@@ -256,10 +256,20 @@ async fn read_all_session_events_with_page_limit(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, sync::Arc};
+    use std::{
+        collections::BTreeMap,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
 
     use engine::{
-        StoredEvent,
+        CoreAgentIoError, CoreAgentLlm, CoreAgentTools, LlmFinish, LlmGenerationFacts,
+        LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, ObservedToolCall,
+        StoredEvent, ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest,
+        ToolInvocationBatchResult, ToolInvocationResult, ToolName, WorkflowToolInvocation,
+        WorkflowToolInvocationId, WorkflowToolPortBinding,
         storage::{BlobStore, InMemoryBlobStore, InMemorySessionStore, SessionPage, SessionRecord},
     };
     use serde_json::json;
@@ -316,6 +326,111 @@ mod tests {
             _request: engine::LlmGenerationRequest,
         ) -> Result<engine::LlmGenerationResult, engine::CoreAgentIoError> {
             panic!("bootstrap-volume test must not generate")
+        }
+    }
+
+    struct PortLlm {
+        generations: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl CoreAgentLlm for PortLlm {
+        async fn generate(
+            &self,
+            request: LlmGenerationRequest,
+        ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+            let first = self.generations.fetch_add(1, Ordering::SeqCst) == 0;
+            Ok(LlmGenerationResult {
+                run_id: request.run_id,
+                turn_id: request.turn_id,
+                status: LlmGenerationStatus::Succeeded,
+                failure_ref: None,
+                context_entries: Vec::new(),
+                facts: LlmGenerationFacts {
+                    provider_response_id: Some(format!("port-response-{}", request.turn_id)),
+                    finish: if first {
+                        LlmFinish::ToolCalls
+                    } else {
+                        LlmFinish::Stop
+                    },
+                    usage: None,
+                    tool_calls: if first {
+                        vec![ObservedToolCall {
+                            call_id: engine::ToolCallId::new("report-call"),
+                            tool_name: ToolName::new("work_report"),
+                            provider_kind: None,
+                            arguments_ref: BlobRef::from_bytes(b"{\"outcome\":\"complete\"}"),
+                            native_call_ref: None,
+                        }]
+                    } else {
+                        Vec::new()
+                    },
+                    context_token_estimate: None,
+                },
+            })
+        }
+    }
+
+    struct PortTools {
+        universe_id: uuid::Uuid,
+        binding: WorkflowToolPortBinding,
+    }
+
+    #[async_trait::async_trait]
+    impl CoreAgentTools for PortTools {
+        async fn invoke_batch(
+            &self,
+            request: ToolInvocationBatchRequest,
+        ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
+            let results = request
+                .calls
+                .iter()
+                .map(|call| {
+                    let invocation = WorkflowToolInvocation {
+                        invocation_id: WorkflowToolInvocationId::for_call(
+                            self.universe_id,
+                            &request.session_id,
+                            request.run_id,
+                            request.turn_id,
+                            request.batch_id,
+                            &call.call_id,
+                            &self.binding.binding_fingerprint,
+                        ),
+                        port_id: self.binding.definition.port_id.clone(),
+                        semantic_type: self.binding.definition.semantic_type.clone(),
+                        schema_revision: self.binding.definition.revision,
+                        binding_fingerprint: self.binding.binding_fingerprint.clone(),
+                        session_universe_id: self.universe_id,
+                        session_id: request.session_id.clone(),
+                        run_id: request.run_id,
+                        turn_id: request.turn_id,
+                        tool_batch_id: request.batch_id,
+                        tool_call_id: call.call_id.clone(),
+                        arguments_ref: call.arguments_ref.clone(),
+                        reply_promise_id: None,
+                    };
+                    ToolInvocationResult {
+                        call_id: call.call_id.clone(),
+                        status: ToolCallStatus::Succeeded,
+                        output_ref: Some(BlobRef::from_bytes(b"accepted")),
+                        model_visible_context_entries: vec![
+                            ToolInvocationResult::tool_result_context_entry(
+                                &call.call_id,
+                                ToolCallStatus::Succeeded,
+                                BlobRef::from_bytes(b"accepted"),
+                            ),
+                        ],
+                        error_ref: None,
+                        effects: vec![engine::workflow_port_emit_effect(&invocation)],
+                    }
+                })
+                .collect();
+            Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
+                run_id: request.run_id,
+                turn_id: request.turn_id,
+                batch_id: request.batch_id,
+                results,
+            }))
         }
     }
 
@@ -518,24 +633,22 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn port_emission_read_is_complete_after_terminal_boundary_across_pages() {
         use engine::{
-            ControllerWorkflowPorts, CoreAgentCodec, CoreAgentEvent, CoreAgentJoins,
-            FunctionToolSpec, RunEvent, RunId, ToolBatchId, ToolCallId, ToolKind, ToolName,
-            ToolParallelism, ToolSpec, ToolTargetRequirement, TurnId, UncommittedCoreAgentEvent,
-            WorkflowEndpointRef, WorkflowPortConfigEvent, WorkflowPortEvent,
-            WorkflowToolInvocation, WorkflowToolInvocationId, WorkflowToolPortDefinition,
-            WorkflowToolPortId,
+            ContextEntryInput, ContextEntryKind, ContextMessageRole, ControllerWorkflowPorts,
+            CoreAgentCommand, FunctionToolSpec, RunConfig, RunRequestCommand, RunRequestSource,
+            ToolKind, ToolParallelism, ToolSpec, ToolTargetRequirement, WorkflowEndpointRef,
+            WorkflowToolPortDefinition, WorkflowToolPortId,
         };
+        use test_support::{DriveCommand, RunnerStores, SessionRunner};
         use uuid::Uuid;
 
         let store = Arc::new(InMemorySessionStore::new());
-        let deps = storage_deps(store.clone());
         let session_id = create_test_session(store.as_ref()).await;
         let universe_id = Uuid::from_u128(1);
         let receiver = WorkflowEndpointRef {
             workflow_id: "work-controller".to_owned(),
             workflow_kind: "agent_work".to_owned(),
         };
-        let admitted = ControllerWorkflowPorts::v1(
+        let declaration = ControllerWorkflowPorts::v1(
             receiver.clone(),
             vec![WorkflowToolPortDefinition {
                 port_id: WorkflowToolPortId::new("work-report"),
@@ -555,98 +668,94 @@ mod tests {
                     target_requirement: ToolTargetRequirement::None,
                 },
             }],
+        );
+        let admitted = declaration.admit(universe_id).expect("admit controller");
+        let binding = admitted.bindings[0].clone();
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let sessions: Arc<dyn SessionStore> = store.clone();
+        let runner = SessionRunner::new(
+            RunnerStores::new(sessions, blobs),
+            Arc::new(PortLlm {
+                generations: AtomicUsize::new(0),
+            }),
         )
-        .admit(universe_id)
-        .expect("admit controller");
-        let binding = &admitted.bindings[0];
-        let run_id = RunId::new(7);
-        let turn_id = TurnId::new(8);
-        let tool_batch_id = ToolBatchId::new(9);
-        let tool_call_id = ToolCallId::new("report-call");
-        let invocation = WorkflowToolInvocation {
-            invocation_id: WorkflowToolInvocationId::for_call(
-                universe_id,
-                &session_id,
-                run_id,
-                turn_id,
-                tool_batch_id,
-                &tool_call_id,
-                &binding.binding_fingerprint,
-            ),
-            port_id: binding.definition.port_id.clone(),
-            semantic_type: binding.definition.semantic_type.clone(),
-            schema_revision: binding.definition.revision,
-            binding_fingerprint: binding.binding_fingerprint.clone(),
-            session_universe_id: universe_id,
-            session_id: session_id.clone(),
-            run_id,
-            turn_id,
-            tool_batch_id,
-            tool_call_id: tool_call_id.clone(),
-            arguments_ref: BlobRef::from_bytes(b"{\"outcome\":\"complete\"}"),
-            reply_promise_id: None,
-        };
-        let codec = CoreAgentCodec;
-        let events = vec![
-            codec
-                .encode_uncommitted(&UncommittedCoreAgentEvent {
-                    observed_at_ms: 10,
-                    joins: CoreAgentJoins::default(),
-                    event: CoreAgentEvent::WorkflowPortConfig(
-                        WorkflowPortConfigEvent::ControllerBindingsAdmitted {
-                            session_universe_id: universe_id,
-                            declaration_version: admitted.version,
-                            controller: admitted.controller,
-                            creation_fingerprint: admitted.creation_fingerprint,
-                            bindings: admitted.bindings,
-                        },
-                    ),
-                })
-                .expect("encode binding event"),
-            codec
-                .encode_uncommitted(&UncommittedCoreAgentEvent {
-                    observed_at_ms: 11,
-                    joins: CoreAgentJoins {
-                        run_id: Some(run_id),
-                        turn_id: Some(turn_id),
-                        tool_batch_id: Some(tool_batch_id),
-                        tool_call_id: Some(tool_call_id),
-                        ..CoreAgentJoins::default()
-                    },
-                    event: CoreAgentEvent::WorkflowPort(WorkflowPortEvent::Emitted {
-                        invocation: invocation.clone(),
-                    }),
-                })
-                .expect("encode emission"),
-            codec
-                .encode_uncommitted(&UncommittedCoreAgentEvent {
-                    observed_at_ms: 12,
-                    joins: CoreAgentJoins {
-                        run_id: Some(run_id),
-                        ..CoreAgentJoins::default()
-                    },
-                    event: CoreAgentEvent::Run(RunEvent::Completed {
-                        run_id,
-                        output_ref: None,
-                    }),
-                })
-                .expect("encode terminal boundary"),
-        ];
-        store
-            .append(AppendSessionEvents {
+        .with_tools(Arc::new(PortTools {
+            universe_id,
+            binding,
+        }));
+
+        runner
+            .drive_command(DriveCommand {
                 session_id: session_id.clone(),
-                expected_head: None,
-                events,
+                observed_at_ms: 10,
+                command: CoreAgentCommand::OpenManagedSession {
+                    config: volume_session_config(),
+                    session_universe_id: universe_id,
+                    controller_ports: declaration,
+                },
+                max_steps: None,
             })
             .await
-            .expect("append port log");
+            .expect("open managed session");
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 11,
+                command: CoreAgentCommand::ReplaceTools {
+                    expected_revision: Some(0),
+                    tools: BTreeMap::from([(
+                        admitted.bindings[0].definition.tool.name.clone(),
+                        admitted.bindings[0].definition.tool.clone(),
+                    )]),
+                },
+                max_steps: None,
+            })
+            .await
+            .expect("install workflow-port tool");
+        let completed = runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 12,
+                command: CoreAgentCommand::RequestRun(RunRequestCommand {
+                    notify_on_terminal: Vec::new(),
+                    submission_id: None,
+                    source: RunRequestSource::Input {
+                        input: vec![ContextEntryInput {
+                            kind: ContextEntryKind::Message {
+                                role: ContextMessageRole::User,
+                            },
+                            content_ref: BlobRef::from_bytes(b"complete the work"),
+                            media_type: None,
+                            preview: None,
+                            provider_kind: None,
+                            provider_item_id: None,
+                            token_estimate: None,
+                        }],
+                    },
+                    run_config: RunConfig::default(),
+                }),
+                max_steps: None,
+            })
+            .await
+            .expect("complete run with workflow-port emission");
+        let run = completed.state.runs.completed.last().expect("terminal run");
+        let run_id = run.run_id;
+        let expected = completed
+            .state
+            .workflow_ports
+            .emissions
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(expected.len(), 1);
 
+        let deps = storage_deps(store);
         let emissions =
             read_port_emissions_with_page_limit(&deps, &receiver, &session_id, run_id, 2)
                 .await
                 .expect("read port emissions after terminal boundary");
 
-        assert_eq!(emissions, vec![invocation]);
+        assert_eq!(emissions, expected);
     }
 
     #[tokio::test(flavor = "current_thread")]
