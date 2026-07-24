@@ -47,9 +47,9 @@ lockstep.
 There are exactly two wait implementations and one mailbox path today, and
 the first fleet-versus-cancellation race already produced an unrecoverable
 session in production. This is the moment to settle the suspension model
-once, before more wait consumers (triggers/P101, sub-workflows, approvals)
-multiply the surface. Every future async feature becomes a new *source*
-behind the same primitive, never a new primitive.
+once, before more wait consumers (the later trigger proposal, sub-workflows,
+approvals) multiply the surface. Every future async feature becomes a new
+*source* behind the same primitive, never a new primitive.
 
 ## Background: The 2026-07-06 Incident
 
@@ -222,9 +222,9 @@ Each source implements one trait with three duties:
   nothing — notify-intents live in the *observed* session's log (below), and
   signals target the workflow id, which is stable across CAN on both sides.
 
-Adding sub-workflows, approvals, webhooks (P101 triggers), or outbox delivery
-confirmations later means implementing this trait — no new workflow
-machinery.
+Adding sub-workflows, approvals, webhooks from the later trigger proposal, or
+outbox delivery confirmations later means implementing this trait — no new
+workflow machinery.
 
 **The edge event is the subscription.** P84's standalone subscription
 machinery — the `subscribe_run`/`unsubscribe_run` signals and the

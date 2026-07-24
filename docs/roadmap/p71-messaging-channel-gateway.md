@@ -8,16 +8,21 @@
   sections for what shipped).
 - G3 second cut (document input: PDF + text-based documents) and bridge
   typing indicators implemented 2026-06-12.
+- P100 follow-on: migrate `message_send`, `message_edit`, and `message_react`
+  from direct tool activities to workflow-bound ports targeting a
+  same-universe `MessagingWorkflow`. Keep the PostgreSQL outbox as the
+  bridge-facing delivery queue/projection; `message_noop` may remain inline.
 - Builds on the P70 external integration surface (schema export, TS client,
   idempotent `run/start`, long-poll `session/events/read`), the first-cut
   Telegram/WhatsApp bridge in `interop/messaging/`, and the timers/triggers
-  proposal in `p101-timers-schedules-and-triggers.md`.
+  proposal in `later/pNNN-timers-schedules-and-triggers.md`.
 - Inspired by OpenClaw's channel gateway (activation modes, ambient room
   context, queue discipline, tool-based outbound messaging), adapted to
   Lightspeed's deterministic engine and hosted runtime.
 - Naming note: some older docs (`p63-skills.md`,
-  `p101-timers-schedules-and-triggers.md`) reference "P71 prompt management";
-  that work shipped as P65. This document claims the unused P71 slot.
+  `later/pNNN-timers-schedules-and-triggers.md`) reference "P71 prompt
+  management"; that work shipped as P65. This document claims the unused P71
+  slot.
 
 ## Goal
 
@@ -67,12 +72,14 @@ session log (or buffered and attached to the next activated run) with no LLM
 call. Only an explicit per-chat `always` activation mode runs turns on
 unaddressed messages, and then debounced.
 
-**Side effects stay outside the engine.** The `message_send` tool executes as
-a worker activity that appends a durable outbox row. The engine sees a normal
-tool call and result. Channel connections (grammY, Baileys) stay in the
-bridge process; the gateway gains only channel-neutral methods
-(`context/append`, `outbox/read`, `outbox/ack`), preserving the P70 rule that
-the bridge adds no channel-specific endpoints to Lightspeed.
+**Side effects stay outside the engine.** Today `message_send` executes as a
+worker activity that appends a durable outbox row. The P100 follow-on moves
+message mutation lifecycle into a `MessagingWorkflow`: the session records a
+generic workflow-port invocation, and the receiver workflow appends/updates
+the outbox through idempotent activities. Channel connections (grammY,
+Baileys) stay in the bridge process; the gateway keeps only channel-neutral
+methods (`context/append`, `outbox/read`, `outbox/ack`), preserving the P70
+rule that the bridge adds no channel-specific endpoints to Lightspeed.
 
 **Worker never calls the bridge.** Tool execution must not depend on bridge
 liveness or reachability. The outbox decouples them: the tool durably
@@ -81,8 +88,9 @@ restarts, and audit fall out of the durable record.
 
 ## OpenClaw Reference Study (Channel Side)
 
-The cron/heartbeat side is covered in `p101-timers-schedules-and-triggers.md`.
-Channel-side mechanisms worth adopting or adapting
+The cron/heartbeat side is covered in the later
+`later/pNNN-timers-schedules-and-triggers.md` proposal. Channel-side mechanisms
+worth adopting or adapting
 (https://docs.openclaw.ai/channels/groups, /concepts/session,
 /concepts/queue, /gateway/heartbeat):
 
@@ -227,7 +235,7 @@ OutboundMessage {
   id: OutboxId,
   origin: ToolCall { session_id, run_id, call_id }
         | FinalText { session_id, run_id }
-        | Trigger { trigger_id, firing_id },     // P101, later
+        | Trigger { trigger_id, firing_id },     // later trigger proposal
   target: Current { session_id }                  // resolved via binding
         | Explicit { channel, account_id, chat_id, thread_id? },
   text: String,
@@ -297,7 +305,8 @@ Design notes:
   via a client-supplied key like `run/start`'s `submissionId`;
 - appended room events are ordinary context entries, rendered with their
   envelope (`[telegram:group Engineering] Alice (12:01): ...`); they are
-  data, not instructions — same trust stance as P101 external payloads;
+  data, not instructions — the same trust stance planned for external trigger
+  payloads;
 - the bridge batches room events (e.g. flush every 30s or 20 messages,
   whichever first) instead of one RPC per message;
 - bounded retention: the bridge stops appending beyond a configurable
@@ -620,11 +629,11 @@ solve) arrive in two steps:
   (`notify_on_completion` or `message_tool`), so "nothing to report" runs
   are silent without sentinel tokens. Deliberately minimal — no missed-run
   handling, no durability beyond the binding record.
-- **Target (server-side):** the P101 trigger system. Trigger firings start
+- **Target (server-side):** the later trigger proposal. Trigger firings start
   runs through the same admission path; `TriggerDelivery` gains an outbox
   variant (`SessionAnnouncement` → enqueue `OutboundMessage` targeting the
-  session's binding). The bridge heartbeat is deleted when P101 phases 1–3
-  land.
+  session's binding). The bridge heartbeat is deleted when its first three
+  phases land.
 
 Acceptance criteria:
 
@@ -655,8 +664,8 @@ Acceptance criteria:
 - Allowlists default-on for real use (current empty-allowlist warning gets a
   config flag to hard-fail in non-dev mode). Deferred 2026-06-12: a proper
   login/authorization system is planned next and supersedes the flag.
-- Inbound channel text and media are untrusted data — same stance as P101
-  external trigger payloads; envelopes make provenance explicit to the
+- Inbound channel text and media are untrusted data — the same stance planned
+  for external trigger payloads; envelopes make provenance explicit to the
   model.
 - Outbox admission is the enforcement point: per-chat/per-session rate
   caps, allowed-target lists, attachment size limits.
@@ -700,5 +709,5 @@ Acceptance criteria:
 4. **G7 interim** — bridge heartbeat (small, after G4/G5 so delivery policy
    applies).
 5. **G6** — audio transcription activity.
-6. **P101 phases 1–3** supersede the interim heartbeat; trigger delivery
-   targets the outbox.
+6. **The later trigger proposal's phases 1–3** supersede the interim
+   heartbeat; trigger delivery targets the outbox.

@@ -906,9 +906,9 @@ that environment to be active at call time.
 ### Schedules and triggers
 
 Environment jobs are not a scheduler. They execute work now, subject to
-dependencies and capacity. P101-style timers/schedules may later start jobs as
-their firing action, but recurring definitions and missed-run policy stay in the
-trigger system.
+dependencies and capacity. Timers/schedules from the later trigger proposal
+may start jobs as their firing action, but recurring definitions and missed-run
+policy stay in the trigger system.
 
 ## Security And Secrets
 

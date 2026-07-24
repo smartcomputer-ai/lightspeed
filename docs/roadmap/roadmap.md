@@ -1,10 +1,16 @@
 # Lightspeed Roadmap
 
 ## Work
-- [ ] [P100](p100-durable-work-workflow.md) — first-class durable Work with
-  Temporal-owned state, one managed session/run attempt, generic run-terminal
-  workflow notification, point read/cancel APIs, and no Work database in the
-  initial cut
+- [ ] [P100](p100-workflow-tool-ports.md) — workflow-bound typed function
+  tools that turn agent calls into log-backed, schema-validated,
+  at-least-once signals to a fixed receiver per binding; supports both
+  lifecycle controllers and shared workflow services, and is used first by
+  Work
+- [ ] [P101](p101-durable-work-workflow.md) — durable Work as a Temporal-owned
+  goal loop over one managed session and many execution runs; explicit
+  completion/blockage reports over P100 ports, automatic continuation, caller
+  input, and reuse of Fleet promises/run notifications without Work-specific
+  transport
 
 ## Core
 - [x] [P91](p91-core-agent-structure-cleanup.md) — cleanup of CoreAgent structures: delete the SDK-era open-kernel layer, commit to a closed event vocabulary and core FSM
@@ -50,6 +56,9 @@
   compaction: watermarked drop-oldest pruning via `context/remove`, then
   summarize-and-replace, so always-on group sessions stay bounded
 - [x] Password/code-based login in channel (instead of whitelisting)
+- [ ] Move `message_send`/`message_edit`/`message_react` behind a P100
+  MessagingWorkflow while retaining the outbox as the bridge-facing delivery
+  queue/projection
 - [ ] Support Slack
 
 ## Security Auth
@@ -66,8 +75,9 @@
 - [ ] MCP orchestration by Lightspeed
 
 ## Framework/SDK
-- [ ] Temporal service design: ensure ls can be used as a Temporal service by other workflows
-- [ ] Workflows as tools (register a workflow as a tool, route to workflow)
+- [ ] External Temporal workflow SDK: authenticated P100 endpoint
+  registration plus managed-session start/control operations
+- [ ] Request/reply workflow tools over P100 ports + P92 Promises
 - [x] [P90](p90-multi-tenancy.md) — multi-tenant worker: multiple universes
       per deployment, composed workflow ids, per-request universe resolution
       (`single` / `trusted-header` / `api-key` modes), principal pass-through,
