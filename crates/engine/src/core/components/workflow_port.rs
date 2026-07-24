@@ -2,16 +2,20 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    BlobRef, DomainError, PromiseId, RunId, SessionId, ToolBatchId, ToolCallId, ToolEffect,
-    ToolKind, ToolName, ToolSpec, TurnId, WorkflowToolInvocationId, WorkflowToolPortId,
+    BlobRef, CodecError, CoreAgentCodec, CoreAgentEntry, CoreAgentEvent, DomainError, PromiseId,
+    RunId, SessionId, ToolBatchId, ToolCallId, ToolEffect, ToolKind, ToolName, ToolSpec, TurnId,
+    WorkflowToolInvocationId, WorkflowToolPortId, storage::StoredSessionEntry,
 };
 
 const CONTROLLER_PORT_DECLARATION_VERSION: u32 = 1;
 const MAX_CONTROLLER_PORTS: usize = 32;
 pub const MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN: u32 = 32;
+pub const MAX_WORKFLOW_PORT_EMISSIONS_PER_READ: usize =
+    MAX_CONTROLLER_PORTS * MAX_WORKFLOW_PORT_EMISSIONS_PER_RUN as usize;
 const WORKFLOW_ID_MAX_LEN: usize = 512;
 const WORKFLOW_KIND_MAX_LEN: usize = 128;
 const SEMANTIC_TYPE_MAX_LEN: usize = 192;
@@ -131,6 +135,53 @@ pub struct WorkflowToolInvocation {
     pub arguments_ref: BlobRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_promise_id: Option<PromiseId>,
+}
+
+#[derive(Debug, Error)]
+pub enum ReadPortEmissionsError {
+    #[error("invalid workflow-port receiver endpoint: {message}")]
+    InvalidReceiver { message: String },
+
+    #[error("decode workflow-port session entry: {0}")]
+    Decode(#[from] CodecError),
+
+    #[error("invalid durable workflow-port binding {binding_fingerprint}: {message}")]
+    InvalidBinding {
+        binding_fingerprint: String,
+        message: String,
+    },
+
+    #[error("workflow-port receiver is not bound to this session: {workflow_id}")]
+    ReceiverNotBound { workflow_id: String },
+
+    #[error(
+        "workflow-port invocation {invocation_id} references unknown durable binding {binding_fingerprint}"
+    )]
+    UnknownBinding {
+        invocation_id: WorkflowToolInvocationId,
+        binding_fingerprint: String,
+    },
+
+    #[error(
+        "workflow-port invocation {invocation_id} does not match its durable binding: {message}"
+    )]
+    InvocationBindingMismatch {
+        invocation_id: WorkflowToolInvocationId,
+        message: String,
+    },
+
+    #[error("workflow-port invocation {invocation_id} does not match its event joins")]
+    InvocationJoinMismatch {
+        invocation_id: WorkflowToolInvocationId,
+    },
+
+    #[error("duplicate workflow-port invocation in session log: {invocation_id}")]
+    DuplicateInvocation {
+        invocation_id: WorkflowToolInvocationId,
+    },
+
+    #[error("workflow-port emission read exceeds the bounded result limit of {limit} invocations")]
+    ResultLimitExceeded { limit: usize },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -321,6 +372,210 @@ impl WorkflowPortState {
             .count()
             .try_into()
             .unwrap_or(u32::MAX)
+    }
+}
+
+/// Project the workflow-port invocations for one receiver and run from the
+/// durable session log.
+///
+/// Results retain session-log order. Bindings are learned only from durable
+/// configuration facts encountered before an invocation, so registry changes
+/// cannot retarget historical emissions. Invocations inherited by a session
+/// fork are ignored because their embedded session id names the source
+/// session.
+pub fn read_port_emissions(
+    entries: &[StoredSessionEntry],
+    receiver_endpoint: &WorkflowEndpointRef,
+    session_id: &SessionId,
+    run_id: RunId,
+) -> Result<Vec<WorkflowToolInvocation>, ReadPortEmissionsError> {
+    receiver_endpoint
+        .validate()
+        .map_err(|error| ReadPortEmissionsError::InvalidReceiver {
+            message: error.to_string(),
+        })?;
+
+    let mut projection = WorkflowPortEmissionReadProjection {
+        receiver_endpoint,
+        session_id,
+        run_id,
+        bindings: BTreeMap::new(),
+        receiver_bound: false,
+        seen_invocations: BTreeSet::new(),
+        emissions: Vec::new(),
+    };
+    for entry in entries {
+        let decoded = CoreAgentCodec.decode_entry(entry)?;
+        projection.observe(&decoded)?;
+    }
+    projection.finish()
+}
+
+struct WorkflowPortEmissionReadProjection<'a> {
+    receiver_endpoint: &'a WorkflowEndpointRef,
+    session_id: &'a SessionId,
+    run_id: RunId,
+    bindings: BTreeMap<String, WorkflowToolPortBinding>,
+    receiver_bound: bool,
+    seen_invocations: BTreeSet<WorkflowToolInvocationId>,
+    emissions: Vec<WorkflowToolInvocation>,
+}
+
+impl WorkflowPortEmissionReadProjection<'_> {
+    fn observe(&mut self, entry: &CoreAgentEntry) -> Result<(), ReadPortEmissionsError> {
+        match &entry.event {
+            CoreAgentEvent::WorkflowPortConfig(event) => self.observe_config(event)?,
+            CoreAgentEvent::WorkflowPort(WorkflowPortEvent::Emitted { invocation })
+                if invocation.session_id == *self.session_id =>
+            {
+                let binding = self
+                    .bindings
+                    .get(&invocation.binding_fingerprint)
+                    .ok_or_else(|| ReadPortEmissionsError::UnknownBinding {
+                        invocation_id: invocation.invocation_id.clone(),
+                        binding_fingerprint: invocation.binding_fingerprint.clone(),
+                    })?;
+                validate_invocation_against_binding(binding, invocation).map_err(|error| {
+                    ReadPortEmissionsError::InvocationBindingMismatch {
+                        invocation_id: invocation.invocation_id.clone(),
+                        message: error.to_string(),
+                    }
+                })?;
+                let expected_id = WorkflowToolInvocationId::for_call(
+                    invocation.session_universe_id,
+                    &invocation.session_id,
+                    invocation.run_id,
+                    invocation.turn_id,
+                    invocation.tool_batch_id,
+                    &invocation.tool_call_id,
+                    &invocation.binding_fingerprint,
+                );
+                if invocation.invocation_id != expected_id {
+                    return Err(ReadPortEmissionsError::InvocationBindingMismatch {
+                        invocation_id: invocation.invocation_id.clone(),
+                        message: "invocation id is not canonical".to_owned(),
+                    });
+                }
+                if entry.joins.run_id != Some(invocation.run_id)
+                    || entry.joins.turn_id != Some(invocation.turn_id)
+                    || entry.joins.tool_batch_id != Some(invocation.tool_batch_id)
+                    || entry.joins.tool_call_id.as_ref() != Some(&invocation.tool_call_id)
+                {
+                    return Err(ReadPortEmissionsError::InvocationJoinMismatch {
+                        invocation_id: invocation.invocation_id.clone(),
+                    });
+                }
+                if !self
+                    .seen_invocations
+                    .insert(invocation.invocation_id.clone())
+                {
+                    return Err(ReadPortEmissionsError::DuplicateInvocation {
+                        invocation_id: invocation.invocation_id.clone(),
+                    });
+                }
+                if invocation.run_id == self.run_id && binding.receiver == *self.receiver_endpoint {
+                    if self.emissions.len() >= MAX_WORKFLOW_PORT_EMISSIONS_PER_READ {
+                        return Err(ReadPortEmissionsError::ResultLimitExceeded {
+                            limit: MAX_WORKFLOW_PORT_EMISSIONS_PER_READ,
+                        });
+                    }
+                    self.emissions.push(invocation.clone());
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn observe_config(
+        &mut self,
+        event: &WorkflowPortConfigEvent,
+    ) -> Result<(), ReadPortEmissionsError> {
+        match event {
+            WorkflowPortConfigEvent::ControllerBindingsAdmitted {
+                session_universe_id,
+                declaration_version,
+                controller,
+                creation_fingerprint: observed_creation_fingerprint,
+                bindings,
+            } => {
+                if *declaration_version != CONTROLLER_PORT_DECLARATION_VERSION {
+                    return Err(ReadPortEmissionsError::InvalidBinding {
+                        binding_fingerprint: observed_creation_fingerprint.clone(),
+                        message: format!(
+                            "unsupported controller declaration version {declaration_version}"
+                        ),
+                    });
+                }
+                controller
+                    .validate()
+                    .map_err(|error| ReadPortEmissionsError::InvalidBinding {
+                        binding_fingerprint: observed_creation_fingerprint.clone(),
+                        message: error.to_string(),
+                    })?;
+                let expected_creation_fingerprint = creation_fingerprint(
+                    *session_universe_id,
+                    *declaration_version,
+                    controller,
+                    bindings,
+                )
+                .map_err(|error| ReadPortEmissionsError::InvalidBinding {
+                    binding_fingerprint: observed_creation_fingerprint.clone(),
+                    message: error.to_string(),
+                })?;
+                if observed_creation_fingerprint != &expected_creation_fingerprint {
+                    return Err(ReadPortEmissionsError::InvalidBinding {
+                        binding_fingerprint: observed_creation_fingerprint.clone(),
+                        message: "managed-session creation fingerprint does not match".to_owned(),
+                    });
+                }
+
+                for binding in bindings {
+                    binding
+                        .validate()
+                        .map_err(|error| ReadPortEmissionsError::InvalidBinding {
+                            binding_fingerprint: binding.binding_fingerprint.clone(),
+                            message: error.to_string(),
+                        })?;
+                    if binding.session_universe_id != *session_universe_id
+                        || &binding.receiver != controller
+                    {
+                        return Err(ReadPortEmissionsError::InvalidBinding {
+                            binding_fingerprint: binding.binding_fingerprint.clone(),
+                            message:
+                                "binding source universe or receiver differs from its controller declaration"
+                                    .to_owned(),
+                        });
+                    }
+                    if binding.receiver == *self.receiver_endpoint {
+                        self.receiver_bound = true;
+                    }
+                    match self
+                        .bindings
+                        .insert(binding.binding_fingerprint.clone(), binding.clone())
+                    {
+                        Some(existing) if existing != *binding => {
+                            return Err(ReadPortEmissionsError::InvalidBinding {
+                                binding_fingerprint: binding.binding_fingerprint.clone(),
+                                message: "fingerprint identifies more than one durable binding"
+                                    .to_owned(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<Vec<WorkflowToolInvocation>, ReadPortEmissionsError> {
+        if !self.receiver_bound {
+            return Err(ReadPortEmissionsError::ReceiverNotBound {
+                workflow_id: self.receiver_endpoint.workflow_id.clone(),
+            });
+        }
+        Ok(self.emissions)
     }
 }
 
@@ -716,10 +971,18 @@ fn validate_invocation_binding(
                 invocation.port_id
             ))
         })?;
+    validate_invocation_against_binding(binding, invocation)
+}
+
+fn validate_invocation_against_binding(
+    binding: &WorkflowToolPortBinding,
+    invocation: &WorkflowToolInvocation,
+) -> Result<(), DomainError> {
     if invocation.session_universe_id != binding.session_universe_id
         || invocation.semantic_type != binding.definition.semantic_type
         || invocation.schema_revision != binding.definition.revision
         || invocation.binding_fingerprint != binding.binding_fingerprint
+        || invocation.port_id != binding.definition.port_id
     {
         return Err(DomainError::InvariantViolation(format!(
             "workflow port invocation {} does not match its durable binding",
@@ -947,9 +1210,9 @@ mod tests {
     use super::*;
     use crate::{
         BlobRef, ContextConfig, CoreAgentCodec, CoreAgentCommand, CoreAgentEntry, CoreAgentEvent,
-        CoreAgentLifecycleEvent, CoreAgentState, EventSeq, FunctionToolSpec, ModelSelection,
-        ProviderApiKind, SessionConfig, SessionPosition, ToolName, ToolParallelism,
-        ToolTargetRequirement,
+        CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, EventSeq, FunctionToolSpec,
+        ModelSelection, ProviderApiKind, RunEvent, SessionConfig, SessionPosition, ToolName,
+        ToolParallelism, ToolTargetRequirement, storage::StoredSessionEntry,
     };
 
     fn endpoint(workflow_id: &str) -> WorkflowEndpointRef {
@@ -992,6 +1255,87 @@ mod tests {
             context: ContextConfig { compaction: None },
             features: Default::default(),
         }
+    }
+
+    fn stored_entry(seq: u64, joins: CoreAgentJoins, event: CoreAgentEvent) -> StoredSessionEntry {
+        CoreAgentCodec
+            .encode_entry(&CoreAgentEntry {
+                position: SessionPosition {
+                    seq: EventSeq::new(seq),
+                },
+                observed_at_ms: seq,
+                joins,
+                event,
+            })
+            .expect("encode stored workflow-port fixture")
+    }
+
+    fn admitted_controller(
+        universe_id: Uuid,
+        controller: WorkflowEndpointRef,
+    ) -> AdmittedControllerWorkflowPorts {
+        ControllerWorkflowPorts::v1(controller, vec![definition("report", "work_report")])
+            .admit(universe_id)
+            .expect("admit controller fixture")
+    }
+
+    fn controller_binding_event(admitted: &AdmittedControllerWorkflowPorts) -> CoreAgentEvent {
+        CoreAgentEvent::WorkflowPortConfig(WorkflowPortConfigEvent::ControllerBindingsAdmitted {
+            session_universe_id: admitted.session_universe_id,
+            declaration_version: admitted.version,
+            controller: admitted.controller.clone(),
+            creation_fingerprint: admitted.creation_fingerprint.clone(),
+            bindings: admitted.bindings.clone(),
+        })
+    }
+
+    fn invocation(
+        binding: &WorkflowToolPortBinding,
+        session_id: &SessionId,
+        run_id: RunId,
+        turn_id: u64,
+        call_id: &str,
+    ) -> WorkflowToolInvocation {
+        let turn_id = TurnId::new(turn_id);
+        let tool_batch_id = ToolBatchId::new(turn_id.as_u64());
+        let tool_call_id = ToolCallId::new(call_id);
+        WorkflowToolInvocation {
+            invocation_id: WorkflowToolInvocationId::for_call(
+                binding.session_universe_id,
+                session_id,
+                run_id,
+                turn_id,
+                tool_batch_id,
+                &tool_call_id,
+                &binding.binding_fingerprint,
+            ),
+            port_id: binding.definition.port_id.clone(),
+            semantic_type: binding.definition.semantic_type.clone(),
+            schema_revision: binding.definition.revision,
+            binding_fingerprint: binding.binding_fingerprint.clone(),
+            session_universe_id: binding.session_universe_id,
+            session_id: session_id.clone(),
+            run_id,
+            turn_id,
+            tool_batch_id,
+            tool_call_id,
+            arguments_ref: BlobRef::from_bytes(call_id.as_bytes()),
+            reply_promise_id: None,
+        }
+    }
+
+    fn invocation_entry(seq: u64, invocation: WorkflowToolInvocation) -> StoredSessionEntry {
+        stored_entry(
+            seq,
+            CoreAgentJoins {
+                run_id: Some(invocation.run_id),
+                turn_id: Some(invocation.turn_id),
+                tool_batch_id: Some(invocation.tool_batch_id),
+                tool_call_id: Some(invocation.tool_call_id.clone()),
+                ..CoreAgentJoins::default()
+            },
+            CoreAgentEvent::WorkflowPort(WorkflowPortEvent::Emitted { invocation }),
+        )
     }
 
     #[test]
@@ -1118,6 +1462,92 @@ mod tests {
         );
         assert_eq!(id, retry);
         assert_ne!(id, other_universe);
+    }
+
+    #[test]
+    fn pull_read_is_receiver_authorized_run_scoped_and_log_ordered() {
+        let universe_id = Uuid::from_u128(1);
+        let controller = endpoint("controller::work-1");
+        let admitted = admitted_controller(universe_id, controller.clone());
+        let binding = &admitted.bindings[0];
+        let session_id = SessionId::new("managed-session");
+        let requested_run = RunId::new(7);
+        let other_run = invocation(binding, &session_id, RunId::new(6), 1, "other-run");
+        let first = invocation(binding, &session_id, requested_run, 2, "z-first");
+        let second = invocation(binding, &session_id, requested_run, 3, "a-second");
+        let inherited = invocation(
+            binding,
+            &SessionId::new("source-session"),
+            requested_run,
+            4,
+            "inherited",
+        );
+        let entries = vec![
+            stored_entry(
+                1,
+                CoreAgentJoins::default(),
+                controller_binding_event(&admitted),
+            ),
+            invocation_entry(2, other_run),
+            invocation_entry(3, first.clone()),
+            invocation_entry(4, inherited),
+            invocation_entry(5, second.clone()),
+            stored_entry(
+                6,
+                CoreAgentJoins {
+                    run_id: Some(requested_run),
+                    ..CoreAgentJoins::default()
+                },
+                CoreAgentEvent::Run(RunEvent::Completed {
+                    run_id: requested_run,
+                    output_ref: None,
+                }),
+            ),
+        ];
+
+        let emissions = read_port_emissions(&entries, &controller, &session_id, requested_run)
+            .expect("authorized pull read");
+
+        assert_eq!(emissions, vec![first, second]);
+
+        let error = read_port_emissions(
+            &entries,
+            &endpoint("controller::other-work"),
+            &session_id,
+            requested_run,
+        )
+        .expect_err("unbound receiver must be rejected");
+        assert!(matches!(
+            error,
+            ReadPortEmissionsError::ReceiverNotBound { .. }
+        ));
+    }
+
+    #[test]
+    fn pull_read_rejects_invocation_whose_durable_binding_metadata_was_changed() {
+        let universe_id = Uuid::from_u128(1);
+        let controller = endpoint("controller::work-1");
+        let admitted = admitted_controller(universe_id, controller.clone());
+        let binding = &admitted.bindings[0];
+        let session_id = SessionId::new("managed-session");
+        let run_id = RunId::new(7);
+        let mut forged = invocation(binding, &session_id, run_id, 2, "forged");
+        forged.semantic_type = "lightspeed.work.other.v1".to_owned();
+        let entries = vec![
+            stored_entry(
+                1,
+                CoreAgentJoins::default(),
+                controller_binding_event(&admitted),
+            ),
+            invocation_entry(2, forged),
+        ];
+
+        let error = read_port_emissions(&entries, &controller, &session_id, run_id)
+            .expect_err("changed binding metadata must fail");
+        assert!(matches!(
+            error,
+            ReadPortEmissionsError::InvocationBindingMismatch { .. }
+        ));
     }
 
     #[test]

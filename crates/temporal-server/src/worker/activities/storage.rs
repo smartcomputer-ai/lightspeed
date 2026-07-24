@@ -1,5 +1,5 @@
 use engine::{
-    BlobRef, SessionId, SessionPosition,
+    BlobRef, RunId, SessionId, SessionPosition, WorkflowEndpointRef, WorkflowToolInvocation,
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateSession, ReadSessionEvents,
         SessionStore, SessionStoreError, StoredSessionEntry, UncommittedStoredEvent,
@@ -127,6 +127,34 @@ pub(super) async fn read_blob(
     Ok(ReadBlobResult { bytes })
 }
 
+/// Read one run's workflow-port emissions from this worker state's
+/// universe-scoped session store. Exact receiver authorization is evaluated
+/// against the durable binding facts by the engine projection.
+// P101's work-cycle reconciliation activity is the first production caller.
+#[allow(dead_code)]
+pub(super) async fn read_port_emissions(
+    deps: &StorageActivityDeps,
+    receiver_endpoint: &WorkflowEndpointRef,
+    session_id: &SessionId,
+    run_id: RunId,
+) -> Result<Vec<WorkflowToolInvocation>, ActivityError> {
+    read_port_emissions_with_page_limit(deps, receiver_endpoint, session_id, run_id, 512).await
+}
+
+async fn read_port_emissions_with_page_limit(
+    deps: &StorageActivityDeps,
+    receiver_endpoint: &WorkflowEndpointRef,
+    session_id: &SessionId,
+    run_id: RunId,
+    page_limit: usize,
+) -> Result<Vec<WorkflowToolInvocation>, ActivityError> {
+    let entries =
+        read_all_session_events_with_page_limit(deps.sessions.as_ref(), session_id, page_limit)
+            .await?;
+    engine::read_port_emissions(&entries, receiver_endpoint, session_id, run_id)
+        .map_err(activity_error)
+}
+
 pub(super) async fn append_events(
     deps: &StorageActivityDeps,
     request: AppendEventsRequest,
@@ -199,6 +227,14 @@ async fn read_all_session_events(
     store: &dyn SessionStore,
     session_id: &SessionId,
 ) -> Result<Vec<StoredSessionEntry>, ActivityError> {
+    read_all_session_events_with_page_limit(store, session_id, 512).await
+}
+
+async fn read_all_session_events_with_page_limit(
+    store: &dyn SessionStore,
+    session_id: &SessionId,
+    page_limit: usize,
+) -> Result<Vec<StoredSessionEntry>, ActivityError> {
     let mut after = None;
     let mut entries = Vec::new();
     loop {
@@ -206,7 +242,7 @@ async fn read_all_session_events(
             .read_after(ReadSessionEvents {
                 session_id: session_id.clone(),
                 after,
-                limit: 512,
+                limit: page_limit,
             })
             .await
             .map_err(activity_error)?;
@@ -477,6 +513,140 @@ mod tests {
         assert_eq!(retried, first);
         let page = read_all(store.as_ref(), &session_id).await;
         assert_eq!(page.entries, first.entries);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn port_emission_read_is_complete_after_terminal_boundary_across_pages() {
+        use engine::{
+            ControllerWorkflowPorts, CoreAgentCodec, CoreAgentEvent, CoreAgentJoins,
+            FunctionToolSpec, RunEvent, RunId, ToolBatchId, ToolCallId, ToolKind, ToolName,
+            ToolParallelism, ToolSpec, ToolTargetRequirement, TurnId, UncommittedCoreAgentEvent,
+            WorkflowEndpointRef, WorkflowPortConfigEvent, WorkflowPortEvent,
+            WorkflowToolInvocation, WorkflowToolInvocationId, WorkflowToolPortDefinition,
+            WorkflowToolPortId,
+        };
+        use uuid::Uuid;
+
+        let store = Arc::new(InMemorySessionStore::new());
+        let deps = storage_deps(store.clone());
+        let session_id = create_test_session(store.as_ref()).await;
+        let universe_id = Uuid::from_u128(1);
+        let receiver = WorkflowEndpointRef {
+            workflow_id: "work-controller".to_owned(),
+            workflow_kind: "agent_work".to_owned(),
+        };
+        let admitted = ControllerWorkflowPorts::v1(
+            receiver.clone(),
+            vec![WorkflowToolPortDefinition {
+                port_id: WorkflowToolPortId::new("work-report"),
+                revision: 1,
+                semantic_type: "lightspeed.work.report.v1".to_owned(),
+                tool: ToolSpec {
+                    name: ToolName::new("work_report"),
+                    kind: ToolKind::Function(FunctionToolSpec {
+                        model_name: None,
+                        description_ref: None,
+                        input_schema_ref: BlobRef::from_bytes(b"work-report-schema"),
+                        output_schema_ref: None,
+                        strict: Some(true),
+                        provider_options_ref: None,
+                    }),
+                    parallelism: ToolParallelism::ParallelSafe,
+                    target_requirement: ToolTargetRequirement::None,
+                },
+            }],
+        )
+        .admit(universe_id)
+        .expect("admit controller");
+        let binding = &admitted.bindings[0];
+        let run_id = RunId::new(7);
+        let turn_id = TurnId::new(8);
+        let tool_batch_id = ToolBatchId::new(9);
+        let tool_call_id = ToolCallId::new("report-call");
+        let invocation = WorkflowToolInvocation {
+            invocation_id: WorkflowToolInvocationId::for_call(
+                universe_id,
+                &session_id,
+                run_id,
+                turn_id,
+                tool_batch_id,
+                &tool_call_id,
+                &binding.binding_fingerprint,
+            ),
+            port_id: binding.definition.port_id.clone(),
+            semantic_type: binding.definition.semantic_type.clone(),
+            schema_revision: binding.definition.revision,
+            binding_fingerprint: binding.binding_fingerprint.clone(),
+            session_universe_id: universe_id,
+            session_id: session_id.clone(),
+            run_id,
+            turn_id,
+            tool_batch_id,
+            tool_call_id: tool_call_id.clone(),
+            arguments_ref: BlobRef::from_bytes(b"{\"outcome\":\"complete\"}"),
+            reply_promise_id: None,
+        };
+        let codec = CoreAgentCodec;
+        let events = vec![
+            codec
+                .encode_uncommitted(&UncommittedCoreAgentEvent {
+                    observed_at_ms: 10,
+                    joins: CoreAgentJoins::default(),
+                    event: CoreAgentEvent::WorkflowPortConfig(
+                        WorkflowPortConfigEvent::ControllerBindingsAdmitted {
+                            session_universe_id: universe_id,
+                            declaration_version: admitted.version,
+                            controller: admitted.controller,
+                            creation_fingerprint: admitted.creation_fingerprint,
+                            bindings: admitted.bindings,
+                        },
+                    ),
+                })
+                .expect("encode binding event"),
+            codec
+                .encode_uncommitted(&UncommittedCoreAgentEvent {
+                    observed_at_ms: 11,
+                    joins: CoreAgentJoins {
+                        run_id: Some(run_id),
+                        turn_id: Some(turn_id),
+                        tool_batch_id: Some(tool_batch_id),
+                        tool_call_id: Some(tool_call_id),
+                        ..CoreAgentJoins::default()
+                    },
+                    event: CoreAgentEvent::WorkflowPort(WorkflowPortEvent::Emitted {
+                        invocation: invocation.clone(),
+                    }),
+                })
+                .expect("encode emission"),
+            codec
+                .encode_uncommitted(&UncommittedCoreAgentEvent {
+                    observed_at_ms: 12,
+                    joins: CoreAgentJoins {
+                        run_id: Some(run_id),
+                        ..CoreAgentJoins::default()
+                    },
+                    event: CoreAgentEvent::Run(RunEvent::Completed {
+                        run_id,
+                        output_ref: None,
+                    }),
+                })
+                .expect("encode terminal boundary"),
+        ];
+        store
+            .append(AppendSessionEvents {
+                session_id: session_id.clone(),
+                expected_head: None,
+                events,
+            })
+            .await
+            .expect("append port log");
+
+        let emissions =
+            read_port_emissions_with_page_limit(&deps, &receiver, &session_id, run_id, 2)
+                .await
+                .expect("read port emissions after terminal boundary");
+
+        assert_eq!(emissions, vec![invocation]);
     }
 
     #[tokio::test(flavor = "current_thread")]

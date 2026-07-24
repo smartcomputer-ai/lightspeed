@@ -33,6 +33,16 @@
   `ToolDispatchMode::{Local, WorkflowPort}`; the unused per-tool `Activity`
   mode and `activity_type` metadata were removed because hosted tools already
   execute inside the enclosing `tool_invoke_batch` Temporal activity.
+- Slice 4 pull reconciliation reads implemented 2026-07-24: the engine
+  projects one run's invocations in log order, authorizes by exact durable
+  receiver binding, rejects malformed or unbound reads, and keeps inherited
+  source-session emissions out of fork reads; the Temporal worker wraps that
+  projection with its existing universe-scoped, paginated session store.
+  Protocol coverage proves an emission preceding a durable run-terminal
+  boundary remains readable across store pages. P101 can now build
+  `read_work_cycle_result` on this internal operation. The projection takes
+  explicit domain arguments rather than defining a wire DTO; P101 owns the
+  actual reconciliation activity request/result in `temporal-workflow`.
 - Greenfield: internal workflow protocols and engine event vocabulary change
   without compatibility aliases. Replaced surfaces (the `resolve_promise` /
   `resolve_promise_source` signal split, promise-specific notification DTO
@@ -1183,13 +1193,13 @@ change so no transitional dual-funnel state ever ships.
 
 ### Slice 4: Pull reconciliation reads
 
-- [ ] Add the receiver-authorized internal
+- [x] Add the receiver-authorized internal
       `read_port_emissions(receiver_endpoint, session_id, run_id)` operation
       over the session log/projection; return only bindings targeting that
       receiver.
-- [ ] Guarantee boundary completeness: every emission of a run is readable
+- [x] Guarantee boundary completeness: every emission of a run is readable
       once that run's terminal emission is delivered.
-- [ ] This is the operation P101's `read_work_cycle_result` builds on.
+- [x] This is the operation P101's `read_work_cycle_result` builds on.
 
 ### Slice 5: Push delivery on the shared spine (deferred)
 
