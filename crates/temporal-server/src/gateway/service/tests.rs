@@ -45,6 +45,46 @@ fn admission_failure_mapping_uses_gateway_error_kinds() {
 }
 
 #[test]
+fn managed_session_retry_requires_the_durable_creation_fingerprint() {
+    let universe_id = uuid::Uuid::from_u128(1);
+    let declaration = engine::ControllerWorkflowPorts::v1(
+        engine::WorkflowEndpointRef {
+            workflow_id: "global controller/work-1".to_owned(),
+            workflow_kind: "agent_work".to_owned(),
+        },
+        Vec::new(),
+    );
+    let mut state = engine::CoreAgentState::new();
+    state.workflow_ports.session_universe_id = Some(universe_id);
+    state.workflow_ports.managed_creation_fingerprint = Some(
+        declaration
+            .creation_fingerprint(universe_id)
+            .expect("creation fingerprint"),
+    );
+    validate_managed_session_retry(&state, universe_id, &declaration).expect("matching retry");
+
+    let conflicting = engine::ControllerWorkflowPorts::v1(
+        engine::WorkflowEndpointRef {
+            workflow_id: "another controller".to_owned(),
+            workflow_kind: "agent_work".to_owned(),
+        },
+        Vec::new(),
+    );
+    assert_eq!(
+        validate_managed_session_retry(&state, universe_id, &conflicting)
+            .expect_err("conflicting retry")
+            .kind,
+        AgentApiErrorKind::Conflict
+    );
+    assert_eq!(
+        validate_managed_session_retry(&engine::CoreAgentState::new(), universe_id, &declaration,)
+            .expect_err("standalone session cannot become managed")
+            .kind,
+        AgentApiErrorKind::Conflict
+    );
+}
+
+#[test]
 fn skill_list_response_marks_active_catalog_entries() {
     let catalog_ref = BlobRef::from_bytes(b"catalog");
     let catalog = test_skill_catalog(

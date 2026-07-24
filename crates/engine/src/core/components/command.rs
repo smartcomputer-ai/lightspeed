@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
-    ContextEntryInput, ContextEntryKey, PromiseId, PromiseResolution, ResumeAwaitCommand, RunId,
-    RunRequestCommand, SessionConfig, SubmitMessageCommand, ToolExecutionTarget, ToolName,
-    ToolPatch, ToolSpec,
+    ContextEntryInput, ContextEntryKey, ControllerWorkflowPorts, PromiseId, PromiseResolution,
+    ResumeAwaitCommand, RunId, RunRequestCommand, SessionConfig, SubmitMessageCommand,
+    ToolExecutionTarget, ToolName, ToolPatch, ToolSpec,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,6 +14,13 @@ use crate::{
 pub enum CoreAgentCommand {
     OpenSession {
         config: SessionConfig,
+    },
+    /// Trusted managed-session creation path. Controller identity and ports
+    /// are admitted once, atomically with the lifecycle open event.
+    OpenManagedSession {
+        config: SessionConfig,
+        session_universe_id: Uuid,
+        controller_ports: ControllerWorkflowPorts,
     },
     /// Replace the session config with a complete document. The previous
     /// config is not consulted beyond validation (api-kind pinning) and the

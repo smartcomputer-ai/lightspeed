@@ -2,7 +2,7 @@ use crate::{
     CodecError, ContextEvent, CoreAgentEntry, CoreAgentEvent, CoreAgentJoins,
     CoreAgentLifecycleEvent, CorrelationId, PromiseEvent, RunEvent, RunId, StoredEvent,
     SubmissionId, ToolBatchId, ToolCallId, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
-    UncommittedCoreAgentEvent,
+    UncommittedCoreAgentEvent, WorkflowPortConfigEvent,
     session::{StoredJoins, StoredSessionEntry, UncommittedStoredEvent},
 };
 
@@ -175,6 +175,11 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             PromiseEvent::Failed { .. } => "lightspeed.core.promise.failed",
             PromiseEvent::Cancelled { .. } => "lightspeed.core.promise.cancelled",
             PromiseEvent::Detached { .. } => "lightspeed.core.promise.detached",
+        },
+        CoreAgentEvent::WorkflowPortConfig(event) => match event {
+            WorkflowPortConfigEvent::ControllerBindingsAdmitted { .. } => {
+                "lightspeed.core.workflow_port_config.controller_bindings_admitted"
+            }
         },
     }
 }

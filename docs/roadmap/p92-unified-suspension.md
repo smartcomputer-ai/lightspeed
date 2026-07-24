@@ -585,7 +585,11 @@ Each step is independently shippable and testable:
    workflow-resident registry — so they are continue-as-new-portable by
    construction and step 6 is largely already satisfied for the push source.
    CAN-at-idle is gated on transport quiescence (admissions, unresumed
-   batches, the flush queue), not on pending promises.
+   batches, the flush queue), not on pending promises. **P100 follow-up:** the
+   originally landed `resolve_promise` signal and
+   `PendingPromiseNotification` names were subsequently generalized to the
+   fixed `deliver_emission` signal and `PendingEmission` queue; the P92
+   promise semantics and transient-transport model are unchanged.
 3. **[DONE] Job waits fold in** (poll source). Deleted the P86 model-visible
    job wait tool, `ActiveEnvironmentJobWait`, `job_waits.rs`, and the second
    deadline/resume implementation. EnvJob promises now reconcile into

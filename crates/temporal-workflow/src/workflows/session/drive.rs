@@ -192,7 +192,7 @@ async fn append_events(
     let entries = drive.resume_appended(appended.entries)?;
     ctx.state_mut(|state| -> anyhow::Result<()> {
         apply_entries(&mut state.core_state, &entries, &mut state.run_submissions)?;
-        state.queue_promise_notifications_for_entries(&entries);
+        state.queue_emissions_for_entries(&entries)?;
         state.queue_promise_cancellations_for_entries(&entries);
         state.head = appended.head;
         state.last_error = None;

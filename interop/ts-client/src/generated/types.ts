@@ -325,6 +325,12 @@ export type SessionEventKindView =
       type: "sessionConfigChanged";
     }
   | {
+      controllerWorkflowKind: string;
+      creationFingerprint: string;
+      portIds: string[];
+      type: "workflowControllerPortsConfigured";
+    }
+  | {
       type: "sessionClosed";
     }
   | {

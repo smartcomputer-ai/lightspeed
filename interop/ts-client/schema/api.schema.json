@@ -7948,6 +7948,33 @@
         },
         {
           "properties": {
+            "controllerWorkflowKind": {
+              "type": "string"
+            },
+            "creationFingerprint": {
+              "type": "string"
+            },
+            "portIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "workflowControllerPortsConfigured",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "controllerWorkflowKind",
+            "creationFingerprint",
+            "portIds"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
             "type": {
               "const": "sessionClosed",
               "type": "string"

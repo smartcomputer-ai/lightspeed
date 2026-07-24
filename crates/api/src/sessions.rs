@@ -827,6 +827,11 @@ pub enum SessionEventKindView {
         model: Option<ModelConfig>,
         revision: u64,
     },
+    WorkflowControllerPortsConfigured {
+        controller_workflow_kind: String,
+        creation_fingerprint: String,
+        port_ids: Vec<String>,
+    },
     SessionClosed,
     RunAccepted {
         run_id: RunId,

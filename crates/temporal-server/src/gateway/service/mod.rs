@@ -90,8 +90,8 @@ use auth::{
 };
 use engine::{
     BlobRef, CompactionPolicy, ContextEntry, ContextEntryInput, ContextEntryKey, ContextEntryKind,
-    ContextMessageRole, CoreAgentCommand, CoreAgentStatus, ModelSelection, ProviderApiKind,
-    RunConfig, RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
+    ContextMessageRole, ControllerWorkflowPorts, CoreAgentCommand, CoreAgentStatus, ModelSelection,
+    ProviderApiKind, RunConfig, RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
     SKILL_ACTIVATION_PROVIDER_KIND_SESSION, SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionId,
     SkillId, SubmissionId, ToolChoice, ToolName, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
@@ -920,6 +920,7 @@ impl GatewayAgentApi {
         session_id: SessionId,
         display_name: Option<String>,
         session_config: SessionConfig,
+        controller_ports: Option<ControllerWorkflowPorts>,
         close_on_terminal: bool,
     ) -> AgentSessionArgs {
         AgentSessionArgs {
@@ -927,6 +928,7 @@ impl GatewayAgentApi {
             session_id,
             display_name,
             session_config,
+            controller_ports,
             max_steps_per_input: self.max_steps_per_input,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             close_on_terminal,
@@ -947,6 +949,30 @@ impl GatewayAgentApi {
                 profile,
             },
             close_on_terminal,
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Trusted controller entry point. Public session APIs never accept
+    /// controller endpoints or raw workflow port bindings.
+    pub async fn start_managed_session_for_controller_with_profile(
+        &self,
+        session_id: &SessionId,
+        close_on_terminal: bool,
+        profile: Option<ProfileSource>,
+        controller_ports: ControllerWorkflowPorts,
+    ) -> Result<(), AgentApiError> {
+        self.start_session_internal(
+            SessionStartParams {
+                session_id: Some(session_id.as_str().to_owned()),
+                display_name: None,
+                config: None,
+                profile,
+            },
+            close_on_terminal,
+            Some(controller_ports),
         )
         .await?;
         Ok(())
@@ -1155,6 +1181,7 @@ impl GatewayAgentApi {
         &self,
         params: SessionStartParams,
         close_on_terminal: bool,
+        controller_ports: Option<ControllerWorkflowPorts>,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
         let SessionStartParams {
             session_id,
@@ -1169,13 +1196,31 @@ impl GatewayAgentApi {
             })?,
             None => self.allocate_session_id(),
         };
+        if let Some(controller_ports) = controller_ports.as_ref() {
+            self.validate_managed_session_declaration(controller_ports)?;
+        }
         if client_supplied_id {
             match self.load_session_state(&session_id).await {
                 Ok(loaded) if loaded.state.lifecycle.status == CoreAgentStatus::Closed => {
+                    if let Some(controller_ports) = controller_ports.as_ref() {
+                        validate_managed_session_retry(
+                            &loaded.state,
+                            self.universe_id(),
+                            controller_ports,
+                        )?;
+                    }
                     let session = self.project_session_by_id(&session_id).await?;
                     return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
                 }
-                Ok(_) => {}
+                Ok(loaded) => {
+                    if let Some(controller_ports) = controller_ports.as_ref() {
+                        validate_managed_session_retry(
+                            &loaded.state,
+                            self.universe_id(),
+                            controller_ports,
+                        )?;
+                    }
+                }
                 Err(error) if is_not_found(&error) => {}
                 Err(error) => return Err(error),
             }
@@ -1199,6 +1244,7 @@ impl GatewayAgentApi {
                     session_id.clone(),
                     display_name,
                     session_config,
+                    controller_ports.clone(),
                     close_on_terminal,
                 ),
                 WorkflowStartOptions::new(
@@ -1215,6 +1261,13 @@ impl GatewayAgentApi {
                 if matches!(error.kind, AgentApiErrorKind::Conflict) && client_supplied_id =>
             {
                 let loaded = self.load_session_state(&session_id).await?;
+                if let Some(controller_ports) = controller_ports.as_ref() {
+                    validate_managed_session_retry(
+                        &loaded.state,
+                        self.universe_id(),
+                        controller_ports,
+                    )?;
+                }
                 if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
                     let session = self.project_session_by_id(&session_id).await?;
                     return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
@@ -1226,6 +1279,9 @@ impl GatewayAgentApi {
         }
         self.wait_for_open_session(&session_id).await?;
         let loaded = self.load_session_state(&session_id).await?;
+        if let Some(controller_ports) = controller_ports.as_ref() {
+            validate_managed_session_retry(&loaded.state, self.universe_id(), controller_ports)?;
+        }
         let _ = self.configure_session_toolset(&session_id, &loaded).await?;
         if let Some(profile) = resolved_profile {
             self.apply_profile_document(&session_id, &profile.document, false, None, None)
@@ -1235,6 +1291,20 @@ impl GatewayAgentApi {
             .await?;
         let session = self.project_session_by_id(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionStartResponse { session }))
+    }
+
+    fn validate_managed_session_declaration(
+        &self,
+        controller_ports: &ControllerWorkflowPorts,
+    ) -> Result<(), AgentApiError> {
+        controller_ports
+            .admit(self.universe_id())
+            .map_err(|error| {
+                AgentApiError::invalid_request(format!(
+                    "invalid managed-session controller declaration: {error}"
+                ))
+            })?;
+        Ok(())
     }
 
     fn projector(&self) -> CoreAgentProjector<'_> {
@@ -1319,6 +1389,36 @@ pub(super) struct LoadedSession {
     pub(super) state: engine::CoreAgentState,
 }
 
+fn validate_managed_session_retry(
+    state: &engine::CoreAgentState,
+    session_universe_id: uuid::Uuid,
+    controller_ports: &ControllerWorkflowPorts,
+) -> Result<(), AgentApiError> {
+    let expected = controller_ports
+        .creation_fingerprint(session_universe_id)
+        .map_err(|error| {
+            AgentApiError::invalid_request(format!(
+                "invalid managed-session controller declaration: {error}"
+            ))
+        })?;
+    match (
+        state.workflow_ports.session_universe_id,
+        state.workflow_ports.managed_creation_fingerprint.as_deref(),
+    ) {
+        (Some(actual_universe), Some(actual))
+            if actual_universe == session_universe_id && actual == expected =>
+        {
+            Ok(())
+        }
+        (Some(_), Some(_)) => Err(AgentApiError::conflict(
+            "managed-session controller or port declaration conflicts with durable creation state",
+        )),
+        _ => Err(AgentApiError::conflict(
+            "existing standalone session cannot be reopened as a managed session",
+        )),
+    }
+}
+
 #[async_trait]
 impl AgentApiService for GatewayAgentApi {
     async fn list_models(
@@ -1361,7 +1461,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        self.start_session_internal(params, false).await
+        self.start_session_internal(params, false, None).await
     }
 
     async fn create_profile(

@@ -260,6 +260,21 @@ impl<'a> CoreAgentProjector<'a> {
                 }
                 CoreAgentLifecycleEvent::Closed => Ok(SessionEventKindView::SessionClosed),
             },
+            CoreAgentEvent::WorkflowPortConfig(event) => match event {
+                engine::WorkflowPortConfigEvent::ControllerBindingsAdmitted {
+                    controller,
+                    creation_fingerprint,
+                    bindings,
+                    ..
+                } => Ok(SessionEventKindView::WorkflowControllerPortsConfigured {
+                    controller_workflow_kind: controller.workflow_kind.clone(),
+                    creation_fingerprint: creation_fingerprint.clone(),
+                    port_ids: bindings
+                        .iter()
+                        .map(|binding| binding.definition.port_id.as_str().to_owned())
+                        .collect(),
+                }),
+            },
             CoreAgentEvent::Run(event) => match event {
                 RunEvent::Accepted(accepted) => Ok(SessionEventKindView::RunAccepted {
                     run_id: api_run_id(accepted.run_id),
@@ -1948,6 +1963,40 @@ mod tests {
                 revision: 9,
                 entries: Vec::new(),
                 reason: "providerCompacted".to_owned(),
+            }
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn controller_port_config_projects_bounded_diagnostics() {
+        let blobs = InMemoryBlobStore::new();
+        let projector = CoreAgentProjector::new(&blobs);
+        let universe_id = "00000000-0000-0000-0000-000000000001";
+        let config_event: engine::WorkflowPortConfigEvent =
+            serde_json::from_value(serde_json::json!({
+                "controller_bindings_admitted": {
+                    "session_universe_id": universe_id,
+                    "declaration_version": 1,
+                    "controller": {
+                        "workflow_id": "global controller/work-1",
+                        "workflow_kind": "agent_work",
+                    },
+                    "creation_fingerprint": "msc:sha256:test",
+                    "bindings": [],
+                }
+            }))
+            .expect("decode workflow port config event");
+        let projected = projector
+            .project_event_kind(&CoreAgentEvent::WorkflowPortConfig(config_event))
+            .await
+            .expect("project controller ports");
+
+        assert_eq!(
+            projected,
+            SessionEventKindView::WorkflowControllerPortsConfigured {
+                controller_workflow_kind: "agent_work".to_owned(),
+                creation_fingerprint: "msc:sha256:test".to_owned(),
+                port_ids: Vec::new(),
             }
         );
     }

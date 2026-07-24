@@ -9,9 +9,11 @@
 
 pub mod blob;
 pub mod core;
+pub mod emission;
 pub mod session;
 pub mod storage;
 
 pub use blob::*;
 pub use core::*;
+pub use emission::*;
 pub use session::{CodecError, StoredEvent};

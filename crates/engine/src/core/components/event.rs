@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ContextEvent, CoreAgentLifecycleEvent, PromiseEvent, RunEvent, ToolConfigEvent, ToolEvent,
-    TurnEvent,
+    TurnEvent, WorkflowPortConfigEvent,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,4 +15,5 @@ pub enum CoreAgentEvent {
     ToolConfig(ToolConfigEvent),
     Tool(ToolEvent),
     Promise(PromiseEvent),
+    WorkflowPortConfig(WorkflowPortConfigEvent),
 }

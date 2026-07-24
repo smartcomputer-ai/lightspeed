@@ -123,6 +123,11 @@ string_id!(ContextEntryKey, validate_general_string_id);
 string_id!(SkillId, validate_general_string_id);
 string_id!(ToolCallId, validate_general_string_id);
 string_id!(ToolName, validate_tool_name);
+string_id!(WorkflowToolPortId, validate_general_string_id);
+string_id!(
+    WorkflowToolInvocationId,
+    validate_workflow_tool_invocation_id
+);
 
 numeric_id!(RunId);
 numeric_id!(MessageId);
@@ -153,6 +158,29 @@ fn validate_tool_name(kind: &'static str, value: &str) -> Result<(), StringIdErr
                 allowed: "ASCII letters, digits, '_', '-'",
             });
         }
+    }
+    Ok(())
+}
+
+fn validate_workflow_tool_invocation_id(
+    kind: &'static str,
+    value: &str,
+) -> Result<(), StringIdError> {
+    const PREFIX: &str = "wpi:sha256:";
+    const DIGEST_LEN: usize = 64;
+    crate::session::validate_string_id_length(kind, value, PREFIX.len() + DIGEST_LEN)?;
+    if value.len() != PREFIX.len() + DIGEST_LEN
+        || !value.starts_with(PREFIX)
+        || !value[PREFIX.len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(StringIdError::InvalidCharacter {
+            kind,
+            index: 0,
+            ch: value.chars().next().unwrap_or('?'),
+            allowed: "'wpi:sha256:' followed by 64 lowercase hexadecimal characters",
+        });
     }
     Ok(())
 }
@@ -210,6 +238,21 @@ mod tests {
         assert!(ToolName::try_new("tool:name").is_err());
         assert!(ToolName::try_new("tool/name").is_err());
         assert!(ToolName::try_new("tool name").is_err());
+    }
+
+    #[test]
+    fn workflow_tool_invocation_ids_require_canonical_digest_shape() {
+        let id = format!("wpi:sha256:{}", "a".repeat(64));
+        assert_eq!(
+            WorkflowToolInvocationId::try_new(id.clone())
+                .expect("valid invocation id")
+                .as_str(),
+            id
+        );
+        assert!(
+            WorkflowToolInvocationId::try_new(format!("wpi:sha256:{}", "A".repeat(64))).is_err()
+        );
+        assert!(WorkflowToolInvocationId::try_new("wpi:sha256:short").is_err());
     }
 
     #[test]

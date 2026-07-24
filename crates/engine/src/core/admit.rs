@@ -5,7 +5,7 @@ use crate::{
     CoreAgentCommand, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
     CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, DomainError, MessageStatus,
     PromiseEvent, PromiseResolution, RunConfig, RunEvent, RunRequestSource, RunSource, RunStatus,
-    ToolConfigEvent,
+    ToolConfigEvent, WorkflowPortConfigEvent,
     core::components::{
         config::{validate_config_update_for_state, validate_run_config_for_state},
         tooling::{
@@ -32,6 +32,40 @@ pub fn admit_command(
                 CoreAgentJoins::default(),
                 CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Opened { config }),
             )])
+        }
+        CoreAgentCommand::OpenManagedSession {
+            config,
+            session_universe_id,
+            controller_ports,
+        } => {
+            if state.lifecycle.status != CoreAgentStatus::New {
+                return reject(
+                    CommandRejectionKind::CoreAgentState,
+                    "session can only be opened from new state",
+                );
+            }
+            config.validate().map_err(command_rejection_from_domain)?;
+            let admitted = controller_ports
+                .admit(session_universe_id)
+                .map_err(command_rejection_from_domain)?;
+            Ok(vec![
+                CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Opened { config }),
+                ),
+                CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEvent::WorkflowPortConfig(
+                        WorkflowPortConfigEvent::ControllerBindingsAdmitted {
+                            session_universe_id: admitted.session_universe_id,
+                            declaration_version: admitted.version,
+                            controller: admitted.controller,
+                            creation_fingerprint: admitted.creation_fingerprint,
+                            bindings: admitted.bindings,
+                        },
+                    ),
+                ),
+            ])
         }
         CoreAgentCommand::ReplaceSessionConfig {
             expected_revision,

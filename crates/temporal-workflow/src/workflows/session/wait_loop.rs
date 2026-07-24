@@ -44,7 +44,7 @@ fn workflow_has_immediate_work(ctx: &WorkflowContext<AgentSessionWorkflow>, now:
 pub(super) fn workflow_state_has_immediate_work(state: &AgentSessionWorkflow) -> bool {
     !state.pending_admissions.is_empty()
         || !state.pending_tool_batch_resumes.is_empty()
-        || !state.pending_promise_notifications.is_empty()
+        || !state.pending_emissions.is_empty()
         || !state.pending_promise_cancellations.is_empty()
         || promise_sources::has_unconfirmed_subscriptions(state)
         || awaits::has_satisfied_await(state)
@@ -85,7 +85,7 @@ pub(super) fn can_continue_as_new_at_idle(
 pub(super) fn workflow_state_allows_continue_as_new(state: &AgentSessionWorkflow) -> bool {
     state.pending_admissions.is_empty()
         && state.pending_tool_batch_resumes.is_empty()
-        && state.pending_promise_notifications.is_empty()
+        && state.pending_emissions.is_empty()
         && state.pending_promise_cancellations.is_empty()
 }
 
@@ -98,7 +98,7 @@ pub(super) fn workflow_state_is_closed_and_quiescent(state: &AgentSessionWorkflo
         && state.core_state.lifecycle.status == CoreAgentStatus::Closed
         && state.pending_admissions.is_empty()
         && state.pending_tool_batch_resumes.is_empty()
-        && state.pending_promise_notifications.is_empty()
+        && state.pending_emissions.is_empty()
         && state.pending_promise_cancellations.is_empty()
         && state.core_state.runs.active.is_none()
         && state.core_state.runs.queued.is_empty()

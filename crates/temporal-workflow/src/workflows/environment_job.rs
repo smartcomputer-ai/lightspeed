@@ -14,7 +14,7 @@ use crate::{
     EnvironmentJobCancelActivityRequest, EnvironmentJobCancelSignal,
     EnvironmentJobConfirmSubscriptionSignal, EnvironmentJobPollActivityRequest,
     EnvironmentJobSubscription, EnvironmentJobWorkflowArgs, EnvironmentJobWorkflowSnapshot,
-    PromiseSourceResolutionSignal, WorkflowActivities, activity_options,
+    WorkflowActivities, activity_options, compose_environment_job_workflow_id,
 };
 
 const SUBSCRIPTION_CONFIRMATION_TIMEOUT_MS: u64 = 60_000;
@@ -45,6 +45,19 @@ impl EnvironmentJobWorkflow {
         ctx: &mut WorkflowContext<Self>,
         mut args: EnvironmentJobWorkflowArgs,
     ) -> WorkflowResult<()> {
+        let expected_workflow_id = compose_environment_job_workflow_id(
+            args.universe_id,
+            &args.start.instance_id,
+            &args.start.job_group_id,
+        );
+        if ctx.workflow_id() != expected_workflow_id {
+            return Err(anyhow::anyhow!(
+                "environment job workflow id does not match its universe and job identity: workflow_id={} expected={}",
+                ctx.workflow_id(),
+                expected_workflow_id
+            )
+            .into());
+        }
         ctx.state_mut(|state| {
             state.snapshot.instance_id = args.start.instance_id.clone();
             state.snapshot.job_group_id = args.start.job_group_id.clone();
@@ -155,7 +168,7 @@ impl EnvironmentJobWorkflow {
                 }
             }
 
-            flush_terminal_notifications(ctx).await;
+            flush_terminal_emissions(ctx, args.universe_id).await;
             if ctx.state(|state| {
                 state.snapshot.terminal
                     && state
@@ -236,12 +249,17 @@ fn expire_unconfirmed_subscriptions(ctx: &WorkflowContext<EnvironmentJobWorkflow
     ctx.state_mut(|state| expire_unconfirmed_subscriptions_for_state(state, now_ms));
 }
 
-async fn flush_terminal_notifications(ctx: &mut WorkflowContext<EnvironmentJobWorkflow>) {
-    let notifications = ctx.state_mut(collect_terminal_notifications);
-    for (holder_workflow_id, signal) in notifications {
+async fn flush_terminal_emissions(
+    ctx: &mut WorkflowContext<EnvironmentJobWorkflow>,
+    universe_id: uuid::Uuid,
+) {
+    let workflow_id = ctx.workflow_id().to_owned();
+    let emissions =
+        ctx.state_mut(|state| collect_terminal_emissions(state, universe_id, &workflow_id));
+    for (receiver_workflow_id, envelope) in emissions {
         let _ = ctx
-            .external_workflow(holder_workflow_id, None)
-            .signal(AgentSessionWorkflow::resolve_promise_source, signal)
+            .external_workflow(receiver_workflow_id, None)
+            .signal(AgentSessionWorkflow::deliver_emission, envelope)
             .await;
     }
 }
@@ -277,10 +295,12 @@ fn expire_unconfirmed_subscriptions_for_state(state: &mut EnvironmentJobWorkflow
     state.nudged = true;
 }
 
-fn collect_terminal_notifications(
+fn collect_terminal_emissions(
     state: &mut EnvironmentJobWorkflow,
-) -> Vec<(String, PromiseSourceResolutionSignal)> {
-    let mut notifications = Vec::new();
+    universe_id: uuid::Uuid,
+    workflow_id: &str,
+) -> Vec<(String, engine::EmissionEnvelope)> {
+    let mut emissions = Vec::new();
     for subscription in &mut state.subscriptions {
         if !subscription.confirmed || subscription.notified {
             continue;
@@ -293,16 +313,28 @@ fn collect_terminal_notifications(
         else {
             continue;
         };
+        let resolution = match result {
+            engine::PromiseSourceCheckResult::Pending => continue,
+            engine::PromiseSourceCheckResult::Resolved { payload_ref } => {
+                engine::PromiseResolution::Resolved { payload_ref }
+            }
+            engine::PromiseSourceCheckResult::Failed { error_ref } => {
+                engine::PromiseResolution::Failed { error_ref }
+            }
+        };
         subscription.notified = true;
-        notifications.push((
+        let promise_id = engine::PromiseId::new(subscription.promise_id.clone());
+        emissions.push((
             subscription.holder_workflow_id.clone(),
-            PromiseSourceResolutionSignal {
-                promise_id: subscription.promise_id.clone(),
-                result,
-            },
+            engine::EmissionEnvelope::source_resolution(
+                universe_id,
+                workflow_id.to_owned(),
+                promise_id,
+                resolution,
+            ),
         ));
     }
-    notifications
+    emissions
 }
 
 fn workflow_time_ms(ctx: &WorkflowContext<EnvironmentJobWorkflow>) -> u64 {
@@ -354,18 +386,29 @@ mod tests {
             },
         );
 
-        let first = collect_terminal_notifications(&mut workflow);
-        let second = collect_terminal_notifications(&mut workflow);
+        let universe_id = uuid::Uuid::from_u128(1);
+        let first = collect_terminal_emissions(&mut workflow, universe_id, "universe/envjob-job_1");
+        let second =
+            collect_terminal_emissions(&mut workflow, universe_id, "universe/envjob-job_1");
 
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].0, "universe/session_1");
-        assert_eq!(first[0].1.promise_id, "promise_1");
-        assert_eq!(
-            first[0].1.result,
-            PromiseSourceCheckResult::Resolved {
-                payload_ref: Some(payload_ref),
-            }
-        );
+        assert!(matches!(
+            &first[0].1.body,
+            engine::EmissionBody::SourceResolution {
+                promise_id,
+                resolution: engine::PromiseResolution::Resolved {
+                    payload_ref: Some(actual),
+                },
+            } if promise_id.as_str() == "promise_1" && actual == &payload_ref
+        ));
+        assert!(matches!(
+            first[0].1.producer,
+            engine::EmissionProducer::Workflow {
+                universe_id: actual,
+                ref workflow_id,
+            } if actual == universe_id && workflow_id == "universe/envjob-job_1"
+        ));
         assert!(second.is_empty());
     }
 }

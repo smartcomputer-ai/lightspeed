@@ -786,6 +786,7 @@ impl ChatSessionDriver {
             }
             SessionEventKindView::SessionOpened { .. }
             | SessionEventKindView::SessionConfigChanged { .. }
+            | SessionEventKindView::WorkflowControllerPortsConfigured { .. }
             | SessionEventKindView::SessionClosed
             | SessionEventKindView::RunSteeringAccepted { .. }
             | SessionEventKindView::RunCancellationRequested { .. }

@@ -17,6 +17,7 @@ pub mod run;
 pub mod state;
 pub mod tooling;
 pub mod turn;
+pub mod workflow_port;
 
 pub use command::*;
 pub use config::*;
@@ -66,4 +67,9 @@ pub use tooling::{
 pub use turn::{
     LlmFinish, LlmGenerationFacts, LlmGenerationStatus, LlmUsage, PlannedRequestState, TurnEvent,
     TurnOutcome, TurnState, TurnStatus,
+};
+pub use workflow_port::{
+    AdmittedControllerWorkflowPorts, ControllerWorkflowPorts, WorkflowEndpointRef,
+    WorkflowPortConfigEvent, WorkflowPortState, WorkflowToolPortBinding,
+    WorkflowToolPortDefinition,
 };

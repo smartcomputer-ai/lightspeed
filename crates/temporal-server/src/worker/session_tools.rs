@@ -1019,6 +1019,7 @@ impl SessionTools {
             .start_workflow(
                 temporal_workflow::EnvironmentJobWorkflow::run,
                 temporal_workflow::EnvironmentJobWorkflowArgs {
+                    universe_id: runtime.universe_id,
                     start,
                     job_ids,
                     subscriptions,

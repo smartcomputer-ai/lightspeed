@@ -200,6 +200,7 @@ impl GatewayAgentApi {
             .start_workflow(
                 temporal_workflow::EnvironmentJobWorkflow::run,
                 temporal_workflow::EnvironmentJobWorkflowArgs {
+                    universe_id: self.universe_id(),
                     start,
                     job_ids,
                     subscriptions,

@@ -46,5 +46,8 @@ fn apply_event_kind(state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Resul
         CoreAgentEvent::Promise(event) => {
             crate::core::components::promise::apply_event(state, event)
         }
+        CoreAgentEvent::WorkflowPortConfig(event) => {
+            crate::core::components::workflow_port::apply_config_event(state, event)
+        }
     }
 }

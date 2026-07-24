@@ -5,45 +5,47 @@ impl AgentSessionWorkflow {
         self.pending_admissions.push(admission);
     }
 
-    /// Inbound push delivery: a session we hold a promise on reports the
-    /// terminal state of the run behind it. Queued as a normal admission so
-    /// the resolution flows through `ResolvePromise` command admission —
-    /// the single funnel — where a promise that is already terminal makes
-    /// the delivery an idempotent no-op.
-    pub fn queue_promise_resolution(&mut self, signal: PromiseResolutionSignal) {
-        let resolution = match signal.status {
-            RunStatus::Completed => engine::PromiseResolution::Resolved {
-                payload_ref: signal.output_ref,
-            },
-            // A failed or externally-cancelled source is a failed promise
-            // for the holder; promise `cancelled` is reserved for the
-            // holder's own revocation.
-            _ => engine::PromiseResolution::Failed {
-                error_ref: signal.failure_message_ref,
-            },
-        };
-        self.pending_admissions.push(AgentAdmission {
-            command: CoreAgentCommand::ResolvePromise {
-                promise_id: engine::PromiseId::new(signal.token),
+    /// Inbound push delivery converges on ordinary promise resolution
+    /// admission. The receiver's promise registry remains the semantic
+    /// idempotency boundary for duplicate transport deliveries.
+    pub fn queue_emission(&mut self, universe_id: uuid::Uuid, envelope: EmissionEnvelope) {
+        if envelope.producer.universe_id() != universe_id {
+            self.last_error = Some(format!(
+                "cross-universe emission rejected: receiver_universe={} producer_universe={}",
+                universe_id,
+                envelope.producer.universe_id()
+            ));
+            return;
+        }
+        let (promise_id, resolution) = match envelope.body {
+            engine::EmissionBody::RunTerminal {
+                token,
+                status,
+                output_ref,
+                failure_message_ref,
+                ..
+            } => {
+                let resolution = match status {
+                    RunStatus::Completed => engine::PromiseResolution::Resolved {
+                        payload_ref: output_ref,
+                    },
+                    // A failed or externally-cancelled source is a failed
+                    // promise for the holder; promise `cancelled` is reserved
+                    // for the holder's own revocation.
+                    _ => engine::PromiseResolution::Failed {
+                        error_ref: failure_message_ref,
+                    },
+                };
+                (engine::PromiseId::new(token), resolution)
+            }
+            engine::EmissionBody::SourceResolution {
+                promise_id,
                 resolution,
-            },
-            correlation_token: None,
-        });
-    }
-
-    pub fn queue_promise_source_resolution(&mut self, signal: PromiseSourceResolutionSignal) {
-        let resolution = match signal.result {
-            engine::PromiseSourceCheckResult::Pending => return,
-            engine::PromiseSourceCheckResult::Resolved { payload_ref } => {
-                engine::PromiseResolution::Resolved { payload_ref }
-            }
-            engine::PromiseSourceCheckResult::Failed { error_ref } => {
-                engine::PromiseResolution::Failed { error_ref }
-            }
+            } => (promise_id, resolution),
         };
         self.pending_admissions.push(AgentAdmission {
             command: CoreAgentCommand::ResolvePromise {
-                promise_id: engine::PromiseId::new(signal.promise_id),
+                promise_id,
                 resolution,
             },
             correlation_token: None,
@@ -54,7 +56,17 @@ impl AgentSessionWorkflow {
     /// terminal state, queue one notification per intent. Intents live on
     /// the run record in core state (the edge event is the subscription), so
     /// this consults the just-applied record — no subscription table.
-    pub(super) fn queue_promise_notifications_for_entries(&mut self, entries: &[CoreAgentEntry]) {
+    pub(super) fn queue_emissions_for_entries(
+        &mut self,
+        entries: &[CoreAgentEntry],
+    ) -> anyhow::Result<()> {
+        let universe_id = self
+            .universe_id
+            .ok_or_else(|| anyhow::anyhow!("initialized session is missing universe id"))?;
+        let session_id = self
+            .session_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("initialized session is missing session id"))?;
         for entry in entries {
             let Some(run_id) = terminal_run_id_for_event(&entry.event) else {
                 continue;
@@ -69,21 +81,25 @@ impl AgentSessionWorkflow {
                 continue;
             };
             for intent in &record.notify_on_terminal {
-                self.pending_promise_notifications
-                    .push(PendingPromiseNotification {
-                        holder_workflow_id: intent.holder_workflow_id.clone(),
-                        signal: PromiseResolutionSignal {
-                            token: intent.token.clone(),
-                            status: record.status,
-                            output_ref: record.output_ref.clone(),
-                            failure_message_ref: record
-                                .failure
-                                .as_ref()
-                                .and_then(|failure| failure.message_ref.clone()),
-                        },
-                    });
+                self.pending_emissions.push(PendingEmission {
+                    receiver_workflow_id: intent.holder_workflow_id.clone(),
+                    envelope: EmissionEnvelope::run_terminal(
+                        universe_id,
+                        session_id.clone(),
+                        entry.position.seq,
+                        intent.token.clone(),
+                        run_id,
+                        record.status,
+                        record.output_ref.clone(),
+                        record
+                            .failure
+                            .as_ref()
+                            .and_then(|failure| failure.message_ref.clone()),
+                    ),
+                });
             }
         }
+        Ok(())
     }
 
     pub(super) fn queue_promise_cancellations_for_entries(&mut self, entries: &[CoreAgentEntry]) {
@@ -116,7 +132,7 @@ impl AgentSessionWorkflow {
             pending_tool_batch_resumes: self.pending_tool_batch_resumes.len(),
             active_waits: usize::from(awaits::parked_await(&self.core_state).is_some())
                 + self.promise_source_polls.len(),
-            pending_promise_notifications: self.pending_promise_notifications.len(),
+            pending_emissions: self.pending_emissions.len(),
             active_run: self
                 .core_state
                 .runs
@@ -196,19 +212,19 @@ fn terminal_run_id_for_event(event: &CoreAgentEvent) -> Option<engine::RunId> {
     }
 }
 
-/// Deliver queued notifications by signalling each holder workflow's
-/// `resolve_promise` handler. Signals to an existing workflow id are durable;
+/// Deliver queued facts by signalling each receiver workflow's fixed
+/// `deliver_emission` handler. Signals to an existing workflow id are durable;
 /// a missing target drops the entry (its holder is gone — the reaper's
 /// upward sweep covers that direction). The queue gates continue-as-new, so
 /// in-flight deliveries never need reconstruction.
-pub(super) async fn flush_pending_promise_notifications(
+pub(super) async fn flush_pending_emissions(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
 ) -> anyhow::Result<()> {
-    let pending = ctx.state_mut(|state| std::mem::take(&mut state.pending_promise_notifications));
+    let pending = ctx.state_mut(|state| std::mem::take(&mut state.pending_emissions));
     for pending in pending {
         let _ = ctx
-            .external_workflow(pending.holder_workflow_id, None)
-            .signal(AgentSessionWorkflow::resolve_promise, pending.signal)
+            .external_workflow(pending.receiver_workflow_id, None)
+            .signal(AgentSessionWorkflow::deliver_emission, pending.envelope)
             .await;
     }
     Ok(())

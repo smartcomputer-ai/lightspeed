@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    BlobRef, CommandRejection, ContextEntryInput, CoreAgentCommand, CoreAgentState, RunStatus,
-    SessionConfig, SessionId, SessionPosition, SubmissionId, ToolBatchId,
+    BlobRef, CommandRejection, ContextEntryInput, ControllerWorkflowPorts, CoreAgentCommand,
+    CoreAgentState, EmissionEnvelope, RunStatus, SessionConfig, SessionId, SessionPosition,
+    SubmissionId, ToolBatchId,
     storage::{SessionRecord, UncommittedStoredEvent},
 };
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,11 @@ pub struct AgentSessionArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     pub session_config: SessionConfig,
+    /// Present only for the trusted managed-session creation path. The
+    /// declaration is validated against `universe_id` and recorded as an
+    /// immutable creation fact on the first append.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_ports: Option<ControllerWorkflowPorts>,
     pub max_steps_per_input: Option<u32>,
     pub continue_as_new_history_threshold: Option<u32>,
     #[serde(default)]
@@ -72,7 +78,7 @@ pub struct AgentSessionStatus {
     #[serde(default)]
     pub active_waits: usize,
     #[serde(default)]
-    pub pending_promise_notifications: usize,
+    pub pending_emissions: usize,
     pub active_run: Option<AgentActiveRunSummary>,
     pub queued_runs: Vec<AgentQueuedRunSummary>,
     pub completed_runs: Vec<AgentCompletedRunSummary>,
@@ -152,25 +158,14 @@ pub struct AgentCompletedRunSummary {
     pub failure_message_ref: Option<BlobRef>,
 }
 
-/// Push-transport payload: the observed session signals the holder workflow
-/// when a run carrying a notify-intent reaches a terminal state. The token is
-/// the holder-side promise id — the edge event is the subscription (P92 §1).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PromiseResolutionSignal {
-    pub token: String,
-    pub status: RunStatus,
-    pub output_ref: Option<BlobRef>,
-    pub failure_message_ref: Option<BlobRef>,
-}
-
-/// Queued outbound notification on the observed side. Transient transport
+/// Queued outbound emission on the producing side. Transient transport
 /// state: the flush queue gates continue-as-new instead of being carried
 /// through it, so delivery is at-least-once with idempotent receive keyed by
-/// the promise id.
+/// the emission id or the receiver's semantic token.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingPromiseNotification {
-    pub holder_workflow_id: String,
-    pub signal: PromiseResolutionSignal,
+pub struct PendingEmission {
+    pub receiver_workflow_id: String,
+    pub envelope: EmissionEnvelope,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,12 +226,6 @@ pub struct PendingToolBatchResume {
 pub struct CancellingWatchdog {
     pub run_id: u64,
     pub since_ms: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PromiseSourceResolutionSignal {
-    pub promise_id: String,
-    pub result: engine::PromiseSourceCheckResult,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,6 +289,7 @@ pub struct EnvironmentJobConfirmSubscriptionSignal {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentJobWorkflowArgs {
+    pub universe_id: Uuid,
     pub start: EnvironmentJobStartActivityRequest,
     pub job_ids: Vec<host_protocol::shared::JobId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
