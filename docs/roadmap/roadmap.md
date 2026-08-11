@@ -109,6 +109,28 @@
 - [ ] incremental tool discovery support (at least OAI)
 
 ## Environments & Sandboxes
+- [x] [P117](p117-environment-compute-plan.md) — agreed target architecture for
+  operator-scoped compute providers, universe bindings, stable environment
+  identity, direct enrollment, outbound envd connections, managed Incus VMs,
+  public ingress, and a future independent-node pool; delivery is split across
+  P118-P122
+- [ ] [P118](p118-environment-domain-and-lifecycle.md) — replace the
+  provider-as-singleton model with operator providers, revisioned universe
+  bindings, incarnation-scoped physical facts, idempotent asynchronous
+  lifecycle, and a Lightspeed-owned reconciler over a stateless provider
+- [ ] [P119](p119-environment-daemon-gateway-enrollment.md) — replace
+  attach-only host-bridge registration with `lightspeed-envd`, authenticated
+  outbound gateway routing, daemon/incarnation fencing, and direct host
+  enrollment
+- [ ] [P120](p120-incus-environment-provider.md) — implement the standalone,
+  stateless Incus provider, immutable development templates/images, baseline
+  per-binding networking, and durable VM provisioning on hz02
+- [ ] [P121](p121-environment-public-ingress.md) — add binding-controlled
+  per-environment Cloudflare Tunnel ingress with a service-secret boundary
+  separate from ordinary environment credentials
+- [ ] [P122](p122-incus-multi-node-pool.md) — extend the stateless Incus
+  provider to independently managed nodes with placement, image distribution,
+  cordon/drain, and explicit node-loss behavior
 - [x] [P113](p113-explicit-vfs-and-environment-tool-domains.md) — separate
   dedicated VFS tools from ordinary active-environment file/process tools,
   remove generic execution targets and the fused filesystem, and make prompts
