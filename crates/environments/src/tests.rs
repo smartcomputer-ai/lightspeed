@@ -90,6 +90,29 @@ async fn binding_put_is_revisioned_and_unique_per_provider() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn provider_delete_requires_all_bindings_to_be_removed() {
+    let (universe_id, store) = store().await;
+    let provider_id = EnvironmentProviderId::new("incus-local");
+    assert!(matches!(
+        store.delete_provider(&provider_id).await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    store
+        .delete_provider_binding(universe_id, &EnvironmentProviderBindingId::new("primary"))
+        .await
+        .expect("delete binding");
+    let deleted = store
+        .delete_provider(&provider_id)
+        .await
+        .expect("delete provider");
+    assert_eq!(deleted.provider_id, provider_id);
+    assert!(matches!(
+        store.read_provider(&provider_id).await,
+        Err(EnvironmentRegistryError::NotFound { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn stable_request_id_returns_the_original_environment() {
     let (_, store) = store().await;
     let first = store

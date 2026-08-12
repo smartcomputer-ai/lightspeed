@@ -826,6 +826,74 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderDeleteResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOperatorEnvironmentProviderListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfOperatorProviderBindingDeleteResponse": {
         "properties": {
           "notifications": {
@@ -5553,6 +5621,225 @@
         "required": [
           "keyPrefix",
           "createdAtMs"
+        ],
+        "type": "object"
+      },
+      "OperatorEnvironmentProviderConnection": {
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderTransport"
+          }
+        },
+        "required": [
+          "endpoint",
+          "transport"
+        ],
+        "type": "object"
+      },
+      "OperatorEnvironmentProviderDeleteParams": {
+        "properties": {
+          "providerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId"
+        ],
+        "type": "object"
+      },
+      "OperatorEnvironmentProviderDeleteResponse": {
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderView"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "OperatorEnvironmentProviderListParams": {
+        "type": "object"
+      },
+      "OperatorEnvironmentProviderListResponse": {
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorEnvironmentProviderView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers"
+        ],
+        "type": "object"
+      },
+      "OperatorEnvironmentProviderPutParams": {
+        "properties": {
+          "controllerConnection": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderConnection"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "providerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "controllerConnection"
+        ],
+        "type": "object"
+      },
+      "OperatorEnvironmentProviderPutResponse": {
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderView"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "OperatorEnvironmentProviderReadParams": {
+        "properties": {
+          "providerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId"
+        ],
+        "type": "object"
+      },
+      "OperatorEnvironmentProviderReadResponse": {
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderView"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "OperatorEnvironmentProviderTransport": {
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "const": "webSocket",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "http",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "stdio",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "ssh",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "providerType": {
+                "type": "string"
+              },
+              "type": {
+                "const": "provider",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "providerType"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "OperatorEnvironmentProviderView": {
+        "properties": {
+          "controllerConnection": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderConnection"
+          },
+          "createdAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "updatedAtMs": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "providerId",
+          "controllerConnection",
+          "createdAtMs",
+          "updatedAtMs"
         ],
         "type": "object"
       },
@@ -11890,8 +12177,92 @@
       "summary": "Revoke a universe API key"
     },
     {
+      "description": "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
+      "name": "operator/environment-providers/put",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderPutParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse"
+        }
+      },
+      "summary": "Put an environment provider"
+    },
+    {
+      "description": "Returns every operator-registered deployment provider and its controller connection.",
+      "name": "operator/environment-providers/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorEnvironmentProviderListResponse"
+        }
+      },
+      "summary": "List environment providers"
+    },
+    {
+      "description": "Returns one operator-registered deployment provider and its controller connection.",
+      "name": "operator/environment-providers/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse"
+        }
+      },
+      "summary": "Read an environment provider"
+    },
+    {
+      "description": "Deletes a deployment provider only when no universe binding references it.",
+      "name": "operator/environment-providers/delete",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorEnvironmentProviderDeleteParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse"
+        }
+      },
+      "summary": "Delete an environment provider"
+    },
+    {
       "description": "Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.",
-      "name": "operator/universes/provider-bindings/put",
+      "name": "operator/environment-providers/bindings/put",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11912,7 +12283,7 @@
     },
     {
       "description": "Deletes a universe provider binding only after every referencing environment has reached Closed.",
-      "name": "operator/universes/provider-bindings/delete",
+      "name": "operator/environment-providers/bindings/delete",
       "paramStructure": "by-name",
       "params": [
         {

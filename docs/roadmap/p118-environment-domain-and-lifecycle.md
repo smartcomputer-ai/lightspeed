@@ -18,8 +18,8 @@ introducing the new daemon gateway or a real Incus backend.
 
 After P118:
 
-- one physical provider is operator-scoped and deployment-seeded;
-- universes consume it through revisioned routing/admission bindings;
+- physical providers are operator-registered and deployment-scoped;
+- universes consume them through revisioned routing/admission bindings;
 - environments have stable identity plus a minimal incarnation-to-provider-target
   reference;
 - create and close are asynchronous, idempotent intents;
@@ -85,8 +85,12 @@ model.
 Operator-scoped:
 
 ```text
-operator/universes/provider-bindings/put
-operator/universes/provider-bindings/delete
+operator/environment-providers/put
+operator/environment-providers/list
+operator/environment-providers/read
+operator/environment-providers/delete
+operator/environment-providers/bindings/put
+operator/environment-providers/bindings/delete
 ```
 
 Universe-scoped:
@@ -104,11 +108,12 @@ environments/close
 
 Binding `put` replaces the whole binding document and requires
 `expectedRevision` when replacing it. Physical provider registration is not a
-universe API. v1 seeds exactly one provider from deployment configuration.
-Future providers, including third-party services, are registered by a
-Lightspeed operator by supplying an authenticated controller connection. A
-provider never self-registers and does not need access to Lightspeed's operator
-API; Lightspeed only needs to be able to reach and authenticate to it.
+universe API. Multiple providers, including third-party services, are
+registered by a Lightspeed operator by supplying their controller connection.
+A provider never has to self-register and does not need access to Lightspeed's
+operator API; Lightspeed only needs to be able to reach it. Provider
+authentication will use an operator-managed secret reference when that
+controller protocol is introduced; credentials must not be placed in metadata.
 
 `environments/create` accepts a caller-generated stable `requestId`,
 `bindingId`, and provider-owned immutable `templateId`. The unique key
@@ -197,6 +202,7 @@ administrator roles are deferred rather than implied by the API vocabulary.
 - [x] Replace required provider/target environment fields with stable source
       plus current-incarnation records.
 - [x] Move physical providers to deployment/operator scope.
+- [x] Add operator-managed multi-provider put/list/read/delete APIs.
 - [x] Add revisioned universe provider-binding storage and APIs.
 - [x] Add provider-owned immutable template-version catalog views.
 - [x] Add transactional request-id deduplication without a Lightspeed resource

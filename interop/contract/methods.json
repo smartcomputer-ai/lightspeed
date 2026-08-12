@@ -1423,8 +1423,80 @@
       "summary": "Revoke a universe API key"
     },
     {
+      "description": "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
+      "method": "operator/environment-providers/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderPutParams"
+        },
+        "type": "OperatorEnvironmentProviderPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse"
+        },
+        "type": "AgentApiOutcome<OperatorEnvironmentProviderPutResponse>"
+      },
+      "scope": "operator",
+      "summary": "Put an environment provider"
+    },
+    {
+      "description": "Returns every operator-registered deployment provider and its controller connection.",
+      "method": "operator/environment-providers/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderListParams"
+        },
+        "type": "OperatorEnvironmentProviderListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorEnvironmentProviderListResponse"
+        },
+        "type": "AgentApiOutcome<OperatorEnvironmentProviderListResponse>"
+      },
+      "scope": "operator",
+      "summary": "List environment providers"
+    },
+    {
+      "description": "Returns one operator-registered deployment provider and its controller connection.",
+      "method": "operator/environment-providers/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderReadParams"
+        },
+        "type": "OperatorEnvironmentProviderReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse"
+        },
+        "type": "AgentApiOutcome<OperatorEnvironmentProviderReadResponse>"
+      },
+      "scope": "operator",
+      "summary": "Read an environment provider"
+    },
+    {
+      "description": "Deletes a deployment provider only when no universe binding references it.",
+      "method": "operator/environment-providers/delete",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderDeleteParams"
+        },
+        "type": "OperatorEnvironmentProviderDeleteParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse"
+        },
+        "type": "AgentApiOutcome<OperatorEnvironmentProviderDeleteResponse>"
+      },
+      "scope": "operator",
+      "summary": "Delete an environment provider"
+    },
+    {
       "description": "Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.",
-      "method": "operator/universes/provider-bindings/put",
+      "method": "operator/environment-providers/bindings/put",
       "params": {
         "schema": {
           "$ref": "#/definitions/OperatorProviderBindingPutParams"
@@ -1442,7 +1514,7 @@
     },
     {
       "description": "Deletes a universe provider binding only after every referencing environment has reached Closed.",
-      "method": "operator/universes/provider-bindings/delete",
+      "method": "operator/environment-providers/bindings/delete",
       "params": {
         "schema": {
           "$ref": "#/definitions/OperatorProviderBindingDeleteParams"

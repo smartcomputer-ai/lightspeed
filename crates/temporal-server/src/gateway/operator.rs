@@ -16,19 +16,28 @@ use api::{
     AgentApiError, AgentApiOutcome, OperatorApiKeyCreateParams, OperatorApiKeyCreateResponse,
     OperatorApiKeyListParams, OperatorApiKeyListResponse, OperatorApiKeyRevokeParams,
     OperatorApiKeyRevokeResponse, OperatorApiKeyView, OperatorApiService,
-    OperatorProviderBindingDeleteParams, OperatorProviderBindingDeleteResponse,
-    OperatorProviderBindingPutParams, OperatorProviderBindingPutResponse,
-    OperatorUniverseCreateParams, OperatorUniverseCreateResponse, OperatorUniverseDeleteParams,
-    OperatorUniverseDeleteResponse, OperatorUniverseListParams, OperatorUniverseListResponse,
-    OperatorUniverseReadParams, OperatorUniverseReadResponse, OperatorUniverseView,
+    OperatorEnvironmentProviderConnection, OperatorEnvironmentProviderDeleteParams,
+    OperatorEnvironmentProviderDeleteResponse, OperatorEnvironmentProviderListParams,
+    OperatorEnvironmentProviderListResponse, OperatorEnvironmentProviderPutParams,
+    OperatorEnvironmentProviderPutResponse, OperatorEnvironmentProviderReadParams,
+    OperatorEnvironmentProviderReadResponse, OperatorEnvironmentProviderTransport,
+    OperatorEnvironmentProviderView, OperatorProviderBindingDeleteParams,
+    OperatorProviderBindingDeleteResponse, OperatorProviderBindingPutParams,
+    OperatorProviderBindingPutResponse, OperatorUniverseCreateParams,
+    OperatorUniverseCreateResponse, OperatorUniverseDeleteParams, OperatorUniverseDeleteResponse,
+    OperatorUniverseListParams, OperatorUniverseListResponse, OperatorUniverseReadParams,
+    OperatorUniverseReadResponse, OperatorUniverseView,
 };
 use async_trait::async_trait;
 use auth::ApiKeyStore as _;
 use engine::SessionId;
 use environments::{
     EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
-    EnvironmentProviderBindingStore, EnvironmentProviderId, PutEnvironmentProviderBinding,
+    EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderRecord,
+    EnvironmentProviderStore, HostControllerConnectionSpec, ListEnvironmentProviders,
+    PutEnvironmentProvider, PutEnvironmentProviderBinding,
 };
+use host_protocol::shared::HostTransport;
 use object_store::ObjectStoreExt as _;
 use object_store::path::Path as ObjectPath;
 use temporal_workflow::{AgentSessionWorkflow, compose_workflow_id};
@@ -130,6 +139,82 @@ impl OperatorApiService for GatewayOperatorApi {
             universe,
             created,
         }))
+    }
+
+    async fn put_environment_provider(
+        &self,
+        params: OperatorEnvironmentProviderPutParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderPutResponse>, AgentApiError> {
+        let store = self.runtime.stores().store_for(Uuid::nil());
+        let provider = store
+            .put_provider(PutEnvironmentProvider {
+                provider_id: parse_environment_provider_id(params.provider_id)?,
+                display_name: params.display_name,
+                controller_connection: provider_connection_from_api(params.controller_connection),
+                metadata: params.metadata,
+                updated_at_ms: i64::try_from(current_time_ms()?)
+                    .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?,
+            })
+            .await
+            .map_err(super::service::environment_providers::map_environments_error)?;
+        Ok(AgentApiOutcome::new(
+            OperatorEnvironmentProviderPutResponse {
+                provider: environment_provider_view(provider),
+            },
+        ))
+    }
+
+    async fn list_environment_providers(
+        &self,
+        _params: OperatorEnvironmentProviderListParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderListResponse>, AgentApiError> {
+        let store = self.runtime.stores().store_for(Uuid::nil());
+        let providers = store
+            .list_providers(ListEnvironmentProviders::default())
+            .await
+            .map_err(super::service::environment_providers::map_environments_error)?;
+        Ok(AgentApiOutcome::new(
+            OperatorEnvironmentProviderListResponse {
+                providers: providers
+                    .into_iter()
+                    .map(environment_provider_view)
+                    .collect(),
+            },
+        ))
+    }
+
+    async fn read_environment_provider(
+        &self,
+        params: OperatorEnvironmentProviderReadParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderReadResponse>, AgentApiError> {
+        let store = self.runtime.stores().store_for(Uuid::nil());
+        let provider_id = parse_environment_provider_id(params.provider_id)?;
+        let provider = store
+            .read_provider(&provider_id)
+            .await
+            .map_err(super::service::environment_providers::map_environments_error)?;
+        Ok(AgentApiOutcome::new(
+            OperatorEnvironmentProviderReadResponse {
+                provider: environment_provider_view(provider),
+            },
+        ))
+    }
+
+    async fn delete_environment_provider(
+        &self,
+        params: OperatorEnvironmentProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderDeleteResponse>, AgentApiError> {
+        let store = self.runtime.stores().store_for(Uuid::nil());
+        let provider_id = parse_environment_provider_id(params.provider_id)?;
+        let provider = store
+            .delete_provider(&provider_id)
+            .await
+            .map_err(super::service::environment_providers::map_environments_error)?;
+        Ok(AgentApiOutcome::new(
+            OperatorEnvironmentProviderDeleteResponse {
+                provider: environment_provider_view(provider),
+            },
+        ))
     }
 
     async fn put_environment_provider_binding(
@@ -390,6 +475,50 @@ impl OperatorApiService for GatewayOperatorApi {
 fn parse_universe_id(value: &str) -> Result<Uuid, AgentApiError> {
     Uuid::parse_str(value.trim())
         .map_err(|error| AgentApiError::invalid_request(format!("invalid universe id: {error}")))
+}
+
+fn parse_environment_provider_id(value: String) -> Result<EnvironmentProviderId, AgentApiError> {
+    EnvironmentProviderId::try_new(value)
+        .map_err(|error| AgentApiError::invalid_request(format!("invalid provider id: {error}")))
+}
+
+fn provider_connection_from_api(
+    connection: OperatorEnvironmentProviderConnection,
+) -> HostControllerConnectionSpec {
+    HostControllerConnectionSpec {
+        endpoint: connection.endpoint,
+        transport: match connection.transport {
+            OperatorEnvironmentProviderTransport::WebSocket => HostTransport::WebSocket,
+            OperatorEnvironmentProviderTransport::Http => HostTransport::Http,
+            OperatorEnvironmentProviderTransport::Stdio => HostTransport::Stdio,
+            OperatorEnvironmentProviderTransport::Ssh => HostTransport::Ssh,
+            OperatorEnvironmentProviderTransport::Provider { provider_type } => {
+                HostTransport::Provider { provider_type }
+            }
+        },
+    }
+}
+
+fn environment_provider_view(record: EnvironmentProviderRecord) -> OperatorEnvironmentProviderView {
+    OperatorEnvironmentProviderView {
+        provider_id: record.provider_id.to_string(),
+        display_name: record.display_name,
+        controller_connection: OperatorEnvironmentProviderConnection {
+            endpoint: record.controller_connection.endpoint,
+            transport: match record.controller_connection.transport {
+                HostTransport::WebSocket => OperatorEnvironmentProviderTransport::WebSocket,
+                HostTransport::Http => OperatorEnvironmentProviderTransport::Http,
+                HostTransport::Stdio => OperatorEnvironmentProviderTransport::Stdio,
+                HostTransport::Ssh => OperatorEnvironmentProviderTransport::Ssh,
+                HostTransport::Provider { provider_type } => {
+                    OperatorEnvironmentProviderTransport::Provider { provider_type }
+                }
+            },
+        },
+        metadata: record.metadata,
+        created_at_ms: record.created_at_ms,
+        updated_at_ms: record.updated_at_ms,
+    }
 }
 
 fn universe_view(stats: store_pg::UniverseStats) -> OperatorUniverseView {

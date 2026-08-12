@@ -21,9 +21,15 @@ pub const METHOD_OPERATOR_UNIVERSES_DELETE: &str = "operator/universes/delete";
 pub const METHOD_OPERATOR_API_KEYS_CREATE: &str = "operator/api-keys/create";
 pub const METHOD_OPERATOR_API_KEYS_LIST: &str = "operator/api-keys/list";
 pub const METHOD_OPERATOR_API_KEYS_REVOKE: &str = "operator/api-keys/revoke";
-pub const METHOD_OPERATOR_PROVIDER_BINDINGS_PUT: &str = "operator/universes/provider-bindings/put";
+pub const METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_PUT: &str = "operator/environment-providers/put";
+pub const METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_LIST: &str = "operator/environment-providers/list";
+pub const METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_READ: &str = "operator/environment-providers/read";
+pub const METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_DELETE: &str =
+    "operator/environment-providers/delete";
+pub const METHOD_OPERATOR_PROVIDER_BINDINGS_PUT: &str =
+    "operator/environment-providers/bindings/put";
 pub const METHOD_OPERATOR_PROVIDER_BINDINGS_DELETE: &str =
-    "operator/universes/provider-bindings/delete";
+    "operator/environment-providers/bindings/delete";
 
 pub fn is_operator_method(method: &str) -> bool {
     method.starts_with(OPERATOR_METHOD_PREFIX)
@@ -179,6 +185,90 @@ pub struct OperatorApiKeyRevokeResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum OperatorEnvironmentProviderTransport {
+    WebSocket,
+    Http,
+    Stdio,
+    Ssh,
+    Provider {
+        #[serde(rename = "providerType")]
+        provider_type: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentProviderConnection {
+    pub endpoint: String,
+    pub transport: OperatorEnvironmentProviderTransport,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentProviderView {
+    pub provider_id: EnvironmentProviderId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub controller_connection: OperatorEnvironmentProviderConnection,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentProviderPutParams {
+    pub provider_id: EnvironmentProviderId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub controller_connection: OperatorEnvironmentProviderConnection,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentProviderPutResponse {
+    pub provider: OperatorEnvironmentProviderView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentProviderListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentProviderListResponse {
+    pub providers: Vec<OperatorEnvironmentProviderView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentProviderReadParams {
+    pub provider_id: EnvironmentProviderId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentProviderReadResponse {
+    pub provider: OperatorEnvironmentProviderView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentProviderDeleteParams {
+    pub provider_id: EnvironmentProviderId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentProviderDeleteResponse {
+    pub provider: OperatorEnvironmentProviderView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OperatorProviderBindingPutParams {
     pub universe_id: String,
@@ -246,6 +336,42 @@ pub trait OperatorApiService: Send + Sync {
         &self,
         params: OperatorApiKeyRevokeParams,
     ) -> Result<AgentApiOutcome<OperatorApiKeyRevokeResponse>, AgentApiError>;
+
+    async fn put_environment_provider(
+        &self,
+        _params: OperatorEnvironmentProviderPutParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderPutResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "environment providers are unavailable",
+        ))
+    }
+
+    async fn list_environment_providers(
+        &self,
+        _params: OperatorEnvironmentProviderListParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderListResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "environment providers are unavailable",
+        ))
+    }
+
+    async fn read_environment_provider(
+        &self,
+        _params: OperatorEnvironmentProviderReadParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderReadResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "environment providers are unavailable",
+        ))
+    }
+
+    async fn delete_environment_provider(
+        &self,
+        _params: OperatorEnvironmentProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderDeleteResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "environment providers are unavailable",
+        ))
+    }
 
     async fn put_environment_provider_binding(
         &self,
@@ -324,6 +450,14 @@ operator_api_methods! {
         ["List universe API keys", "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned."],
     METHOD_OPERATOR_API_KEYS_REVOKE => revoke_api_key(OperatorApiKeyRevokeParams) -> OperatorApiKeyRevokeResponse =>
         ["Revoke a universe API key", "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found."],
+    METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider(OperatorEnvironmentProviderPutParams) -> OperatorEnvironmentProviderPutResponse =>
+        ["Put an environment provider", "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed."],
+    METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers(OperatorEnvironmentProviderListParams) -> OperatorEnvironmentProviderListResponse =>
+        ["List environment providers", "Returns every operator-registered deployment provider and its controller connection."],
+    METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_READ => read_environment_provider(OperatorEnvironmentProviderReadParams) -> OperatorEnvironmentProviderReadResponse =>
+        ["Read an environment provider", "Returns one operator-registered deployment provider and its controller connection."],
+    METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_DELETE => delete_environment_provider(OperatorEnvironmentProviderDeleteParams) -> OperatorEnvironmentProviderDeleteResponse =>
+        ["Delete an environment provider", "Deletes a deployment provider only when no universe binding references it."],
     METHOD_OPERATOR_PROVIDER_BINDINGS_PUT => put_environment_provider_binding(OperatorProviderBindingPutParams) -> OperatorProviderBindingPutResponse =>
         ["Put an environment provider binding", "Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe."],
     METHOD_OPERATOR_PROVIDER_BINDINGS_DELETE => delete_environment_provider_binding(OperatorProviderBindingDeleteParams) -> OperatorProviderBindingDeleteResponse =>

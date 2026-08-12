@@ -718,7 +718,43 @@ Immediately and idempotently revokes the matching key only when it belongs to th
 - Params: `OperatorApiKeyRevokeParams`
 - Result: `AgentApiOutcome<OperatorApiKeyRevokeResponse>`
 
-### `operator/universes/provider-bindings/put`
+### `operator/environment-providers/put`
+
+**Put an environment provider**
+
+Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.
+
+- Params: `OperatorEnvironmentProviderPutParams`
+- Result: `AgentApiOutcome<OperatorEnvironmentProviderPutResponse>`
+
+### `operator/environment-providers/list`
+
+**List environment providers**
+
+Returns every operator-registered deployment provider and its controller connection.
+
+- Params: `OperatorEnvironmentProviderListParams`
+- Result: `AgentApiOutcome<OperatorEnvironmentProviderListResponse>`
+
+### `operator/environment-providers/read`
+
+**Read an environment provider**
+
+Returns one operator-registered deployment provider and its controller connection.
+
+- Params: `OperatorEnvironmentProviderReadParams`
+- Result: `AgentApiOutcome<OperatorEnvironmentProviderReadResponse>`
+
+### `operator/environment-providers/delete`
+
+**Delete an environment provider**
+
+Deletes a deployment provider only when no universe binding references it.
+
+- Params: `OperatorEnvironmentProviderDeleteParams`
+- Result: `AgentApiOutcome<OperatorEnvironmentProviderDeleteResponse>`
+
+### `operator/environment-providers/bindings/put`
 
 **Put an environment provider binding**
 
@@ -727,7 +763,7 @@ Creates or replaces one universe's complete revisioned provider policy document.
 - Params: `OperatorProviderBindingPutParams`
 - Result: `AgentApiOutcome<OperatorProviderBindingPutResponse>`
 
-### `operator/universes/provider-bindings/delete`
+### `operator/environment-providers/bindings/delete`
 
 **Delete an environment provider binding**
 

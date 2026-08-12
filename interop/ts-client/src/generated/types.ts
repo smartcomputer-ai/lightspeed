@@ -890,6 +890,27 @@ export type RemoteMcpTransport = "streamableHttp" | "sse" | "auto";
 export type ModelSource = "provider";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderTransport".
+ */
+export type OperatorEnvironmentProviderTransport =
+  | {
+      type: "webSocket";
+    }
+  | {
+      type: "http";
+    }
+  | {
+      type: "stdio";
+    }
+  | {
+      type: "ssh";
+    }
+  | {
+      providerType: string;
+      type: "provider";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProfileInstructions".
  */
 export type ProfileInstructions =
@@ -2653,6 +2674,88 @@ export interface OperatorApiKeyRevokeResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse".
+ */
+export interface AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse {
+  notifications?: AgentNotification[];
+  result: OperatorEnvironmentProviderDeleteResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderDeleteResponse".
+ */
+export interface OperatorEnvironmentProviderDeleteResponse {
+  provider: OperatorEnvironmentProviderView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderView".
+ */
+export interface OperatorEnvironmentProviderView {
+  controllerConnection: OperatorEnvironmentProviderConnection;
+  createdAtMs: number;
+  displayName?: string | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  providerId: string;
+  updatedAtMs: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderConnection".
+ */
+export interface OperatorEnvironmentProviderConnection {
+  endpoint: string;
+  transport: OperatorEnvironmentProviderTransport;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorEnvironmentProviderListResponse".
+ */
+export interface AgentApiOutcomeOfOperatorEnvironmentProviderListResponse {
+  notifications?: AgentNotification[];
+  result: OperatorEnvironmentProviderListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderListResponse".
+ */
+export interface OperatorEnvironmentProviderListResponse {
+  providers: OperatorEnvironmentProviderView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse".
+ */
+export interface AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse {
+  notifications?: AgentNotification[];
+  result: OperatorEnvironmentProviderPutResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderPutResponse".
+ */
+export interface OperatorEnvironmentProviderPutResponse {
+  provider: OperatorEnvironmentProviderView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse".
+ */
+export interface AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse {
+  notifications?: AgentNotification[];
+  result: OperatorEnvironmentProviderReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderReadResponse".
+ */
+export interface OperatorEnvironmentProviderReadResponse {
+  provider: OperatorEnvironmentProviderView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfOperatorProviderBindingDeleteResponse".
  */
 export interface AgentApiOutcomeOfOperatorProviderBindingDeleteResponse {
@@ -3898,6 +4001,37 @@ export interface OperatorApiKeyListParams {
 export interface OperatorApiKeyRevokeParams {
   keyPrefix: string;
   universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderDeleteParams".
+ */
+export interface OperatorEnvironmentProviderDeleteParams {
+  providerId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderListParams".
+ */
+export interface OperatorEnvironmentProviderListParams {}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderPutParams".
+ */
+export interface OperatorEnvironmentProviderPutParams {
+  controllerConnection: OperatorEnvironmentProviderConnection;
+  displayName?: string | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  providerId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderReadParams".
+ */
+export interface OperatorEnvironmentProviderReadParams {
+  providerId: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

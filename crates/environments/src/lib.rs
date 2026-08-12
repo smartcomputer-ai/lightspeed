@@ -469,6 +469,10 @@ pub trait EnvironmentProviderStore: Send + Sync {
         &self,
         request: ListEnvironmentProviders,
     ) -> Result<Vec<EnvironmentProviderRecord>, EnvironmentRegistryError>;
+    async fn delete_provider(
+        &self,
+        provider_id: &EnvironmentProviderId,
+    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError>;
 }
 
 #[async_trait]

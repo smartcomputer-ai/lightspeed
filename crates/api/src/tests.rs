@@ -2494,6 +2494,20 @@ fn test_operator_api_key(key_prefix: &str) -> OperatorApiKeyView {
     }
 }
 
+fn test_operator_environment_provider(provider_id: &str) -> OperatorEnvironmentProviderView {
+    OperatorEnvironmentProviderView {
+        provider_id: provider_id.to_owned(),
+        display_name: Some("Local Incus".to_owned()),
+        controller_connection: OperatorEnvironmentProviderConnection {
+            endpoint: "ws://127.0.0.1:19090/control".to_owned(),
+            transport: OperatorEnvironmentProviderTransport::WebSocket,
+        },
+        metadata: BTreeMap::new(),
+        created_at_ms: 10,
+        updated_at_ms: 20,
+    }
+}
+
 #[async_trait]
 impl OperatorApiService for TestOperatorService {
     async fn create_universe(
@@ -2563,6 +2577,99 @@ impl OperatorApiService for TestOperatorService {
         Ok(AgentApiOutcome::new(OperatorApiKeyRevokeResponse {
             api_key,
         }))
+    }
+
+    async fn put_environment_provider(
+        &self,
+        params: OperatorEnvironmentProviderPutParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderPutResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(
+            OperatorEnvironmentProviderPutResponse {
+                provider: test_operator_environment_provider(&params.provider_id),
+            },
+        ))
+    }
+
+    async fn list_environment_providers(
+        &self,
+        _params: OperatorEnvironmentProviderListParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(
+            OperatorEnvironmentProviderListResponse {
+                providers: vec![test_operator_environment_provider("incus-local")],
+            },
+        ))
+    }
+
+    async fn read_environment_provider(
+        &self,
+        params: OperatorEnvironmentProviderReadParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderReadResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(
+            OperatorEnvironmentProviderReadResponse {
+                provider: test_operator_environment_provider(&params.provider_id),
+            },
+        ))
+    }
+
+    async fn delete_environment_provider(
+        &self,
+        params: OperatorEnvironmentProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderDeleteResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(
+            OperatorEnvironmentProviderDeleteResponse {
+                provider: test_operator_environment_provider(&params.provider_id),
+            },
+        ))
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn operator_environment_provider_methods_dispatch() {
+    let requests = [
+        (
+            METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_PUT,
+            json!({
+                "providerId": "incus-local",
+                "displayName": "Local Incus",
+                "controllerConnection": {
+                    "endpoint": "ws://127.0.0.1:19090/control",
+                    "transport": { "type": "webSocket" }
+                }
+            }),
+        ),
+        (METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_LIST, json!({})),
+        (
+            METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_READ,
+            json!({ "providerId": "incus-local" }),
+        ),
+        (
+            METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_DELETE,
+            json!({ "providerId": "incus-local" }),
+        ),
+    ];
+    for (index, (method, params)) in requests.into_iter().enumerate() {
+        let response = dispatch_operator_json_rpc(
+            &TestOperatorService,
+            JsonRpcRequest {
+                id: RequestId::Number(index as u64),
+                method: method.to_owned(),
+                params: Some(params),
+            },
+        )
+        .await;
+        assert!(response.error.is_none(), "{method}: {:?}", response.error);
+        assert_eq!(
+            response.result.expect("result")["result"]
+                .get(if method.ends_with("/list") {
+                    "providers"
+                } else {
+                    "provider"
+                })
+                .is_some(),
+            true,
+            "{method}"
+        );
     }
 }
 

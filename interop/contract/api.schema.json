@@ -826,6 +826,74 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderDeleteResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorEnvironmentProviderListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfOperatorProviderBindingDeleteResponse": {
       "properties": {
         "notifications": {
@@ -5553,6 +5621,225 @@
       "required": [
         "keyPrefix",
         "createdAtMs"
+      ],
+      "type": "object"
+    },
+    "OperatorEnvironmentProviderConnection": {
+      "properties": {
+        "endpoint": {
+          "type": "string"
+        },
+        "transport": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderTransport"
+        }
+      },
+      "required": [
+        "endpoint",
+        "transport"
+      ],
+      "type": "object"
+    },
+    "OperatorEnvironmentProviderDeleteParams": {
+      "properties": {
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "type": "object"
+    },
+    "OperatorEnvironmentProviderDeleteResponse": {
+      "properties": {
+        "provider": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderView"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "OperatorEnvironmentProviderListParams": {
+      "type": "object"
+    },
+    "OperatorEnvironmentProviderListResponse": {
+      "properties": {
+        "providers": {
+          "items": {
+            "$ref": "#/definitions/OperatorEnvironmentProviderView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "providers"
+      ],
+      "type": "object"
+    },
+    "OperatorEnvironmentProviderPutParams": {
+      "properties": {
+        "controllerConnection": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderConnection"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "controllerConnection"
+      ],
+      "type": "object"
+    },
+    "OperatorEnvironmentProviderPutResponse": {
+      "properties": {
+        "provider": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderView"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "OperatorEnvironmentProviderReadParams": {
+      "properties": {
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "type": "object"
+    },
+    "OperatorEnvironmentProviderReadResponse": {
+      "properties": {
+        "provider": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderView"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "OperatorEnvironmentProviderTransport": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "webSocket",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "http",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "stdio",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "ssh",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "providerType": {
+              "type": "string"
+            },
+            "type": {
+              "const": "provider",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "providerType"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "OperatorEnvironmentProviderView": {
+      "properties": {
+        "controllerConnection": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderConnection"
+        },
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "updatedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "providerId",
+        "controllerConnection",
+        "createdAtMs",
+        "updatedAtMs"
       ],
       "type": "object"
     },

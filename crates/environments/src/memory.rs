@@ -110,6 +110,24 @@ impl EnvironmentProviderStore for InMemoryEnvironmentRegistryStore {
     ) -> Result<Vec<EnvironmentProviderRecord>, EnvironmentRegistryError> {
         Ok(self.read_state()?.providers.values().cloned().collect())
     }
+
+    async fn delete_provider(
+        &self,
+        provider_id: &EnvironmentProviderId,
+    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
+        let mut state = self.write_state()?;
+        if state
+            .bindings
+            .values()
+            .any(|binding| &binding.provider_id == provider_id)
+        {
+            return invalid("environment provider is referenced by a universe binding");
+        }
+        state
+            .providers
+            .remove(provider_id)
+            .ok_or_else(|| not_found("environment_provider", provider_id))
+    }
 }
 
 #[async_trait]

@@ -116,6 +116,32 @@ impl EnvironmentProviderStore for PgStore {
             .map_err(|error| sql_error("list environment providers", error))?;
         rows.iter().map(provider_from_row).collect()
     }
+
+    async fn delete_provider(
+        &self,
+        provider_id: &EnvironmentProviderId,
+    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
+        let bindings: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM environment_provider_bindings WHERE provider_id = $1",
+        )
+        .bind(provider_id.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| sql_error("count environment provider bindings", error))?;
+        if bindings != 0 {
+            return invalid("environment provider is referenced by a universe binding");
+        }
+        let query = format!(
+            "DELETE FROM environment_providers WHERE provider_id = $1 RETURNING {PROVIDER_COLUMNS}"
+        );
+        let row = sqlx::query(&query)
+            .bind(provider_id.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_provider_delete_error)?
+            .ok_or_else(|| not_found("environment_provider", provider_id))?;
+        provider_from_row(&row)
+    }
 }
 
 #[async_trait]
@@ -892,6 +918,16 @@ fn map_binding_write_error(action: &str, error: sqlx::Error) -> EnvironmentRegis
         }
     }
     sql_error(action, error)
+}
+
+fn map_provider_delete_error(error: sqlx::Error) -> EnvironmentRegistryError {
+    if error
+        .as_database_error()
+        .is_some_and(|database| database.code().as_deref() == Some("23503"))
+    {
+        return invalid_error("environment provider is referenced by a universe binding");
+    }
+    sql_error("delete environment provider", error)
 }
 
 #[allow(dead_code)]

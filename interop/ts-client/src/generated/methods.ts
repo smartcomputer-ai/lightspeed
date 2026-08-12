@@ -84,8 +84,12 @@ export const METHODS = [
   "operator/api-keys/create",
   "operator/api-keys/list",
   "operator/api-keys/revoke",
-  "operator/universes/provider-bindings/put",
-  "operator/universes/provider-bindings/delete",
+  "operator/environment-providers/put",
+  "operator/environment-providers/list",
+  "operator/environment-providers/read",
+  "operator/environment-providers/delete",
+  "operator/environment-providers/bindings/put",
+  "operator/environment-providers/bindings/delete",
 ] as const;
 
 export const METHOD_INFO = {
@@ -484,12 +488,32 @@ export const METHOD_INFO = {
     summary: "Revoke a universe API key",
     description: "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.",
   },
-  "operator/universes/provider-bindings/put": {
+  "operator/environment-providers/put": {
+    scope: "operator",
+    summary: "Put an environment provider",
+    description: "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
+  },
+  "operator/environment-providers/list": {
+    scope: "operator",
+    summary: "List environment providers",
+    description: "Returns every operator-registered deployment provider and its controller connection.",
+  },
+  "operator/environment-providers/read": {
+    scope: "operator",
+    summary: "Read an environment provider",
+    description: "Returns one operator-registered deployment provider and its controller connection.",
+  },
+  "operator/environment-providers/delete": {
+    scope: "operator",
+    summary: "Delete an environment provider",
+    description: "Deletes a deployment provider only when no universe binding references it.",
+  },
+  "operator/environment-providers/bindings/put": {
     scope: "operator",
     summary: "Put an environment provider binding",
     description: "Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.",
   },
-  "operator/universes/provider-bindings/delete": {
+  "operator/environment-providers/bindings/delete": {
     scope: "operator",
     summary: "Delete an environment provider binding",
     description: "Deletes a universe provider binding only after every referencing environment has reached Closed.",
@@ -1221,11 +1245,47 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfOperatorApiKeyRevokeResponse;
   };
   /**
+   * Put an environment provider
+   *
+   * Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.
+   */
+  "operator/environment-providers/put": {
+    params: Api.OperatorEnvironmentProviderPutParams;
+    result: Api.AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse;
+  };
+  /**
+   * List environment providers
+   *
+   * Returns every operator-registered deployment provider and its controller connection.
+   */
+  "operator/environment-providers/list": {
+    params: Api.OperatorEnvironmentProviderListParams;
+    result: Api.AgentApiOutcomeOfOperatorEnvironmentProviderListResponse;
+  };
+  /**
+   * Read an environment provider
+   *
+   * Returns one operator-registered deployment provider and its controller connection.
+   */
+  "operator/environment-providers/read": {
+    params: Api.OperatorEnvironmentProviderReadParams;
+    result: Api.AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse;
+  };
+  /**
+   * Delete an environment provider
+   *
+   * Deletes a deployment provider only when no universe binding references it.
+   */
+  "operator/environment-providers/delete": {
+    params: Api.OperatorEnvironmentProviderDeleteParams;
+    result: Api.AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse;
+  };
+  /**
    * Put an environment provider binding
    *
    * Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.
    */
-  "operator/universes/provider-bindings/put": {
+  "operator/environment-providers/bindings/put": {
     params: Api.OperatorProviderBindingPutParams;
     result: Api.AgentApiOutcomeOfOperatorProviderBindingPutResponse;
   };
@@ -1234,7 +1294,7 @@ export interface MethodMap {
    *
    * Deletes a universe provider binding only after every referencing environment has reached Closed.
    */
-  "operator/universes/provider-bindings/delete": {
+  "operator/environment-providers/bindings/delete": {
     params: Api.OperatorProviderBindingDeleteParams;
     result: Api.AgentApiOutcomeOfOperatorProviderBindingDeleteResponse;
   };
@@ -1881,19 +1941,51 @@ export const rpc = {
     return client.call("operator/api-keys/revoke", params);
   },
   /**
+   * Put an environment provider
+   *
+   * Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.
+   */
+  operatorEnvironmentProvidersPut(client: RpcCaller, params: Api.OperatorEnvironmentProviderPutParams): Promise<Api.AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse> {
+    return client.call("operator/environment-providers/put", params);
+  },
+  /**
+   * List environment providers
+   *
+   * Returns every operator-registered deployment provider and its controller connection.
+   */
+  operatorEnvironmentProvidersList(client: RpcCaller, params: Api.OperatorEnvironmentProviderListParams): Promise<Api.AgentApiOutcomeOfOperatorEnvironmentProviderListResponse> {
+    return client.call("operator/environment-providers/list", params);
+  },
+  /**
+   * Read an environment provider
+   *
+   * Returns one operator-registered deployment provider and its controller connection.
+   */
+  operatorEnvironmentProvidersRead(client: RpcCaller, params: Api.OperatorEnvironmentProviderReadParams): Promise<Api.AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse> {
+    return client.call("operator/environment-providers/read", params);
+  },
+  /**
+   * Delete an environment provider
+   *
+   * Deletes a deployment provider only when no universe binding references it.
+   */
+  operatorEnvironmentProvidersDelete(client: RpcCaller, params: Api.OperatorEnvironmentProviderDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse> {
+    return client.call("operator/environment-providers/delete", params);
+  },
+  /**
    * Put an environment provider binding
    *
    * Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.
    */
-  operatorUniversesProviderBindingsPut(client: RpcCaller, params: Api.OperatorProviderBindingPutParams): Promise<Api.AgentApiOutcomeOfOperatorProviderBindingPutResponse> {
-    return client.call("operator/universes/provider-bindings/put", params);
+  operatorEnvironmentProvidersBindingsPut(client: RpcCaller, params: Api.OperatorProviderBindingPutParams): Promise<Api.AgentApiOutcomeOfOperatorProviderBindingPutResponse> {
+    return client.call("operator/environment-providers/bindings/put", params);
   },
   /**
    * Delete an environment provider binding
    *
    * Deletes a universe provider binding only after every referencing environment has reached Closed.
    */
-  operatorUniversesProviderBindingsDelete(client: RpcCaller, params: Api.OperatorProviderBindingDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorProviderBindingDeleteResponse> {
-    return client.call("operator/universes/provider-bindings/delete", params);
+  operatorEnvironmentProvidersBindingsDelete(client: RpcCaller, params: Api.OperatorProviderBindingDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorProviderBindingDeleteResponse> {
+    return client.call("operator/environment-providers/bindings/delete", params);
   },
 } as const;

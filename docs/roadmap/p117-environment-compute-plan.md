@@ -410,10 +410,11 @@ provider grants trusted infrastructure code the ability to allocate compute
 and causes Lightspeed to communicate with its controller. A universe must not
 be able to register an arbitrary endpoint.
 
-v1 has exactly one provider and no operator CRUD API or admin UI. The provider
-record is seeded from versioned deployment configuration at deploy time;
-changing it is a configuration change. A programmatic operator API is deferred
-until there is more than one provider or an external operator.
+Lightspeed may register multiple providers. Provider records are managed
+through the operator API; there is no provider self-registration requirement
+and no operator admin UI in v1. Deployment configuration owns the provider
+services themselves, but it is not the authoritative Lightspeed provider
+registry.
 
 The record contains stable provider identity, authenticated controller
 connection, and operator metadata. Protocol version, implementation details,
@@ -439,8 +440,12 @@ requirements.
 Target universe/operator API:
 
 ```text
-operator/universes/provider-bindings/put
-operator/universes/provider-bindings/delete
+operator/environment-providers/put
+operator/environment-providers/list
+operator/environment-providers/read
+operator/environment-providers/delete
+operator/environment-providers/bindings/put
+operator/environment-providers/bindings/delete
 
 environments/provider-bindings/list
 environments/provider-bindings/read
