@@ -3,8 +3,8 @@
 **Status**
 
 - Proposed 2026-08-11.
-- Core implementation completed 2026-08-12; provider-relay admission,
-  packaging, and product-specific enrollment UX remain follow-on work.
+- Core implementation completed 2026-08-12; packaging and product-specific
+  enrollment UX remain follow-on work.
 - Builds on [P118](p118-environment-domain-and-lifecycle.md).
 - Implements the canonical data plane from
   [P117](p117-environment-compute-plan.md).
@@ -14,8 +14,8 @@
 Replace the attach-only, publicly inbound `host-bridge` provider with one
 canonical `lightspeed-envd` daemon reached through an authenticated
 environment gateway route. Directly enrolled hosts use an outbound daemon
-connection; provider-managed environments may later use either that form or a
-multiplexed provider relay.
+connection; provider-managed environments use Lightspeed-initiated,
+target-specific connections to a passive provider endpoint.
 
 After P119, an existing laptop, workstation, server, or manually managed VM can
 be enrolled directly as a universe environment without creating a physical
@@ -34,7 +34,7 @@ P120.
 
 The environment gateway owns only live transport:
 
-- authenticated direct-daemon or provider-relay sockets;
+- authenticated direct-daemon sockets and on-demand provider connections;
 - route ownership for the current incarnation;
 - multiplexing, correlation, streaming, cancellation, and backpressure;
 - connection leases and immediate availability observations; and
@@ -42,8 +42,9 @@ The environment gateway owns only live transport:
 
 Lightspeed Postgres owns environment/incarnation identity and, only for
 directly enrolled environments, enrollment token hashes, daemon public keys,
-and revocation. A provider-mediated route is authorized through the provider
-identity, universe binding, environment ownership, and current incarnation; it
+and revocation. A provider-mediated route is authorized through the registered
+provider connection, universe binding, environment ownership, current
+incarnation, and target; it
 does not create a daemon-enrollment row. Ephemeral sockets, route presence,
 `connectionId` values, and idle timers remain in gateway memory. Environment
 status may carry a bounded availability observation, but an old observation
@@ -107,10 +108,10 @@ universe binding, and for the current incarnation.
 
 ```text
 direct route:   daemon key -> daemon enrollment -> current incarnation
-mediated route: provider identity -> binding -> environment -> current incarnation
+mediated route: provider endpoint -> binding -> environment -> incarnation -> target
 ```
 
-End-to-end daemon identity behind a provider relay is not required by this
+End-to-end daemon identity behind a provider is not required by this
 milestone. It may be added later as an additional proof without making direct
 enrollment a prerequisite for provider-managed environments.
 
@@ -133,15 +134,14 @@ HTTP/2 remain implementation choices. The protocol must support:
 Workers resolve a stable gateway route outside deterministic session state.
 Worker-to-gateway calls use deployment identity and a resolved
 universe/environment context; a raw environment ID alone grants no route.
-One gateway replica is sufficient for this milestone. P119 implements direct
-outbound connections but defines route/authentication framing that permits a
-provider relay to multiplex many environments. Gateway HA and a cross-replica
-relay bus remain deferred.
+One gateway replica is sufficient for this milestone. Gateway HA and a
+cross-replica route bus remain deferred.
 
-For provider-managed environments, a relay may dial envd over the private
-provider network only when a routed call arrives and close that connection
-after an idle timeout. The provider owns that dial/wake behavior and idle
-policy; the gateway owns logical route correlation and fencing. Directly
+For provider-managed environments, Lightspeed connects to the passive provider
+endpoint when a worker needs a route. The provider dials envd over its private
+network and closes the paired connection after an idle timeout. The provider
+owns that dial/reachability behavior; Lightspeed owns lifecycle authorization
+and fencing. Directly
 enrolled NAT-bound hosts normally remain connected because no separate wake or
 inbound reachability channel exists.
 
@@ -184,10 +184,10 @@ module layout are implementation details.
 - [x] Implement one-time direct-enrollment storage and APIs; provider-managed
       incarnations must not create enrollment rows.
 - [x] Implement the environment gateway deployment role and worker routing.
-- [x] Keep the internal route registry transport-neutral across direct and
-      future multiplexed provider-relay connections.
-- [ ] Admit authenticated provider-relay routes and provider-local on-demand
-      connections (P120).
+- [x] Keep the in-memory route registry for direct-daemon connections; passive
+      provider routes need no registered provider presence.
+- [x] Open provider-local connections on demand (P120), with per-route
+      authorization and idle guest-connection reaping.
 - [x] Implement correlated concurrent calls, polling/streaming, cancellation
       through existing process/job methods, bounded route queues, leases, and
       incarnation fencing.
@@ -211,7 +211,7 @@ real gateway. Cover:
 - credential injection without log or state leakage;
 - job terminality and restart reconciliation;
 - direct token expiry/replay, signature failure, revoked daemon, stale
-  incarnation, wrong-provider relay, disabled binding, duplicate connection,
+  incarnation, wrong provider/target, disabled binding, duplicate connection,
   and superseded-route rejection; and
 - daemon restart, gateway restart, reconnect, and identity rotation.
 
@@ -230,5 +230,5 @@ state or explicit terminal failures without hanging callers.
 
 - Provider-managed Incus VMs: P120.
 - Public application ingress: P121.
-- Gateway replication and relay infrastructure.
+- Gateway replication and cross-replica route infrastructure.
 - Windows daemon packaging.

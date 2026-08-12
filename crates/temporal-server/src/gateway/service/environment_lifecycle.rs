@@ -307,7 +307,9 @@ impl GatewayAgentApi {
             })
             .await?;
         let status = match response.target.status {
-            HostTargetStatus::Ready => EnvironmentStatus::WaitingForDaemon,
+            // A passive provider reports Ready only after its private envd is
+            // reachable. No provider presence has to register separately.
+            HostTargetStatus::Ready => EnvironmentStatus::Ready,
             HostTargetStatus::Creating | HostTargetStatus::Starting => EnvironmentStatus::Booting,
             HostTargetStatus::Stopped => EnvironmentStatus::Offline,
             HostTargetStatus::Closing => EnvironmentStatus::Closing,
@@ -315,18 +317,23 @@ impl GatewayAgentApi {
             HostTargetStatus::Failed => EnvironmentStatus::Failed,
             HostTargetStatus::Unknown => EnvironmentStatus::Unknown,
         };
-        EnvironmentStore::observe_provisioned_environment(
-            self.store.as_ref(),
-            ObserveProvisionedEnvironment {
-                environment_id: environment.environment_id.clone(),
-                provider_target_id: response.target.target_id,
-                status,
-                observed_at_ms: now_ms()?,
-            },
-        )
-        .await
-        .map_err(map_environments_error)?;
-        Ok(true)
+        let changed = environment.status != status
+            || environment.incarnation.provider_target_id.as_ref()
+                != Some(&response.target.target_id);
+        if changed {
+            EnvironmentStore::observe_provisioned_environment(
+                self.store.as_ref(),
+                ObserveProvisionedEnvironment {
+                    environment_id: environment.environment_id.clone(),
+                    provider_target_id: response.target.target_id,
+                    status,
+                    observed_at_ms: now_ms()?,
+                },
+            )
+            .await
+            .map_err(map_environments_error)?;
+        }
+        Ok(changed)
     }
 
     async fn reconcile_environment_close(

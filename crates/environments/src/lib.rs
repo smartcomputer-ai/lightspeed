@@ -7,7 +7,7 @@
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use async_trait::async_trait;
-use auth::{AuthGrantId, AuthProviderId, SecretId};
+use auth::{AuthGrantId, AuthProviderId, SecretId, SecretValue};
 pub use engine::EnvironmentId;
 use engine::{StringIdError, validate_general_string_id};
 use host_protocol::{
@@ -129,6 +129,8 @@ pub enum EnvironmentRegistryError {
 pub struct HostControllerConnectionSpec {
     pub endpoint: String,
     pub transport: HostTransport,
+    #[serde(skip)]
+    pub bearer_token: Option<SecretValue>,
 }
 
 impl HostControllerConnectionSpec {
@@ -136,6 +138,7 @@ impl HostControllerConnectionSpec {
         Self {
             endpoint: endpoint.into(),
             transport,
+            bearer_token: None,
         }
     }
 

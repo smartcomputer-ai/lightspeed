@@ -16,17 +16,17 @@ use api::{
     AgentApiError, AgentApiOutcome, OperatorApiKeyCreateParams, OperatorApiKeyCreateResponse,
     OperatorApiKeyListParams, OperatorApiKeyListResponse, OperatorApiKeyRevokeParams,
     OperatorApiKeyRevokeResponse, OperatorApiKeyView, OperatorApiService,
-    OperatorEnvironmentProviderConnection, OperatorEnvironmentProviderDeleteParams,
-    OperatorEnvironmentProviderDeleteResponse, OperatorEnvironmentProviderListParams,
-    OperatorEnvironmentProviderListResponse, OperatorEnvironmentProviderPutParams,
-    OperatorEnvironmentProviderPutResponse, OperatorEnvironmentProviderReadParams,
-    OperatorEnvironmentProviderReadResponse, OperatorEnvironmentProviderTransport,
-    OperatorEnvironmentProviderView, OperatorProviderBindingDeleteParams,
-    OperatorProviderBindingDeleteResponse, OperatorProviderBindingPutParams,
-    OperatorProviderBindingPutResponse, OperatorUniverseCreateParams,
-    OperatorUniverseCreateResponse, OperatorUniverseDeleteParams, OperatorUniverseDeleteResponse,
-    OperatorUniverseListParams, OperatorUniverseListResponse, OperatorUniverseReadParams,
-    OperatorUniverseReadResponse, OperatorUniverseView,
+    OperatorEnvironmentProviderConnection, OperatorEnvironmentProviderConnectionInput,
+    OperatorEnvironmentProviderDeleteParams, OperatorEnvironmentProviderDeleteResponse,
+    OperatorEnvironmentProviderListParams, OperatorEnvironmentProviderListResponse,
+    OperatorEnvironmentProviderPutParams, OperatorEnvironmentProviderPutResponse,
+    OperatorEnvironmentProviderReadParams, OperatorEnvironmentProviderReadResponse,
+    OperatorEnvironmentProviderTransport, OperatorEnvironmentProviderView,
+    OperatorProviderBindingDeleteParams, OperatorProviderBindingDeleteResponse,
+    OperatorProviderBindingPutParams, OperatorProviderBindingPutResponse,
+    OperatorUniverseCreateParams, OperatorUniverseCreateResponse, OperatorUniverseDeleteParams,
+    OperatorUniverseDeleteResponse, OperatorUniverseListParams, OperatorUniverseListResponse,
+    OperatorUniverseReadParams, OperatorUniverseReadResponse, OperatorUniverseView,
 };
 use async_trait::async_trait;
 use auth::ApiKeyStore as _;
@@ -483,10 +483,11 @@ fn parse_environment_provider_id(value: String) -> Result<EnvironmentProviderId,
 }
 
 fn provider_connection_from_api(
-    connection: OperatorEnvironmentProviderConnection,
+    connection: OperatorEnvironmentProviderConnectionInput,
 ) -> HostControllerConnectionSpec {
     HostControllerConnectionSpec {
         endpoint: connection.endpoint,
+        bearer_token: connection.bearer_token.map(auth::SecretValue::new),
         transport: match connection.transport {
             OperatorEnvironmentProviderTransport::WebSocket => HostTransport::WebSocket,
             OperatorEnvironmentProviderTransport::Http => HostTransport::Http,

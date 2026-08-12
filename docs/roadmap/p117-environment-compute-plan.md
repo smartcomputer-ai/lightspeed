@@ -105,7 +105,8 @@ Replace the current model directly:
 - raw image names and unrestricted provider options become provider-owned,
   curated template IDs;
 - inbound public per-host WebSocket addresses become gateway routes backed by
-  either direct outbound daemon connections or provider/node relays; and
+  either direct outbound daemon connections or Lightspeed-initiated passive
+  provider connections; and
 - the current per-universe provider API key is removed from infrastructure
   identity.
 
@@ -346,7 +347,7 @@ The environment gateway is authoritative only for live transport facts:
 
 - active sockets and their ephemeral `connectionId` values;
 - current stream correlation, backpressure, and cancellation state;
-- which authenticated direct daemon or provider relay currently owns a route;
+- which authenticated direct daemon currently owns an outbound route;
 - immediate ping/disconnect observations.
 
 These facts remain in gateway memory. Lightspeed may persist a bounded
@@ -357,13 +358,12 @@ The route abstraction is independent of transport ownership:
 
 - directly enrolled hosts normally keep one outbound envd connection because
   NAT/firewalls leave no other reachability channel;
-- provider-managed environments may connect envd directly or use an
-  authenticated provider/node relay that multiplexes many independently
-  fenced environment routes over one or a small number of streams; and
-- a provider relay may open a private-network connection to envd on demand and
-  close it after a configured idle period. It must retain a provider-local
-  dial/wake path; Lightspeed cannot summon a daemon that has neither a live
-  route nor an inbound provider-local reachability mechanism.
+- provider-managed environments expose a passive, target-specific provider
+  data endpoint; Lightspeed opens it only when a worker needs the environment;
+  and
+- the provider opens a private-network connection to envd for that request and
+  closes the paired connection after a configured idle period. It retains the
+  provider-local dial/reachability path; envd does not connect to Lightspeed.
 
 Multiplexing never merges authorization. Every logical stream carries and is
 fenced by universe, environment, and incarnation. A direct stream is
@@ -527,13 +527,13 @@ discover, inspect, or close binding B's targets.
    ids, binding context, and provider-owned template ID.
 6. Provider validates template entitlement, allocation policy, aggregate quota,
    and physical capacity, then idempotently creates or finds the target.
-7. Provider injects its private envd/relay bootstrap configuration through
+7. Provider injects its private envd bootstrap configuration through
    cloud-init, metadata, config drive, Kubernetes Secret, or an equivalent
    backend channel.
-8. envd boots; the provider relay exposes it directly or on demand.
-9. Gateway authenticates the provider, validates binding/environment/current
-   incarnation ownership, negotiates capabilities, and opens the route.
-10. Provider/backend readiness and gateway data-plane readiness converge.
+8. envd boots and listens only on the provider-private network.
+9. Provider reports ready after it can authenticate and reach envd.
+10. On use, Lightspeed validates provider/binding/environment/incarnation/target,
+    opens the provider data endpoint, and the provider dials envd.
 11. Lightspeed marks the environment Ready and it becomes selectable.
 ```
 
@@ -629,7 +629,8 @@ and not part of the Incus provider.
 
 Responsibilities:
 
-- accept authenticated outbound direct-daemon and provider-relay connections;
+- accept authenticated outbound direct-daemon connections and initiate
+  target-specific provider connections;
 - redeem one-time tickets and verify challenge signatures for direct daemons;
 - authenticate provider-mediated routes through provider identity and binding;
 - enforce environment incarnation fencing;
@@ -653,11 +654,11 @@ The gateway does not:
 
 ### Transport
 
-The gateway transport is an authenticated, multiplexed connection over TLS,
-using WebSocket or HTTP/2 according to the simplest implementation that
-satisfies streaming and backpressure. Direct hosts open it from envd;
-provider-managed fleets may open it from a node relay and multiplex multiple
-independently fenced environments.
+The gateway transport is authenticated over TLS, using WebSocket or HTTP/2
+according to the simplest implementation that satisfies streaming and
+backpressure. Direct hosts open it from envd. For provider-managed targets,
+Lightspeed opens a target-specific provider connection on demand; the provider
+then opens its private envd connection.
 
 The protocol must support:
 
@@ -1125,15 +1126,14 @@ Preferred data path:
 ```text
 envd in microVM
   ⇄ AF_VSOCK
-node-local provider relay
-  ⇄ authenticated outbound stream
+node-local provider endpoint
+  ⇄ Lightspeed-initiated target connection
 environment gateway
 ```
 
-The microVM need not have general network access for control traffic. The
-provider authenticates the relay and labels each logical route with the
-environment's current incarnation; it does not transport a direct-enrollment
-ticket into the guest.
+The microVM need not have general network access for control traffic.
+Lightspeed and the provider independently validate the environment's current
+incarnation and target; no direct-enrollment token enters the guest.
 
 Base snapshots contain no reusable daemon or provider credential. Restore
 recreates the vsock backing channel, supplies a fresh incarnation, and exposes
@@ -1414,17 +1414,17 @@ umbrella document and have no scheduled implementation plan.
    control.
 4. Lightspeed persists the environment before provisioning and repeating the
    same request ID cannot create a duplicate VM.
-5. The VM boots an image without direct daemon enrollment; the authenticated
-   provider relay exposes its `lightspeed-envd` route to the environment
-   gateway on demand.
-6. Environment readiness requires both provider target availability and an
-   authenticated, current data-plane route.
+5. The VM boots an image without direct daemon enrollment; Lightspeed opens a
+   target-specific provider route on demand and the provider dials
+   `lightspeed-envd` privately.
+6. Environment readiness requires provider target and envd availability;
+   selection probes the authenticated current data path.
 7. A plain session can select the environment and use filesystem, process,
    PTY, credential, and durable-job capabilities.
 8. The environment survives session closure and ordinary VM/daemon restart.
 9. A manually managed host can enroll as an environment without any provider
    record and uses the same envd/gateway data plane.
-10. Stale incarnation, wrong-provider relay, duplicate direct daemon, and
+10. Stale incarnation, wrong provider/target, duplicate direct daemon, and
     superseded connection attempts are fenced.
 11. Closing a provisioned environment destroys its verified provider target;
     closing an enrolled environment only revokes access.
@@ -1448,7 +1448,7 @@ umbrella document and have no scheduled implementation plan.
 | Resource and ingress policy | Provider-owned, including templates, allocation, aggregate quota, capacity, and public ingress |
 | Lightspeed resource ledger | None; environment lifecycle rows are not physical capacity reservations |
 | Existing machine | Direct enrolled environment, not singleton provider |
-| Canonical data plane | `lightspeed-envd` through an environment-gateway route: direct outbound or provider-relayed/on-demand |
+| Canonical data plane | `lightspeed-envd` through an environment-gateway route: direct outbound or Lightspeed-initiated through a passive provider |
 | AI terminology | Reserve “agent” for AI agents; infrastructure process is daemon/envd |
 | Provider-native execution | Allowed behind the same host contract, not the general VM default |
 | Dynamic isolation | Full VM by default; trusted system containers remain possible |

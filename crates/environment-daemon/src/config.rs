@@ -22,6 +22,14 @@ pub struct DaemonArgs {
     #[arg(long, env = "LIGHTSPEED_ENVD_ENROLLMENT_TOKEN")]
     pub enrollment_token: Option<String>,
 
+    /// Private provider-network listener for managed environments.
+    #[arg(long, env = "LIGHTSPEED_ENVD_PROVIDER_LISTEN")]
+    pub provider_listen: Option<std::net::SocketAddr>,
+
+    /// Target-specific provider credential. Required with --provider-listen.
+    #[arg(long, env = "LIGHTSPEED_ENVD_PROVIDER_TOKEN")]
+    pub provider_token: Option<String>,
+
     #[arg(long, env = "LIGHTSPEED_ENVD_CWD")]
     pub cwd: Option<PathBuf>,
 
@@ -49,13 +57,24 @@ pub struct DaemonIdentityBinding {
 
 #[derive(Clone, Debug)]
 pub struct DaemonConfig {
-    pub identity: DaemonIdentityBinding,
-    pub enrollment_token: Option<String>,
+    pub mode: DaemonMode,
     pub cwd: PathBuf,
     pub fs_root: PathBuf,
     pub state_dir: PathBuf,
     pub read_only_fs: bool,
     pub reconnect_ms: u64,
+}
+
+#[derive(Clone, Debug)]
+pub enum DaemonMode {
+    Direct {
+        identity: DaemonIdentityBinding,
+        enrollment_token: Option<String>,
+    },
+    Provider {
+        listen: std::net::SocketAddr,
+        token: String,
+    },
 }
 
 impl DaemonArgs {
@@ -81,6 +100,28 @@ impl DaemonArgs {
             Some(path) => cwd.join(path),
             None => cwd.join(".lightspeed-envd"),
         };
+        if let Some(listen) = self.provider_listen {
+            let token = self
+                .provider_token
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("--provider-token is required with --provider-listen")
+                })?;
+            if self.gateway_url.is_some() || self.enrollment_token.is_some() {
+                bail!("direct enrollment options cannot be combined with --provider-listen");
+            }
+            return Ok(DaemonConfig {
+                mode: DaemonMode::Provider { listen, token },
+                cwd,
+                fs_root,
+                state_dir,
+                read_only_fs: self.read_only_fs,
+                reconnect_ms: self.reconnect_ms.max(100),
+            });
+        }
+        if self.provider_token.is_some() {
+            bail!("--provider-token requires --provider-listen");
+        }
         let persisted = read_persisted_identity(&state_dir)?;
         let identity = match self.enrollment_token.as_deref() {
             Some(token) => {
@@ -116,8 +157,10 @@ impl DaemonArgs {
             bail!("--gateway-url does not match the persisted envd identity");
         }
         Ok(DaemonConfig {
-            identity,
-            enrollment_token: self.enrollment_token,
+            mode: DaemonMode::Direct {
+                identity,
+                enrollment_token: self.enrollment_token,
+            },
             cwd,
             fs_root,
             state_dir,
@@ -181,6 +224,8 @@ mod tests {
         DaemonArgs {
             gateway_url: gateway_url.map(ToOwned::to_owned),
             enrollment_token,
+            provider_listen: None,
+            provider_token: None,
             cwd: Some(root.to_path_buf()),
             fs_root: Some(root.to_path_buf()),
             state_dir: Some(root.join("state")),
@@ -202,17 +247,27 @@ mod tests {
         let first = args(temp.path(), Some("https://gateway.example/"), Some(token))
             .into_config()
             .expect("first-run config");
-        assert_eq!(first.identity.gateway_url, "https://gateway.example");
-        assert_eq!(first.identity.universe_id, "universe-a");
-        DaemonIdentity::load_or_create(&first.state_dir, &first.identity)
+        let DaemonMode::Direct { identity, .. } = &first.mode else {
+            panic!("direct")
+        };
+        assert_eq!(identity.gateway_url, "https://gateway.example");
+        assert_eq!(identity.universe_id, "universe-a");
+        DaemonIdentity::load_or_create(&first.state_dir, identity)
             .await
             .expect("persist identity");
 
         let restarted = args(temp.path(), None, None)
             .into_config()
             .expect("restart config");
-        assert_eq!(restarted.identity, first.identity);
-        assert!(restarted.enrollment_token.is_none());
+        let DaemonMode::Direct {
+            identity: restarted,
+            enrollment_token,
+        } = restarted.mode
+        else {
+            panic!("direct")
+        };
+        assert_eq!(restarted, *identity);
+        assert!(enrollment_token.is_none());
     }
 
     #[test]

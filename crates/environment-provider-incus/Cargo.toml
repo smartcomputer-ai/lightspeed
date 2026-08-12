@@ -1,41 +1,30 @@
 [package]
-name = "environment-daemon"
+name = "environment-provider-incus"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 anyhow = "1"
-api = { path = "../api" }
+async-trait = "0.1"
+axum = { version = "0.7", features = ["ws"] }
+base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"
 futures-util = "0.3"
-base64 = "0.22"
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-glob = "0.3"
-grep-regex = "0.1"
-grep-searcher = "0.1"
+hmac = "0.12"
 host-protocol = { path = "../host-protocol" }
-ignore = "0.4"
-portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 thiserror = "1"
-tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
-http = "1"
-rand = "0.8"
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-engine = { path = "../engine" }
-host-client = { path = "../host-client" }
 tempfile = "3"
-tools = { path = "../tools" }
 
 [[bin]]
-name = "lightspeed-envd"
+name = "lightspeed-provider-incus"
 path = "src/main.rs"

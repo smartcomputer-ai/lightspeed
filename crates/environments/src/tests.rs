@@ -114,6 +114,20 @@ async fn provider_delete_requires_all_bindings_to_be_removed() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn provider_put_can_remove_optional_bearer() {
+    let store = InMemoryEnvironmentRegistryStore::for_universe(Uuid::nil());
+    let mut initial = provider();
+    initial.controller_connection.bearer_token = Some(auth::SecretValue::new("secret"));
+    store.put_provider(initial).await.expect("initial provider");
+
+    let updated = store
+        .put_provider(provider())
+        .await
+        .expect("updated provider");
+    assert!(updated.controller_connection.bearer_token.is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn stable_request_id_returns_the_original_environment() {
     let (_, store) = store().await;
     let first = store

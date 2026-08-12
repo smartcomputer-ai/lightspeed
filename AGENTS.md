@@ -128,7 +128,12 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   workspaces, transient workspace-link resolution, and store traits.
 - `crates/host-protocol/`, `crates/host-client/`, and
   `crates/environment-daemon/` — environment host wire protocol, gateway
-  client, and outbound `lightspeed-envd` execution daemon.
+  client, and direct/provider-mediated `lightspeed-envd` execution daemon.
+- `crates/environment-provider-incus/` — standalone stateless Incus controller
+  and passive on-demand data endpoint. It depends only on the host protocol
+  boundary and reconstructs target state from Incus inventory and deployment
+  configuration; it must not depend on Lightspeed stores, API internals,
+  engine, or Temporal runtime.
 - `crates/store-fs/` — filesystem-backed session log and content-addressed blob
   store adapters.
 - `crates/store-pg/` — PostgreSQL-backed session store, CAS catalog, MCP server

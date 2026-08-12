@@ -124,9 +124,10 @@
   attach-only host-bridge registration with `lightspeed-envd`, authenticated
   outbound gateway routing, daemon/incarnation fencing, and direct host
   enrollment
-- [ ] [P120](p120-incus-environment-provider.md) — implement the standalone,
-  stateless Incus provider, immutable development templates/images, baseline
-  per-binding networking, and durable VM provisioning on hz02
+- [ ] [P120](p120-incus-environment-provider.md) — core standalone stateless
+  Incus controller, passive on-demand data endpoint, immutable image recipe, per-binding policy,
+  and durable VM provisioning are implemented; hz01/hz02 deployment, image
+  publication, ls.bot UX, and live isolation/acceptance proofs remain
 - [ ] [P121](p121-environment-public-ingress.md) — add provider-authorized
   per-environment Cloudflare Tunnel ingress with a service-secret boundary
   separate from ordinary environment credentials

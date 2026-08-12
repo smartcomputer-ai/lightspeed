@@ -17,10 +17,12 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
+use futures_util::{SinkExt as _, StreamExt as _};
 use host_protocol::{
     gateway::{
         DEFAULT_LEASE_MS, DIRECT_DAEMON_PATH, DirectDaemonAuthenticate, GatewayAccepted,
-        GatewayChallenge, GatewayRejected, ROUTE_PATH_PREFIX, direct_auth_message,
+        GatewayChallenge, GatewayRejected, PROVIDER_DATA_PATH_PREFIX, ROUTE_PATH_PREFIX,
+        direct_auth_message,
     },
     shared::CURRENT_PROTOCOL_VERSION,
 };
@@ -30,6 +32,10 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use store_pg::{PgApiKeyStore, PgStore};
 use temporalio_client::Client;
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{Message as ProviderMessage, client::IntoClientRequest as _},
+};
 use uuid::Uuid;
 
 use crate::{
@@ -212,6 +218,19 @@ impl GatewayState {
                 runtime.environment_gateway().deployment_token()
             }
         }
+    }
+
+    async fn environment_provider(
+        &self,
+        provider_id: &environments::EnvironmentProviderId,
+    ) -> Result<environments::EnvironmentProviderRecord, AgentApiError> {
+        let store = match &self.resolution {
+            UniverseResolution::FixedApi { api } => api.store().clone(),
+            UniverseResolution::Multi { runtime, .. } => runtime.stores().store_for(Uuid::nil()),
+        };
+        environments::EnvironmentProviderStore::read_provider(store.as_ref(), provider_id)
+            .await
+            .map_err(|error| AgentApiError::rejected(error.to_string()))
     }
 }
 
@@ -485,12 +504,232 @@ async fn environment_route_upgrade(
         Ok(environment) => environment,
         Err(_) => return StatusCode::NOT_FOUND.into_response(),
     };
-    if environment.incarnation.incarnation_id.as_str() != key.incarnation_id
-        || state.environment_routes().snapshot(&key).await.is_none()
-    {
+    if environment.incarnation.incarnation_id.as_str() != key.incarnation_id {
         return StatusCode::CONFLICT.into_response();
     }
-    upgrade.on_upgrade(move |socket| proxy_worker_route(state.environment_routes(), key, socket))
+    match &environment.source {
+        environments::EnvironmentSource::Enrolled => {
+            if state.environment_routes().snapshot(&key).await.is_none() {
+                return StatusCode::CONFLICT.into_response();
+            }
+            upgrade
+                .on_upgrade(move |socket| {
+                    proxy_worker_route(state.environment_routes(), key, socket)
+                })
+                .into_response()
+        }
+        environments::EnvironmentSource::Provisioned {
+            provider_id,
+            binding_id,
+        } => {
+            let Some(target_id) = environment.incarnation.provider_target_id.as_ref() else {
+                return StatusCode::CONFLICT.into_response();
+            };
+            if authorize_provisioned_route(
+                &state,
+                &key,
+                provider_id,
+                binding_id,
+                target_id.as_str(),
+            )
+            .await
+            .is_err()
+            {
+                return StatusCode::CONFLICT.into_response();
+            }
+            let provider = match state.environment_provider(provider_id).await {
+                Ok(provider) => provider,
+                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+            };
+            let endpoint = match provider_data_endpoint(
+                &provider.controller_connection.endpoint,
+                &key,
+                binding_id.as_str(),
+                target_id.as_str(),
+            ) {
+                Ok(endpoint) => endpoint,
+                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+            };
+            let mut request = match endpoint.as_str().into_client_request() {
+                Ok(request) => request,
+                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+            };
+            if let Some(token) = provider.controller_connection.bearer_token.as_ref() {
+                let Ok(value) = format!("Bearer {}", token.expose()).parse() else {
+                    return StatusCode::BAD_GATEWAY.into_response();
+                };
+                request.headers_mut().insert("authorization", value);
+            }
+            let provider_socket = match connect_async(request).await {
+                Ok((socket, _)) => socket,
+                Err(error) => {
+                    tracing::warn!(target: "temporal_server", %error, %endpoint, "provider data connection failed");
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
+            };
+            let provider_id = provider_id.clone();
+            let binding_id = binding_id.clone();
+            let target_id = target_id.to_string();
+            upgrade
+                .max_message_size(64 * 1024 * 1024)
+                .on_upgrade(move |socket| {
+                    proxy_provider_route(
+                        state,
+                        key,
+                        provider_id,
+                        binding_id,
+                        target_id,
+                        socket,
+                        provider_socket,
+                    )
+                })
+                .into_response()
+        }
+    }
+}
+
+fn provider_data_endpoint(
+    controller_endpoint: &str,
+    key: &RouteKey,
+    binding_id: &str,
+    target_id: &str,
+) -> anyhow::Result<String> {
+    let mut endpoint = url::Url::parse(controller_endpoint)?;
+    let scheme = match endpoint.scheme() {
+        "http" => "ws",
+        "https" => "wss",
+        "ws" => "ws",
+        "wss" => "wss",
+        other => anyhow::bail!("unsupported provider controller URL scheme: {other}"),
+    };
+    endpoint
+        .set_scheme(scheme)
+        .map_err(|_| anyhow::anyhow!("invalid provider controller URL scheme"))?;
+    endpoint.set_query(None);
+    endpoint.set_fragment(None);
+    let base_path = endpoint
+        .path()
+        .trim_end_matches('/')
+        .strip_suffix("/control")
+        .ok_or_else(|| anyhow::anyhow!("provider controller endpoint must end in /control"))?;
+    endpoint.set_path(&format!("{base_path}{PROVIDER_DATA_PATH_PREFIX}"));
+    endpoint
+        .path_segments_mut()
+        .map_err(|_| anyhow::anyhow!("provider controller URL cannot be a base URL"))?
+        .pop_if_empty()
+        .push(&key.universe_id.to_string())
+        .push(binding_id)
+        .push(&key.environment_id)
+        .push(&key.incarnation_id)
+        .push(target_id);
+    Ok(endpoint.into())
+}
+
+async fn authorize_provisioned_route(
+    state: &GatewayState,
+    key: &RouteKey,
+    provider_id: &environments::EnvironmentProviderId,
+    binding_id: &environments::EnvironmentProviderBindingId,
+    target_id: &str,
+) -> anyhow::Result<()> {
+    let api = state
+        .api_for_daemon(key.universe_id)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+    let environment_id = environments::EnvironmentId::try_new(key.environment_id.clone())?;
+    let environment =
+        environments::EnvironmentStore::read_environment(api.store().as_ref(), &environment_id)
+            .await?;
+    let environments::EnvironmentSource::Provisioned {
+        provider_id: assigned_provider,
+        binding_id: assigned_binding,
+    } = &environment.source
+    else {
+        anyhow::bail!("provider data routes require a provisioned environment")
+    };
+    if assigned_provider != provider_id
+        || assigned_binding != binding_id
+        || environment.incarnation.incarnation_id.as_str() != key.incarnation_id
+        || environment
+            .incarnation
+            .provider_target_id
+            .as_ref()
+            .map(|id| id.as_str())
+            != Some(target_id)
+        || matches!(
+            environment.status,
+            environments::EnvironmentStatus::Closing | environments::EnvironmentStatus::Closed
+        )
+    {
+        anyhow::bail!("provider data route is stale or no longer owned")
+    }
+    let binding = environments::EnvironmentProviderBindingStore::read_provider_binding(
+        api.store().as_ref(),
+        key.universe_id,
+        binding_id,
+    )
+    .await?;
+    if binding.status != environments::EnvironmentProviderBindingStatus::Enabled
+        || binding.provider_id != *provider_id
+    {
+        anyhow::bail!("provider binding is disabled or changed")
+    }
+    Ok(())
+}
+
+async fn proxy_provider_route(
+    state: Arc<GatewayState>,
+    key: RouteKey,
+    provider_id: environments::EnvironmentProviderId,
+    binding_id: environments::EnvironmentProviderBindingId,
+    target_id: String,
+    mut worker: WebSocket,
+    provider: tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+) {
+    let (mut provider_writer, mut provider_reader) = provider.split();
+    let mut reauthorize = tokio::time::interval(Duration::from_secs(5));
+    loop {
+        tokio::select! {
+            _ = reauthorize.tick() => {
+                if authorize_provisioned_route(
+                    &state, &key, &provider_id, &binding_id, &target_id,
+                ).await.is_err() {
+                    let _ = worker.send(close_message("provider route authorization changed")).await;
+                    break;
+                }
+            }
+            message = worker.recv() => {
+                let Some(Ok(message)) = message else { break };
+                let close = matches!(message, Message::Close(_));
+                let message = match message {
+                    Message::Text(value) => ProviderMessage::Text(value.to_string().into()),
+                    Message::Binary(value) => ProviderMessage::Binary(value.to_vec().into()),
+                    Message::Ping(value) => ProviderMessage::Ping(value.to_vec().into()),
+                    Message::Pong(value) => ProviderMessage::Pong(value.to_vec().into()),
+                    Message::Close(_) => ProviderMessage::Close(None),
+                };
+                if provider_writer.send(message).await.is_err() || close { break }
+            }
+            message = provider_reader.next() => {
+                let Some(Ok(message)) = message else { break };
+                let close = matches!(message, ProviderMessage::Close(_));
+                let message = match message {
+                    ProviderMessage::Text(value) => Some(Message::Text(value.to_string())),
+                    ProviderMessage::Binary(value) => Some(Message::Binary(value.to_vec())),
+                    ProviderMessage::Ping(value) => Some(Message::Ping(value.to_vec())),
+                    ProviderMessage::Pong(value) => Some(Message::Pong(value.to_vec())),
+                    ProviderMessage::Close(_) => Some(Message::Close(None)),
+                    ProviderMessage::Frame(_) => None,
+                };
+                if let Some(message) = message
+                    && worker.send(message).await.is_err()
+                { break }
+                if close { break }
+            }
+        }
+    }
 }
 
 async fn proxy_worker_route(
@@ -1054,6 +1293,35 @@ mod tests {
             response.headers().get(header::CACHE_CONTROL),
             Some(&HeaderValue::from_static("no-store"))
         );
+    }
+
+    #[test]
+    fn provider_data_url_is_derived_and_path_segments_are_escaped() {
+        let key = RouteKey {
+            universe_id: Uuid::parse_str("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f").unwrap(),
+            environment_id: "environment with space".to_owned(),
+            incarnation_id: "incarnation/one".to_owned(),
+        };
+        let endpoint = provider_data_endpoint(
+            "https://provider.example/control",
+            &key,
+            "primary",
+            "target-one",
+        )
+        .unwrap();
+        assert_eq!(
+            endpoint,
+            "wss://provider.example/routes/6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/primary/environment%20with%20space/incarnation%2Fone/target-one"
+        );
+        let nested = provider_data_endpoint(
+            "https://provider.example/services/incus/control",
+            &key,
+            "primary",
+            "target-one",
+        )
+        .unwrap();
+        assert!(nested.starts_with("wss://provider.example/services/incus/routes/"));
+        assert!(provider_data_endpoint("wss://provider.example/custom", &key, "b", "t").is_err());
     }
 
     #[test]

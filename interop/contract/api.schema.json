@@ -5845,6 +5845,28 @@
       ],
       "type": "object"
     },
+    "OperatorEnvironmentProviderConnectionInput": {
+      "properties": {
+        "bearerToken": {
+          "description": "Optional write-only bearer used by Lightspeed for both controller and\ndata-plane connections. Read and list responses never return it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "transport": {
+          "$ref": "#/definitions/OperatorEnvironmentProviderTransport"
+        }
+      },
+      "required": [
+        "endpoint",
+        "transport"
+      ],
+      "type": "object"
+    },
     "OperatorEnvironmentProviderDeleteParams": {
       "properties": {
         "providerId": {
@@ -5887,7 +5909,7 @@
     "OperatorEnvironmentProviderPutParams": {
       "properties": {
         "controllerConnection": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderConnection"
+          "$ref": "#/definitions/OperatorEnvironmentProviderConnectionInput"
         },
         "displayName": {
           "type": [

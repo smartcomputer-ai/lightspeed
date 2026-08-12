@@ -2,6 +2,7 @@
 members = [
     "crates/host-client",
     "crates/environment-daemon",
+    "crates/environment-provider-incus",
     "crates/host-protocol",
     "crates/llm-clients",
     "crates/api",

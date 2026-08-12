@@ -5,6 +5,9 @@ CREATE TABLE IF NOT EXISTS environment_providers (
     provider_id text PRIMARY KEY,
     display_name text,
     controller_connection_json jsonb NOT NULL,
+    controller_secret_key_id text,
+    controller_secret_nonce bytea,
+    controller_secret_ciphertext bytea,
     metadata_json jsonb NOT NULL DEFAULT '{}',
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
@@ -13,6 +16,10 @@ CREATE TABLE IF NOT EXISTS environment_providers (
     CONSTRAINT environment_providers_json_objects CHECK (
         jsonb_typeof(controller_connection_json) = 'object'
         AND jsonb_typeof(metadata_json) = 'object'
+    ),
+    CONSTRAINT environment_providers_controller_secret_complete CHECK (
+        (controller_secret_key_id IS NULL AND controller_secret_nonce IS NULL AND controller_secret_ciphertext IS NULL)
+        OR (controller_secret_key_id IS NOT NULL AND octet_length(controller_secret_nonce) = 12 AND octet_length(controller_secret_ciphertext) > 0)
     ),
     CONSTRAINT environment_providers_times_valid CHECK (
         created_at_ms >= 0 AND updated_at_ms >= created_at_ms
@@ -210,10 +217,12 @@ COMMENT ON TABLE environment_providers IS
     'Operator-registered provider identity and controller connection; protocol and presence are observed transiently.';
 COMMENT ON COLUMN environment_providers.metadata_json IS
     'Non-authoritative operator metadata; never provider capability, health, or allocation policy.';
+COMMENT ON COLUMN environment_providers.controller_secret_ciphertext IS
+    'Optional AEAD-encrypted write-only bearer used by Lightspeed for provider controller and on-demand data-plane connections.';
 COMMENT ON TABLE environment_provider_bindings IS
     'Revisioned universe routing and admission binding to one provider; allocation and ingress policy remain provider-owned.';
 COMMENT ON TABLE environment_daemon_enrollments IS
-    'One-time enrollment token hash and daemon public-key identity for a directly enrolled environment incarnation. Provider-mediated environments authenticate through their provider binding and do not have rows here; live route presence remains gateway-memory state.';
+    'One-time enrollment token hash and daemon public-key identity for a directly enrolled environment incarnation. Provider-mediated environments authenticate locally to their provider and do not have rows here.';
 COMMENT ON COLUMN environment_provider_bindings.metadata_json IS
     'Non-authoritative binding labels; never provider template, quota, capacity, or ingress policy.';
 COMMENT ON TABLE environments IS

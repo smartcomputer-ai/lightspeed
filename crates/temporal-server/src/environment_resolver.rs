@@ -118,7 +118,8 @@ impl EnvironmentResolver {
             if routes.snapshot(&key).await.is_some() {
                 return Ok(environment);
             }
-        } else if let Some(gateway) = &self.gateway {
+        }
+        if let Some(gateway) = &self.gateway {
             let connection = gateway.connection_for(self.universe_id, &environment);
             if host_client::HostDataClient::connect(
                 &connection.endpoint,

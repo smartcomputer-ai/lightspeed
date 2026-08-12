@@ -33,14 +33,100 @@ use host_protocol::{
     shared::CURRENT_PROTOCOL_VERSION,
 };
 use serde_json::Value;
+use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, mpsc};
 use tokio_tungstenite::{
-    connect_async,
+    accept_hdr_async, connect_async,
     tungstenite::{Message, client::IntoClientRequest},
 };
 
+async fn run_provider_listener(runtime: DaemonRuntime) -> anyhow::Result<()> {
+    let DaemonMode::Provider { listen, token } = &runtime.config().mode else {
+        bail!("not provider mode")
+    };
+    let listener = TcpListener::bind(listen)
+        .await
+        .context("bind provider listener")?;
+    tracing_line(&format!("provider listener ready on {listen}"));
+    loop {
+        let (stream, peer) = listener.accept().await?;
+        let runtime = runtime.clone();
+        let expected = token.clone();
+        tokio::spawn(async move {
+            let authorized = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let authorized_for_handshake = authorized.clone();
+            let websocket = accept_hdr_async(stream, move |request: &tokio_tungstenite::tungstenite::handshake::server::Request, response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                let valid = request.headers().get(http::header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.strip_prefix("Bearer "))
+                    .is_some_and(|value| constant_time_eq(value.as_bytes(), expected.as_bytes()));
+                authorized_for_handshake.store(valid, std::sync::atomic::Ordering::Relaxed);
+                if valid { Ok(response) } else {
+                    Err(http::Response::builder().status(http::StatusCode::UNAUTHORIZED).body(Some("unauthorized".to_owned())).expect("response"))
+                }
+            }).await;
+            match websocket {
+                Ok(socket) if authorized.load(std::sync::atomic::Ordering::Relaxed) => {
+                    if let Err(error) = run_provider_data_connection(&runtime, socket).await {
+                        eprintln!("lightspeed-envd provider connection {peer} failed: {error:#}");
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("lightspeed-envd rejected provider connection {peer}: {error}")
+                }
+            }
+        });
+    }
+}
+
+async fn run_provider_data_connection<S>(
+    runtime: &DaemonRuntime,
+    socket: tokio_tungstenite::WebSocketStream<S>,
+) -> anyhow::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let (mut writer, mut reader) = socket.split();
+    let (responses, mut response_rx) = mpsc::channel::<Value>(64);
+    let concurrency = std::sync::Arc::new(Semaphore::new(32));
+    loop {
+        tokio::select! {
+            response = response_rx.recv() => {
+                let Some(response) = response else { return Ok(()) };
+                writer.send(Message::Text(response.to_string().into())).await?;
+            }
+            message = reader.next() => {
+                let Some(message) = message else { return Ok(()) };
+                match message? {
+                    Message::Text(text) => dispatch_gateway_json(runtime, &responses, &concurrency, &text).await?,
+                    Message::Binary(bytes) => {
+                        let text = std::str::from_utf8(&bytes).context("binary provider frame is not UTF-8")?;
+                        dispatch_gateway_json(runtime, &responses, &concurrency, text).await?;
+                    }
+                    Message::Ping(bytes) => writer.send(Message::Pong(bytes)).await?,
+                    Message::Pong(_) | Message::Frame(_) => {}
+                    Message::Close(_) => return Ok(()),
+                }
+            }
+        }
+    }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0_u8;
+    for (&left, &right) in left.iter().zip(right) {
+        difference |= left ^ right;
+    }
+    difference == 0
+}
+
 use crate::{
     DaemonRuntime,
+    config::DaemonMode,
     identity::DaemonIdentity,
     rpc::{
         decode_params, encode_result, error_response, invalid_request, method_not_found,
@@ -49,10 +135,15 @@ use crate::{
 };
 
 pub async fn run(runtime: DaemonRuntime) -> anyhow::Result<()> {
-    let identity =
-        DaemonIdentity::load_or_create(&runtime.config().state_dir, &runtime.config().identity)
-            .await?;
-    let mut enrollment_token = runtime.config().enrollment_token.clone();
+    let DaemonMode::Direct {
+        identity: binding,
+        enrollment_token: configured_token,
+    } = &runtime.config().mode
+    else {
+        return run_provider_listener(runtime).await;
+    };
+    let identity = DaemonIdentity::load_or_create(&runtime.config().state_dir, binding).await?;
+    let mut enrollment_token = configured_token.clone();
     loop {
         match run_connection(&runtime, &identity, enrollment_token.as_deref()).await {
             Ok(connected) => {
@@ -72,9 +163,15 @@ async fn run_connection(
     identity: &DaemonIdentity,
     enrollment_token: Option<&str>,
 ) -> anyhow::Result<bool> {
+    let DaemonMode::Direct {
+        identity: binding, ..
+    } = &runtime.config().mode
+    else {
+        bail!("not a direct daemon")
+    };
     let endpoint = format!(
         "{}{DIRECT_DAEMON_PATH}",
-        websocket_base(&runtime.config().identity.gateway_url)?
+        websocket_base(&binding.gateway_url)?
     );
     let request = endpoint.into_client_request()?;
     let (mut socket, _) = connect_async(request)
@@ -91,18 +188,18 @@ async fn run_connection(
     let daemon_id = identity.daemon_id();
     let signature = identity.sign(&direct_auth_message(
         &challenge.nonce,
-        &runtime.config().identity.universe_id,
-        &runtime.config().identity.environment_id,
-        &runtime.config().identity.incarnation_id,
+        &binding.universe_id,
+        &binding.environment_id,
+        &binding.incarnation_id,
         &daemon_id,
     ));
     send_json(
         &mut socket,
         &DirectDaemonAuthenticate {
             protocol_version: CURRENT_PROTOCOL_VERSION,
-            universe_id: runtime.config().identity.universe_id.clone(),
-            environment_id: runtime.config().identity.environment_id.clone(),
-            incarnation_id: runtime.config().identity.incarnation_id.clone(),
+            universe_id: binding.universe_id.clone(),
+            environment_id: binding.environment_id.clone(),
+            incarnation_id: binding.incarnation_id.clone(),
             daemon_id,
             public_key: URL_SAFE_NO_PAD.encode(identity.public_key()),
             signature: URL_SAFE_NO_PAD.encode(signature),

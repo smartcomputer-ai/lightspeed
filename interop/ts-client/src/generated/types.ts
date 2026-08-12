@@ -4100,6 +4100,19 @@ export interface OperatorApiKeyRevokeParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentProviderConnectionInput".
+ */
+export interface OperatorEnvironmentProviderConnectionInput {
+  /**
+   * Optional write-only bearer used by Lightspeed for both controller and
+   * data-plane connections. Read and list responses never return it.
+   */
+  bearerToken?: string | null;
+  endpoint: string;
+  transport: OperatorEnvironmentProviderTransport;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OperatorEnvironmentProviderDeleteParams".
  */
 export interface OperatorEnvironmentProviderDeleteParams {
@@ -4115,7 +4128,7 @@ export interface OperatorEnvironmentProviderListParams {}
  * via the `definition` "OperatorEnvironmentProviderPutParams".
  */
 export interface OperatorEnvironmentProviderPutParams {
-  controllerConnection: OperatorEnvironmentProviderConnection;
+  controllerConnection: OperatorEnvironmentProviderConnectionInput;
   displayName?: string | null;
   metadata?: {
     [k: string]: string;

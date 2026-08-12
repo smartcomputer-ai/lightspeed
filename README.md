@@ -62,7 +62,10 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
   sessions use through event-sourced active environment state; model discovery
   and selection is a separate, default-off `selectionTools` grant. Ordinary
   file and process tools always operate on the selected environment and never
-  on linked VFS content
+  on linked VFS content. The in-repo stateless Incus provider supplies
+  authenticated durable full-VM provisioning and on-demand envd routes; real
+  Incus deployment still requires node certificates, an immutable image, and
+  provider policy configuration
 - [x] **Provider-owned jobs** for long-running work: downloads, experiments,
   and delegated coding-agent runs with optional session/run supervision. Jobs
   are an advanced, default-off environment grant and appear as model tools

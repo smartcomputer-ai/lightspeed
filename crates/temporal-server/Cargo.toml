@@ -41,18 +41,19 @@ temporalio-sdk = "0.4.0"
 temporalio-sdk-core = "0.4.0"
 tempfile = "3"
 tokio = { version = "1", features = ["fs", "macros", "net", "process", "rt-multi-thread", "signal", "time"] }
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 tools = { path = "../tools" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 thiserror = "1"
 uuid = { version = "1", features = ["v4"] }
+url = "2"
 
 [dev-dependencies]
 test-support = { path = "../test-support" }
 dotenvy = "0.15"
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 
 [[bin]]
 name = "server"

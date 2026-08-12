@@ -1,0 +1,21 @@
+[Unit]
+Description=Lightspeed environment daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lightspeed-envd
+Group=lightspeed-envd
+EnvironmentFile=/etc/lightspeed-envd/provider.env
+ExecStart=/usr/local/bin/lightspeed-envd
+Restart=always
+RestartSec=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/workspace /var/lib/lightspeed-envd
+WorkingDirectory=/workspace
+
+[Install]
+WantedBy=multi-user.target

@@ -113,8 +113,9 @@ universe API. Multiple providers, including third-party services, are
 registered by a Lightspeed operator by supplying their controller connection.
 A provider never has to self-register and does not need access to Lightspeed's
 operator API; Lightspeed only needs to be able to reach it. Provider
-authentication will use an operator-managed secret reference when that
-controller protocol is introduced; credentials must not be placed in metadata.
+authentication uses a write-only bearer credential on provider registration.
+The credential is AEAD-encrypted at rest, omitted from provider views, and is
+never placed in metadata.
 
 `environments/create` accepts a caller-generated stable `requestId`,
 `bindingId`, and provider-owned immutable `templateId`. The unique key

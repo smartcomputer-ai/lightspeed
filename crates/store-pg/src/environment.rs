@@ -1,3 +1,5 @@
+use aes_gcm::aead::{Aead, Payload};
+use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 use async_trait::async_trait;
 use auth::{AuthGrantId, AuthProviderId, SecretId};
 use environments::{
@@ -15,13 +17,16 @@ use environments::{
     PutEnvironmentProvider, PutEnvironmentProviderBinding,
 };
 use host_protocol::shared::HostTargetId;
+use rand::RngCore as _;
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use crate::PgStore;
 
 const PROVIDER_COLUMNS: &str = r#"
-    provider_id, display_name, controller_connection_json, metadata_json,
+    provider_id, display_name, controller_connection_json,
+    controller_secret_key_id, controller_secret_nonce, controller_secret_ciphertext,
+    metadata_json,
     created_at_ms, updated_at_ms
 "#;
 
@@ -65,16 +70,27 @@ impl EnvironmentProviderStore for PgStore {
         &self,
         request: PutEnvironmentProvider,
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        let record = request.into_record()?;
+        let mut record = request.into_record()?;
+        let sealed = record
+            .controller_connection
+            .bearer_token
+            .as_ref()
+            .map(|token| seal_provider_secret(self, &record.provider_id, token))
+            .transpose()?;
+        record.controller_connection.bearer_token = None;
         let query = format!(
             r#"
             INSERT INTO environment_providers (
                 provider_id, display_name, controller_connection_json,
+                controller_secret_key_id, controller_secret_nonce, controller_secret_ciphertext,
                 metadata_json, created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,$4,$5,$6)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
             ON CONFLICT (provider_id) DO UPDATE SET
                 display_name = EXCLUDED.display_name,
                 controller_connection_json = EXCLUDED.controller_connection_json,
+                controller_secret_key_id = EXCLUDED.controller_secret_key_id,
+                controller_secret_nonce = EXCLUDED.controller_secret_nonce,
+                controller_secret_ciphertext = EXCLUDED.controller_secret_ciphertext,
                 metadata_json = EXCLUDED.metadata_json,
                 updated_at_ms = EXCLUDED.updated_at_ms
             RETURNING {PROVIDER_COLUMNS}
@@ -87,13 +103,16 @@ impl EnvironmentProviderStore for PgStore {
                 "encode provider controller connection",
                 &record.controller_connection,
             )?)
+            .bind(sealed.as_ref().map(|value| value.0))
+            .bind(sealed.as_ref().map(|value| value.1.as_slice()))
+            .bind(sealed.as_ref().map(|value| value.2.as_slice()))
             .bind(json_value("encode provider metadata", &record.metadata)?)
             .bind(record.created_at_ms)
             .bind(record.updated_at_ms)
             .fetch_one(&self.pool)
             .await
             .map_err(|error| sql_error("put environment provider", error))?;
-        provider_from_row(&row)
+        provider_from_row(self, &row)
     }
 
     async fn read_provider(
@@ -108,7 +127,7 @@ impl EnvironmentProviderStore for PgStore {
             .await
             .map_err(|error| sql_error("read environment provider", error))?
             .ok_or_else(|| not_found("environment_provider", provider_id))?;
-        provider_from_row(&row)
+        provider_from_row(self, &row)
     }
 
     async fn list_providers(
@@ -121,7 +140,9 @@ impl EnvironmentProviderStore for PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list environment providers", error))?;
-        rows.iter().map(provider_from_row).collect()
+        rows.iter()
+            .map(|row| provider_from_row(self, row))
+            .collect()
     }
 
     async fn delete_provider(
@@ -147,7 +168,7 @@ impl EnvironmentProviderStore for PgStore {
             .await
             .map_err(map_provider_delete_error)?
             .ok_or_else(|| not_found("environment_provider", provider_id))?;
-        provider_from_row(&row)
+        provider_from_row(self, &row)
     }
 }
 
@@ -834,20 +855,100 @@ async fn read_environment_on(
 }
 
 fn provider_from_row(
+    store: &PgStore,
     row: &sqlx::postgres::PgRow,
 ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
+    let provider_id = parse_id(row, "provider_id", EnvironmentProviderId::try_new)?;
+    let mut connection: environments::HostControllerConnectionSpec =
+        json_column(row, "controller_connection_json")?;
+    connection.bearer_token = open_provider_secret(store, &provider_id, row)?;
     let record = EnvironmentProviderRecord {
-        provider_id: parse_id(row, "provider_id", EnvironmentProviderId::try_new)?,
+        provider_id,
         display_name: row
             .try_get("display_name")
             .map_err(|e| sql_error("decode provider display_name", e))?,
-        controller_connection: json_column(row, "controller_connection_json")?,
+        controller_connection: connection,
         metadata: json_column(row, "metadata_json")?,
         created_at_ms: scalar(row, "created_at_ms")?,
         updated_at_ms: scalar(row, "updated_at_ms")?,
     };
     record.validate()?;
     Ok(record)
+}
+
+const PROVIDER_SECRET_KEY_ID: &str = "local-v1";
+
+fn provider_secret_aad(provider_id: &EnvironmentProviderId) -> Vec<u8> {
+    format!("environment-provider/{}", provider_id.as_str()).into_bytes()
+}
+
+fn seal_provider_secret(
+    store: &PgStore,
+    provider_id: &EnvironmentProviderId,
+    value: &auth::SecretValue,
+) -> Result<(&'static str, Vec<u8>, Vec<u8>), EnvironmentRegistryError> {
+    let key = store.config.secrets_master_key.as_ref().ok_or_else(|| {
+        store_message("secrets master key is required to store a provider credential")
+    })?;
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.bytes()));
+    let mut nonce = [0_u8; 12];
+    rand::rngs::OsRng.fill_bytes(&mut nonce);
+    let ciphertext = cipher
+        .encrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: value.expose().as_bytes(),
+                aad: &provider_secret_aad(provider_id),
+            },
+        )
+        .map_err(|_| store_message("provider credential encryption failed"))?;
+    Ok((PROVIDER_SECRET_KEY_ID, nonce.to_vec(), ciphertext))
+}
+
+fn open_provider_secret(
+    store: &PgStore,
+    provider_id: &EnvironmentProviderId,
+    row: &sqlx::postgres::PgRow,
+) -> Result<Option<auth::SecretValue>, EnvironmentRegistryError> {
+    let key_id: Option<String> = row
+        .try_get("controller_secret_key_id")
+        .map_err(|error| sql_error("decode provider credential key id", error))?;
+    let Some(key_id) = key_id else {
+        return Ok(None);
+    };
+    if key_id != PROVIDER_SECRET_KEY_ID {
+        return Err(store_message(format!(
+            "unsupported provider credential key id '{key_id}'"
+        )));
+    }
+    let nonce: Vec<u8> = row
+        .try_get("controller_secret_nonce")
+        .map_err(|error| sql_error("decode provider credential nonce", error))?;
+    let ciphertext: Vec<u8> = row
+        .try_get("controller_secret_ciphertext")
+        .map_err(|error| sql_error("decode provider credential ciphertext", error))?;
+    if nonce.len() != 12 {
+        return Err(store_message(
+            "stored provider credential nonce has invalid length",
+        ));
+    }
+    let key = store.config.secrets_master_key.as_ref().ok_or_else(|| {
+        store_message("secrets master key is required to read a provider credential")
+    })?;
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.bytes()));
+    let plaintext = cipher
+        .decrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: &ciphertext,
+                aad: &provider_secret_aad(provider_id),
+            },
+        )
+        .map_err(|_| store_message("provider credential decryption failed"))?;
+    String::from_utf8(plaintext)
+        .map(auth::SecretValue::new)
+        .map(Some)
+        .map_err(|_| store_message("provider credential is not valid UTF-8"))
 }
 
 fn binding_from_row(

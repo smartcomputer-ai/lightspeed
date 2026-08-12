@@ -2,7 +2,8 @@
 
 **Status**
 
-- Proposed 2026-08-11.
+- Core implementation completed 2026-08-12; hz01/hz02 deployment and live
+  acceptance verification remain.
 - Builds on [P118](p118-environment-domain-and-lifecycle.md) and
   [P119](p119-environment-daemon-gateway-enrollment.md).
 - Delivers the first managed backend from
@@ -18,11 +19,14 @@ or write Lightspeed Postgres. Lightspeed owns lifecycle intent; Incus owns
 physical truth; the provider reconstructs its view from deployment
 configuration, Incus inventory, and immutable target metadata.
 
-The provider is a passive authenticated controller endpoint. Lightspeed opens
-connections to it and performs the transient `controller/initialize`
-handshake. It does not self-register, call Lightspeed's operator API, or need a
-Lightspeed API credential. The same contract may be implemented by a
-third-party provider reachable from the Lightspeed deployment.
+The provider is a passive controller and data endpoint. Lightspeed opens both
+kinds of connection. It performs the transient `controller/initialize`
+handshake on controller connections and opens a target-specific data
+connection only when an environment is used. The provider does not
+self-register, call Lightspeed's operator API, or need a Lightspeed API
+credential. Its optional controller bearer may be omitted when the deployment
+protects the endpoint with network or transport identity. The same contract
+may be implemented by a third-party provider reachable from Lightspeed.
 
 Keep the provider contract as the extraction seam. The implementation starts
 in this workspace as `crates/environment-provider-incus`, but it must not
@@ -34,8 +38,8 @@ implementation so it can move to a separate repository later.
 - The provider runs on hz01's trusted application plane.
 - It talks to the hz02 Incus HTTPS API over the tailnet with a restricted
   deployment credential.
-- Controller traffic is authenticated with deployment identity, not a universe
-  bearer key.
+- Controller and data traffic may use one optional operator-configured bearer,
+  or deployment network/mTLS identity. This is not a universe credential.
 - Guests receive no Incus, node-root, tailnet, or general universe credential.
 - Dynamically provisioned development environments use full KVM/QEMU VMs.
 
@@ -92,29 +96,30 @@ For `createTarget`, the provider:
 3. finds an existing target with the same provision request ID or selects hz02;
 4. creates the project/network/profile resources idempotently;
 5. creates the VM with deterministic naming and immutable ownership metadata;
-6. injects the opaque fresh envd bootstrap ticket through cloud-init or config
+6. injects an opaque target-bound envd bootstrap token through cloud-init or config
    drive;
 7. starts the VM and returns while it may still be starting; and
-8. reports backend observations while its node relay exposes the admitted envd
-   route to the environment gateway.
+8. reports `Ready` only after it can authenticate and reach envd over the
+   private guest network.
 
 Required backend metadata includes environment, incarnation, request, binding,
 template-version, image-fingerprint, and creation-time facts. It contains no
 bearer secrets.
 
-Environment readiness requires both an available Incus target and the current
-admitted gateway incarnation. VM running alone is not ready.
+Environment readiness requires both an available Incus target and reachable
+envd. VM running alone is not ready. Selection still probes the full
+Lightspeed-to-provider-to-envd path rather than trusting stored status.
 
-The Incus provider must support on-demand data-plane connections. A node-local
-relay keeps one or a small number of authenticated outbound gateway streams,
-multiplexes logical environment routes, and dials envd over the binding's
-private guest network when a routed call arrives. It may close the guest
-connection after a configurable idle timeout and redial on the next call.
-Route frames always carry universe, environment, incarnation, and daemon
-identity; a relay is transport aggregation, not shared authorization.
+The Incus provider exposes a passive target-specific WebSocket beside its
+controller endpoint. Lightspeed derives that endpoint from the registered
+controller URL and opens it on demand. Before upgrade, both sides independently
+validate provider, enabled binding, universe, environment, current incarnation,
+and target ownership. The provider then dials envd over the private guest
+network, proxies the host protocol unchanged, and closes the pair after a
+configurable idle timeout. The next use creates fresh connections.
 
-The VM therefore does not need one permanently open Internet-facing gateway
-socket. The relay's private dial path is the wake/reachability mechanism.
+Neither the VM nor provider maintains a permanent connection to Lightspeed.
+The provider's private dial path is the reachability mechanism.
 
 `closeTarget` verifies immutable ownership metadata and is idempotent. A
 missing object is success only after ownership/adoption facts show that it was
@@ -139,25 +144,38 @@ environment state.
 
 ## Implementation
 
-- [ ] Add the standalone `environment-provider-incus` crate and binary.
-- [ ] Implement the authenticated P118 controller contract over the Incus
+- [x] Add the standalone `environment-provider-incus` crate and binary.
+- [x] Implement the authenticated P118 controller contract over the Incus
       remote HTTPS API.
 - [ ] Configure restricted tailnet-only Incus access from hz01 to hz02.
-- [ ] Reconcile per-binding projects, managed networks, baseline rules, and VM
+- [x] Reconcile per-binding projects, managed networks, baseline rules, and VM
       profiles.
-- [ ] Build and publish the first immutable development image.
-- [ ] Implement binding-filtered typed template discovery and provider-owned
+- [x] Add a versioned immutable development-image build recipe and systemd
+      unit. Publishing its production fingerprint on hz02 remains deployment
+      work.
+- [x] Implement binding-filtered typed template discovery and provider-owned
       quota/allocation enforcement.
-- [ ] Implement image fingerprint resolution and lazy hz02 caching.
-- [ ] Implement deterministic naming and immutable ownership metadata.
-- [ ] Authenticate the provider relay and fence every routed daemon stream by
-      provider ownership, enabled binding, environment, and current
-      incarnation; do not create direct-enrollment rows.
-- [ ] Implement a node-local multiplexing relay with on-demand envd dialing,
-      bounded connection establishment, and idle connection reaping.
-- [ ] Reconcile Incus and gateway observations into Lightspeed readiness.
-- [ ] Implement ownership-verified idempotent close.
+- [x] Implement exact image-fingerprint resolution and optional lazy caching
+      from a configured trusted Incus image server.
+- [x] Implement deterministic naming and immutable ownership metadata.
+- [x] Implement the passive provider data endpoint; Lightspeed initiates every
+      target-specific route and does not create direct-enrollment rows.
+- [x] Fence every route by provider ownership, enabled binding, environment,
+      current incarnation, and target on admission and while connected.
+- [x] Implement bounded on-demand envd dialing and idle connection reaping.
+- [x] Reconcile Incus/envd observations into Lightspeed readiness and probe the
+      complete data path during selection.
+- [x] Implement ownership-verified idempotent close.
 - [ ] Update ls.bot template-aware environment creation and status views.
+
+The provider has no database or durable local operation ledger. Its JSON
+configuration is authoritative only for its optional incoming bearer, private
+envd token-derivation key, binding policy, templates, and physical networking.
+Target/request recovery is derived from Incus inventory and
+`user.lightspeed.*` ownership metadata. The optional operator bearer is
+write-only in the API and AEAD-encrypted in Postgres; it never appears in
+provider views or binding metadata. The envd token key remains provider-local
+and never enters Lightspeed.
 
 ## Verification
 

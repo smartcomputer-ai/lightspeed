@@ -1024,6 +1024,7 @@ dependencies = [
  "grep-searcher",
  "host-client",
  "host-protocol",
+ "http",
  "ignore",
  "libc",
  "portable-pty",
@@ -1037,6 +1038,30 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tools",
+]
+
+[[package]]
+name = "environment-provider-incus"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64",
+ "clap",
+ "dotenvy",
+ "futures-util",
+ "hmac",
+ "host-protocol",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "uuid",
 ]
 
 [[package]]
@@ -4186,6 +4211,7 @@ dependencies = [
  "tools",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "vfs",
 ]

@@ -21,13 +21,7 @@ pub struct RouteKey {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RouteOwner {
-    DirectDaemon {
-        daemon_id: String,
-    },
-    Provider {
-        provider_id: String,
-        binding_id: String,
-    },
+    DirectDaemon { daemon_id: String },
 }
 
 pub enum RouteCommand {
