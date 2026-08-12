@@ -313,6 +313,20 @@ pub async fn list_universes(pool: &PgPool) -> Result<Vec<(Uuid, Option<String>)>
     Ok(rows)
 }
 
+/// Universes with lifecycle intents requiring provider reconciliation.
+pub async fn list_universes_with_pending_environments(
+    pool: &PgPool,
+) -> Result<Vec<Uuid>, PgStoreError> {
+    let rows: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT DISTINCT universe_id FROM environments \
+         WHERE status IN ('provisioning','booting','closing','unknown') \
+         ORDER BY universe_id",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(universe_id,)| universe_id).collect())
+}
+
 /// Deployment-level check whether a universe exists. Runs above the
 /// per-universe `PgStore` boundary: multi-universe deployments consult it
 /// before lazily constructing a universe's store.

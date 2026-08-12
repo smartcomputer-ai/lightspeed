@@ -3756,154 +3756,50 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_create",
     "method": "environments/create",
-    "summary": "Provision an environment instance",
-    "description": "Asks a live provider with create capability to create a universe-owned environment instance. This does not attach the instance to any session.",
+    "summary": "Create an environment",
+    "description": "Records an idempotent provisioning intent against an enabled universe binding. The provider validates the template, entitlement, allocation, and capacity asynchronously.",
     "paramsType": "EnvironmentCreateParams",
     "resultType": "AgentApiOutcome<EnvironmentCreateResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "providerId": {
+        "bindingId": {
           "type": "string"
         },
-        "request": {
-          "$ref": "#/definitions/HostTargetCreateRequestView"
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "requestId": {
+          "description": "Stable caller-generated retry identity, unique inside the universe.",
+          "type": "string"
+        },
+        "templateId": {
+          "description": "Immutable provider template-version identity.",
+          "type": "string"
         }
       },
       "required": [
-        "providerId",
-        "request"
+        "requestId",
+        "bindingId",
+        "templateId"
       ],
-      "type": "object",
-      "definitions": {
-        "AttachedHostSpecView": {
-          "properties": {
-            "cwd": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "endpoint": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "labels": {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
-            },
-            "name": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "providerOptions": {}
-          },
-          "type": "object"
-        },
-        "HostTargetCreateRequestView": {
-          "oneOf": [
-            {
-              "properties": {
-                "spec": {
-                  "$ref": "#/definitions/SandboxTargetSpecView"
-                },
-                "type": {
-                  "const": "sandbox",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "spec"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "spec": {
-                  "$ref": "#/definitions/AttachedHostSpecView"
-                },
-                "type": {
-                  "const": "attachedHost",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "spec"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "providerType": {
-                  "type": "string"
-                },
-                "spec": {},
-                "type": {
-                  "const": "provider",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "providerType",
-                "spec"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "SandboxTargetSpecView": {
-          "properties": {
-            "cwd": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "env": {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
-            },
-            "image": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "labels": {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
-            },
-            "providerOptions": {},
-            "template": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          "type": "object"
-        }
-      }
+      "type": "object"
     }
   },
   {
     "name": "lightspeed_environments_read",
     "method": "environments/read",
-    "summary": "Read an environment instance",
-    "description": "Returns the universe resource with its provider identity, current observed lifecycle, connection, scope, and capabilities.",
+    "summary": "Read an environment",
+    "description": "Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.",
     "paramsType": "EnvironmentReadParams",
     "resultType": "AgentApiOutcome<EnvironmentReadResponse>",
     "inputSchema": {
@@ -3922,13 +3818,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_list",
     "method": "environments/list",
-    "summary": "List environment instances",
-    "description": "Lists universe-owned instances, optionally filtered by provider or observed target status.",
+    "summary": "List environments",
+    "description": "Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.",
     "paramsType": "EnvironmentListParams",
     "resultType": "AgentApiOutcome<EnvironmentListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
+        "bindingId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "providerId": {
           "type": [
             "string",
@@ -3938,7 +3840,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "status": {
           "anyOf": [
             {
-              "$ref": "#/definitions/EnvironmentTargetStatusView"
+              "$ref": "#/definitions/EnvironmentLifecycleStatusView"
             },
             {
               "type": "null"
@@ -3948,12 +3850,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       },
       "type": "object",
       "definitions": {
-        "EnvironmentTargetStatusView": {
+        "EnvironmentLifecycleStatusView": {
           "enum": [
-            "creating",
-            "starting",
+            "provisioning",
+            "booting",
+            "waitingForDaemon",
             "ready",
-            "stopped",
+            "offline",
             "closing",
             "closed",
             "failed",
@@ -3967,8 +3870,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_close",
     "method": "environments/close",
-    "summary": "Close an environment instance",
-    "description": "Tears down the universe resource through its provider. Closing is rejected while session bindings occupy the instance; the provider decides whether active jobs reject close or are interrupted.",
+    "summary": "Close an environment",
+    "description": "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.",
     "paramsType": "EnvironmentCloseParams",
     "resultType": "AgentApiOutcome<EnvironmentCloseResponse>",
     "inputSchema": {
@@ -3980,6 +3883,82 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       },
       "required": [
         "environmentId"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_environments_provider-bindings_list",
+    "method": "environments/provider-bindings/list",
+    "summary": "List environment provider bindings",
+    "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",
+    "paramsType": "EnvironmentProviderBindingListParams",
+    "resultType": "AgentApiOutcome<EnvironmentProviderBindingListResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_environments_provider-bindings_read",
+    "method": "environments/provider-bindings/read",
+    "summary": "Read an environment provider binding",
+    "description": "Returns one universe routing and admission binding. Provider template entitlement, capacity, quota, and ingress policy remain provider-owned.",
+    "paramsType": "EnvironmentProviderBindingReadParams",
+    "resultType": "AgentApiOutcome<EnvironmentProviderBindingReadResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "bindingId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "bindingId"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_environments_templates_list",
+    "method": "environments/templates/list",
+    "summary": "List environment templates",
+    "description": "Reads immutable templates directly from the selected bound provider controller.",
+    "paramsType": "EnvironmentTemplateListParams",
+    "resultType": "AgentApiOutcome<EnvironmentTemplateListResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "bindingId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_environments_templates_read",
+    "method": "environments/templates/read",
+    "summary": "Read an environment template",
+    "description": "Returns one immutable template version from the selected bound provider controller.",
+    "paramsType": "EnvironmentTemplateReadParams",
+    "resultType": "AgentApiOutcome<EnvironmentTemplateReadResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "bindingId": {
+          "type": "string"
+        },
+        "templateId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "bindingId",
+        "templateId"
       ],
       "type": "object"
     }
@@ -6466,58 +6445,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "serverId"
       ],
       "type": "object"
-    }
-  },
-  {
-    "name": "lightspeed_environments_providers_list",
-    "method": "environments/providers/list",
-    "summary": "List environment providers",
-    "description": "Lists current provider presence with lease-derived online/stale/offline status, optionally filtered by status or kind.",
-    "paramsType": "EnvironmentProviderListParams",
-    "resultType": "AgentApiOutcome<EnvironmentProviderListResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "providerKind": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/EnvironmentProviderKindView"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "status": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/EnvironmentProviderStatusView"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object",
-      "definitions": {
-        "EnvironmentProviderKindView": {
-          "enum": [
-            "sandbox",
-            "bridge",
-            "custom"
-          ],
-          "type": "string"
-        },
-        "EnvironmentProviderStatusView": {
-          "enum": [
-            "online",
-            "stale",
-            "offline"
-          ],
-          "type": "string"
-        }
-      }
     }
   },
   {

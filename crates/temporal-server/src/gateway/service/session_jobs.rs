@@ -76,9 +76,11 @@ impl GatewayAgentApi {
                 "environments/jobs/create requires at least one job",
             ));
         }
-        self.read_live_environment_provider(&instance.provider_id)
-            .await?;
-        if !instance.capabilities.job_start {
+        let provider_id = instance.provider_id().ok_or_else(|| {
+            AgentApiError::rejected("enrolled environments do not have a provider controller")
+        })?;
+        self.read_environment_provider(provider_id).await?;
+        if !instance.capabilities().job_start {
             return Err(AgentApiError::rejected(format!(
                 "environment does not support durable job start: {}",
                 instance.environment_id
@@ -403,10 +405,16 @@ impl GatewayAgentApi {
             .read_job_instance(environment_id)
             .await
             .map_err(|error| error.to_string())?;
-        self.read_live_environment_provider(&instance.provider_id)
+        let provider_id = instance
+            .provider_id()
+            .ok_or_else(|| "enrolled environments do not have a provider controller".to_owned())?;
+        self.read_environment_provider(provider_id)
             .await
             .map_err(|error| error.to_string())?;
-        let (client, capabilities) = connect_initialized_host_data_client(&instance.connection)
+        let connection = instance
+            .connection()
+            .ok_or_else(|| "environment has no admitted data-plane connection".to_owned())?;
+        let (client, capabilities) = connect_initialized_host_data_client(connection)
             .await
             .map_err(|error| error.to_string())?;
         let supported = match operation {

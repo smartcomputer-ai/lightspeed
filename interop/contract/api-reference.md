@@ -231,39 +231,75 @@ Removes one variable-to-credential mapping without deleting the underlying grant
 
 ### `environments/create`
 
-**Provision an environment instance**
+**Create an environment**
 
-Asks a live provider with create capability to create a universe-owned environment instance. This does not attach the instance to any session.
+Records an idempotent provisioning intent against an enabled universe binding. The provider validates the template, entitlement, allocation, and capacity asynchronously.
 
 - Params: `EnvironmentCreateParams`
 - Result: `AgentApiOutcome<EnvironmentCreateResponse>`
 
 ### `environments/read`
 
-**Read an environment instance**
+**Read an environment**
 
-Returns the universe resource with its provider identity, current observed lifecycle, connection, scope, and capabilities.
+Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.
 
 - Params: `EnvironmentReadParams`
 - Result: `AgentApiOutcome<EnvironmentReadResponse>`
 
 ### `environments/list`
 
-**List environment instances**
+**List environments**
 
-Lists universe-owned instances, optionally filtered by provider or observed target status.
+Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.
 
 - Params: `EnvironmentListParams`
 - Result: `AgentApiOutcome<EnvironmentListResponse>`
 
 ### `environments/close`
 
-**Close an environment instance**
+**Close an environment**
 
-Tears down the universe resource through its provider. Closing is rejected while session bindings occupy the instance; the provider decides whether active jobs reject close or are interrupted.
+Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.
 
 - Params: `EnvironmentCloseParams`
 - Result: `AgentApiOutcome<EnvironmentCloseResponse>`
+
+### `environments/provider-bindings/list`
+
+**List environment provider bindings**
+
+Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.
+
+- Params: `EnvironmentProviderBindingListParams`
+- Result: `AgentApiOutcome<EnvironmentProviderBindingListResponse>`
+
+### `environments/provider-bindings/read`
+
+**Read an environment provider binding**
+
+Returns one universe routing and admission binding. Provider template entitlement, capacity, quota, and ingress policy remain provider-owned.
+
+- Params: `EnvironmentProviderBindingReadParams`
+- Result: `AgentApiOutcome<EnvironmentProviderBindingReadResponse>`
+
+### `environments/templates/list`
+
+**List environment templates**
+
+Reads immutable templates directly from the selected bound provider controller.
+
+- Params: `EnvironmentTemplateListParams`
+- Result: `AgentApiOutcome<EnvironmentTemplateListResponse>`
+
+### `environments/templates/read`
+
+**Read an environment template**
+
+Returns one immutable template version from the selected bound provider controller.
+
+- Params: `EnvironmentTemplateReadParams`
+- Result: `AgentApiOutcome<EnvironmentTemplateReadResponse>`
 
 ### `environments/jobs/create`
 
@@ -471,42 +507,6 @@ Deletes the catalog document. Existing session configs that reference it are not
 
 - Params: `McpServerDeleteParams`
 - Result: `AgentApiOutcome<McpServerDeleteResponse>`
-
-### `environments/providers/register`
-
-**Register environment provider presence**
-
-Publishes a controller endpoint, capabilities, implementation identity, and liveness lease. Intended for trusted provider/bridge infrastructure, not ordinary configuration clients.
-
-- Params: `EnvironmentProviderRegisterParams`
-- Result: `AgentApiOutcome<EnvironmentProviderRegisterResponse>`
-
-### `environments/providers/heartbeat`
-
-**Refresh environment provider presence**
-
-Renews a provider lease and records its complete observed target descriptors. Omitted provided targets may become unknown; intended for provider infrastructure.
-
-- Params: `EnvironmentProviderHeartbeatParams`
-- Result: `AgentApiOutcome<EnvironmentProviderHeartbeatResponse>`
-
-### `environments/providers/unregister`
-
-**Unregister environment provider presence**
-
-Marks provider presence offline without deleting its durable environment instance records.
-
-- Params: `EnvironmentProviderUnregisterParams`
-- Result: `AgentApiOutcome<EnvironmentProviderUnregisterResponse>`
-
-### `environments/providers/list`
-
-**List environment providers**
-
-Lists current provider presence with lease-derived online/stale/offline status, optionally filtered by status or kind.
-
-- Params: `EnvironmentProviderListParams`
-- Result: `AgentApiOutcome<EnvironmentProviderListResponse>`
 
 ### `auth/grants/import`
 
@@ -717,4 +717,22 @@ Immediately and idempotently revokes the matching key only when it belongs to th
 
 - Params: `OperatorApiKeyRevokeParams`
 - Result: `AgentApiOutcome<OperatorApiKeyRevokeResponse>`
+
+### `operator/universes/provider-bindings/put`
+
+**Put an environment provider binding**
+
+Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.
+
+- Params: `OperatorProviderBindingPutParams`
+- Result: `AgentApiOutcome<OperatorProviderBindingPutResponse>`
+
+### `operator/universes/provider-bindings/delete`
+
+**Delete an environment provider binding**
+
+Deletes a universe provider binding only after every referencing environment has reached Closed.
+
+- Params: `OperatorProviderBindingDeleteParams`
+- Result: `AgentApiOutcome<OperatorProviderBindingDeleteResponse>`
 

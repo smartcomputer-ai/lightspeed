@@ -1,6 +1,10 @@
 use std::{env, sync::Arc};
 
 use engine::{ModelSelection, ProviderApiKind};
+use environments::{
+    EnvironmentProviderId, EnvironmentProviderStore, HostControllerConnectionSpec,
+    PutEnvironmentProvider,
+};
 use object_store::ObjectStore;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use store_pg::{
@@ -8,6 +12,17 @@ use store_pg::{
 };
 use temporal_workflow::{DEFAULT_MODEL, DEFAULT_TASK_QUEUE};
 use uuid::Uuid;
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EnvironmentProviderSeed {
+    provider_id: String,
+    #[serde(default)]
+    display_name: Option<String>,
+    controller_connection: HostControllerConnectionSpec,
+    #[serde(default)]
+    metadata: std::collections::BTreeMap<String, String>,
+}
 
 pub fn default_model_from_env() -> ModelSelection {
     ModelSelection {
@@ -127,6 +142,7 @@ impl DeploymentStores {
             })?;
         let pool = PgPoolOptions::new().connect(&database_url).await?;
         PgStore::migrate(&pool).await?;
+        seed_environment_provider_from_env(&pool).await?;
         let object_store = match object_store_config_from_env()? {
             Some(object_config) => Some(build_s3_object_store(object_config)?),
             None => None,
@@ -197,6 +213,35 @@ impl DeploymentStores {
         };
         Arc::new(store)
     }
+}
+
+async fn seed_environment_provider_from_env(pool: &PgPool) -> anyhow::Result<()> {
+    let Some(value) = optional_env("LIGHTSPEED_ENVIRONMENT_PROVIDER") else {
+        return Ok(());
+    };
+    let seed: EnvironmentProviderSeed = serde_json::from_str(&value).map_err(|error| {
+        anyhow::anyhow!("invalid LIGHTSPEED_ENVIRONMENT_PROVIDER JSON: {error}")
+    })?;
+    let updated_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| anyhow::anyhow!("system clock before unix epoch: {error}"))?
+        .as_millis()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("current timestamp exceeds i64"))?;
+    let store = PgStore::new(pool.clone(), PgStoreConfig::new(Uuid::nil()));
+    store
+        .put_provider(PutEnvironmentProvider {
+            provider_id: EnvironmentProviderId::try_new(seed.provider_id).map_err(|error| {
+                anyhow::anyhow!("invalid seeded environment provider id: {error}")
+            })?,
+            display_name: seed.display_name,
+            controller_connection: seed.controller_connection,
+            metadata: seed.metadata,
+            updated_at_ms,
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("seed environment provider: {error}"))?;
+    Ok(())
 }
 
 /// Single-universe store bound to `LIGHTSPEED_PG_UNIVERSE_ID`. Used by

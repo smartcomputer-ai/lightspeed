@@ -18,6 +18,12 @@ or write Lightspeed Postgres. Lightspeed owns lifecycle intent; Incus owns
 physical truth; the provider reconstructs its view from deployment
 configuration, Incus inventory, and immutable target metadata.
 
+The provider is a passive authenticated controller endpoint. Lightspeed opens
+connections to it and performs the transient `controller/initialize`
+handshake. It does not self-register, call Lightspeed's operator API, or need a
+Lightspeed API credential. The same contract may be implemented by a
+third-party provider reachable from the Lightspeed deployment.
+
 Keep the provider contract as the extraction seam. The implementation starts
 in this workspace as `crates/environment-provider-incus`, but it must not
 depend on the engine, Temporal server, session runtime, CLI, or store
@@ -69,7 +75,8 @@ key, environment credential, or populated envd state directory.
 The provider:
 
 - publishes typed immutable template versions;
-- validates binding entitlement and bounded overrides;
+- owns and validates per-binding template entitlement, allocation policy,
+  aggregate quota, and public-ingress eligibility;
 - ensures the exact image fingerprint is cached on hz02;
 - records template version and image fingerprint on every target; and
 - never accepts arbitrary images, cloud-init, backend JSON, privileged devices,
@@ -80,13 +87,15 @@ The provider:
 For `createTarget`, the provider:
 
 1. validates authenticated binding and template context;
-2. finds an existing target with the same provision request ID or selects hz02;
-3. creates the project/network/profile resources idempotently;
-4. creates the VM with deterministic naming and immutable ownership metadata;
-5. injects the opaque fresh envd bootstrap ticket through cloud-init or config
+2. atomically enforces its binding quota and physical-capacity policy against
+   Incus inventory;
+3. finds an existing target with the same provision request ID or selects hz02;
+4. creates the project/network/profile resources idempotently;
+5. creates the VM with deterministic naming and immutable ownership metadata;
+6. injects the opaque fresh envd bootstrap ticket through cloud-init or config
    drive;
-6. starts the VM and returns while it may still be starting; and
-7. reports backend observations while envd independently connects to the
+7. starts the VM and returns while it may still be starting; and
+8. reports backend observations while envd independently connects to the
    environment gateway.
 
 Required backend metadata includes environment, incarnation, request, binding,
@@ -126,7 +135,8 @@ environment state.
 - [ ] Reconcile per-binding projects, managed networks, baseline rules, and VM
       profiles.
 - [ ] Build and publish the first immutable development image.
-- [ ] Implement typed template discovery and bounded overrides.
+- [ ] Implement binding-filtered typed template discovery and provider-owned
+      quota/allocation enforcement.
 - [ ] Implement image fingerprint resolution and lazy hz02 caching.
 - [ ] Implement deterministic naming and immutable ownership metadata.
 - [ ] Bootstrap a fresh envd enrollment into each new incarnation.
@@ -136,7 +146,8 @@ environment state.
 
 ## Verification
 
-- Bind one provider to two test universes with distinct template/quota policy.
+- Bind one provider to two test universes with distinct provider-owned template
+  and quota policy.
 - Prove neither universe can list, inspect, route to, credential-bind, or close
   the other's targets.
 - Prove repeated create adoption, provider restart during create, partial

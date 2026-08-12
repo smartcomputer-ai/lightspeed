@@ -3,6 +3,10 @@
 **Status**
 - Proposed 2026-06-17.
 - G1-G7 implemented 2026-06-17.
+- Superseded for provider registration, heartbeat, lease, and ownership by
+  [P117](p117-environment-compute-plan.md) and
+  [P118](p118-environment-domain-and-lifecycle.md). Retained as implementation
+  history.
 - Builds on P75-P79 and `docs/spec/04-environments.md`.
 - Breaking changes remain allowed. Lightspeed has not shipped a stable
   environment API.

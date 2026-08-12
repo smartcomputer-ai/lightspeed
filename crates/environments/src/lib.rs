@@ -1,30 +1,22 @@
-//! Runtime environment registry contracts.
+//! Environment-compute domain contracts.
 //!
-//! Providers advertise presence and universe environments own machine lifetime,
-//! connection observations, and credential bindings.
+//! Physical providers are deployment-scoped, provider bindings and
+//! environments are universe-scoped, and provider target facts live on an
+//! environment incarnation rather than on stable environment identity.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-    str::FromStr,
-};
+use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use async_trait::async_trait;
 use auth::{AuthGrantId, AuthProviderId, SecretId};
 pub use engine::EnvironmentId;
 use engine::{StringIdError, validate_general_string_id};
 use host_protocol::{
-    control::{
-        handshake::ControllerCapabilities,
-        targets::{HostTargetStatus, HostTargetSummary},
-    },
-    shared::{
-        HostCapabilities, HostConnectionSpec, HostPath, HostScope, HostTargetId, HostTransport,
-        ImplementationInfo,
-    },
+    control::targets::EnvironmentTemplate,
+    shared::{HostCapabilities, HostConnectionSpec, HostPath, HostTargetId, HostTransport},
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use thiserror::Error;
+use uuid::Uuid;
 
 macro_rules! registry_string_id {
     ($name:ident) => {
@@ -42,10 +34,6 @@ macro_rules! registry_string_id {
                 let value = value.into();
                 validate_general_string_id(stringify!($name), &value)?;
                 Ok(Self(value))
-            }
-
-            pub fn parse(value: impl Into<String>) -> Result<Self, StringIdError> {
-                Self::try_new(value)
             }
 
             pub fn as_str(&self) -> &str {
@@ -105,6 +93,10 @@ macro_rules! registry_string_id {
 }
 
 registry_string_id!(EnvironmentProviderId);
+registry_string_id!(EnvironmentProviderBindingId);
+registry_string_id!(EnvironmentIncarnationId);
+registry_string_id!(EnvironmentProvisionRequestId);
+registry_string_id!(EnvironmentTemplateId);
 registry_string_id!(EnvironmentJobGroupId);
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -115,159 +107,21 @@ pub enum EnvironmentRegistryError {
     #[error("environment registry {kind} not found: {id}")]
     NotFound { kind: &'static str, id: String },
 
+    #[error(
+        "environment registry revision conflict for {kind} {id}: expected {expected:?}, actual {actual:?}"
+    )]
+    RevisionConflict {
+        kind: &'static str,
+        id: String,
+        expected: Option<u64>,
+        actual: Option<u64>,
+    },
+
     #[error("invalid environment registry request: {message}")]
     InvalidInput { message: String },
 
     #[error("environment registry store failure: {message}")]
     Store { message: String },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnvironmentProviderRecord {
-    pub provider_id: EnvironmentProviderId,
-    pub provider_kind: EnvironmentProviderKind,
-    pub display_name: Option<String>,
-    pub status: EnvironmentProviderStatus,
-    pub controller_connection: HostControllerConnectionSpec,
-    pub capabilities: EnvironmentProviderCapabilities,
-    pub implementation: ImplementationInfo,
-    pub last_seen_ms: i64,
-    pub lease_expires_ms: i64,
-    pub metadata: BTreeMap<String, String>,
-    pub created_at_ms: i64,
-    pub updated_at_ms: i64,
-}
-
-impl EnvironmentProviderRecord {
-    pub fn is_live_at(&self, now_ms: i64) -> bool {
-        self.status == EnvironmentProviderStatus::Online && self.lease_expires_ms > now_ms
-    }
-
-    pub fn presence_at(&self, now_ms: i64) -> EnvironmentProviderPresence {
-        match self.status {
-            EnvironmentProviderStatus::Offline => EnvironmentProviderPresence::Offline,
-            EnvironmentProviderStatus::Online if self.lease_expires_ms > now_ms => {
-                EnvironmentProviderPresence::Online
-            }
-            EnvironmentProviderStatus::Online => EnvironmentProviderPresence::Stale,
-        }
-    }
-
-    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
-        validate_nonempty_optional("display_name", self.display_name.as_deref())?;
-        self.controller_connection.validate()?;
-        self.capabilities.validate()?;
-        validate_nonempty_string("implementation name", &self.implementation.name)?;
-        validate_metadata(&self.metadata)?;
-        validate_nonnegative_i64(self.last_seen_ms, "last_seen_ms")?;
-        validate_nonnegative_i64(self.lease_expires_ms, "lease_expires_ms")?;
-        validate_timestamps(self.created_at_ms, self.updated_at_ms)?;
-        if self.lease_expires_ms < self.last_seen_ms {
-            return invalid("lease_expires_ms must be >= last_seen_ms");
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RegisterEnvironmentProvider {
-    pub provider_id: EnvironmentProviderId,
-    pub provider_kind: EnvironmentProviderKind,
-    pub display_name: Option<String>,
-    pub controller_connection: HostControllerConnectionSpec,
-    pub capabilities: EnvironmentProviderCapabilities,
-    pub implementation: ImplementationInfo,
-    pub lease_ttl_ms: i64,
-    pub metadata: BTreeMap<String, String>,
-    pub observed_at_ms: i64,
-}
-
-impl RegisterEnvironmentProvider {
-    pub fn into_record(self) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        validate_nonnegative_i64(self.observed_at_ms, "observed_at_ms")?;
-        validate_positive_i64(self.lease_ttl_ms, "lease_ttl_ms")?;
-        let lease_expires_ms = self
-            .observed_at_ms
-            .checked_add(self.lease_ttl_ms)
-            .ok_or_else(|| EnvironmentRegistryError::InvalidInput {
-                message: "lease expiry timestamp overflowed".to_owned(),
-            })?;
-        let record = EnvironmentProviderRecord {
-            provider_id: self.provider_id,
-            provider_kind: self.provider_kind,
-            display_name: self.display_name,
-            status: EnvironmentProviderStatus::Online,
-            controller_connection: self.controller_connection,
-            capabilities: self.capabilities,
-            implementation: self.implementation,
-            last_seen_ms: self.observed_at_ms,
-            lease_expires_ms,
-            metadata: self.metadata,
-            created_at_ms: self.observed_at_ms,
-            updated_at_ms: self.observed_at_ms,
-        };
-        record.validate()?;
-        Ok(record)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ObservedEnvironmentTarget {
-    pub target: HostTargetSummary,
-    pub connection: HostConnectionSpec,
-}
-
-impl ObservedEnvironmentTarget {
-    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
-        if self.target.target_id != self.connection.target_id {
-            return invalid("observed target and connection target ids must match");
-        }
-        validate_host_connection(&self.connection)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EnvironmentProviderHeartbeat {
-    pub provider_id: EnvironmentProviderId,
-    pub observed_at_ms: i64,
-    pub lease_ttl_ms: Option<i64>,
-    pub observed_targets: Vec<ObservedEnvironmentTarget>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpdateEnvironmentProviderStatus {
-    pub provider_id: EnvironmentProviderId,
-    pub status: EnvironmentProviderStatus,
-    pub updated_at_ms: i64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ListEnvironmentProviders {
-    pub status: Option<EnvironmentProviderStatus>,
-    pub provider_kind: Option<EnvironmentProviderKind>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EnvironmentProviderKind {
-    Sandbox,
-    Bridge,
-    Custom,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EnvironmentProviderStatus {
-    Online,
-    Offline,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EnvironmentProviderPresence {
-    Online,
-    Stale,
-    Offline,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,154 +143,254 @@ impl HostControllerConnectionSpec {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnvironmentProviderCapabilities {
-    #[serde(default)]
-    pub list_targets: bool,
-    #[serde(default)]
-    pub create_target: bool,
-    #[serde(default)]
-    pub get_target: bool,
-    #[serde(default)]
-    pub close_target: bool,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentProviderRecord {
+    pub provider_id: EnvironmentProviderId,
+    pub display_name: Option<String>,
+    pub controller_connection: HostControllerConnectionSpec,
+    pub metadata: BTreeMap<String, String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
-impl EnvironmentProviderCapabilities {
-    pub fn from_controller(value: ControllerCapabilities) -> Self {
-        Self {
-            list_targets: value.list_targets,
-            create_target: value.create_target,
-            get_target: value.get_target,
-            close_target: value.close_target,
+impl EnvironmentProviderRecord {
+    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
+        validate_nonempty_optional("display_name", self.display_name.as_deref())?;
+        self.controller_connection.validate()?;
+        validate_metadata(&self.metadata)?;
+        validate_timestamps(self.created_at_ms, self.updated_at_ms)?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PutEnvironmentProvider {
+    pub provider_id: EnvironmentProviderId,
+    pub display_name: Option<String>,
+    pub controller_connection: HostControllerConnectionSpec,
+    pub metadata: BTreeMap<String, String>,
+    pub updated_at_ms: i64,
+}
+
+impl PutEnvironmentProvider {
+    pub fn into_record(self) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
+        validate_nonnegative_i64(self.updated_at_ms, "updated_at_ms")?;
+        let record = EnvironmentProviderRecord {
+            provider_id: self.provider_id,
+            display_name: self.display_name,
+            controller_connection: self.controller_connection,
+            metadata: self.metadata,
+            created_at_ms: self.updated_at_ms,
+            updated_at_ms: self.updated_at_ms,
+        };
+        record.validate()?;
+        Ok(record)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListEnvironmentProviders {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentProviderBindingStatus {
+    Enabled,
+    Disabled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentProviderBindingRecord {
+    pub universe_id: Uuid,
+    pub binding_id: EnvironmentProviderBindingId,
+    pub provider_id: EnvironmentProviderId,
+    pub status: EnvironmentProviderBindingStatus,
+    pub revision: u64,
+    pub metadata: BTreeMap<String, String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+impl EnvironmentProviderBindingRecord {
+    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
+        if self.revision == 0 {
+            return invalid("provider binding revision must be positive");
+        }
+        validate_metadata(&self.metadata)?;
+        validate_timestamps(self.created_at_ms, self.updated_at_ms)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PutEnvironmentProviderBinding {
+    pub universe_id: Uuid,
+    pub binding_id: EnvironmentProviderBindingId,
+    pub provider_id: EnvironmentProviderId,
+    pub status: EnvironmentProviderBindingStatus,
+    pub metadata: BTreeMap<String, String>,
+    pub expected_revision: Option<u64>,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EnvironmentSource {
+    Provisioned {
+        provider_id: EnvironmentProviderId,
+        binding_id: EnvironmentProviderBindingId,
+    },
+    Enrolled,
+}
+
+impl EnvironmentSource {
+    pub fn provider_id(&self) -> Option<&EnvironmentProviderId> {
+        match self {
+            Self::Provisioned { provider_id, .. } => Some(provider_id),
+            Self::Enrolled => None,
         }
     }
 
-    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
-        if !self.list_targets && !self.create_target && !self.get_target && !self.close_target {
-            return invalid("environment provider must expose at least one controller capability");
+    pub fn binding_id(&self) -> Option<&EnvironmentProviderBindingId> {
+        match self {
+            Self::Provisioned { binding_id, .. } => Some(binding_id),
+            Self::Enrolled => None,
         }
-        Ok(())
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum EnvironmentOrigin {
-    Provided,
-    Provisioned,
+pub enum EnvironmentStatus {
+    Provisioning,
+    Booting,
+    WaitingForDaemon,
+    Ready,
+    Offline,
+    Closing,
+    Closed,
+    Failed,
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentIncarnationRecord {
+    pub incarnation_id: EnvironmentIncarnationId,
+    pub provision_request_id: Option<EnvironmentProvisionRequestId>,
+    pub provider_target_id: Option<HostTargetId>,
+    pub template_id: Option<EnvironmentTemplateId>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentRecord {
     pub environment_id: EnvironmentId,
-    pub provider_id: EnvironmentProviderId,
-    pub provider_target_id: HostTargetId,
-    pub origin: EnvironmentOrigin,
+    pub request_id: EnvironmentProvisionRequestId,
+    pub source: EnvironmentSource,
     pub display_name: Option<String>,
-    pub status: HostTargetStatus,
-    pub scope: HostScope,
-    pub capabilities: HostCapabilities,
-    pub connection: HostConnectionSpec,
-    pub default_cwd: Option<HostPath>,
+    pub status: EnvironmentStatus,
+    pub incarnation: EnvironmentIncarnationRecord,
     pub metadata: BTreeMap<String, String>,
-    pub observed_at_ms: i64,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
 
 impl EnvironmentRecord {
-    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
-        validate_host_target_id(&self.provider_target_id)?;
-        if self.connection.target_id != self.provider_target_id {
-            return invalid("instance connection target id must equal provider_target_id");
-        }
-        validate_host_connection(&self.connection)?;
-        validate_nonempty_optional("display_name", self.display_name.as_deref())?;
-        validate_metadata(&self.metadata)?;
-        validate_nonnegative_i64(self.observed_at_ms, "observed_at_ms")?;
-        validate_timestamps(self.created_at_ms, self.updated_at_ms)
+    pub fn provider_id(&self) -> Option<&EnvironmentProviderId> {
+        self.source.provider_id()
+    }
+
+    pub fn binding_id(&self) -> Option<&EnvironmentProviderBindingId> {
+        self.source.binding_id()
+    }
+
+    /// P119 replaces this compatibility accessor with live gateway routing.
+    pub fn connection(&self) -> Option<&HostConnectionSpec> {
+        None
+    }
+
+    /// P119 replaces this compatibility accessor with negotiated live capabilities.
+    pub fn capabilities(&self) -> &HostCapabilities {
+        static NONE: std::sync::OnceLock<HostCapabilities> = std::sync::OnceLock::new();
+        NONE.get_or_init(HostCapabilities::default)
+    }
+
+    pub fn default_cwd(&self) -> Option<&HostPath> {
+        None
+    }
+
+    pub fn observed_at_ms(&self) -> i64 {
+        self.updated_at_ms
     }
 
     pub fn is_attachable(&self) -> bool {
-        matches!(self.status, HostTargetStatus::Ready)
+        false
+    }
+
+    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
+        validate_nonempty_optional("display_name", self.display_name.as_deref())?;
+        validate_metadata(&self.metadata)?;
+        validate_timestamps(self.created_at_ms, self.updated_at_ms)?;
+        validate_timestamps(
+            self.incarnation.created_at_ms,
+            self.incarnation.updated_at_ms,
+        )?;
+        if let Some(target_id) = &self.incarnation.provider_target_id {
+            validate_host_target_id(target_id)?;
+        }
+        match &self.source {
+            EnvironmentSource::Provisioned { .. } => {
+                if self.incarnation.provision_request_id.is_none()
+                    || self.incarnation.template_id.is_none()
+                {
+                    return invalid(
+                        "provisioned incarnation requires provision request and template ids",
+                    );
+                }
+            }
+            EnvironmentSource::Enrolled => {
+                if self.incarnation.provision_request_id.is_some()
+                    || self.incarnation.provider_target_id.is_some()
+                    || self.incarnation.template_id.is_some()
+                {
+                    return invalid("enrolled incarnation must not have provider linkage");
+                }
+            }
+        }
+        Ok(())
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ObserveEnvironment {
+pub struct CreateEnvironment {
+    pub request_id: EnvironmentProvisionRequestId,
     pub environment_id: EnvironmentId,
-    pub provider_id: EnvironmentProviderId,
-    pub provider_target_id: HostTargetId,
-    pub origin: EnvironmentOrigin,
+    pub incarnation_id: EnvironmentIncarnationId,
+    pub binding_id: EnvironmentProviderBindingId,
+    pub template_id: EnvironmentTemplateId,
     pub display_name: Option<String>,
-    pub status: HostTargetStatus,
-    pub scope: HostScope,
-    pub capabilities: HostCapabilities,
-    pub connection: HostConnectionSpec,
-    pub default_cwd: Option<HostPath>,
     pub metadata: BTreeMap<String, String>,
-    pub observed_at_ms: i64,
-}
-
-impl ObserveEnvironment {
-    pub fn from_observation(
-        environment_id: EnvironmentId,
-        provider_id: EnvironmentProviderId,
-        origin: EnvironmentOrigin,
-        observation: ObservedEnvironmentTarget,
-        observed_at_ms: i64,
-    ) -> Self {
-        Self {
-            environment_id,
-            provider_id,
-            provider_target_id: observation.target.target_id,
-            origin,
-            display_name: observation.target.display_name,
-            status: observation.target.status,
-            scope: observation.target.scope,
-            capabilities: observation.connection.capabilities.clone(),
-            default_cwd: observation
-                .connection
-                .default_cwd
-                .clone()
-                .or(observation.target.default_cwd),
-            connection: observation.connection,
-            metadata: observation.target.metadata,
-            observed_at_ms,
-        }
-    }
-
-    pub fn into_record(self) -> EnvironmentRecord {
-        EnvironmentRecord {
-            environment_id: self.environment_id,
-            provider_id: self.provider_id,
-            provider_target_id: self.provider_target_id,
-            origin: self.origin,
-            display_name: self.display_name,
-            status: self.status,
-            scope: self.scope,
-            capabilities: self.capabilities,
-            connection: self.connection,
-            default_cwd: self.default_cwd,
-            metadata: self.metadata,
-            observed_at_ms: self.observed_at_ms,
-            created_at_ms: self.observed_at_ms,
-            updated_at_ms: self.observed_at_ms,
-        }
-    }
+    pub created_at_ms: i64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListEnvironments {
     pub provider_id: Option<EnvironmentProviderId>,
-    pub status: Option<HostTargetStatus>,
-    pub origin: Option<EnvironmentOrigin>,
+    pub binding_id: Option<EnvironmentProviderBindingId>,
+    pub status: Option<EnvironmentStatus>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpdateEnvironmentStatus {
+pub struct ObserveProvisionedEnvironment {
     pub environment_id: EnvironmentId,
-    pub status: HostTargetStatus,
+    pub provider_target_id: HostTargetId,
+    pub status: EnvironmentStatus,
+    pub observed_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailEnvironmentLifecycle {
+    pub environment_id: EnvironmentId,
+    pub message: String,
     pub observed_at_ms: i64,
 }
 
@@ -444,6 +398,12 @@ pub struct UpdateEnvironmentStatus {
 pub struct BeginCloseEnvironment {
     pub environment_id: EnvironmentId,
     pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinishCloseEnvironment {
+    pub environment_id: EnvironmentId,
+    pub observed_at_ms: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -497,9 +457,9 @@ pub struct ListEnvironmentCredentials {
 
 #[async_trait]
 pub trait EnvironmentProviderStore: Send + Sync {
-    async fn register_provider(
+    async fn put_provider(
         &self,
-        record: RegisterEnvironmentProvider,
+        record: PutEnvironmentProvider,
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError>;
     async fn read_provider(
         &self,
@@ -509,52 +469,66 @@ pub trait EnvironmentProviderStore: Send + Sync {
         &self,
         request: ListEnvironmentProviders,
     ) -> Result<Vec<EnvironmentProviderRecord>, EnvironmentRegistryError>;
-    async fn update_provider_heartbeat(
+}
+
+#[async_trait]
+pub trait EnvironmentProviderBindingStore: Send + Sync {
+    async fn put_provider_binding(
         &self,
-        heartbeat: EnvironmentProviderHeartbeat,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError>;
-    async fn update_provider_status(
+        request: PutEnvironmentProviderBinding,
+    ) -> Result<EnvironmentProviderBindingRecord, EnvironmentRegistryError>;
+    async fn read_provider_binding(
         &self,
-        request: UpdateEnvironmentProviderStatus,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError>;
-    async fn delete_provider(
+        universe_id: Uuid,
+        binding_id: &EnvironmentProviderBindingId,
+    ) -> Result<EnvironmentProviderBindingRecord, EnvironmentRegistryError>;
+    async fn list_provider_bindings(
         &self,
-        provider_id: &EnvironmentProviderId,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError>;
+        universe_id: Uuid,
+    ) -> Result<Vec<EnvironmentProviderBindingRecord>, EnvironmentRegistryError>;
+    async fn delete_provider_binding(
+        &self,
+        universe_id: Uuid,
+        binding_id: &EnvironmentProviderBindingId,
+    ) -> Result<EnvironmentProviderBindingRecord, EnvironmentRegistryError>;
 }
 
 #[async_trait]
 pub trait EnvironmentStore: Send + Sync {
-    async fn observe_environment(
+    async fn create_environment(
         &self,
-        record: ObserveEnvironment,
+        request: CreateEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
     async fn read_environment(
         &self,
         environment_id: &EnvironmentId,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
-    async fn read_environment_by_provider_target(
+    async fn read_environment_by_request_id(
         &self,
-        provider_id: &EnvironmentProviderId,
-        provider_target_id: &HostTargetId,
+        request_id: &EnvironmentProvisionRequestId,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
     async fn list_environments(
         &self,
         request: ListEnvironments,
     ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError>;
-    async fn mark_missing_provided_environments_unknown(
+    async fn list_environments_needing_reconcile(
         &self,
-        provider_id: &EnvironmentProviderId,
-        observed_target_ids: &BTreeSet<HostTargetId>,
-        observed_at_ms: i64,
     ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError>;
-    async fn update_environment_status(
+    async fn observe_provisioned_environment(
         &self,
-        request: UpdateEnvironmentStatus,
+        request: ObserveProvisionedEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+    async fn fail_environment_lifecycle(
+        &self,
+        request: FailEnvironmentLifecycle,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
     async fn begin_close_environment(
         &self,
         request: BeginCloseEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+    async fn finish_close_environment(
+        &self,
+        request: FinishCloseEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
 }
 
@@ -573,6 +547,18 @@ pub trait EnvironmentCredentialStore: Send + Sync {
         environment_id: &EnvironmentId,
         env_name: &str,
     ) -> Result<EnvironmentCredentialRecord, EnvironmentRegistryError>;
+}
+
+pub fn template_record(
+    value: &EnvironmentTemplate,
+) -> Result<EnvironmentTemplateId, EnvironmentRegistryError> {
+    let template_id =
+        EnvironmentTemplateId::try_new(value.template_id.clone()).map_err(|error| {
+            EnvironmentRegistryError::InvalidInput {
+                message: format!("invalid template id: {error}"),
+            }
+        })?;
+    Ok(template_id)
 }
 
 mod memory;
@@ -602,11 +588,6 @@ fn validate_endpoint(name: &'static str, value: &str) -> Result<(), EnvironmentR
         return invalid(format!("{name} must not contain whitespace"));
     }
     Ok(())
-}
-
-fn validate_host_connection(value: &HostConnectionSpec) -> Result<(), EnvironmentRegistryError> {
-    validate_host_target_id(&value.target_id)?;
-    validate_endpoint("host connection endpoint", &value.endpoint)
 }
 
 fn validate_host_target_id(value: &HostTargetId) -> Result<(), EnvironmentRegistryError> {
@@ -655,16 +636,6 @@ pub(crate) fn validate_nonnegative_i64(
     Ok(())
 }
 
-pub(crate) fn validate_positive_i64(
-    value: i64,
-    name: &'static str,
-) -> Result<(), EnvironmentRegistryError> {
-    if value <= 0 {
-        return invalid(format!("{name} must be positive"));
-    }
-    Ok(())
-}
-
 fn validate_env_name(value: &str) -> Result<(), EnvironmentRegistryError> {
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
@@ -676,6 +647,13 @@ fn validate_env_name(value: &str) -> Result<(), EnvironmentRegistryError> {
         return invalid("credential env_name must match [A-Za-z_][A-Za-z0-9_]*");
     }
     Ok(())
+}
+
+pub(crate) fn not_found(kind: &'static str, id: &impl ToString) -> EnvironmentRegistryError {
+    EnvironmentRegistryError::NotFound {
+        kind,
+        id: id.to_string(),
+    }
 }
 
 #[cfg(test)]

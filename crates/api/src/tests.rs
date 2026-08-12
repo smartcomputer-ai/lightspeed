@@ -765,14 +765,10 @@ async fn dispatch_json_rpc_routes_environments_create() {
             id: RequestId::Number(1),
             method: METHOD_ENVIRONMENTS_CREATE.to_owned(),
             params: Some(json!({
-                "providerId": "sandbox-pool",
-                "request": {
-                    "type": "sandbox",
-                    "spec": {
-                        "image": "ubuntu:latest",
-                        "cwd": "/workspace"
-                    }
-                }
+                "requestId": "request-1",
+                "bindingId": "primary",
+                "templateId": "rust-v1",
+                "resources": { "cpu": 2, "memoryBytes": 2147483648_u64, "diskBytes": 10737418240_u64 }
             })),
         },
     )
@@ -899,111 +895,6 @@ async fn dispatch_json_rpc_routes_environment_credentials_unbind() {
     assert_eq!(
         response.result.expect("result")["result"]["credential"]["envName"],
         json!("GITHUB_TOKEN")
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn dispatch_json_rpc_routes_environment_provider_register() {
-    let response = dispatch_json_rpc(
-        &TestService,
-        JsonRpcRequest {
-            id: RequestId::Number(1),
-            method: METHOD_ENVIRONMENTS_PROVIDERS_REGISTER.to_owned(),
-            params: Some(json!({
-                "providerId": "bridge-local",
-                "providerKind": "bridge",
-                "controllerConnection": {
-                    "endpoint": "ws://127.0.0.1:9000/controller",
-                    "transport": { "type": "webSocket" }
-                },
-                "capabilities": {
-                    "listTargets": true,
-                    "attachTarget": true,
-                    "getTarget": true
-                },
-                "implementation": {
-                    "name": "test-bridge",
-                    "version": "1.0.0"
-                },
-                "leaseTtlMs": 30000
-            })),
-        },
-    )
-    .await;
-
-    assert!(response.error.is_none());
-    assert_eq!(
-        response.result.expect("result")["result"]["provider"]["providerId"],
-        json!("bridge-local")
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn dispatch_json_rpc_routes_environment_provider_heartbeat() {
-    let response = dispatch_json_rpc(
-        &TestService,
-        JsonRpcRequest {
-            id: RequestId::Number(1),
-            method: METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT.to_owned(),
-            params: Some(json!({
-                "providerId": "bridge-local",
-                "observedTargets": [{
-                    "target": {
-                        "targetId": "local-host",
-                        "status": "ready",
-                        "scope": { "type": "default" },
-                        "capabilities": {
-                            "filesystemRead": true,
-                            "filesystemWrite": true,
-                            "processStart": true,
-                            "processStdin": true,
-                            "network": true
-                        },
-                        "defaultCwd": "/workspace"
-                    },
-                    "connection": {
-                        "targetId": "local-host",
-                        "endpoint": "ws://127.0.0.1:9000/data",
-                        "transport": { "type": "webSocket" },
-                        "scope": { "type": "default" },
-                        "defaultCwd": "/workspace",
-                        "capabilities": {
-                            "filesystemRead": true,
-                            "filesystemWrite": true,
-                            "processStart": true,
-                            "processStdin": true,
-                            "network": true
-                        }
-                    }
-                }]
-            })),
-        },
-    )
-    .await;
-
-    assert!(response.error.is_none(), "{:?}", response.error);
-    assert_eq!(
-        response.result.expect("result")["result"]["environments"][0]["providerTargetId"],
-        json!("local")
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn dispatch_json_rpc_routes_environment_provider_unregister() {
-    let response = dispatch_json_rpc(
-        &TestService,
-        JsonRpcRequest {
-            id: RequestId::Number(1),
-            method: METHOD_ENVIRONMENTS_PROVIDERS_UNREGISTER.to_owned(),
-            params: Some(json!({ "providerId": "bridge-local" })),
-        },
-    )
-    .await;
-
-    assert!(response.error.is_none());
-    assert_eq!(
-        response.result.expect("result")["result"]["provider"]["status"],
-        json!("offline")
     );
 }
 
@@ -1909,7 +1800,7 @@ impl AgentApiService for TestService {
         &self,
         params: EnvironmentCreateParams,
     ) -> Result<AgentApiOutcome<EnvironmentCreateResponse>, AgentApiError> {
-        assert_eq!(params.provider_id, "sandbox-pool");
+        assert_eq!(params.binding_id, "primary");
         Ok(AgentApiOutcome::new(EnvironmentCreateResponse {
             environment: test_environment_instance(),
         }))
@@ -2032,61 +1923,6 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<EnvironmentJobCancelResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(EnvironmentJobCancelResponse {
             jobs: Vec::new(),
-        }))
-    }
-
-    async fn register_environment_provider(
-        &self,
-        params: EnvironmentProviderRegisterParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderRegisterResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(EnvironmentProviderRegisterResponse {
-            provider: test_environment_provider(
-                params.provider_id,
-                params.provider_kind,
-                EnvironmentProviderStatusView::Online,
-            ),
-        }))
-    }
-
-    async fn heartbeat_environment_provider(
-        &self,
-        params: EnvironmentProviderHeartbeatParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderHeartbeatResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(EnvironmentProviderHeartbeatResponse {
-            provider: test_environment_provider(
-                params.provider_id,
-                EnvironmentProviderKindView::Bridge,
-                EnvironmentProviderStatusView::Online,
-            ),
-            environments: vec![test_environment_instance()],
-        }))
-    }
-
-    async fn unregister_environment_provider(
-        &self,
-        params: EnvironmentProviderUnregisterParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderUnregisterResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(
-            EnvironmentProviderUnregisterResponse {
-                provider: test_environment_provider(
-                    params.provider_id,
-                    EnvironmentProviderKindView::Bridge,
-                    EnvironmentProviderStatusView::Offline,
-                ),
-            },
-        ))
-    }
-
-    async fn list_environment_providers(
-        &self,
-        _params: EnvironmentProviderListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(EnvironmentProviderListResponse {
-            providers: vec![test_environment_provider(
-                "bridge-local".to_owned(),
-                EnvironmentProviderKindView::Bridge,
-                EnvironmentProviderStatusView::Online,
-            )],
         }))
     }
 
@@ -2564,85 +2400,25 @@ fn test_environment_credential(
     }
 }
 
-fn test_environment_provider(
-    provider_id: EnvironmentProviderId,
-    provider_kind: EnvironmentProviderKindView,
-    status: EnvironmentProviderStatusView,
-) -> EnvironmentProviderView {
-    EnvironmentProviderView {
-        provider_id,
-        provider_kind,
-        status,
-        controller_connection: HostControllerConnectionView {
-            endpoint: "ws://127.0.0.1:9000/controller".to_owned(),
-            transport: HostTransportView::WebSocket,
-        },
-        capabilities: EnvironmentProviderCapabilitiesView {
-            list_targets: true,
-            get_target: true,
-            ..EnvironmentProviderCapabilitiesView::default()
-        },
-        implementation: EnvironmentProviderImplementationView {
-            name: "test-bridge".to_owned(),
-            version: Some("1.0.0".to_owned()),
-        },
-        last_seen_ms: 10,
-        lease_expires_ms: 30_010,
-        display_name: Some("Local bridge".to_owned()),
-        metadata: BTreeMap::new(),
-    }
-}
-
-fn test_environment_target() -> EnvironmentTargetSummaryView {
-    EnvironmentTargetSummaryView {
-        target_id: "local".to_owned(),
-        status: EnvironmentTargetStatusView::Ready,
-        scope: HostScopeView::Default,
-        capabilities: HostCapabilitiesView {
-            filesystem_read: true,
-            filesystem_write: true,
-            process_start: true,
-            process_stdin: true,
-            process_terminate: true,
-            process_output_polling: true,
-            process_output_notifications: false,
-            process_pty: true,
-            job_start: true,
-            job_list: true,
-            job_read: true,
-            job_cancel: true,
-            job_wait_hint: false,
-            job_dependencies: true,
-            job_queue_keys: true,
-            network: true,
+fn test_environment_instance() -> EnvironmentView {
+    EnvironmentView {
+        environment_id: "evi_test".to_owned(),
+        request_id: "request-1".to_owned(),
+        source: EnvironmentSourceView::Provisioned {
+            provider_id: "bridge-local".to_owned(),
+            binding_id: "primary".to_owned(),
         },
         display_name: Some("Local".to_owned()),
-        default_cwd: Some("/workspace".to_owned()),
-        metadata: BTreeMap::new(),
-    }
-}
-
-fn test_environment_instance() -> EnvironmentInstanceView {
-    let capabilities = test_environment_target().capabilities;
-    EnvironmentInstanceView {
-        environment_id: "evi_test".to_owned(),
-        provider_id: "bridge-local".to_owned(),
-        provider_target_id: "local".to_owned(),
-        origin: EnvironmentOriginView::Provided,
-        status: EnvironmentTargetStatusView::Ready,
-        scope: HostScopeView::Default,
-        capabilities,
-        connection: HostConnectionView {
-            target_id: "local".to_owned(),
-            endpoint: "ws://127.0.0.1:9000/data".to_owned(),
-            transport: HostTransportView::WebSocket,
-            scope: HostScopeView::Default,
-            default_cwd: Some("/workspace".to_owned()),
-            capabilities,
+        status: EnvironmentLifecycleStatusView::Ready,
+        incarnation: EnvironmentIncarnationView {
+            incarnation_id: "incarnation-1".to_owned(),
+            provision_request_id: Some("request-1".to_owned()),
+            provider_target_id: Some("local".to_owned()),
+            template_id: Some("rust-v1".to_owned()),
+            created_at_ms: 10,
+            updated_at_ms: 10,
         },
-        default_cwd: Some("/workspace".to_owned()),
         metadata: BTreeMap::new(),
-        observed_at_ms: 10,
         created_at_ms: 10,
         updated_at_ms: 10,
     }

@@ -1,10 +1,11 @@
 {
-  "request": {
-    "providerType": "smolvm",
-    "spec": {
-      "cpus": 2,
-      "image": "lightspeed-dev"
-    },
-    "type": "provider"
-  }
+  "binding": {
+    "bindingId": "primary",
+    "universeId": "universe-1"
+  },
+  "bootstrapTicket": "ticket-1",
+  "environmentId": "environment-1",
+  "incarnationId": "incarnation-1",
+  "requestId": "request-1",
+  "templateId": "lightspeed-dev-v1"
 }

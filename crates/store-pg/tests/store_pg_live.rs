@@ -19,19 +19,14 @@ use engine::{
     },
 };
 use environments::{
-    BeginCloseEnvironment, EnvironmentId, EnvironmentOrigin, EnvironmentProviderCapabilities,
-    EnvironmentProviderHeartbeat, EnvironmentProviderId, EnvironmentProviderKind,
-    EnvironmentProviderStatus, EnvironmentProviderStore, EnvironmentStore,
-    HostControllerConnectionSpec, ListEnvironmentProviders, ListEnvironments, ObserveEnvironment,
-    RegisterEnvironmentProvider, UpdateEnvironmentProviderStatus,
+    BeginCloseEnvironment, CreateEnvironment, EnvironmentId, EnvironmentIncarnationId,
+    EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
+    EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderStore,
+    EnvironmentProvisionRequestId, EnvironmentStatus, EnvironmentStore, EnvironmentTemplateId,
+    HostControllerConnectionSpec, ListEnvironmentProviders, ListEnvironments,
+    ObserveProvisionedEnvironment, PutEnvironmentProvider, PutEnvironmentProviderBinding,
 };
-use host_protocol::{
-    control::targets::HostTargetStatus,
-    shared::{
-        HostCapabilities, HostConnectionSpec, HostPath, HostScope, HostTargetId, HostTransport,
-        ImplementationInfo,
-    },
-};
+use host_protocol::shared::{HostTargetId, HostTransport};
 use mcp::{
     ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore, McpServerAuthPolicy,
     McpServerId, McpServerStatus, PutMcpServerRecord, RemoteMcpTransport,
@@ -1052,73 +1047,56 @@ async fn pg_live_universe_environments_are_independent_of_sessions() {
     let session_id = SessionId::new("session-env");
 
     let provider = store
-        .register_provider(RegisterEnvironmentProvider {
+        .put_provider(PutEnvironmentProvider {
             provider_id: provider_id.clone(),
-            provider_kind: EnvironmentProviderKind::Bridge,
             display_name: Some("Local bridge".to_owned()),
             controller_connection: HostControllerConnectionSpec::new(
                 "ws://127.0.0.1:9000/controller",
                 HostTransport::WebSocket,
             ),
-            capabilities: EnvironmentProviderCapabilities {
-                list_targets: true,
-                get_target: true,
-                ..EnvironmentProviderCapabilities::default()
-            },
-            implementation: ImplementationInfo {
-                name: "test-bridge".to_owned(),
-                version: Some("1.0.0".to_owned()),
-            },
-            lease_ttl_ms: 30_000,
             metadata: Default::default(),
-            observed_at_ms: 10,
+            updated_at_ms: 10,
         })
         .await
         .expect("register provider");
-    assert_eq!(provider.status, EnvironmentProviderStatus::Online);
-
-    let heartbeat = store
-        .update_provider_heartbeat(EnvironmentProviderHeartbeat {
-            provider_id: provider_id.clone(),
-            observed_at_ms: 20,
-            lease_ttl_ms: Some(30_000),
-            observed_targets: Vec::new(),
-        })
-        .await
-        .expect("provider heartbeat");
-    assert_eq!(heartbeat.last_seen_ms, 20);
-    assert_eq!(heartbeat.lease_expires_ms, 30_020);
     assert_eq!(
         store
-            .list_providers(ListEnvironmentProviders {
-                status: Some(EnvironmentProviderStatus::Online),
-                provider_kind: Some(EnvironmentProviderKind::Bridge),
-            })
+            .list_providers(ListEnvironmentProviders::default())
             .await
             .expect("list providers"),
-        vec![heartbeat.clone()]
+        vec![provider.clone()]
     );
 
-    let instance = store
-        .observe_environment(ObserveEnvironment {
-            environment_id: environment_id.clone(),
+    store
+        .put_provider_binding(PutEnvironmentProviderBinding {
+            universe_id: store.config().universe_id,
+            binding_id: EnvironmentProviderBindingId::new("primary"),
             provider_id: provider_id.clone(),
-            provider_target_id: target_id.clone(),
-            origin: EnvironmentOrigin::Provided,
-            display_name: Some("Local host".to_owned()),
-            status: HostTargetStatus::Ready,
-            scope: HostScope::Default,
-            capabilities: HostCapabilities::filesystem(true, true).with_process(),
-            connection: HostConnectionSpec {
-                target_id: target_id.clone(),
-                endpoint: "ws://127.0.0.1:9001/data".to_owned(),
-                transport: HostTransport::WebSocket,
-                scope: HostScope::Default,
-                default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
-                capabilities: HostCapabilities::filesystem(true, true).with_process(),
-            },
-            default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
+            status: EnvironmentProviderBindingStatus::Enabled,
             metadata: Default::default(),
+            expected_revision: None,
+            updated_at_ms: 25,
+        })
+        .await
+        .expect("provider binding");
+    store
+        .create_environment(CreateEnvironment {
+            request_id: EnvironmentProvisionRequestId::new("request-local"),
+            environment_id: environment_id.clone(),
+            incarnation_id: EnvironmentIncarnationId::new("incarnation-local"),
+            binding_id: EnvironmentProviderBindingId::new("primary"),
+            template_id: EnvironmentTemplateId::new("rust-v1"),
+            display_name: Some("Local host".to_owned()),
+            metadata: Default::default(),
+            created_at_ms: 29,
+        })
+        .await
+        .expect("create environment");
+    let instance = store
+        .observe_provisioned_environment(ObserveProvisionedEnvironment {
+            environment_id: environment_id.clone(),
+            provider_target_id: target_id.clone(),
+            status: EnvironmentStatus::WaitingForDaemon,
             observed_at_ms: 30,
         })
         .await
@@ -1127,8 +1105,8 @@ async fn pg_live_universe_environments_are_independent_of_sessions() {
         store
             .list_environments(ListEnvironments {
                 provider_id: Some(provider_id.clone()),
-                status: Some(HostTargetStatus::Ready),
-                origin: Some(EnvironmentOrigin::Provided),
+                binding_id: Some(EnvironmentProviderBindingId::new("primary")),
+                status: Some(EnvironmentStatus::WaitingForDaemon),
             })
             .await
             .expect("list instances"),
@@ -1151,26 +1129,7 @@ async fn pg_live_universe_environments_are_independent_of_sessions() {
         })
         .await
         .expect("close environment while a session exists");
-    assert_eq!(closing.status, HostTargetStatus::Closing);
-
-    let offline = store
-        .update_provider_status(UpdateEnvironmentProviderStatus {
-            provider_id: provider_id.clone(),
-            status: EnvironmentProviderStatus::Offline,
-            updated_at_ms: 70,
-        })
-        .await
-        .expect("mark provider offline");
-    assert_eq!(offline.status, EnvironmentProviderStatus::Offline);
-
-    assert_eq!(
-        store
-            .read_provider(&provider_id)
-            .await
-            .expect("read offline provider")
-            .status,
-        EnvironmentProviderStatus::Offline
-    );
+    assert_eq!(closing.status, EnvironmentStatus::Closing);
 }
 
 #[tokio::test(flavor = "current_thread")]

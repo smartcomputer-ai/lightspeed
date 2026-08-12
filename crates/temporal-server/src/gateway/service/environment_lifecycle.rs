@@ -1,57 +1,49 @@
-use super::environment_providers::{environment_instance_view, registry_target_status};
+use super::environment_providers::{
+    binding_context, environment_view, map_environments_error,
+    parse_environment_provider_binding_id, registry_lifecycle_status,
+};
 use super::*;
 
 use ::environments::{
-    BeginCloseEnvironment, EnvironmentId, EnvironmentOrigin, EnvironmentProviderRecord,
-    ListEnvironments, ObserveEnvironment, ObservedEnvironmentTarget, UpdateEnvironmentStatus,
+    BeginCloseEnvironment, CreateEnvironment, EnvironmentId, EnvironmentIncarnationId,
+    EnvironmentProviderBindingStore, EnvironmentProvisionRequestId, EnvironmentSource,
+    EnvironmentStatus, EnvironmentStore, EnvironmentTemplateId, FailEnvironmentLifecycle,
+    FinishCloseEnvironment, ListEnvironments, ObserveProvisionedEnvironment,
 };
-use host_protocol::{
-    control::targets::{
-        AttachedHostSpec, CloseTargetParams, CreateTargetParams, HostTargetCreateRequest,
-        HostTargetStatus, SandboxTargetSpec,
-    },
-    shared::HostPath,
-};
+use host_protocol::control::targets::{CloseTargetParams, CreateTargetParams, HostTargetStatus};
 
 impl GatewayAgentApi {
     pub(super) async fn create_environment_record(
         &self,
         params: EnvironmentCreateParams,
     ) -> Result<EnvironmentCreateResponse, AgentApiError> {
-        let provider_id = parse_environment_provider_id(params.provider_id)?;
-        let provider = self.read_live_environment_provider(&provider_id).await?;
-        if !provider.capabilities.create_target {
-            return Err(AgentApiError::rejected(format!(
-                "environment provider does not support target creation: {provider_id}"
-            )));
-        }
-        let mut controller = self
-            .host_controller_connector
-            .connect(&provider.controller_connection)
-            .await?;
-        let response = controller
-            .create_target(&CreateTargetParams {
-                request: host_target_create_request(params.request)?,
-            })
-            .await?;
-        let observed_at_ms = now_ms()?;
-        let environment = ::environments::EnvironmentStore::observe_environment(
+        let request_id =
+            EnvironmentProvisionRequestId::try_new(params.request_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid environment request id: {error}"))
+            })?;
+        let binding_id = parse_environment_provider_binding_id(params.binding_id)?;
+        let template_id = EnvironmentTemplateId::try_new(params.template_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid environment template id: {error}"))
+        })?;
+        let environment = EnvironmentStore::create_environment(
             self.store.as_ref(),
-            ObserveEnvironment::from_observation(
-                allocate_environment_id(),
-                provider_id,
-                EnvironmentOrigin::Provisioned,
-                ObservedEnvironmentTarget {
-                    target: response.target,
-                    connection: response.connection,
-                },
-                observed_at_ms,
-            ),
+            CreateEnvironment {
+                request_id,
+                environment_id: allocate_environment_id(),
+                incarnation_id: allocate_incarnation_id(),
+                binding_id,
+                template_id,
+                display_name: params.display_name,
+                metadata: params.metadata,
+                created_at_ms: now_ms()?,
+            },
         )
         .await
         .map_err(map_environments_error)?;
+        // The transaction above is the acceptance boundary. Provider I/O is
+        // deliberately left to the independently restartable reconciler.
         Ok(EnvironmentCreateResponse {
-            environment: environment_instance_view(&environment),
+            environment: environment_view(&environment),
         })
     }
 
@@ -60,14 +52,11 @@ impl GatewayAgentApi {
         params: EnvironmentReadParams,
     ) -> Result<EnvironmentReadResponse, AgentApiError> {
         let environment_id = parse_registry_environment_id(params.environment_id)?;
-        let environment = ::environments::EnvironmentStore::read_environment(
-            self.store.as_ref(),
-            &environment_id,
-        )
-        .await
-        .map_err(map_environments_error)?;
+        let environment = EnvironmentStore::read_environment(self.store.as_ref(), &environment_id)
+            .await
+            .map_err(map_environments_error)?;
         Ok(EnvironmentReadResponse {
-            environment: environment_instance_view(&environment),
+            environment: environment_view(&environment),
         })
     }
 
@@ -75,22 +64,24 @@ impl GatewayAgentApi {
         &self,
         params: EnvironmentListParams,
     ) -> Result<EnvironmentListResponse, AgentApiError> {
-        let provider_id = params
-            .provider_id
-            .map(parse_environment_provider_id)
-            .transpose()?;
-        let environments = ::environments::EnvironmentStore::list_environments(
+        let environments = EnvironmentStore::list_environments(
             self.store.as_ref(),
             ListEnvironments {
-                provider_id,
-                status: params.status.map(registry_target_status),
-                origin: None,
+                provider_id: params
+                    .provider_id
+                    .map(parse_environment_provider_id)
+                    .transpose()?,
+                binding_id: params
+                    .binding_id
+                    .map(parse_environment_provider_binding_id)
+                    .transpose()?,
+                status: params.status.map(registry_lifecycle_status),
             },
         )
         .await
         .map_err(map_environments_error)?;
         Ok(EnvironmentListResponse {
-            environments: environments.iter().map(environment_instance_view).collect(),
+            environments: environments.iter().map(environment_view).collect(),
         })
     }
 
@@ -99,84 +90,185 @@ impl GatewayAgentApi {
         params: EnvironmentCloseParams,
     ) -> Result<EnvironmentCloseResponse, AgentApiError> {
         let environment_id = parse_registry_environment_id(params.environment_id)?;
-        let previous = ::environments::EnvironmentStore::read_environment(
-            self.store.as_ref(),
-            &environment_id,
-        )
-        .await
-        .map_err(map_environments_error)?;
-        let closing = ::environments::EnvironmentStore::begin_close_environment(
+        let environment = EnvironmentStore::begin_close_environment(
             self.store.as_ref(),
             BeginCloseEnvironment {
-                environment_id: environment_id.clone(),
+                environment_id,
                 updated_at_ms: now_ms()?,
             },
         )
         .await
         .map_err(map_environments_error)?;
-        let result = async {
-            let provider = self
-                .read_live_environment_provider(&closing.provider_id)
-                .await?;
-            if !provider.capabilities.close_target {
-                return Err(AgentApiError::rejected(format!(
-                    "environment provider does not support target close: {}",
-                    provider.provider_id
-                )));
-            }
-            let mut controller = self
-                .host_controller_connector
-                .connect(&provider.controller_connection)
-                .await?;
-            controller
-                .close_target(&CloseTargetParams {
-                    target_id: closing.provider_target_id.clone(),
-                    force: false,
-                })
+        Ok(EnvironmentCloseResponse {
+            environment: environment_view(&environment),
+        })
+    }
+
+    /// Reconcile every pending environment in this universe once. Calls are
+    /// stable and idempotent; a crash after controller I/O is recovered by a
+    /// later pass issuing the same IDs again.
+    pub(crate) async fn reconcile_environment_lifecycle_once(
+        &self,
+    ) -> Result<usize, AgentApiError> {
+        let environments =
+            EnvironmentStore::list_environments_needing_reconcile(self.store.as_ref())
                 .await
-        }
-        .await;
-        let (status, error) = match result {
-            Ok(response) => (response.status, None),
-            Err(error) if error.kind == AgentApiErrorKind::Rejected => {
-                (previous.status, Some(error))
+                .map_err(map_environments_error)?;
+        let mut changed = 0;
+        for environment in environments {
+            match environment.status {
+                EnvironmentStatus::Closing => {
+                    if self.reconcile_environment_close(&environment).await? {
+                        changed += 1;
+                    }
+                }
+                EnvironmentStatus::Provisioning
+                | EnvironmentStatus::Booting
+                | EnvironmentStatus::Unknown => {
+                    match self.reconcile_environment_create(&environment).await {
+                        Ok(did_change) => changed += usize::from(did_change),
+                        Err(error) if error.kind == api::AgentApiErrorKind::Rejected => {
+                            EnvironmentStore::fail_environment_lifecycle(
+                                self.store.as_ref(),
+                                FailEnvironmentLifecycle {
+                                    environment_id: environment.environment_id.clone(),
+                                    message: error.message,
+                                    observed_at_ms: now_ms()?,
+                                },
+                            )
+                            .await
+                            .map_err(map_environments_error)?;
+                            changed += 1;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                _ => {}
             }
-            Err(error) => (HostTargetStatus::Unknown, Some(error)),
+        }
+        Ok(changed)
+    }
+
+    async fn reconcile_environment_create(
+        &self,
+        environment: &::environments::EnvironmentRecord,
+    ) -> Result<bool, AgentApiError> {
+        let EnvironmentSource::Provisioned {
+            provider_id,
+            binding_id,
+        } = &environment.source
+        else {
+            return Ok(false);
         };
-        let environment = ::environments::EnvironmentStore::update_environment_status(
+        let provider = self.read_environment_provider(provider_id).await?;
+        let binding = EnvironmentProviderBindingStore::read_provider_binding(
             self.store.as_ref(),
-            UpdateEnvironmentStatus {
-                environment_id,
+            self.store.config().universe_id,
+            binding_id,
+        )
+        .await
+        .map_err(map_environments_error)?;
+        let template_id = environment
+            .incarnation
+            .template_id
+            .as_ref()
+            .ok_or_else(|| AgentApiError::internal("provisioned incarnation has no template id"))?;
+        let mut controller = self
+            .host_controller_connector
+            .connect(&provider.controller_connection)
+            .await?;
+        let response = controller
+            .create_target(&CreateTargetParams {
+                request_id: environment.request_id.to_string(),
+                environment_id: environment.environment_id.to_string(),
+                incarnation_id: environment.incarnation.incarnation_id.to_string(),
+                binding: binding_context(&binding),
+                template_id: template_id.to_string(),
+                // P119 replaces this explicit control-plane placeholder with an
+                // expiring daemon-enrollment ticket minted by the gateway.
+                bootstrap_ticket: format!("p118:{}", environment.incarnation.incarnation_id),
+            })
+            .await?;
+        let status = match response.target.status {
+            HostTargetStatus::Ready => EnvironmentStatus::WaitingForDaemon,
+            HostTargetStatus::Creating | HostTargetStatus::Starting => EnvironmentStatus::Booting,
+            HostTargetStatus::Stopped => EnvironmentStatus::Offline,
+            HostTargetStatus::Closing => EnvironmentStatus::Closing,
+            HostTargetStatus::Closed => EnvironmentStatus::Closed,
+            HostTargetStatus::Failed => EnvironmentStatus::Failed,
+            HostTargetStatus::Unknown => EnvironmentStatus::Unknown,
+        };
+        EnvironmentStore::observe_provisioned_environment(
+            self.store.as_ref(),
+            ObserveProvisionedEnvironment {
+                environment_id: environment.environment_id.clone(),
+                provider_target_id: response.target.target_id,
                 status,
                 observed_at_ms: now_ms()?,
             },
         )
         .await
         .map_err(map_environments_error)?;
-        if let Some(error) = error {
-            return Err(error);
-        }
-        Ok(EnvironmentCloseResponse {
-            environment: environment_instance_view(&environment),
-        })
+        Ok(true)
     }
 
-    pub(super) async fn read_live_environment_provider(
+    async fn reconcile_environment_close(
         &self,
-        provider_id: &::environments::EnvironmentProviderId,
-    ) -> Result<EnvironmentProviderRecord, AgentApiError> {
-        let provider = ::environments::EnvironmentProviderStore::read_provider(
-            self.store.as_ref(),
+        environment: &::environments::EnvironmentRecord,
+    ) -> Result<bool, AgentApiError> {
+        let Some(target_id) = environment.incarnation.provider_target_id.clone() else {
+            EnvironmentStore::finish_close_environment(
+                self.store.as_ref(),
+                FinishCloseEnvironment {
+                    environment_id: environment.environment_id.clone(),
+                    observed_at_ms: now_ms()?,
+                },
+            )
+            .await
+            .map_err(map_environments_error)?;
+            return Ok(true);
+        };
+        let EnvironmentSource::Provisioned {
             provider_id,
+            binding_id,
+        } = &environment.source
+        else {
+            return Ok(false);
+        };
+        let provider = self.read_environment_provider(provider_id).await?;
+        let binding = EnvironmentProviderBindingStore::read_provider_binding(
+            self.store.as_ref(),
+            self.store.config().universe_id,
+            binding_id,
         )
         .await
         .map_err(map_environments_error)?;
-        if !provider.is_live_at(now_ms()?) {
-            return Err(AgentApiError::rejected(format!(
-                "environment provider lease is not live: {provider_id}"
-            )));
+        let mut controller = self
+            .host_controller_connector
+            .connect(&provider.controller_connection)
+            .await?;
+        let response = controller
+            .close_target(&CloseTargetParams {
+                request_id: format!("close:{}", environment.request_id),
+                environment_id: environment.environment_id.to_string(),
+                incarnation_id: environment.incarnation.incarnation_id.to_string(),
+                binding: binding_context(&binding),
+                target_id,
+                force: false,
+            })
+            .await?;
+        if response.status == HostTargetStatus::Closed {
+            EnvironmentStore::finish_close_environment(
+                self.store.as_ref(),
+                FinishCloseEnvironment {
+                    environment_id: environment.environment_id.clone(),
+                    observed_at_ms: now_ms()?,
+                },
+            )
+            .await
+            .map_err(map_environments_error)?;
         }
-        Ok(provider)
+        Ok(true)
     }
 }
 
@@ -189,54 +281,6 @@ pub(super) fn allocate_environment_id() -> EnvironmentId {
     EnvironmentId::new(format!("environment_{}", uuid::Uuid::new_v4().simple()))
 }
 
-fn host_target_create_request(
-    value: HostTargetCreateRequestView,
-) -> Result<HostTargetCreateRequest, AgentApiError> {
-    Ok(match value {
-        HostTargetCreateRequestView::Sandbox { spec } => HostTargetCreateRequest::Sandbox {
-            spec: SandboxTargetSpec {
-                template: spec.template,
-                image: spec.image,
-                cwd: optional_host_path(spec.cwd, "cwd")?,
-                env: spec.env,
-                labels: spec.labels,
-                provider_options: spec.provider_options,
-            },
-        },
-        HostTargetCreateRequestView::AttachedHost { spec } => {
-            HostTargetCreateRequest::AttachedHost {
-                spec: AttachedHostSpec {
-                    name: spec.name,
-                    endpoint: spec.endpoint,
-                    cwd: optional_host_path(spec.cwd, "cwd")?,
-                    labels: spec.labels,
-                    provider_options: spec.provider_options,
-                },
-            }
-        }
-        HostTargetCreateRequestView::Provider {
-            provider_type,
-            spec,
-        } => {
-            if provider_type.is_empty() {
-                return Err(AgentApiError::invalid_request(
-                    "provider type must not be empty",
-                ));
-            }
-            HostTargetCreateRequest::Provider {
-                provider_type,
-                spec,
-            }
-        }
-    })
-}
-
-fn optional_host_path(
-    value: Option<String>,
-    name: &str,
-) -> Result<Option<HostPath>, AgentApiError> {
-    value
-        .map(HostPath::new)
-        .transpose()
-        .map_err(|error| AgentApiError::invalid_request(format!("invalid {name}: {error}")))
+fn allocate_incarnation_id() -> EnvironmentIncarnationId {
+    EnvironmentIncarnationId::new(format!("incarnation_{}", uuid::Uuid::new_v4().simple()))
 }

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::collections::BTreeMap;
 
 use host_bridge::{BridgeRuntime, config::BridgeConfig, server};
 use host_client::{HostControllerClient, HostDataClient, WebSocketConnectOptions};
@@ -37,9 +37,6 @@ async fn bridge_serves_controller_attach_and_process_data_plane() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let local_addr = listener.local_addr().expect("local addr");
     let config = BridgeConfig {
-        gateway_url: "http://127.0.0.1:18080/rpc".to_owned(),
-        provider_id: "test-provider".to_owned(),
-        provider_token: None,
         target_id: "local".to_owned(),
         listen: local_addr,
         advertise_url: None,
@@ -47,8 +44,6 @@ async fn bridge_serves_controller_attach_and_process_data_plane() {
         fs_root: root.clone(),
         state_dir: root.join(".lightspeed"),
         metadata: Default::default(),
-        heartbeat_interval: Duration::from_millis(10_000),
-        lease_ttl: Duration::from_millis(30_000),
         read_only_fs: false,
     };
     let runtime = BridgeRuntime::new(config, local_addr).expect("runtime");
@@ -70,7 +65,13 @@ async fn bridge_serves_controller_attach_and_process_data_plane() {
     assert!(!initialized.capabilities.create_target);
 
     let targets = controller
-        .list_targets(&ListTargetsParams { status: None })
+        .list_targets(&ListTargetsParams {
+            binding: host_protocol::control::targets::ProviderBindingContext {
+                universe_id: "test-universe".to_owned(),
+                binding_id: "test-binding".to_owned(),
+            },
+            status: None,
+        })
         .await
         .expect("list targets");
     assert_eq!(targets.targets.len(), 1);

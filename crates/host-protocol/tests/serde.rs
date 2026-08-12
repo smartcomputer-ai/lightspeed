@@ -9,7 +9,7 @@ use host_protocol::{
         },
         targets::{
             AttachTargetParams, CreateTargetParams, CreateTargetResponse, HostTargetAttachRequest,
-            HostTargetCreateRequest, HostTargetStatus, HostTargetSummary, ListTargetsResponse,
+            HostTargetStatus, HostTargetSummary, ListTargetsResponse, ProviderBindingContext,
         },
     },
     data::{
@@ -261,13 +261,15 @@ fn controller_initialize_params_match_fixture() {
 fn create_target_params_match_provider_fixture() {
     assert_round_trip(
         CreateTargetParams {
-            request: HostTargetCreateRequest::Provider {
-                provider_type: "smolvm".to_owned(),
-                spec: json!({
-                    "cpus": 2,
-                    "image": "lightspeed-dev"
-                }),
+            request_id: "request-1".to_owned(),
+            environment_id: "environment-1".to_owned(),
+            incarnation_id: "incarnation-1".to_owned(),
+            binding: ProviderBindingContext {
+                universe_id: "universe-1".to_owned(),
+                binding_id: "primary".to_owned(),
             },
+            template_id: "lightspeed-dev-v1".to_owned(),
+            bootstrap_ticket: "ticket-1".to_owned(),
         },
         fixture("controller_create_target_params"),
     );

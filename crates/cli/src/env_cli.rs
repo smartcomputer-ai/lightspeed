@@ -122,9 +122,13 @@ async fn list(args: ResourceArgs) -> Result<()> {
         .result;
     print_json_or(args.json, &response, || {
         for environment in &response.environments {
+            let provider = match &environment.source {
+                api::EnvironmentSourceView::Provisioned { provider_id, .. } => provider_id.as_str(),
+                api::EnvironmentSourceView::Enrolled => "enrolled",
+            };
             println!(
                 "{} {} {:?}",
-                environment.environment_id, environment.provider_id, environment.status
+                environment.environment_id, provider, environment.status
             );
         }
     })
@@ -139,11 +143,13 @@ async fn read(args: EnvironmentResourceArgs) -> Result<()> {
         .map_err(crate::api_client::api_error)?
         .result;
     print_json_or(args.json, &response, || {
+        let provider = match &response.environment.source {
+            api::EnvironmentSourceView::Provisioned { provider_id, .. } => provider_id.as_str(),
+            api::EnvironmentSourceView::Enrolled => "enrolled",
+        };
         println!(
             "{} {} {:?}",
-            response.environment.environment_id,
-            response.environment.provider_id,
-            response.environment.status
+            response.environment.environment_id, provider, response.environment.status
         );
     })
 }

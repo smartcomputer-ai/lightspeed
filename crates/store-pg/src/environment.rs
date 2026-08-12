@@ -1,34 +1,50 @@
-use std::collections::BTreeSet;
-
 use async_trait::async_trait;
 use auth::{AuthGrantId, AuthProviderId, SecretId};
 use environments::{
-    BeginCloseEnvironment, EnvironmentCredentialRecord, EnvironmentCredentialSource,
-    EnvironmentCredentialStore, EnvironmentId, EnvironmentOrigin, EnvironmentProviderHeartbeat,
-    EnvironmentProviderId, EnvironmentProviderKind, EnvironmentProviderRecord,
-    EnvironmentProviderStatus, EnvironmentProviderStore, EnvironmentRecord,
-    EnvironmentRegistryError, EnvironmentStore, ListEnvironmentCredentials,
-    ListEnvironmentProviders, ListEnvironments, ObserveEnvironment, PutEnvironmentCredential,
-    RegisterEnvironmentProvider, UpdateEnvironmentProviderStatus, UpdateEnvironmentStatus,
+    BeginCloseEnvironment, CreateEnvironment, EnvironmentCredentialRecord,
+    EnvironmentCredentialSource, EnvironmentCredentialStore, EnvironmentId,
+    EnvironmentIncarnationId, EnvironmentIncarnationRecord, EnvironmentProviderBindingId,
+    EnvironmentProviderBindingRecord, EnvironmentProviderBindingStatus,
+    EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderRecord,
+    EnvironmentProviderStore, EnvironmentProvisionRequestId, EnvironmentRecord,
+    EnvironmentRegistryError, EnvironmentSource, EnvironmentStatus, EnvironmentStore,
+    EnvironmentTemplateId, FailEnvironmentLifecycle, FinishCloseEnvironment,
+    ListEnvironmentCredentials, ListEnvironmentProviders, ListEnvironments,
+    ObserveProvisionedEnvironment, PutEnvironmentCredential, PutEnvironmentProvider,
+    PutEnvironmentProviderBinding,
 };
-use host_protocol::{
-    control::targets::HostTargetStatus,
-    shared::{HostPath, HostTargetId},
-};
-use sqlx::Row;
+use host_protocol::shared::HostTargetId;
+use sqlx::{Postgres, Row, Transaction};
+use uuid::Uuid;
 
 use crate::PgStore;
 
 const PROVIDER_COLUMNS: &str = r#"
-    provider_id, provider_kind, display_name, status,
-    controller_connection_json, capabilities_json, implementation_json,
-    last_seen_ms, lease_expires_ms, metadata_json, created_at_ms, updated_at_ms
+    provider_id, display_name, controller_connection_json, metadata_json,
+    created_at_ms, updated_at_ms
+"#;
+
+const BINDING_COLUMNS: &str = r#"
+    universe_id, binding_id, provider_id, status, revision, metadata_json,
+    created_at_ms, updated_at_ms
 "#;
 
 const ENVIRONMENT_COLUMNS: &str = r#"
-    environment_id, provider_id, provider_target_id, origin, display_name, status,
-    scope_json, capabilities_json, connection_json, default_cwd, metadata_json,
-    observed_at_ms, created_at_ms, updated_at_ms
+    e.environment_id, e.request_id, e.source_kind, e.provider_id, e.binding_id,
+    e.display_name, e.status, e.metadata_json,
+    e.created_at_ms, e.updated_at_ms,
+    i.incarnation_id, i.provision_request_id, i.provider_target_id,
+    i.template_id,
+    i.created_at_ms AS incarnation_created_at_ms,
+    i.updated_at_ms AS incarnation_updated_at_ms
+"#;
+
+const ENVIRONMENT_JOIN: &str = r#"
+    FROM environments e
+    JOIN environment_incarnations i
+      ON i.universe_id = e.universe_id
+     AND i.environment_id = e.environment_id
+     AND i.incarnation_id = e.current_incarnation_id
 "#;
 
 const CREDENTIAL_COLUMNS: &str = r#"
@@ -38,61 +54,38 @@ const CREDENTIAL_COLUMNS: &str = r#"
 
 #[async_trait]
 impl EnvironmentProviderStore for PgStore {
-    async fn register_provider(
+    async fn put_provider(
         &self,
-        request: RegisterEnvironmentProvider,
+        request: PutEnvironmentProvider,
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        self.ensure_universe()
-            .await
-            .map_err(|error| store_error("ensure universe", error))?;
         let record = request.into_record()?;
         let query = format!(
             r#"
             INSERT INTO environment_providers (
-                universe_id, provider_id, provider_kind, display_name, status,
-                controller_connection_json, capabilities_json, implementation_json,
-                last_seen_ms, lease_expires_ms, metadata_json, created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-            ON CONFLICT (universe_id, provider_id) DO UPDATE SET
-                provider_kind = EXCLUDED.provider_kind,
+                provider_id, display_name, controller_connection_json,
+                metadata_json, created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,$4,$5,$6)
+            ON CONFLICT (provider_id) DO UPDATE SET
                 display_name = EXCLUDED.display_name,
-                status = EXCLUDED.status,
                 controller_connection_json = EXCLUDED.controller_connection_json,
-                capabilities_json = EXCLUDED.capabilities_json,
-                implementation_json = EXCLUDED.implementation_json,
-                last_seen_ms = EXCLUDED.last_seen_ms,
-                lease_expires_ms = EXCLUDED.lease_expires_ms,
                 metadata_json = EXCLUDED.metadata_json,
                 updated_at_ms = EXCLUDED.updated_at_ms
             RETURNING {PROVIDER_COLUMNS}
-            "#
+        "#
         );
         let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
             .bind(record.provider_id.as_str())
-            .bind(provider_kind_to_str(record.provider_kind))
             .bind(record.display_name.as_deref())
-            .bind(provider_status_to_str(record.status))
             .bind(json_value(
                 "encode provider controller connection",
                 &record.controller_connection,
             )?)
-            .bind(json_value(
-                "encode provider capabilities",
-                &record.capabilities,
-            )?)
-            .bind(json_value(
-                "encode provider implementation",
-                &record.implementation,
-            )?)
-            .bind(record.last_seen_ms)
-            .bind(record.lease_expires_ms)
             .bind(json_value("encode provider metadata", &record.metadata)?)
             .bind(record.created_at_ms)
             .bind(record.updated_at_ms)
             .fetch_one(&self.pool)
             .await
-            .map_err(|error| sql_error("register environment provider", error))?;
+            .map_err(|error| sql_error("put environment provider", error))?;
         provider_from_row(&row)
     }
 
@@ -100,11 +93,9 @@ impl EnvironmentProviderStore for PgStore {
         &self,
         provider_id: &EnvironmentProviderId,
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        let query = format!(
-            "SELECT {PROVIDER_COLUMNS} FROM environment_providers WHERE universe_id = $1 AND provider_id = $2"
-        );
+        let query =
+            format!("SELECT {PROVIDER_COLUMNS} FROM environment_providers WHERE provider_id = $1");
         let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
             .bind(provider_id.as_str())
             .fetch_optional(&self.pool)
             .await
@@ -115,218 +106,271 @@ impl EnvironmentProviderStore for PgStore {
 
     async fn list_providers(
         &self,
-        request: ListEnvironmentProviders,
+        _request: ListEnvironmentProviders,
     ) -> Result<Vec<EnvironmentProviderRecord>, EnvironmentRegistryError> {
-        let mut query =
-            format!("SELECT {PROVIDER_COLUMNS} FROM environment_providers WHERE universe_id = $1");
-        let mut next = 2;
-        if request.status.is_some() {
-            query.push_str(&format!(" AND status = ${next}"));
-            next += 1;
-        }
-        if request.provider_kind.is_some() {
-            query.push_str(&format!(" AND provider_kind = ${next}"));
-        }
-        query.push_str(" ORDER BY provider_id");
-        let mut sql = sqlx::query(&query).bind(self.config.universe_id);
-        if let Some(status) = request.status {
-            sql = sql.bind(provider_status_to_str(status));
-        }
-        if let Some(kind) = request.provider_kind {
-            sql = sql.bind(provider_kind_to_str(kind));
-        }
-        let rows = sql
+        let query =
+            format!("SELECT {PROVIDER_COLUMNS} FROM environment_providers ORDER BY provider_id");
+        let rows = sqlx::query(&query)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list environment providers", error))?;
         rows.iter().map(provider_from_row).collect()
     }
+}
 
-    async fn update_provider_heartbeat(
+#[async_trait]
+impl EnvironmentProviderBindingStore for PgStore {
+    async fn put_provider_binding(
         &self,
-        heartbeat: EnvironmentProviderHeartbeat,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        let current = self.read_provider(&heartbeat.provider_id).await?;
-        let ttl = heartbeat.lease_ttl_ms.unwrap_or_else(|| {
-            current
-                .lease_expires_ms
-                .saturating_sub(current.last_seen_ms)
-        });
-        if heartbeat.observed_at_ms < 0 || ttl <= 0 {
-            return invalid("invalid provider heartbeat time or lease ttl");
+        request: PutEnvironmentProviderBinding,
+    ) -> Result<EnvironmentProviderBindingRecord, EnvironmentRegistryError> {
+        if request.updated_at_ms < 0 {
+            return invalid("updated_at_ms must be nonnegative");
         }
-        let lease_expires_ms = heartbeat.observed_at_ms.checked_add(ttl).ok_or_else(|| {
-            EnvironmentRegistryError::InvalidInput {
-                message: "lease expiry timestamp overflowed".to_owned(),
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| sql_error("begin binding put", error))?;
+        let existing = sqlx::query(
+            "SELECT revision, provider_id FROM environment_provider_bindings WHERE universe_id = $1 AND binding_id = $2 FOR UPDATE"
+        ).bind(request.universe_id).bind(request.binding_id.as_str()).fetch_optional(&mut *tx).await
+            .map_err(|error| sql_error("read provider binding revision", error))?;
+        let actual: Option<i64> = existing
+            .as_ref()
+            .map(|row| row.try_get("revision"))
+            .transpose()
+            .map_err(|error| sql_error("decode provider binding revision", error))?;
+        if let Some(row) = &existing {
+            let provider_id: String = row
+                .try_get("provider_id")
+                .map_err(|error| sql_error("decode provider binding provider", error))?;
+            if provider_id != request.provider_id.as_str() {
+                return invalid("provider_id is immutable for an existing binding");
             }
-        })?;
+        }
+        let actual_u64 = actual.map(|value| value as u64);
+        if actual_u64 != request.expected_revision {
+            return Err(EnvironmentRegistryError::RevisionConflict {
+                kind: "environment_provider_binding",
+                id: request.binding_id.to_string(),
+                expected: request.expected_revision,
+                actual: actual_u64,
+            });
+        }
+        let revision = actual.unwrap_or(0) + 1;
         let query = format!(
             r#"
-            UPDATE environment_providers
-            SET status = 'online', last_seen_ms = $3, lease_expires_ms = $4, updated_at_ms = $3
-            WHERE universe_id = $1 AND provider_id = $2
-            RETURNING {PROVIDER_COLUMNS}
-            "#
+            INSERT INTO environment_provider_bindings (
+                universe_id, binding_id, provider_id, status, revision,
+                metadata_json, created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+            ON CONFLICT (universe_id, binding_id) DO UPDATE SET
+                status = EXCLUDED.status,
+                metadata_json = EXCLUDED.metadata_json,
+                revision = EXCLUDED.revision, updated_at_ms = EXCLUDED.updated_at_ms
+            RETURNING {BINDING_COLUMNS}
+        "#
         );
         let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(heartbeat.provider_id.as_str())
-            .bind(heartbeat.observed_at_ms)
-            .bind(lease_expires_ms)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|error| sql_error("heartbeat environment provider", error))?;
-        provider_from_row(&row)
-    }
-
-    async fn update_provider_status(
-        &self,
-        request: UpdateEnvironmentProviderStatus,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        let query = format!(
-            r#"
-            UPDATE environment_providers SET status = $3, updated_at_ms = $4
-            WHERE universe_id = $1 AND provider_id = $2
-            RETURNING {PROVIDER_COLUMNS}
-            "#
-        );
-        let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
+            .bind(request.universe_id)
+            .bind(request.binding_id.as_str())
             .bind(request.provider_id.as_str())
-            .bind(provider_status_to_str(request.status))
+            .bind(binding_status_to_str(request.status))
+            .bind(revision)
+            .bind(json_value(
+                "encode provider binding metadata",
+                &request.metadata,
+            )?)
             .bind(request.updated_at_ms)
-            .fetch_optional(&self.pool)
+            .fetch_one(&mut *tx)
             .await
-            .map_err(|error| sql_error("update environment provider", error))?
-            .ok_or_else(|| not_found("environment_provider", &request.provider_id))?;
-        provider_from_row(&row)
+            .map_err(|error| map_binding_write_error("put provider binding", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| sql_error("commit provider binding", error))?;
+        binding_from_row(&row)
     }
 
-    async fn delete_provider(
+    async fn read_provider_binding(
         &self,
-        provider_id: &EnvironmentProviderId,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
+        universe_id: Uuid,
+        binding_id: &EnvironmentProviderBindingId,
+    ) -> Result<EnvironmentProviderBindingRecord, EnvironmentRegistryError> {
         let query = format!(
-            "DELETE FROM environment_providers WHERE universe_id = $1 AND provider_id = $2 RETURNING {PROVIDER_COLUMNS}"
+            "SELECT {BINDING_COLUMNS} FROM environment_provider_bindings WHERE universe_id = $1 AND binding_id = $2"
         );
         let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(provider_id.as_str())
+            .bind(universe_id)
+            .bind(binding_id.as_str())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| sql_error("delete environment provider", error))?
-            .ok_or_else(|| not_found("environment_provider", provider_id))?;
-        provider_from_row(&row)
+            .map_err(|error| sql_error("read provider binding", error))?
+            .ok_or_else(|| not_found("environment_provider_binding", binding_id))?;
+        binding_from_row(&row)
+    }
+
+    async fn list_provider_bindings(
+        &self,
+        universe_id: Uuid,
+    ) -> Result<Vec<EnvironmentProviderBindingRecord>, EnvironmentRegistryError> {
+        let query = format!(
+            "SELECT {BINDING_COLUMNS} FROM environment_provider_bindings WHERE universe_id = $1 ORDER BY binding_id"
+        );
+        let rows = sqlx::query(&query)
+            .bind(universe_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| sql_error("list provider bindings", error))?;
+        rows.iter().map(binding_from_row).collect()
+    }
+
+    async fn delete_provider_binding(
+        &self,
+        universe_id: Uuid,
+        binding_id: &EnvironmentProviderBindingId,
+    ) -> Result<EnvironmentProviderBindingRecord, EnvironmentRegistryError> {
+        let active: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM environments WHERE universe_id = $1 AND binding_id = $2 AND status <> 'closed'"
+        ).bind(universe_id).bind(binding_id.as_str()).fetch_one(&self.pool).await
+            .map_err(|error| sql_error("count binding environments", error))?;
+        if active != 0 {
+            return invalid("provider binding is referenced by a non-closed environment");
+        }
+        let query = format!(
+            "DELETE FROM environment_provider_bindings WHERE universe_id = $1 AND binding_id = $2 RETURNING {BINDING_COLUMNS}"
+        );
+        let row = sqlx::query(&query)
+            .bind(universe_id)
+            .bind(binding_id.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| sql_error("delete provider binding", error))?
+            .ok_or_else(|| not_found("environment_provider_binding", binding_id))?;
+        binding_from_row(&row)
     }
 }
 
 #[async_trait]
 impl EnvironmentStore for PgStore {
-    async fn observe_environment(
+    async fn create_environment(
         &self,
-        request: ObserveEnvironment,
+        request: CreateEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
         self.ensure_universe()
             .await
             .map_err(|error| store_error("ensure universe", error))?;
-        let record = request.into_record();
-        record.validate()?;
+        if request.created_at_ms < 0 {
+            return invalid("environment timestamp must be nonnegative");
+        }
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| sql_error("begin environment create", error))?;
+        if let Some(existing_id) = sqlx::query_scalar::<_, String>(
+            "SELECT environment_id FROM environments WHERE universe_id = $1 AND request_id = $2",
+        )
+        .bind(self.config.universe_id)
+        .bind(request.request_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|error| sql_error("deduplicate environment create", error))?
+        {
+            tx.commit()
+                .await
+                .map_err(|error| sql_error("commit environment dedup", error))?;
+            let environment_id = EnvironmentId::try_new(existing_id)
+                .map_err(|error| store_message(format!("decode environment id: {error}")))?;
+            return self.read_environment(&environment_id).await;
+        }
         let query = format!(
+            "SELECT {BINDING_COLUMNS} FROM environment_provider_bindings WHERE universe_id = $1 AND binding_id = $2 FOR UPDATE"
+        );
+        let binding_row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(request.binding_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| sql_error("lock provider binding", error))?
+            .ok_or_else(|| not_found("environment_provider_binding", &request.binding_id))?;
+        let binding = binding_from_row(&binding_row)?;
+        if binding.status != EnvironmentProviderBindingStatus::Enabled {
+            return invalid("environment provider binding is disabled");
+        }
+        sqlx::query(
             r#"
             INSERT INTO environments (
-                universe_id, environment_id, provider_id, provider_target_id, origin,
-                display_name, status, scope_json, capabilities_json, connection_json,
-                default_cwd, metadata_json, observed_at_ms, created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-            ON CONFLICT (universe_id, provider_id, provider_target_id) DO UPDATE SET
-                origin = CASE WHEN environments.origin = 'provisioned' THEN 'provisioned' ELSE EXCLUDED.origin END,
-                display_name = EXCLUDED.display_name,
-                status = EXCLUDED.status,
-                scope_json = EXCLUDED.scope_json,
-                capabilities_json = EXCLUDED.capabilities_json,
-                connection_json = EXCLUDED.connection_json,
-                default_cwd = EXCLUDED.default_cwd,
-                metadata_json = EXCLUDED.metadata_json,
-                observed_at_ms = EXCLUDED.observed_at_ms,
-                updated_at_ms = EXCLUDED.updated_at_ms
-            WHERE environments.observed_at_ms <= EXCLUDED.observed_at_ms
-            RETURNING {ENVIRONMENT_COLUMNS}
-            "#
-        );
-        let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(record.environment_id.as_str())
-            .bind(record.provider_id.as_str())
-            .bind(record.provider_target_id.as_str())
-            .bind(environment_origin_to_str(record.origin))
-            .bind(record.display_name.as_deref())
-            .bind(target_status_to_str(record.status))
-            .bind(json_value("encode environment scope", &record.scope)?)
-            .bind(json_value(
-                "encode environment capabilities",
-                &record.capabilities,
-            )?)
-            .bind(json_value(
-                "encode environment connection",
-                &record.connection,
-            )?)
-            .bind(record.default_cwd.as_ref().map(HostPath::as_str))
-            .bind(json_value("encode environment metadata", &record.metadata)?)
-            .bind(record.observed_at_ms)
-            .bind(record.created_at_ms)
-            .bind(record.updated_at_ms)
-            .fetch_optional(&self.pool)
+                universe_id, environment_id, request_id, source_kind, provider_id, binding_id,
+                display_name, status, current_incarnation_id, metadata_json,
+                created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,'provisioned',$4,$5,$6,'provisioning',$7,$8,$9,$9)
+        "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(request.request_id.as_str())
+        .bind(binding.provider_id.as_str())
+        .bind(request.binding_id.as_str())
+        .bind(request.display_name.as_deref())
+        .bind(request.incarnation_id.as_str())
+        .bind(json_value(
+            "encode environment metadata",
+            &request.metadata,
+        )?)
+        .bind(request.created_at_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| map_environment_insert_error(error))?;
+        sqlx::query(
+            r#"
+            INSERT INTO environment_incarnations (
+                universe_id, environment_id, incarnation_id, provision_request_id,
+                template_id, created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,$4,$5,$6,$6)
+        "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(request.incarnation_id.as_str())
+        .bind(request.request_id.as_str())
+        .bind(request.template_id.as_str())
+        .bind(request.created_at_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| sql_error("insert environment incarnation", error))?;
+        tx.commit()
             .await
-            .map_err(|error| sql_error("observe environment instance", error))?;
-        match row {
-            Some(row) => environment_from_row(&row),
-            None => {
-                self.read_environment_by_provider_target(
-                    &record.provider_id,
-                    &record.provider_target_id,
-                )
-                .await
-            }
-        }
+            .map_err(|error| sql_error("commit environment create", error))?;
+        self.read_environment(&request.environment_id).await
     }
 
     async fn read_environment(
         &self,
         environment_id: &EnvironmentId,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let query = format!(
-            "SELECT {ENVIRONMENT_COLUMNS} FROM environments WHERE universe_id = $1 AND environment_id = $2"
-        );
-        let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(environment_id.as_str())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| sql_error("read environment instance", error))?
-            .ok_or_else(|| not_found("environment_instance", environment_id))?;
-        environment_from_row(&row)
+        read_environment_on(
+            &self.pool,
+            self.config.universe_id,
+            "e.environment_id = $2",
+            environment_id.as_str(),
+            "read environment",
+        )
+        .await
     }
 
-    async fn read_environment_by_provider_target(
+    async fn read_environment_by_request_id(
         &self,
-        provider_id: &EnvironmentProviderId,
-        provider_target_id: &HostTargetId,
+        request_id: &EnvironmentProvisionRequestId,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let query = format!(
-            "SELECT {ENVIRONMENT_COLUMNS} FROM environments WHERE universe_id = $1 AND provider_id = $2 AND provider_target_id = $3"
-        );
-        let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(provider_id.as_str())
-            .bind(provider_target_id.as_str())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| sql_error("read environment by provider target", error))?
-            .ok_or_else(|| EnvironmentRegistryError::NotFound {
-                kind: "environment_instance",
-                id: format!("{provider_id}/{provider_target_id}"),
-            })?;
-        environment_from_row(&row)
+        read_environment_on(
+            &self.pool,
+            self.config.universe_id,
+            "e.request_id = $2",
+            request_id.as_str(),
+            "read environment request",
+        )
+        .await
     }
 
     async fn list_environments(
@@ -334,106 +378,122 @@ impl EnvironmentStore for PgStore {
         request: ListEnvironments,
     ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
         let mut query =
-            format!("SELECT {ENVIRONMENT_COLUMNS} FROM environments WHERE universe_id = $1");
+            format!("SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1");
         let mut next = 2;
         if request.provider_id.is_some() {
-            query.push_str(&format!(" AND provider_id = ${next}"));
+            query.push_str(&format!(" AND e.provider_id = ${next}"));
+            next += 1;
+        }
+        if request.binding_id.is_some() {
+            query.push_str(&format!(" AND e.binding_id = ${next}"));
             next += 1;
         }
         if request.status.is_some() {
-            query.push_str(&format!(" AND status = ${next}"));
-            next += 1;
+            query.push_str(&format!(" AND e.status = ${next}"));
         }
-        if request.origin.is_some() {
-            query.push_str(&format!(" AND origin = ${next}"));
-        }
-        query.push_str(" ORDER BY environment_id");
+        query.push_str(" ORDER BY e.environment_id");
         let mut sql = sqlx::query(&query).bind(self.config.universe_id);
-        if let Some(provider_id) = request.provider_id {
-            sql = sql.bind(provider_id.as_str().to_owned());
+        if let Some(id) = request.provider_id {
+            sql = sql.bind(id.to_string());
+        }
+        if let Some(id) = request.binding_id {
+            sql = sql.bind(id.to_string());
         }
         if let Some(status) = request.status {
-            sql = sql.bind(target_status_to_str(status));
-        }
-        if let Some(origin) = request.origin {
-            sql = sql.bind(environment_origin_to_str(origin));
+            sql = sql.bind(environment_status_to_str(status));
         }
         let rows = sql
             .fetch_all(&self.pool)
             .await
-            .map_err(|error| sql_error("list environment instances", error))?;
+            .map_err(|error| sql_error("list environments", error))?;
         rows.iter().map(environment_from_row).collect()
     }
 
-    async fn mark_missing_provided_environments_unknown(
+    async fn list_environments_needing_reconcile(
         &self,
-        provider_id: &EnvironmentProviderId,
-        observed_target_ids: &BTreeSet<HostTargetId>,
-        observed_at_ms: i64,
     ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
-        let observed = observed_target_ids
-            .iter()
-            .map(|id| id.as_str().to_owned())
-            .collect::<Vec<_>>();
         let query = format!(
-            r#"
-            UPDATE environments
-            SET status = 'unknown', observed_at_ms = $4, updated_at_ms = $4
-            WHERE universe_id = $1 AND provider_id = $2 AND origin = 'provided'
-              AND NOT (provider_target_id = ANY($3)) AND observed_at_ms <= $4
-            RETURNING {ENVIRONMENT_COLUMNS}
-            "#
+            "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1 AND e.status IN ('provisioning','booting','closing','unknown') ORDER BY e.updated_at_ms, e.environment_id"
         );
         let rows = sqlx::query(&query)
             .bind(self.config.universe_id)
-            .bind(provider_id.as_str())
-            .bind(observed)
-            .bind(observed_at_ms)
             .fetch_all(&self.pool)
             .await
-            .map_err(|error| sql_error("mark missing environment instances unknown", error))?;
+            .map_err(|error| sql_error("list environments needing reconcile", error))?;
         rows.iter().map(environment_from_row).collect()
     }
 
-    async fn update_environment_status(
+    async fn observe_provisioned_environment(
         &self,
-        request: UpdateEnvironmentStatus,
+        request: ObserveProvisionedEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let query = format!(
-            r#"
-            UPDATE environments SET status = $3, observed_at_ms = $4, updated_at_ms = $4
-            WHERE universe_id = $1 AND environment_id = $2
-            RETURNING {ENVIRONMENT_COLUMNS}
-            "#
-        );
-        let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(request.environment_id.as_str())
-            .bind(target_status_to_str(request.status))
-            .bind(request.observed_at_ms)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| sql_error("update environment instance status", error))?
-            .ok_or_else(|| not_found("environment_instance", &request.environment_id))?;
-        environment_from_row(&row)
+        let current = self.read_environment(&request.environment_id).await?;
+        if request.observed_at_ms < current.incarnation.updated_at_ms {
+            return Ok(current);
+        }
+        if current
+            .incarnation
+            .provider_target_id
+            .as_ref()
+            .is_some_and(|id| id != &request.provider_target_id)
+        {
+            return invalid("provider target conflicts with current incarnation");
+        }
+        sqlx::query("UPDATE environment_incarnations SET provider_target_id=$4, updated_at_ms=$5 WHERE universe_id=$1 AND environment_id=$2 AND incarnation_id=$3")
+            .bind(self.config.universe_id).bind(request.environment_id.as_str()).bind(current.incarnation.incarnation_id.as_str())
+            .bind(request.provider_target_id.as_str()).bind(request.observed_at_ms)
+            .execute(&self.pool).await.map_err(|error| sql_error("observe environment incarnation", error))?;
+        sqlx::query("UPDATE environments SET status=$3, updated_at_ms=$4 WHERE universe_id=$1 AND environment_id=$2")
+            .bind(self.config.universe_id).bind(request.environment_id.as_str()).bind(environment_status_to_str(request.status)).bind(request.observed_at_ms)
+            .execute(&self.pool).await.map_err(|error| sql_error("observe environment", error))?;
+        self.read_environment(&request.environment_id).await
+    }
+
+    async fn fail_environment_lifecycle(
+        &self,
+        request: FailEnvironmentLifecycle,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        let mut metadata = self
+            .read_environment(&request.environment_id)
+            .await?
+            .metadata;
+        metadata.insert("lifecycleError".to_owned(), request.message);
+        sqlx::query("UPDATE environments SET status='failed', metadata_json=$3, updated_at_ms=$4 WHERE universe_id=$1 AND environment_id=$2")
+            .bind(self.config.universe_id).bind(request.environment_id.as_str()).bind(json_value("encode environment metadata", &metadata)?).bind(request.observed_at_ms)
+            .execute(&self.pool).await.map_err(|error| sql_error("fail environment", error))?;
+        self.read_environment(&request.environment_id).await
     }
 
     async fn begin_close_environment(
         &self,
         request: BeginCloseEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let update = format!(
-            "UPDATE environments SET status = 'closing', updated_at_ms = $3 WHERE universe_id = $1 AND environment_id = $2 RETURNING {ENVIRONMENT_COLUMNS}"
-        );
-        let row = sqlx::query(&update)
-            .bind(self.config.universe_id)
-            .bind(request.environment_id.as_str())
-            .bind(request.updated_at_ms)
-            .fetch_optional(&self.pool)
+        sqlx::query("UPDATE environments SET status=CASE WHEN status='closed' THEN status ELSE 'closing' END, updated_at_ms=GREATEST(updated_at_ms,$3) WHERE universe_id=$1 AND environment_id=$2")
+            .bind(self.config.universe_id).bind(request.environment_id.as_str()).bind(request.updated_at_ms)
+            .execute(&self.pool).await.map_err(|error| sql_error("begin environment close", error))?;
+        self.read_environment(&request.environment_id).await
+    }
+
+    async fn finish_close_environment(
+        &self,
+        request: FinishCloseEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        let current = self.read_environment(&request.environment_id).await?;
+        let mut tx = self
+            .pool
+            .begin()
             .await
-            .map_err(|error| sql_error("begin closing environment", error))?
-            .ok_or_else(|| not_found("environment", &request.environment_id))?;
-        environment_from_row(&row)
+            .map_err(|error| sql_error("begin finish close", error))?;
+        sqlx::query("UPDATE environment_incarnations SET updated_at_ms=$4 WHERE universe_id=$1 AND environment_id=$2 AND incarnation_id=$3")
+            .bind(self.config.universe_id).bind(request.environment_id.as_str()).bind(current.incarnation.incarnation_id.as_str()).bind(request.observed_at_ms)
+            .execute(&mut *tx).await.map_err(|error| sql_error("close environment incarnation", error))?;
+        sqlx::query("UPDATE environments SET status='closed', updated_at_ms=$3 WHERE universe_id=$1 AND environment_id=$2")
+            .bind(self.config.universe_id).bind(request.environment_id.as_str()).bind(request.observed_at_ms)
+            .execute(&mut *tx).await.map_err(|error| sql_error("finish environment close", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| sql_error("commit environment close", error))?;
+        self.read_environment(&request.environment_id).await
     }
 }
 
@@ -445,30 +505,25 @@ impl EnvironmentCredentialStore for PgStore {
     ) -> Result<EnvironmentCredentialRecord, EnvironmentRegistryError> {
         let record = request.into_record();
         record.validate()?;
-        self.read_environment(&record.environment_id).await?;
-        let (source_kind, grant_id, auth_provider_id, secret_id) =
-            credential_source_columns(&record.source);
+        let (kind, grant, provider, secret) = credential_source_columns(&record.source);
         let query = format!(
             r#"
-            INSERT INTO environment_credentials (
-                universe_id, environment_id, env_name, source_kind,
-                grant_id, auth_provider_id, secret_id, created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+            INSERT INTO environment_credentials (universe_id, environment_id, env_name, source_kind, grant_id, auth_provider_id, secret_id, created_at_ms, updated_at_ms)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
             ON CONFLICT (universe_id, environment_id, env_name) DO UPDATE SET
-                source_kind = EXCLUDED.source_kind, grant_id = EXCLUDED.grant_id,
-                auth_provider_id = EXCLUDED.auth_provider_id, secret_id = EXCLUDED.secret_id,
-                updated_at_ms = EXCLUDED.updated_at_ms
-            RETURNING {CREDENTIAL_COLUMNS}
-            "#
+                source_kind=EXCLUDED.source_kind, grant_id=EXCLUDED.grant_id,
+                auth_provider_id=EXCLUDED.auth_provider_id, secret_id=EXCLUDED.secret_id,
+                updated_at_ms=EXCLUDED.updated_at_ms RETURNING {CREDENTIAL_COLUMNS}
+        "#
         );
         let row = sqlx::query(&query)
             .bind(self.config.universe_id)
             .bind(record.environment_id.as_str())
             .bind(&record.env_name)
-            .bind(source_kind)
-            .bind(grant_id)
-            .bind(auth_provider_id)
-            .bind(secret_id)
+            .bind(kind)
+            .bind(grant)
+            .bind(provider)
+            .bind(secret)
             .bind(record.created_at_ms)
             .fetch_one(&self.pool)
             .await
@@ -481,7 +536,7 @@ impl EnvironmentCredentialStore for PgStore {
         request: ListEnvironmentCredentials,
     ) -> Result<Vec<EnvironmentCredentialRecord>, EnvironmentRegistryError> {
         let query = format!(
-            "SELECT {CREDENTIAL_COLUMNS} FROM environment_credentials WHERE universe_id = $1 AND environment_id = $2 ORDER BY env_name"
+            "SELECT {CREDENTIAL_COLUMNS} FROM environment_credentials WHERE universe_id=$1 AND environment_id=$2 ORDER BY env_name"
         );
         let rows = sqlx::query(&query)
             .bind(self.config.universe_id)
@@ -498,7 +553,7 @@ impl EnvironmentCredentialStore for PgStore {
         env_name: &str,
     ) -> Result<EnvironmentCredentialRecord, EnvironmentRegistryError> {
         let query = format!(
-            "DELETE FROM environment_credentials WHERE universe_id = $1 AND environment_id = $2 AND env_name = $3 RETURNING {CREDENTIAL_COLUMNS}"
+            "DELETE FROM environment_credentials WHERE universe_id=$1 AND environment_id=$2 AND env_name=$3 RETURNING {CREDENTIAL_COLUMNS}"
         );
         let row = sqlx::query(&query)
             .bind(self.config.universe_id)
@@ -507,12 +562,34 @@ impl EnvironmentCredentialStore for PgStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| sql_error("unbind environment credential", error))?
-            .ok_or_else(|| EnvironmentRegistryError::NotFound {
-                kind: "environment_credential",
-                id: format!("{environment_id}/{env_name}"),
+            .ok_or_else(|| {
+                not_found(
+                    "environment_credential",
+                    &format!("{environment_id}/{env_name}"),
+                )
             })?;
         credential_from_row(&row)
     }
+}
+
+async fn read_environment_on(
+    pool: &sqlx::PgPool,
+    universe_id: Uuid,
+    predicate: &str,
+    value: &str,
+    action: &str,
+) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+    let query = format!(
+        "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1 AND {predicate}"
+    );
+    let row = sqlx::query(&query)
+        .bind(universe_id)
+        .bind(value)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| sql_error(action, error))?
+        .ok_or_else(|| not_found("environment", &value))?;
+    environment_from_row(&row)
 }
 
 fn provider_from_row(
@@ -520,27 +597,32 @@ fn provider_from_row(
 ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
     let record = EnvironmentProviderRecord {
         provider_id: parse_id(row, "provider_id", EnvironmentProviderId::try_new)?,
-        provider_kind: provider_kind_from_str(&column(row, "provider_kind")?)?,
         display_name: row
             .try_get("display_name")
-            .map_err(|error| sql_error("decode provider display_name", error))?,
-        status: provider_status_from_str(&column(row, "status")?)?,
+            .map_err(|e| sql_error("decode provider display_name", e))?,
         controller_connection: json_column(row, "controller_connection_json")?,
-        capabilities: json_column(row, "capabilities_json")?,
-        implementation: json_column(row, "implementation_json")?,
-        last_seen_ms: row
-            .try_get("last_seen_ms")
-            .map_err(|error| sql_error("decode provider last_seen_ms", error))?,
-        lease_expires_ms: row
-            .try_get("lease_expires_ms")
-            .map_err(|error| sql_error("decode provider lease_expires_ms", error))?,
         metadata: json_column(row, "metadata_json")?,
-        created_at_ms: row
-            .try_get("created_at_ms")
-            .map_err(|error| sql_error("decode provider created_at_ms", error))?,
-        updated_at_ms: row
-            .try_get("updated_at_ms")
-            .map_err(|error| sql_error("decode provider updated_at_ms", error))?,
+        created_at_ms: scalar(row, "created_at_ms")?,
+        updated_at_ms: scalar(row, "updated_at_ms")?,
+    };
+    record.validate()?;
+    Ok(record)
+}
+
+fn binding_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<EnvironmentProviderBindingRecord, EnvironmentRegistryError> {
+    let record = EnvironmentProviderBindingRecord {
+        universe_id: row
+            .try_get("universe_id")
+            .map_err(|e| sql_error("decode binding universe", e))?,
+        binding_id: parse_id(row, "binding_id", EnvironmentProviderBindingId::try_new)?,
+        provider_id: parse_id(row, "provider_id", EnvironmentProviderId::try_new)?,
+        status: binding_status_from_str(&column(row, "status")?)?,
+        revision: i64_to_u64(scalar(row, "revision")?, "revision")?,
+        metadata: json_column(row, "metadata_json")?,
+        created_at_ms: scalar(row, "created_at_ms")?,
+        updated_at_ms: scalar(row, "updated_at_ms")?,
     };
     record.validate()?;
     Ok(record)
@@ -549,38 +631,57 @@ fn provider_from_row(
 fn environment_from_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-    let default_cwd: Option<String> = row
-        .try_get("default_cwd")
-        .map_err(|error| sql_error("decode environment default_cwd", error))?;
+    let source_kind = column(row, "source_kind")?;
+    let provider_id: Option<String> = row
+        .try_get("provider_id")
+        .map_err(|e| sql_error("decode environment provider", e))?;
+    let binding_id: Option<String> = row
+        .try_get("binding_id")
+        .map_err(|e| sql_error("decode environment binding", e))?;
+    let source = match source_kind.as_str() {
+        "provisioned" => EnvironmentSource::Provisioned {
+            provider_id: EnvironmentProviderId::try_new(
+                provider_id.ok_or_else(|| store_message("missing provider id"))?,
+            )
+            .map_err(|e| store_message(format!("decode provider id: {e}")))?,
+            binding_id: EnvironmentProviderBindingId::try_new(
+                binding_id.ok_or_else(|| store_message("missing binding id"))?,
+            )
+            .map_err(|e| store_message(format!("decode binding id: {e}")))?,
+        },
+        "enrolled" => EnvironmentSource::Enrolled,
+        other => {
+            return Err(store_message(format!(
+                "unknown environment source: {other}"
+            )));
+        }
+    };
+    let target: Option<String> = row
+        .try_get("provider_target_id")
+        .map_err(|e| sql_error("decode provider target", e))?;
     let record = EnvironmentRecord {
         environment_id: parse_id(row, "environment_id", EnvironmentId::try_new)?,
-        provider_id: parse_id(row, "provider_id", EnvironmentProviderId::try_new)?,
-        provider_target_id: HostTargetId::new(column(row, "provider_target_id")?),
-        origin: environment_origin_from_str(&column(row, "origin")?)?,
+        request_id: parse_id(row, "request_id", EnvironmentProvisionRequestId::try_new)?,
+        source,
         display_name: row
             .try_get("display_name")
-            .map_err(|error| sql_error("decode environment display_name", error))?,
-        status: target_status_from_str(&column(row, "status")?)?,
-        scope: json_column(row, "scope_json")?,
-        capabilities: json_column(row, "capabilities_json")?,
-        connection: json_column(row, "connection_json")?,
-        default_cwd: default_cwd
-            .as_deref()
-            .map(HostPath::new)
-            .transpose()
-            .map_err(|error| EnvironmentRegistryError::Store {
-                message: format!("decode environment cwd: {error}"),
-            })?,
+            .map_err(|e| sql_error("decode environment display", e))?,
+        status: environment_status_from_str(&column(row, "status")?)?,
+        incarnation: EnvironmentIncarnationRecord {
+            incarnation_id: parse_id(row, "incarnation_id", EnvironmentIncarnationId::try_new)?,
+            provision_request_id: optional_id(
+                row,
+                "provision_request_id",
+                EnvironmentProvisionRequestId::try_new,
+            )?,
+            provider_target_id: target.map(HostTargetId::new),
+            template_id: optional_id(row, "template_id", EnvironmentTemplateId::try_new)?,
+            created_at_ms: scalar(row, "incarnation_created_at_ms")?,
+            updated_at_ms: scalar(row, "incarnation_updated_at_ms")?,
+        },
         metadata: json_column(row, "metadata_json")?,
-        observed_at_ms: row
-            .try_get("observed_at_ms")
-            .map_err(|error| sql_error("decode environment observed_at_ms", error))?,
-        created_at_ms: row
-            .try_get("created_at_ms")
-            .map_err(|error| sql_error("decode environment created_at_ms", error))?,
-        updated_at_ms: row
-            .try_get("updated_at_ms")
-            .map_err(|error| sql_error("decode environment updated_at_ms", error))?,
+        created_at_ms: scalar(row, "created_at_ms")?,
+        updated_at_ms: scalar(row, "updated_at_ms")?,
     };
     record.validate()?;
     Ok(record)
@@ -589,34 +690,30 @@ fn environment_from_row(
 fn credential_from_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<EnvironmentCredentialRecord, EnvironmentRegistryError> {
-    let source_kind = column(row, "source_kind")?;
-    let grant_id: Option<String> = row
+    let kind = column(row, "source_kind")?;
+    let grant: Option<String> = row
         .try_get("grant_id")
-        .map_err(|error| sql_error("decode credential grant_id", error))?;
-    let provider_id: Option<String> = row
+        .map_err(|e| sql_error("decode grant id", e))?;
+    let provider: Option<String> = row
         .try_get("auth_provider_id")
-        .map_err(|error| sql_error("decode credential provider_id", error))?;
-    let secret_id: Option<String> = row
+        .map_err(|e| sql_error("decode auth provider id", e))?;
+    let secret: Option<String> = row
         .try_get("secret_id")
-        .map_err(|error| sql_error("decode credential secret_id", error))?;
-    let source = match source_kind.as_str() {
+        .map_err(|e| sql_error("decode secret id", e))?;
+    let source = match kind.as_str() {
         "auth_grant" => EnvironmentCredentialSource::AuthGrant {
-            grant_id: AuthGrantId::try_new(
-                grant_id.ok_or_else(|| store_message("missing grant_id"))?,
-            )
-            .map_err(|error| store_message(format!("decode grant id: {error}")))?,
+            grant_id: AuthGrantId::try_new(grant.ok_or_else(|| store_message("missing grant id"))?)
+                .map_err(|e| store_message(format!("decode grant id: {e}")))?,
         },
         "auth_provider_credential" => EnvironmentCredentialSource::AuthProviderCredential {
             provider_id: AuthProviderId::try_new(
-                provider_id.ok_or_else(|| store_message("missing auth_provider_id"))?,
+                provider.ok_or_else(|| store_message("missing auth provider id"))?,
             )
-            .map_err(|error| store_message(format!("decode auth provider id: {error}")))?,
+            .map_err(|e| store_message(format!("decode auth provider id: {e}")))?,
         },
         "direct_secret" => EnvironmentCredentialSource::DirectSecret {
-            secret_id: SecretId::try_new(
-                secret_id.ok_or_else(|| store_message("missing secret_id"))?,
-            )
-            .map_err(|error| store_message(format!("decode secret id: {error}")))?,
+            secret_id: SecretId::try_new(secret.ok_or_else(|| store_message("missing secret id"))?)
+                .map_err(|e| store_message(format!("decode secret id: {e}")))?,
         },
         other => return Err(store_message(format!("unknown credential source: {other}"))),
     };
@@ -624,12 +721,8 @@ fn credential_from_row(
         environment_id: parse_id(row, "environment_id", EnvironmentId::try_new)?,
         env_name: column(row, "env_name")?,
         source,
-        created_at_ms: row
-            .try_get("created_at_ms")
-            .map_err(|error| sql_error("decode credential created_at_ms", error))?,
-        updated_at_ms: row
-            .try_get("updated_at_ms")
-            .map_err(|error| sql_error("decode credential updated_at_ms", error))?,
+        created_at_ms: scalar(row, "created_at_ms")?,
+        updated_at_ms: scalar(row, "updated_at_ms")?,
     };
     record.validate()?;
     Ok(record)
@@ -654,75 +747,45 @@ fn credential_source_columns(
     }
 }
 
-fn provider_kind_to_str(value: EnvironmentProviderKind) -> &'static str {
+fn binding_status_to_str(value: EnvironmentProviderBindingStatus) -> &'static str {
     match value {
-        EnvironmentProviderKind::Sandbox => "sandbox",
-        EnvironmentProviderKind::Bridge => "bridge",
-        EnvironmentProviderKind::Custom => "custom",
+        EnvironmentProviderBindingStatus::Enabled => "enabled",
+        EnvironmentProviderBindingStatus::Disabled => "disabled",
     }
 }
-fn provider_kind_from_str(
+fn binding_status_from_str(
     value: &str,
-) -> Result<EnvironmentProviderKind, EnvironmentRegistryError> {
+) -> Result<EnvironmentProviderBindingStatus, EnvironmentRegistryError> {
     match value {
-        "sandbox" => Ok(EnvironmentProviderKind::Sandbox),
-        "bridge" => Ok(EnvironmentProviderKind::Bridge),
-        "custom" => Ok(EnvironmentProviderKind::Custom),
-        other => Err(store_message(format!("unknown provider kind: {other}"))),
+        "enabled" => Ok(EnvironmentProviderBindingStatus::Enabled),
+        "disabled" => Ok(EnvironmentProviderBindingStatus::Disabled),
+        other => Err(store_message(format!("unknown binding status: {other}"))),
     }
 }
-fn provider_status_to_str(value: EnvironmentProviderStatus) -> &'static str {
+fn environment_status_to_str(value: EnvironmentStatus) -> &'static str {
     match value {
-        EnvironmentProviderStatus::Online => "online",
-        EnvironmentProviderStatus::Offline => "offline",
+        EnvironmentStatus::Provisioning => "provisioning",
+        EnvironmentStatus::Booting => "booting",
+        EnvironmentStatus::WaitingForDaemon => "waiting_for_daemon",
+        EnvironmentStatus::Ready => "ready",
+        EnvironmentStatus::Offline => "offline",
+        EnvironmentStatus::Closing => "closing",
+        EnvironmentStatus::Closed => "closed",
+        EnvironmentStatus::Failed => "failed",
+        EnvironmentStatus::Unknown => "unknown",
     }
 }
-fn provider_status_from_str(
-    value: &str,
-) -> Result<EnvironmentProviderStatus, EnvironmentRegistryError> {
+fn environment_status_from_str(value: &str) -> Result<EnvironmentStatus, EnvironmentRegistryError> {
     match value {
-        "online" => Ok(EnvironmentProviderStatus::Online),
-        "offline" => Ok(EnvironmentProviderStatus::Offline),
-        other => Err(store_message(format!("unknown provider status: {other}"))),
-    }
-}
-fn environment_origin_to_str(value: EnvironmentOrigin) -> &'static str {
-    match value {
-        EnvironmentOrigin::Provided => "provided",
-        EnvironmentOrigin::Provisioned => "provisioned",
-    }
-}
-fn environment_origin_from_str(value: &str) -> Result<EnvironmentOrigin, EnvironmentRegistryError> {
-    match value {
-        "provided" => Ok(EnvironmentOrigin::Provided),
-        "provisioned" => Ok(EnvironmentOrigin::Provisioned),
-        other => Err(store_message(format!(
-            "unknown environment origin: {other}"
-        ))),
-    }
-}
-fn target_status_to_str(value: HostTargetStatus) -> &'static str {
-    match value {
-        HostTargetStatus::Creating => "creating",
-        HostTargetStatus::Starting => "starting",
-        HostTargetStatus::Ready => "ready",
-        HostTargetStatus::Stopped => "stopped",
-        HostTargetStatus::Closing => "closing",
-        HostTargetStatus::Closed => "closed",
-        HostTargetStatus::Failed => "failed",
-        HostTargetStatus::Unknown => "unknown",
-    }
-}
-fn target_status_from_str(value: &str) -> Result<HostTargetStatus, EnvironmentRegistryError> {
-    match value {
-        "creating" => Ok(HostTargetStatus::Creating),
-        "starting" => Ok(HostTargetStatus::Starting),
-        "ready" => Ok(HostTargetStatus::Ready),
-        "stopped" => Ok(HostTargetStatus::Stopped),
-        "closing" => Ok(HostTargetStatus::Closing),
-        "closed" => Ok(HostTargetStatus::Closed),
-        "failed" => Ok(HostTargetStatus::Failed),
-        "unknown" => Ok(HostTargetStatus::Unknown),
+        "provisioning" => Ok(EnvironmentStatus::Provisioning),
+        "booting" => Ok(EnvironmentStatus::Booting),
+        "waiting_for_daemon" => Ok(EnvironmentStatus::WaitingForDaemon),
+        "ready" => Ok(EnvironmentStatus::Ready),
+        "offline" => Ok(EnvironmentStatus::Offline),
+        "closing" => Ok(EnvironmentStatus::Closing),
+        "closed" => Ok(EnvironmentStatus::Closed),
+        "failed" => Ok(EnvironmentStatus::Failed),
+        "unknown" => Ok(EnvironmentStatus::Unknown),
         other => Err(store_message(format!(
             "unknown environment status: {other}"
         ))),
@@ -737,61 +800,99 @@ fn parse_id<T, E>(
 where
     E: std::fmt::Display,
 {
-    let value = column(row, name)?;
-    parse(value).map_err(|error| store_message(format!("decode {name}: {error}")))
+    parse(column(row, name)?).map_err(|e| store_message(format!("decode {name}: {e}")))
 }
-
+fn optional_id<T, E>(
+    row: &sqlx::postgres::PgRow,
+    name: &str,
+    parse: impl FnOnce(String) -> Result<T, E>,
+) -> Result<Option<T>, EnvironmentRegistryError>
+where
+    E: std::fmt::Display,
+{
+    let value: Option<String> = row
+        .try_get(name)
+        .map_err(|e| sql_error("decode optional id", e))?;
+    value
+        .map(parse)
+        .transpose()
+        .map_err(|e| store_message(format!("decode {name}: {e}")))
+}
 fn column(row: &sqlx::postgres::PgRow, name: &str) -> Result<String, EnvironmentRegistryError> {
     row.try_get(name)
-        .map_err(|error| sql_error("decode environment column", error))
+        .map_err(|e| sql_error("decode environment column", e))
 }
-
+fn scalar(row: &sqlx::postgres::PgRow, name: &str) -> Result<i64, EnvironmentRegistryError> {
+    row.try_get(name)
+        .map_err(|e| sql_error("decode integer column", e))
+}
 fn json_value<T: serde::Serialize>(
     action: &str,
     value: &T,
 ) -> Result<serde_json::Value, EnvironmentRegistryError> {
-    serde_json::to_value(value).map_err(|error| EnvironmentRegistryError::Store {
-        message: format!("{action}: {error}"),
-    })
+    serde_json::to_value(value).map_err(|e| store_message(format!("{action}: {e}")))
 }
-
 fn json_column<T: serde::de::DeserializeOwned>(
     row: &sqlx::postgres::PgRow,
     name: &str,
 ) -> Result<T, EnvironmentRegistryError> {
     let value: serde_json::Value = row
         .try_get(name)
-        .map_err(|error| sql_error("decode json column", error))?;
-    serde_json::from_value(value).map_err(|error| store_message(format!("decode {name}: {error}")))
+        .map_err(|e| sql_error("decode json column", e))?;
+    serde_json::from_value(value).map_err(|e| store_message(format!("decode {name}: {e}")))
 }
-
+fn i64_to_u64(value: i64, name: &str) -> Result<u64, EnvironmentRegistryError> {
+    value
+        .try_into()
+        .map_err(|_| store_message(format!("{name} is negative")))
+}
 fn not_found(kind: &'static str, id: &impl ToString) -> EnvironmentRegistryError {
     EnvironmentRegistryError::NotFound {
         kind,
         id: id.to_string(),
     }
 }
-
 fn invalid<T>(message: impl Into<String>) -> Result<T, EnvironmentRegistryError> {
-    Err(EnvironmentRegistryError::InvalidInput {
+    Err(invalid_error(message))
+}
+fn invalid_error(message: impl Into<String>) -> EnvironmentRegistryError {
+    EnvironmentRegistryError::InvalidInput {
         message: message.into(),
-    })
+    }
 }
-
 fn store_error(action: &str, error: crate::PgStoreError) -> EnvironmentRegistryError {
-    EnvironmentRegistryError::Store {
-        message: format!("{action}: {error}"),
-    }
+    store_message(format!("{action}: {error}"))
 }
-
 fn sql_error(action: &str, error: sqlx::Error) -> EnvironmentRegistryError {
-    EnvironmentRegistryError::Store {
-        message: format!("{action}: {error}"),
-    }
+    store_message(format!("{action}: {error}"))
 }
-
 fn store_message(message: impl Into<String>) -> EnvironmentRegistryError {
     EnvironmentRegistryError::Store {
         message: message.into(),
     }
 }
+fn map_environment_insert_error(error: sqlx::Error) -> EnvironmentRegistryError {
+    if let Some(db) = error.as_database_error() {
+        if db.constraint() == Some("environments_pkey") {
+            return EnvironmentRegistryError::AlreadyExists {
+                kind: "environment",
+                id: "duplicate environment id".to_owned(),
+            };
+        }
+    }
+    sql_error("insert environment", error)
+}
+fn map_binding_write_error(action: &str, error: sqlx::Error) -> EnvironmentRegistryError {
+    if let Some(db) = error.as_database_error() {
+        if db.constraint() == Some("environment_provider_bindings_universe_id_provider_id_key") {
+            return EnvironmentRegistryError::AlreadyExists {
+                kind: "environment_provider_binding",
+                id: "universe/provider".to_owned(),
+            };
+        }
+    }
+    sql_error(action, error)
+}
+
+#[allow(dead_code)]
+async fn _transaction_marker(_: &mut Transaction<'_, Postgres>) {}

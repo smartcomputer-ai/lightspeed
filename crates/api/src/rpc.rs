@@ -340,13 +340,21 @@ api_methods! {
     METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND => unbind_environment_credential(EnvironmentCredentialUnbindParams) -> EnvironmentCredentialUnbindResponse =>
         ["Unbind an environment credential", "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret."],
     METHOD_ENVIRONMENTS_CREATE => create_environment(EnvironmentCreateParams) -> EnvironmentCreateResponse =>
-        ["Provision an environment instance", "Asks a live provider with create capability to create a universe-owned environment instance. This does not attach the instance to any session."],
+        ["Create an environment", "Records an idempotent provisioning intent against an enabled universe binding. The provider validates the template, entitlement, allocation, and capacity asynchronously."],
     METHOD_ENVIRONMENTS_READ => read_environment(EnvironmentReadParams) -> EnvironmentReadResponse =>
-        ["Read an environment instance", "Returns the universe resource with its provider identity, current observed lifecycle, connection, scope, and capabilities."],
+        ["Read an environment", "Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity."],
     METHOD_ENVIRONMENTS_LIST => list_environments(EnvironmentListParams) -> EnvironmentListResponse =>
-        ["List environment instances", "Lists universe-owned instances, optionally filtered by provider or observed target status."],
+        ["List environments", "Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state."],
     METHOD_ENVIRONMENTS_CLOSE => close_environment(EnvironmentCloseParams) -> EnvironmentCloseResponse =>
-        ["Close an environment instance", "Tears down the universe resource through its provider. Closing is rejected while session bindings occupy the instance; the provider decides whether active jobs reject close or are interrupted."],
+        ["Close an environment", "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed."],
+    METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST => list_environment_provider_bindings(EnvironmentProviderBindingListParams) -> EnvironmentProviderBindingListResponse =>
+        ["List environment provider bindings", "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers."],
+    METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ => read_environment_provider_binding(EnvironmentProviderBindingReadParams) -> EnvironmentProviderBindingReadResponse =>
+        ["Read an environment provider binding", "Returns one universe routing and admission binding. Provider template entitlement, capacity, quota, and ingress policy remain provider-owned."],
+    METHOD_ENVIRONMENTS_TEMPLATES_LIST => list_environment_templates(EnvironmentTemplateListParams) -> EnvironmentTemplateListResponse =>
+        ["List environment templates", "Reads immutable templates directly from the selected bound provider controller."],
+    METHOD_ENVIRONMENTS_TEMPLATES_READ => read_environment_template(EnvironmentTemplateReadParams) -> EnvironmentTemplateReadResponse =>
+        ["Read an environment template", "Returns one immutable template version from the selected bound provider controller."],
     METHOD_ENVIRONMENTS_JOBS_CREATE => create_environment_jobs(EnvironmentJobCreateParams) -> EnvironmentJobCreateResponse =>
         ["Create environment jobs", "Starts a dependency-aware job group on one environment instance, injecting the environment's configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance rather than a session."],
     METHOD_ENVIRONMENTS_JOBS_READ => read_environment_jobs(EnvironmentJobReadParams) -> EnvironmentJobReadResponse =>
@@ -393,14 +401,6 @@ api_methods! {
         ["List MCP server records", "Lists universe catalog entries, optionally filtered by lifecycle/configuration status."],
     METHOD_MCP_SERVERS_DELETE => delete_mcp_server(McpServerDeleteParams) -> McpServerDeleteResponse =>
         ["Delete an MCP server record", "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration."],
-    METHOD_ENVIRONMENTS_PROVIDERS_REGISTER => register_environment_provider(EnvironmentProviderRegisterParams) -> EnvironmentProviderRegisterResponse =>
-        ["Register environment provider presence", "Publishes a controller endpoint, capabilities, implementation identity, and liveness lease. Intended for trusted provider/bridge infrastructure, not ordinary configuration clients."],
-    METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT => heartbeat_environment_provider(EnvironmentProviderHeartbeatParams) -> EnvironmentProviderHeartbeatResponse =>
-        ["Refresh environment provider presence", "Renews a provider lease and records its complete observed target descriptors. Omitted provided targets may become unknown; intended for provider infrastructure."],
-    METHOD_ENVIRONMENTS_PROVIDERS_UNREGISTER => unregister_environment_provider(EnvironmentProviderUnregisterParams) -> EnvironmentProviderUnregisterResponse =>
-        ["Unregister environment provider presence", "Marks provider presence offline without deleting its durable environment instance records."],
-    METHOD_ENVIRONMENTS_PROVIDERS_LIST => list_environment_providers(EnvironmentProviderListParams) -> EnvironmentProviderListResponse =>
-        ["List environment providers", "Lists current provider presence with lease-derived online/stale/offline status, optionally filtered by status or kind."],
     METHOD_AUTH_GRANTS_IMPORT => import_auth_grant(AuthGrantImportParams) -> AuthGrantImportResponse =>
         ["Import a static bearer grant", "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. The token can never be read back through the API."],
     METHOD_AUTH_GRANTS_READ => read_auth_grant(AuthGrantReadParams) -> AuthGrantReadResponse =>

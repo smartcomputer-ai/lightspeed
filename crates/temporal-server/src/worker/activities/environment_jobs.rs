@@ -4,7 +4,6 @@ use engine::{BlobRef, PromiseSourceCheckResult, storage::BlobStore};
 use environments::{EnvironmentId, EnvironmentJobGroupId, EnvironmentStore};
 use host_client::{HostClientError, HostDataClient, WebSocketConnectOptions};
 use host_protocol::{
-    control::targets::HostTargetStatus,
     data::{
         handshake::{InitializeParams, InitializedParams},
         jobs::{CancelJobsParams, JobStatus, ReadJobsParams},
@@ -121,17 +120,22 @@ pub(super) async fn prepare_workflow_tool(
         .allowed_provider_ids
         .as_ref()
         .is_some_and(|providers| {
-            !providers
-                .iter()
-                .any(|provider| provider == instance.provider_id.as_str())
+            !providers.iter().any(|provider| {
+                instance
+                    .provider_id()
+                    .is_some_and(|id| provider == id.as_str())
+            })
         })
     {
         return Err(activity_error(anyhow::anyhow!(
             "environment provider is not allowed for this session: {}",
-            instance.provider_id
+            instance
+                .provider_id()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "enrolled".to_owned())
         )));
     }
-    if !instance.capabilities.job_start {
+    if !instance.capabilities().job_start {
         return Err(activity_error(anyhow::anyhow!(
             "environment does not support durable jobs: {environment_id}"
         )));
@@ -338,13 +342,18 @@ async fn start_on_provider(
         .map_err(activity_error)?;
     if matches!(
         instance.status,
-        HostTargetStatus::Closing | HostTargetStatus::Closed
+        environments::EnvironmentStatus::Closing | environments::EnvironmentStatus::Closed
     ) {
         return Err(non_retryable_activity_error(anyhow::anyhow!(
             "cannot start jobs on closing environment instance {environment_id}"
         )));
     }
-    let (mut client, capabilities) = initialized_client(&instance.connection).await?;
+    let connection = instance.connection().ok_or_else(|| {
+        non_retryable_activity_error(anyhow::anyhow!(
+            "environment has no admitted data-plane connection"
+        ))
+    })?;
+    let (mut client, capabilities) = initialized_client(connection).await?;
     if !capabilities.job_start {
         return Err(non_retryable_activity_error(anyhow::anyhow!(
             "environment does not support durable job start: {environment_id}"
@@ -414,7 +423,12 @@ pub(super) async fn poll(
         .read_environment(&environment_id)
         .await
         .map_err(activity_error)?;
-    let (mut client, _) = initialized_client(&instance.connection).await?;
+    let connection = instance.connection().ok_or_else(|| {
+        non_retryable_activity_error(anyhow::anyhow!(
+            "environment has no admitted data-plane connection"
+        ))
+    })?;
+    let (mut client, _) = initialized_client(connection).await?;
     let requested_job_ids = request.job_ids.iter().cloned().collect::<BTreeSet<_>>();
     let response = client
         .read_jobs(&ReadJobsParams {
@@ -504,7 +518,12 @@ pub(super) async fn cancel(
         .read_environment(&environment_id)
         .await
         .map_err(activity_error)?;
-    let (mut client, _) = initialized_client(&instance.connection).await?;
+    let connection = instance.connection().ok_or_else(|| {
+        non_retryable_activity_error(anyhow::anyhow!(
+            "environment has no admitted data-plane connection"
+        ))
+    })?;
+    let (mut client, _) = initialized_client(connection).await?;
     let response = client
         .cancel_jobs(&CancelJobsParams {
             namespace: environment_id.as_str().to_owned(),

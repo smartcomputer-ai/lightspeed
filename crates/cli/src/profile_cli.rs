@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use api::{
-    AgentApiErrorKind, AgentProfile, AgentProfileInput, EnvironmentProviderListParams,
-    EnvironmentProviderStatusView, EnvironmentTargetStatusView, InlineAgentProfile,
-    ProfileApplyParams, ProfileDeleteParams, ProfileId, ProfileListParams, ProfilePutParams,
-    ProfileReadParams, ProfileSource, WorkspaceLink, WorkspaceLinkAccess, WorkspaceLinkTarget,
+    AgentApiErrorKind, AgentProfile, AgentProfileInput, EnvironmentLifecycleStatusView,
+    EnvironmentProviderBindingListParams, EnvironmentProviderBindingStatusView,
+    EnvironmentSourceView, InlineAgentProfile, ProfileApplyParams, ProfileDeleteParams, ProfileId,
+    ProfileListParams, ProfilePutParams, ProfileReadParams, ProfileSource, WorkspaceLink,
+    WorkspaceLinkAccess, WorkspaceLinkTarget,
 };
 use clap::{Args, Subcommand};
 use serde::Deserialize;
@@ -586,36 +587,42 @@ async fn validate_environments(
             return;
         }
     };
-    let providers = match api
-        .list_environment_providers(EnvironmentProviderListParams::default())
+    let bindings = match api
+        .list_environment_provider_bindings(EnvironmentProviderBindingListParams::default())
         .await
     {
-        Ok(response) => response.result.providers,
+        Ok(response) => response.result.bindings,
         Err(error) => {
             report.error(format!(
-                "failed to list environment providers: {}",
+                "failed to list environment provider bindings: {}",
                 api_error(error)
             ));
             return;
         }
     };
-    let providers = providers
+    let bindings = bindings
         .into_iter()
-        .map(|provider| (provider.provider_id.clone(), provider))
+        .map(|binding| (binding.binding_id.clone(), binding))
         .collect::<BTreeMap<_, _>>();
-    if environment.status != EnvironmentTargetStatusView::Ready {
+    if environment.status != EnvironmentLifecycleStatusView::Ready {
         report.warning(format!(
             "profile environment is {:?}, not ready",
             environment.status
         ));
     }
-    if let Some(provider) = providers.get(&environment.provider_id)
-        && provider.status != EnvironmentProviderStatusView::Online
-    {
-        report.warning(format!(
-            "profile environment provider {} is {:?}, not online",
-            environment.provider_id, provider.status
-        ));
+    if let EnvironmentSourceView::Provisioned { binding_id, .. } = &environment.source {
+        match bindings.get(binding_id) {
+            Some(binding) if binding.status != EnvironmentProviderBindingStatusView::Enabled => {
+                report.warning(format!(
+                    "profile environment binding {binding_id} is {:?}",
+                    binding.status
+                ));
+            }
+            None => report.warning(format!(
+                "profile environment binding {binding_id} is missing"
+            )),
+            _ => {}
+        }
     }
 }
 

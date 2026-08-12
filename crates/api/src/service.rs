@@ -162,6 +162,42 @@ pub trait AgentApiService: Send + Sync {
         params: EnvironmentCloseParams,
     ) -> Result<AgentApiOutcome<EnvironmentCloseResponse>, AgentApiError>;
 
+    async fn list_environment_provider_bindings(
+        &self,
+        _params: EnvironmentProviderBindingListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingListResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "environment provider bindings are unavailable",
+        ))
+    }
+
+    async fn read_environment_provider_binding(
+        &self,
+        _params: EnvironmentProviderBindingReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingReadResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "environment provider bindings are unavailable",
+        ))
+    }
+
+    async fn list_environment_templates(
+        &self,
+        _params: EnvironmentTemplateListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentTemplateListResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "environment templates are unavailable",
+        ))
+    }
+
+    async fn read_environment_template(
+        &self,
+        _params: EnvironmentTemplateReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentTemplateReadResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "environment templates are unavailable",
+        ))
+    }
+
     async fn bind_environment_credential(
         &self,
         params: EnvironmentCredentialBindParams,
@@ -191,26 +227,6 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: EnvironmentJobCancelParams,
     ) -> Result<AgentApiOutcome<EnvironmentJobCancelResponse>, AgentApiError>;
-
-    async fn register_environment_provider(
-        &self,
-        params: EnvironmentProviderRegisterParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderRegisterResponse>, AgentApiError>;
-
-    async fn heartbeat_environment_provider(
-        &self,
-        params: EnvironmentProviderHeartbeatParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderHeartbeatResponse>, AgentApiError>;
-
-    async fn unregister_environment_provider(
-        &self,
-        params: EnvironmentProviderUnregisterParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderUnregisterResponse>, AgentApiError>;
-
-    async fn list_environment_providers(
-        &self,
-        params: EnvironmentProviderListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError>;
 
     async fn put_blobs(
         &self,

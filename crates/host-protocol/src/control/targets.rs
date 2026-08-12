@@ -6,9 +6,44 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared::{HostCapabilities, HostConnectionSpec, HostPath, HostScope, HostTargetId};
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderBindingContext {
+    pub universe_id: String,
+    pub binding_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentTemplate {
+    pub template_id: String,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub public_ingress: bool,
+    #[serde(default)]
+    pub deprecated: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTemplatesParams {
+    pub binding: ProviderBindingContext,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTemplatesResponse {
+    pub templates: Vec<EnvironmentTemplate>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTargetsParams {
+    pub binding: ProviderBindingContext,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<HostTargetStatus>,
 }
@@ -22,7 +57,12 @@ pub struct ListTargetsResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateTargetParams {
-    pub request: HostTargetCreateRequest,
+    pub request_id: String,
+    pub environment_id: String,
+    pub incarnation_id: String,
+    pub binding: ProviderBindingContext,
+    pub template_id: String,
+    pub bootstrap_ticket: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -48,6 +88,7 @@ pub struct AttachTargetResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTargetParams {
+    pub binding: ProviderBindingContext,
     pub target_id: HostTargetId,
 }
 
@@ -60,6 +101,10 @@ pub struct GetTargetResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseTargetParams {
+    pub request_id: String,
+    pub environment_id: String,
+    pub incarnation_id: String,
+    pub binding: ProviderBindingContext,
     pub target_id: HostTargetId,
     #[serde(default)]
     pub force: bool,
@@ -70,22 +115,6 @@ pub struct CloseTargetParams {
 pub struct CloseTargetResponse {
     pub target_id: HostTargetId,
     pub status: HostTargetStatus,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum HostTargetCreateRequest {
-    Sandbox {
-        spec: SandboxTargetSpec,
-    },
-    AttachedHost {
-        spec: AttachedHostSpec,
-    },
-    Provider {
-        #[serde(rename = "providerType")]
-        provider_type: String,
-        spec: serde_json::Value,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

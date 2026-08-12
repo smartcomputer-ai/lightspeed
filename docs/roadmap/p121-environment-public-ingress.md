@@ -19,10 +19,12 @@ disabled or replaced without changing host protocol or session semantics.
 
 ## Policy and ownership
 
-Ingress is allowed only when the environment's provider binding has
-`publicIngressAllowed`. Lightspeed records the allocated hostname and bounded
-ingress status on the environment. Cloudflare remains authoritative for tunnel,
-DNS, and edge TLS state.
+Ingress is allowed only when the provider authorizes it for the environment's
+binding and template. Lightspeed does not persist a duplicate
+`publicIngressAllowed` binding flag. It records the provider's allocated
+hostname and bounded ingress observation on the environment; the provider owns
+the allocation policy, while Cloudflare remains authoritative for tunnel, DNS,
+and edge TLS state.
 
 The initial environment exposes multiple local services behind one hostname.
 Per-service platform APIs, a deployment DSL, and multi-region routing are not
@@ -64,7 +66,8 @@ remains authoritative.
 
 ## Implementation
 
-- [ ] Add binding-controlled ingress allocation metadata and status.
+- [ ] Add provider-controlled ingress allocation plus Lightspeed observation
+      metadata and status.
 - [ ] Include `cloudflared` in the development template.
 - [ ] Allocate one tunnel and platform-domain hostname per environment.
 - [ ] Install the tunnel token through a protected system-service secret path.

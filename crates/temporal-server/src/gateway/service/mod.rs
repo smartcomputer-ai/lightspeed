@@ -7,7 +7,7 @@ mod common;
 mod environment_credentials;
 mod environment_lifecycle;
 mod environment_projection;
-mod environment_providers;
+pub(crate) mod environment_providers;
 mod environments;
 mod errors;
 mod github_api;
@@ -671,7 +671,7 @@ impl GatewayAgentApi {
             github_api_client: None,
             model_discovery_openai: None,
             model_discovery_anthropic: None,
-            host_controller_connector: Arc::new(WebSocketHostControllerConnector),
+            host_controller_connector: Arc::new(WebSocketHostControllerConnector::default()),
         }
     }
 
@@ -2860,38 +2860,38 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
-    async fn register_environment_provider(
+    async fn list_environment_provider_bindings(
         &self,
-        params: EnvironmentProviderRegisterParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderRegisterResponse>, AgentApiError> {
-        self.register_environment_provider_record(params)
+        params: EnvironmentProviderBindingListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingListResponse>, AgentApiError> {
+        self.list_environment_provider_binding_records(params)
             .await
             .map(AgentApiOutcome::new)
     }
 
-    async fn heartbeat_environment_provider(
+    async fn read_environment_provider_binding(
         &self,
-        params: EnvironmentProviderHeartbeatParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderHeartbeatResponse>, AgentApiError> {
-        self.heartbeat_environment_provider_record(params)
+        params: EnvironmentProviderBindingReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingReadResponse>, AgentApiError> {
+        self.read_environment_provider_binding_record(params)
             .await
             .map(AgentApiOutcome::new)
     }
 
-    async fn unregister_environment_provider(
+    async fn list_environment_templates(
         &self,
-        params: EnvironmentProviderUnregisterParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderUnregisterResponse>, AgentApiError> {
-        self.unregister_environment_provider_record(params)
+        params: EnvironmentTemplateListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentTemplateListResponse>, AgentApiError> {
+        self.list_environment_template_records(params)
             .await
             .map(AgentApiOutcome::new)
     }
 
-    async fn list_environment_providers(
+    async fn read_environment_template(
         &self,
-        params: EnvironmentProviderListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError> {
-        self.list_environment_provider_records(params)
+        params: EnvironmentTemplateReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentTemplateReadResponse>, AgentApiError> {
+        self.read_environment_template_record(params)
             .await
             .map(AgentApiOutcome::new)
     }

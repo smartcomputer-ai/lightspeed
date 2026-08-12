@@ -16,6 +16,8 @@ use api::{
     AgentApiError, AgentApiOutcome, OperatorApiKeyCreateParams, OperatorApiKeyCreateResponse,
     OperatorApiKeyListParams, OperatorApiKeyListResponse, OperatorApiKeyRevokeParams,
     OperatorApiKeyRevokeResponse, OperatorApiKeyView, OperatorApiService,
+    OperatorProviderBindingDeleteParams, OperatorProviderBindingDeleteResponse,
+    OperatorProviderBindingPutParams, OperatorProviderBindingPutResponse,
     OperatorUniverseCreateParams, OperatorUniverseCreateResponse, OperatorUniverseDeleteParams,
     OperatorUniverseDeleteResponse, OperatorUniverseListParams, OperatorUniverseListResponse,
     OperatorUniverseReadParams, OperatorUniverseReadResponse, OperatorUniverseView,
@@ -23,6 +25,10 @@ use api::{
 use async_trait::async_trait;
 use auth::ApiKeyStore as _;
 use engine::SessionId;
+use environments::{
+    EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
+    EnvironmentProviderBindingStore, EnvironmentProviderId, PutEnvironmentProviderBinding,
+};
 use object_store::ObjectStoreExt as _;
 use object_store::path::Path as ObjectPath;
 use temporal_workflow::{AgentSessionWorkflow, compose_workflow_id};
@@ -124,6 +130,68 @@ impl OperatorApiService for GatewayOperatorApi {
             universe,
             created,
         }))
+    }
+
+    async fn put_environment_provider_binding(
+        &self,
+        params: OperatorProviderBindingPutParams,
+    ) -> Result<AgentApiOutcome<OperatorProviderBindingPutResponse>, AgentApiError> {
+        let universe_id = parse_universe_id(&params.universe_id)?;
+        self.require_universe(universe_id).await?;
+        let store = self.runtime.stores().store_for(universe_id);
+        let binding = store
+            .put_provider_binding(PutEnvironmentProviderBinding {
+                universe_id,
+                binding_id: EnvironmentProviderBindingId::try_new(params.binding_id).map_err(
+                    |error| AgentApiError::invalid_request(format!("invalid binding id: {error}")),
+                )?,
+                provider_id: EnvironmentProviderId::try_new(params.provider_id).map_err(
+                    |error| AgentApiError::invalid_request(format!("invalid provider id: {error}")),
+                )?,
+                status: match params.status {
+                    api::EnvironmentProviderBindingStatusView::Enabled => {
+                        EnvironmentProviderBindingStatus::Enabled
+                    }
+                    api::EnvironmentProviderBindingStatusView::Disabled => {
+                        EnvironmentProviderBindingStatus::Disabled
+                    }
+                },
+                metadata: params.metadata,
+                expected_revision: params.expected_revision,
+                updated_at_ms: i64::try_from(current_time_ms()?)
+                    .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?,
+            })
+            .await
+            .map_err(super::service::environment_providers::map_environments_error)?;
+        Ok(AgentApiOutcome::new(OperatorProviderBindingPutResponse {
+            binding: super::service::environment_providers::environment_provider_binding_view(
+                &binding,
+            ),
+        }))
+    }
+
+    async fn delete_environment_provider_binding(
+        &self,
+        params: OperatorProviderBindingDeleteParams,
+    ) -> Result<AgentApiOutcome<OperatorProviderBindingDeleteResponse>, AgentApiError> {
+        let universe_id = parse_universe_id(&params.universe_id)?;
+        self.require_universe(universe_id).await?;
+        let binding_id =
+            EnvironmentProviderBindingId::try_new(params.binding_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid binding id: {error}"))
+            })?;
+        let store = self.runtime.stores().store_for(universe_id);
+        let binding = store
+            .delete_provider_binding(universe_id, &binding_id)
+            .await
+            .map_err(super::service::environment_providers::map_environments_error)?;
+        Ok(AgentApiOutcome::new(
+            OperatorProviderBindingDeleteResponse {
+                binding: super::service::environment_providers::environment_provider_binding_view(
+                    &binding,
+                ),
+            },
+        ))
     }
 
     async fn list_universes(

@@ -208,6 +208,39 @@ impl UniverseRuntime {
         Ok(state)
     }
 
+    /// Run the one active deployment lifecycle reconciler. Provider calls are
+    /// idempotent, so process restart safely resumes any persisted intent.
+    pub async fn run_environment_reconciler(self: Arc<Self>) {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let universe_ids = match store_pg::list_universes_with_pending_environments(
+                self.stores.pool(),
+            )
+            .await
+            {
+                Ok(ids) => ids,
+                Err(error) => {
+                    tracing::warn!(target: "temporal_server", %error, "environment reconciler scan failed");
+                    continue;
+                }
+            };
+            for universe_id in universe_ids {
+                let state = match self.state_for(universe_id, false).await {
+                    Ok(state) => state,
+                    Err(error) => {
+                        tracing::warn!(target: "temporal_server", %universe_id, %error, "environment reconciler could not resolve universe");
+                        continue;
+                    }
+                };
+                if let Err(error) = state.api.reconcile_environment_lifecycle_once().await {
+                    tracing::warn!(target: "temporal_server", %universe_id, %error, "environment lifecycle reconcile pass failed");
+                }
+            }
+        }
+    }
+
     async fn build_state(&self, universe_id: Uuid) -> Result<UniverseState, UniverseError> {
         let store = self.stores.store_for(universe_id);
         store

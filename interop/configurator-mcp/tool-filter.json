@@ -2,9 +2,6 @@
   "excludeMethods": [
     "initialize",
     "session/managed/start",
-    "environments/providers/register",
-    "environments/providers/heartbeat",
-    "environments/providers/unregister",
     "environments/jobs/create",
     "environments/jobs/read",
     "environments/jobs/cancel"

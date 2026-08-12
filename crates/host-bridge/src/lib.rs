@@ -1,6 +1,5 @@
 pub mod config;
 pub mod filesystem;
-pub mod gateway;
 pub mod jobs;
 pub mod process;
 mod process_group;
@@ -93,6 +92,7 @@ impl BridgeRuntime {
 
     pub fn controller_capabilities(&self) -> ControllerCapabilities {
         ControllerCapabilities {
+            list_templates: false,
             list_targets: true,
             create_target: false,
             attach_target: true,

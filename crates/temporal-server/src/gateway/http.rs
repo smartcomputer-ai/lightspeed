@@ -308,11 +308,13 @@ pub async fn serve_gateway(config: GatewayServerConfig) -> anyhow::Result<()> {
         stores,
     )?);
     prewarm_single_universe(&mode, &runtime).await?;
+    let reconciler = tokio::spawn(runtime.clone().run_environment_reconciler());
     let state = Arc::new(GatewayState::multi(mode, runtime, public_base_url));
     let app = gateway_router(state, config.max_request_body_bytes);
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     tracing::info!(target: "temporal_server", bind = %config.bind, "gateway listening");
     axum::serve(listener, app).await?;
+    reconciler.abort();
     Ok(())
 }
 
@@ -344,11 +346,22 @@ pub async fn serve_gateway_with_client_store(
             .with_public_base_url(public_base_url)
             .build(),
     );
+    let reconciler_api = api.clone();
+    let reconciler = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+        loop {
+            interval.tick().await;
+            if let Err(error) = reconciler_api.reconcile_environment_lifecycle_once().await {
+                tracing::warn!(target: "temporal_server", %error, "environment lifecycle reconcile pass failed");
+            }
+        }
+    });
     let state = Arc::new(GatewayState::for_api(api));
     let app = gateway_router(state, config.max_request_body_bytes);
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     tracing::info!(target: "temporal_server", bind = %config.bind, "gateway listening");
     axum::serve(listener, app).await?;
+    reconciler.abort();
     Ok(())
 }
 

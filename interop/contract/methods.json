@@ -451,7 +451,7 @@
       "summary": "Unbind an environment credential"
     },
     {
-      "description": "Asks a live provider with create capability to create a universe-owned environment instance. This does not attach the instance to any session.",
+      "description": "Records an idempotent provisioning intent against an enabled universe binding. The provider validates the template, entitlement, allocation, and capacity asynchronously.",
       "method": "environments/create",
       "params": {
         "schema": {
@@ -466,10 +466,10 @@
         "type": "AgentApiOutcome<EnvironmentCreateResponse>"
       },
       "scope": "universe",
-      "summary": "Provision an environment instance"
+      "summary": "Create an environment"
     },
     {
-      "description": "Returns the universe resource with its provider identity, current observed lifecycle, connection, scope, and capabilities.",
+      "description": "Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.",
       "method": "environments/read",
       "params": {
         "schema": {
@@ -484,10 +484,10 @@
         "type": "AgentApiOutcome<EnvironmentReadResponse>"
       },
       "scope": "universe",
-      "summary": "Read an environment instance"
+      "summary": "Read an environment"
     },
     {
-      "description": "Lists universe-owned instances, optionally filtered by provider or observed target status.",
+      "description": "Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.",
       "method": "environments/list",
       "params": {
         "schema": {
@@ -502,10 +502,10 @@
         "type": "AgentApiOutcome<EnvironmentListResponse>"
       },
       "scope": "universe",
-      "summary": "List environment instances"
+      "summary": "List environments"
     },
     {
-      "description": "Tears down the universe resource through its provider. Closing is rejected while session bindings occupy the instance; the provider decides whether active jobs reject close or are interrupted.",
+      "description": "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.",
       "method": "environments/close",
       "params": {
         "schema": {
@@ -520,7 +520,79 @@
         "type": "AgentApiOutcome<EnvironmentCloseResponse>"
       },
       "scope": "universe",
-      "summary": "Close an environment instance"
+      "summary": "Close an environment"
+    },
+    {
+      "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",
+      "method": "environments/provider-bindings/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderBindingListParams"
+        },
+        "type": "EnvironmentProviderBindingListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderBindingListResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderBindingListResponse>"
+      },
+      "scope": "universe",
+      "summary": "List environment provider bindings"
+    },
+    {
+      "description": "Returns one universe routing and admission binding. Provider template entitlement, capacity, quota, and ingress policy remain provider-owned.",
+      "method": "environments/provider-bindings/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderBindingReadParams"
+        },
+        "type": "EnvironmentProviderBindingReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderBindingReadResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderBindingReadResponse>"
+      },
+      "scope": "universe",
+      "summary": "Read an environment provider binding"
+    },
+    {
+      "description": "Reads immutable templates directly from the selected bound provider controller.",
+      "method": "environments/templates/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentTemplateListParams"
+        },
+        "type": "EnvironmentTemplateListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentTemplateListResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentTemplateListResponse>"
+      },
+      "scope": "universe",
+      "summary": "List environment templates"
+    },
+    {
+      "description": "Returns one immutable template version from the selected bound provider controller.",
+      "method": "environments/templates/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentTemplateReadParams"
+        },
+        "type": "EnvironmentTemplateReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentTemplateReadResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentTemplateReadResponse>"
+      },
+      "scope": "universe",
+      "summary": "Read an environment template"
     },
     {
       "description": "Starts a dependency-aware job group on one environment instance, injecting the environment's configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance rather than a session.",
@@ -937,78 +1009,6 @@
       "summary": "Delete an MCP server record"
     },
     {
-      "description": "Publishes a controller endpoint, capabilities, implementation identity, and liveness lease. Intended for trusted provider/bridge infrastructure, not ordinary configuration clients.",
-      "method": "environments/providers/register",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/EnvironmentProviderRegisterParams"
-        },
-        "type": "EnvironmentProviderRegisterParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderRegisterResponse"
-        },
-        "type": "AgentApiOutcome<EnvironmentProviderRegisterResponse>"
-      },
-      "scope": "universe",
-      "summary": "Register environment provider presence"
-    },
-    {
-      "description": "Renews a provider lease and records its complete observed target descriptors. Omitted provided targets may become unknown; intended for provider infrastructure.",
-      "method": "environments/providers/heartbeat",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/EnvironmentProviderHeartbeatParams"
-        },
-        "type": "EnvironmentProviderHeartbeatParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse"
-        },
-        "type": "AgentApiOutcome<EnvironmentProviderHeartbeatResponse>"
-      },
-      "scope": "universe",
-      "summary": "Refresh environment provider presence"
-    },
-    {
-      "description": "Marks provider presence offline without deleting its durable environment instance records.",
-      "method": "environments/providers/unregister",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/EnvironmentProviderUnregisterParams"
-        },
-        "type": "EnvironmentProviderUnregisterParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderUnregisterResponse"
-        },
-        "type": "AgentApiOutcome<EnvironmentProviderUnregisterResponse>"
-      },
-      "scope": "universe",
-      "summary": "Unregister environment provider presence"
-    },
-    {
-      "description": "Lists current provider presence with lease-derived online/stale/offline status, optionally filtered by status or kind.",
-      "method": "environments/providers/list",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/EnvironmentProviderListParams"
-        },
-        "type": "EnvironmentProviderListParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderListResponse"
-        },
-        "type": "AgentApiOutcome<EnvironmentProviderListResponse>"
-      },
-      "scope": "universe",
-      "summary": "List environment providers"
-    },
-    {
       "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. The token can never be read back through the API.",
       "method": "auth/grants/import",
       "params": {
@@ -1421,6 +1421,42 @@
       },
       "scope": "operator",
       "summary": "Revoke a universe API key"
+    },
+    {
+      "description": "Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.",
+      "method": "operator/universes/provider-bindings/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorProviderBindingPutParams"
+        },
+        "type": "OperatorProviderBindingPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorProviderBindingPutResponse"
+        },
+        "type": "AgentApiOutcome<OperatorProviderBindingPutResponse>"
+      },
+      "scope": "operator",
+      "summary": "Put an environment provider binding"
+    },
+    {
+      "description": "Deletes a universe provider binding only after every referencing environment has reached Closed.",
+      "method": "operator/universes/provider-bindings/delete",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorProviderBindingDeleteParams"
+        },
+        "type": "OperatorProviderBindingDeleteParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorProviderBindingDeleteResponse"
+        },
+        "type": "AgentApiOutcome<OperatorProviderBindingDeleteResponse>"
+      },
+      "scope": "operator",
+      "summary": "Delete an environment provider binding"
     }
   ],
   "notificationSchema": {

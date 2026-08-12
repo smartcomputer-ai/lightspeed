@@ -144,11 +144,12 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   and GitHub App drivers, store traits, typed broker errors, the runtime
   token broker with single-flight refresh and on-demand minting (P69), and
   deployment-scoped inbound API keys for gateway authentication (P90).
-- `crates/environments/` — environment provider presence, universe environment
-  resources, universe-scoped credential bindings, validation, errors, and store
-  traits. Sessions retain only an active environment id in event-sourced core
-  state. Provider job DTOs live in `host-protocol`; no Lightspeed job registry
-  is persisted.
+- `crates/environments/` — operator provider records, universe-scoped routing
+  bindings, environment lifecycle intents, minimal incarnation identities,
+  universe-scoped credential bindings, validation, errors, and store traits.
+  Sessions retain only an active environment id in event-sourced core state.
+  Provider job DTOs live in `host-protocol`; no Lightspeed job registry is
+  persisted.
 - `crates/eval/` — eval harness for agent/tool workflows.
 - `crates/llm-runtime/` — CoreAgent LLM runtime from planned requests to
   provider-native client calls.

@@ -47,7 +47,7 @@ Initial placement uses:
 
 - architecture and immutable template compatibility;
 - hard resource fit;
-- binding policy and quota already admitted by Lightspeed;
+- provider-owned binding entitlement and aggregate quota;
 - node health and admission state;
 - required labels/failure-domain constraints; and
 - simple free-capacity preference.

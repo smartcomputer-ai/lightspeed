@@ -1,194 +1,138 @@
-use super::environment_lifecycle::allocate_environment_id;
 use super::*;
 
-use std::collections::BTreeSet;
-
 use ::environments::{
-    EnvironmentOrigin, EnvironmentProviderCapabilities as RegistryProviderCapabilities,
-    EnvironmentProviderHeartbeat as RegistryProviderHeartbeat, EnvironmentProviderId,
-    EnvironmentProviderKind as RegistryProviderKind, EnvironmentProviderPresence,
-    EnvironmentProviderRecord, EnvironmentProviderStatus as RegistryProviderStatus,
-    EnvironmentRecord, EnvironmentRegistryError, HostControllerConnectionSpec,
-    ListEnvironmentProviders, ObserveEnvironment, ObservedEnvironmentTarget,
-    RegisterEnvironmentProvider, UpdateEnvironmentProviderStatus,
+    EnvironmentProviderBindingId, EnvironmentProviderBindingRecord,
+    EnvironmentProviderBindingStatus, EnvironmentProviderId, EnvironmentProviderRecord,
+    EnvironmentRecord, EnvironmentRegistryError, EnvironmentSource, EnvironmentStatus,
 };
-use host_protocol::{
-    control::{handshake::ControllerInitializeParams, targets::HostTargetStatus},
-    shared::{
-        CURRENT_PROTOCOL_VERSION, HostCapabilities, HostConnectionSpec, HostPath, HostScope,
-        HostTargetId, HostTransport, ImplementationInfo,
-    },
+use host_protocol::control::targets::{
+    EnvironmentTemplate, ListTemplatesParams, ProviderBindingContext,
 };
 
 impl GatewayAgentApi {
-    pub(super) async fn register_environment_provider_record(
+    pub(super) async fn list_environment_provider_binding_records(
         &self,
-        params: EnvironmentProviderRegisterParams,
-    ) -> Result<EnvironmentProviderRegisterResponse, AgentApiError> {
-        let observed_at_ms = now_ms()?;
-        let controller_connection = registry_controller_connection(params.controller_connection)?;
-        let (capabilities, implementation) = self
-            .initialize_environment_provider_controller(&controller_connection)
-            .await?;
-        let provider = ::environments::EnvironmentProviderStore::register_provider(
+        _params: EnvironmentProviderBindingListParams,
+    ) -> Result<EnvironmentProviderBindingListResponse, AgentApiError> {
+        let records = ::environments::EnvironmentProviderBindingStore::list_provider_bindings(
             self.store.as_ref(),
-            RegisterEnvironmentProvider {
-                provider_id: parse_environment_provider_id(params.provider_id)?,
-                provider_kind: registry_provider_kind(params.provider_kind),
-                display_name: params.display_name,
-                controller_connection,
-                capabilities,
-                implementation,
-                lease_ttl_ms: params.lease_ttl_ms,
-                metadata: params.metadata,
-                observed_at_ms,
-            },
+            self.store.config().universe_id,
         )
         .await
         .map_err(map_environments_error)?;
-        Ok(EnvironmentProviderRegisterResponse {
-            provider: environment_provider_view(&provider, observed_at_ms),
+        Ok(EnvironmentProviderBindingListResponse {
+            bindings: records
+                .iter()
+                .map(environment_provider_binding_view)
+                .collect(),
         })
     }
 
-    pub(super) async fn heartbeat_environment_provider_record(
+    pub(super) async fn read_environment_provider_binding_record(
         &self,
-        params: EnvironmentProviderHeartbeatParams,
-    ) -> Result<EnvironmentProviderHeartbeatResponse, AgentApiError> {
-        let observed_at_ms = now_ms()?;
-        let provider_id = parse_environment_provider_id(params.provider_id)?;
-        let observations = params
-            .observed_targets
-            .into_iter()
-            .map(registry_target_descriptor)
-            .collect::<Result<Vec<_>, _>>()?;
-        let provider = ::environments::EnvironmentProviderStore::update_provider_heartbeat(
+        params: EnvironmentProviderBindingReadParams,
+    ) -> Result<EnvironmentProviderBindingReadResponse, AgentApiError> {
+        let binding_id = parse_environment_provider_binding_id(params.binding_id)?;
+        let record = ::environments::EnvironmentProviderBindingStore::read_provider_binding(
             self.store.as_ref(),
-            RegistryProviderHeartbeat {
-                provider_id: provider_id.clone(),
-                observed_at_ms,
-                lease_ttl_ms: params.lease_ttl_ms,
-                observed_targets: observations.clone(),
-            },
+            self.store.config().universe_id,
+            &binding_id,
         )
         .await
         .map_err(map_environments_error)?;
+        Ok(EnvironmentProviderBindingReadResponse {
+            binding: environment_provider_binding_view(&record),
+        })
+    }
 
-        let mut observed_ids = BTreeSet::new();
-        let mut instances = Vec::with_capacity(observations.len());
-        for observation in observations {
-            observed_ids.insert(observation.target.target_id.clone());
-            let environment_id =
-                match ::environments::EnvironmentStore::read_environment_by_provider_target(
+    pub(super) async fn list_environment_template_records(
+        &self,
+        params: EnvironmentTemplateListParams,
+    ) -> Result<EnvironmentTemplateListResponse, AgentApiError> {
+        let binding_filter = params
+            .binding_id
+            .map(parse_environment_provider_binding_id)
+            .transpose()?;
+        let bindings = if let Some(binding_id) = binding_filter {
+            vec![
+                ::environments::EnvironmentProviderBindingStore::read_provider_binding(
                     self.store.as_ref(),
-                    &provider_id,
-                    &observation.target.target_id,
+                    self.store.config().universe_id,
+                    &binding_id,
                 )
                 .await
-                {
-                    Ok(instance) => instance.environment_id,
-                    Err(EnvironmentRegistryError::NotFound { .. }) => allocate_environment_id(),
-                    Err(error) => return Err(map_environments_error(error)),
-                };
-            let instance = ::environments::EnvironmentStore::observe_environment(
+                .map_err(map_environments_error)?,
+            ]
+        } else {
+            ::environments::EnvironmentProviderBindingStore::list_provider_bindings(
                 self.store.as_ref(),
-                ObserveEnvironment::from_observation(
-                    environment_id,
-                    provider_id.clone(),
-                    EnvironmentOrigin::Provided,
-                    observation,
-                    observed_at_ms,
-                ),
+                self.store.config().universe_id,
             )
             .await
-            .map_err(map_environments_error)?;
-            instances.push(environment_instance_view(&instance));
+            .map_err(map_environments_error)?
+        };
+        let mut templates = Vec::new();
+        for binding in bindings
+            .into_iter()
+            .filter(|binding| binding.status == EnvironmentProviderBindingStatus::Enabled)
+        {
+            let provider = self.read_environment_provider(&binding.provider_id).await?;
+            let mut controller = self
+                .host_controller_connector
+                .connect(&provider.controller_connection)
+                .await?;
+            let response = controller
+                .list_templates(&ListTemplatesParams {
+                    binding: binding_context(&binding),
+                })
+                .await?;
+            templates.extend(
+                response
+                    .templates
+                    .iter()
+                    .map(|template| environment_template_view(&binding, template)),
+            );
         }
-        ::environments::EnvironmentStore::mark_missing_provided_environments_unknown(
-            self.store.as_ref(),
-            &provider_id,
-            &observed_ids,
-            observed_at_ms,
-        )
-        .await
-        .map_err(map_environments_error)?;
-
-        Ok(EnvironmentProviderHeartbeatResponse {
-            provider: environment_provider_view(&provider, observed_at_ms),
-            environments: instances,
-        })
+        templates.sort_by(|left, right| {
+            (&left.binding_id, &left.template_id).cmp(&(&right.binding_id, &right.template_id))
+        });
+        Ok(EnvironmentTemplateListResponse { templates })
     }
 
-    pub(super) async fn unregister_environment_provider_record(
+    pub(super) async fn read_environment_template_record(
         &self,
-        params: EnvironmentProviderUnregisterParams,
-    ) -> Result<EnvironmentProviderUnregisterResponse, AgentApiError> {
-        let now = now_ms()?;
-        let provider = ::environments::EnvironmentProviderStore::update_provider_status(
-            self.store.as_ref(),
-            UpdateEnvironmentProviderStatus {
-                provider_id: parse_environment_provider_id(params.provider_id)?,
-                status: RegistryProviderStatus::Offline,
-                updated_at_ms: now,
-            },
-        )
-        .await
-        .map_err(map_environments_error)?;
-        Ok(EnvironmentProviderUnregisterResponse {
-            provider: environment_provider_view(&provider, now),
-        })
-    }
-
-    pub(super) async fn list_environment_provider_records(
-        &self,
-        params: EnvironmentProviderListParams,
-    ) -> Result<EnvironmentProviderListResponse, AgentApiError> {
-        let now = now_ms()?;
-        let providers = ::environments::EnvironmentProviderStore::list_providers(
-            self.store.as_ref(),
-            ListEnvironmentProviders {
-                status: None,
-                provider_kind: params.provider_kind.map(registry_provider_kind),
-            },
-        )
-        .await
-        .map_err(map_environments_error)?
-        .into_iter()
-        .filter(|provider| {
-            params
-                .status
-                .is_none_or(|status| api_provider_presence(provider.presence_at(now)) == status)
-        })
-        .map(|provider| environment_provider_view(&provider, now))
-        .collect();
-        Ok(EnvironmentProviderListResponse { providers })
-    }
-
-    async fn initialize_environment_provider_controller(
-        &self,
-        connection: &HostControllerConnectionSpec,
-    ) -> Result<(RegistryProviderCapabilities, ImplementationInfo), AgentApiError> {
-        let mut controller = self.host_controller_connector.connect(connection).await?;
-        let response = controller
-            .initialize(&ControllerInitializeParams {
-                protocol_version: CURRENT_PROTOCOL_VERSION,
-                client_name: "lightspeed-temporal-server".to_owned(),
+        params: EnvironmentTemplateReadParams,
+    ) -> Result<EnvironmentTemplateReadResponse, AgentApiError> {
+        let expected = params.template_id;
+        let response = self
+            .list_environment_template_records(EnvironmentTemplateListParams {
+                binding_id: Some(params.binding_id),
             })
             .await?;
-        if response.protocol_version != CURRENT_PROTOCOL_VERSION {
-            return Err(AgentApiError::rejected(format!(
-                "unsupported host controller protocol version {}; expected {CURRENT_PROTOCOL_VERSION}",
-                response.protocol_version
-            )));
-        }
-        if response.implementation.name.is_empty() {
-            return Err(AgentApiError::rejected(
-                "host controller implementation name must not be empty",
-            ));
-        }
-        let capabilities = RegistryProviderCapabilities::from_controller(response.capabilities);
-        capabilities.validate().map_err(map_environments_error)?;
-        Ok((capabilities, response.implementation))
+        let template = response
+            .templates
+            .into_iter()
+            .find(|template| template.template_id == expected)
+            .ok_or_else(|| {
+                AgentApiError::not_found(format!("environment template not found: {expected}"))
+            })?;
+        Ok(EnvironmentTemplateReadResponse { template })
+    }
+
+    pub(super) async fn read_environment_provider(
+        &self,
+        provider_id: &EnvironmentProviderId,
+    ) -> Result<EnvironmentProviderRecord, AgentApiError> {
+        ::environments::EnvironmentProviderStore::read_provider(self.store.as_ref(), provider_id)
+            .await
+            .map_err(map_environments_error)
+    }
+}
+
+pub(super) fn binding_context(record: &EnvironmentProviderBindingRecord) -> ProviderBindingContext {
+    ProviderBindingContext {
+        universe_id: record.universe_id.to_string(),
+        binding_id: record.binding_id.to_string(),
     }
 }
 
@@ -199,279 +143,124 @@ pub(super) fn parse_environment_provider_id(
         .map_err(|error| AgentApiError::invalid_request(format!("invalid provider id: {error}")))
 }
 
-fn registry_provider_kind(value: EnvironmentProviderKindView) -> RegistryProviderKind {
-    match value {
-        EnvironmentProviderKindView::Sandbox => RegistryProviderKind::Sandbox,
-        EnvironmentProviderKindView::Bridge => RegistryProviderKind::Bridge,
-        EnvironmentProviderKindView::Custom => RegistryProviderKind::Custom,
-    }
-}
-
-fn api_provider_kind(value: RegistryProviderKind) -> EnvironmentProviderKindView {
-    match value {
-        RegistryProviderKind::Sandbox => EnvironmentProviderKindView::Sandbox,
-        RegistryProviderKind::Bridge => EnvironmentProviderKindView::Bridge,
-        RegistryProviderKind::Custom => EnvironmentProviderKindView::Custom,
-    }
-}
-
-fn api_provider_presence(value: EnvironmentProviderPresence) -> EnvironmentProviderStatusView {
-    match value {
-        EnvironmentProviderPresence::Online => EnvironmentProviderStatusView::Online,
-        EnvironmentProviderPresence::Stale => EnvironmentProviderStatusView::Stale,
-        EnvironmentProviderPresence::Offline => EnvironmentProviderStatusView::Offline,
-    }
-}
-
-fn registry_controller_connection(
-    value: HostControllerConnectionView,
-) -> Result<HostControllerConnectionSpec, AgentApiError> {
-    Ok(HostControllerConnectionSpec {
-        endpoint: value.endpoint,
-        transport: registry_host_transport(value.transport)?,
+pub(super) fn parse_environment_provider_binding_id(
+    value: String,
+) -> Result<EnvironmentProviderBindingId, AgentApiError> {
+    EnvironmentProviderBindingId::try_new(value).map_err(|error| {
+        AgentApiError::invalid_request(format!("invalid provider binding id: {error}"))
     })
 }
 
-fn api_controller_connection(value: &HostControllerConnectionSpec) -> HostControllerConnectionView {
-    HostControllerConnectionView {
-        endpoint: value.endpoint.clone(),
-        transport: api_host_transport(&value.transport),
-    }
-}
-
-pub(super) fn registry_host_transport(
-    value: HostTransportView,
-) -> Result<HostTransport, AgentApiError> {
-    Ok(match value {
-        HostTransportView::WebSocket => HostTransport::WebSocket,
-        HostTransportView::Http => HostTransport::Http,
-        HostTransportView::Stdio => HostTransport::Stdio,
-        HostTransportView::Ssh => HostTransport::Ssh,
-        HostTransportView::Provider { provider_type } => {
-            if provider_type.is_empty() {
-                return Err(AgentApiError::invalid_request(
-                    "host transport provider type must not be empty",
-                ));
+pub(crate) fn environment_provider_binding_view(
+    record: &EnvironmentProviderBindingRecord,
+) -> EnvironmentProviderBindingView {
+    EnvironmentProviderBindingView {
+        binding_id: record.binding_id.to_string(),
+        provider_id: record.provider_id.to_string(),
+        status: match record.status {
+            EnvironmentProviderBindingStatus::Enabled => {
+                EnvironmentProviderBindingStatusView::Enabled
             }
-            HostTransport::Provider { provider_type }
-        }
-    })
-}
-
-pub(super) fn api_host_transport(value: &HostTransport) -> HostTransportView {
-    match value {
-        HostTransport::WebSocket => HostTransportView::WebSocket,
-        HostTransport::Http => HostTransportView::Http,
-        HostTransport::Stdio => HostTransportView::Stdio,
-        HostTransport::Ssh => HostTransportView::Ssh,
-        HostTransport::Provider { provider_type } => HostTransportView::Provider {
-            provider_type: provider_type.clone(),
+            EnvironmentProviderBindingStatus::Disabled => {
+                EnvironmentProviderBindingStatusView::Disabled
+            }
         },
-    }
-}
-
-fn registry_target_descriptor(
-    value: EnvironmentTargetDescriptorView,
-) -> Result<ObservedEnvironmentTarget, AgentApiError> {
-    let target_id = HostTargetId::new(value.target.target_id);
-    let connection = registry_host_connection(value.connection)?;
-    if target_id != connection.target_id {
-        return Err(AgentApiError::invalid_request(
-            "heartbeat target and connection target ids must match",
-        ));
-    }
-    Ok(ObservedEnvironmentTarget {
-        target: host_protocol::control::targets::HostTargetSummary {
-            target_id,
-            display_name: value.target.display_name,
-            status: registry_target_status(value.target.status),
-            scope: registry_host_scope(value.target.scope),
-            capabilities: registry_host_capabilities(value.target.capabilities),
-            default_cwd: optional_host_path(value.target.default_cwd, "default cwd")?,
-            metadata: value.target.metadata,
-        },
-        connection,
-    })
-}
-
-fn registry_host_connection(
-    value: HostConnectionView,
-) -> Result<HostConnectionSpec, AgentApiError> {
-    Ok(HostConnectionSpec {
-        target_id: HostTargetId::new(value.target_id),
-        endpoint: value.endpoint,
-        transport: registry_host_transport(value.transport)?,
-        scope: registry_host_scope(value.scope),
-        default_cwd: optional_host_path(value.default_cwd, "connection default cwd")?,
-        capabilities: registry_host_capabilities(value.capabilities),
-    })
-}
-
-fn optional_host_path(
-    value: Option<String>,
-    name: &str,
-) -> Result<Option<HostPath>, AgentApiError> {
-    value
-        .map(HostPath::new)
-        .transpose()
-        .map_err(|error| AgentApiError::invalid_request(format!("invalid {name}: {error}")))
-}
-
-fn environment_provider_view(
-    record: &EnvironmentProviderRecord,
-    now_ms: i64,
-) -> EnvironmentProviderView {
-    EnvironmentProviderView {
-        provider_id: record.provider_id.as_str().to_owned(),
-        provider_kind: api_provider_kind(record.provider_kind),
-        status: api_provider_presence(record.presence_at(now_ms)),
-        controller_connection: api_controller_connection(&record.controller_connection),
-        capabilities: EnvironmentProviderCapabilitiesView {
-            list_targets: record.capabilities.list_targets,
-            create_target: record.capabilities.create_target,
-            get_target: record.capabilities.get_target,
-            close_target: record.capabilities.close_target,
-        },
-        implementation: EnvironmentProviderImplementationView {
-            name: record.implementation.name.clone(),
-            version: record.implementation.version.clone(),
-        },
-        last_seen_ms: record.last_seen_ms,
-        lease_expires_ms: record.lease_expires_ms,
-        display_name: record.display_name.clone(),
+        revision: record.revision,
         metadata: record.metadata.clone(),
-    }
-}
-
-pub(super) fn environment_instance_view(record: &EnvironmentRecord) -> EnvironmentInstanceView {
-    EnvironmentInstanceView {
-        environment_id: record.environment_id.as_str().to_owned(),
-        provider_id: record.provider_id.as_str().to_owned(),
-        provider_target_id: record.provider_target_id.as_str().to_owned(),
-        origin: match record.origin {
-            EnvironmentOrigin::Provided => EnvironmentOriginView::Provided,
-            EnvironmentOrigin::Provisioned => EnvironmentOriginView::Provisioned,
-        },
-        status: api_target_status(record.status),
-        scope: api_host_scope(&record.scope),
-        capabilities: api_host_capabilities(&record.capabilities),
-        connection: api_host_connection(&record.connection),
-        default_cwd: record
-            .default_cwd
-            .as_ref()
-            .map(|path| path.as_str().to_owned()),
-        metadata: record.metadata.clone(),
-        observed_at_ms: record.observed_at_ms,
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
     }
 }
 
-fn api_host_connection(value: &HostConnectionSpec) -> HostConnectionView {
-    HostConnectionView {
-        target_id: value.target_id.as_str().to_owned(),
-        endpoint: value.endpoint.clone(),
-        transport: api_host_transport(&value.transport),
-        scope: api_host_scope(&value.scope),
-        default_cwd: value
-            .default_cwd
-            .as_ref()
-            .map(|path| path.as_str().to_owned()),
-        capabilities: api_host_capabilities(&value.capabilities),
+pub(super) fn environment_template_view(
+    binding: &EnvironmentProviderBindingRecord,
+    template: &EnvironmentTemplate,
+) -> EnvironmentTemplateView {
+    EnvironmentTemplateView {
+        template_id: template.template_id.clone(),
+        provider_id: binding.provider_id.to_string(),
+        binding_id: binding.binding_id.to_string(),
+        display_name: template.display_name.clone(),
+        description: template.description.clone(),
+        public_ingress: template.public_ingress,
+        deprecated: template.deprecated,
+        metadata: template.metadata.clone(),
     }
 }
 
-pub(super) fn registry_target_status(value: EnvironmentTargetStatusView) -> HostTargetStatus {
-    match value {
-        EnvironmentTargetStatusView::Creating => HostTargetStatus::Creating,
-        EnvironmentTargetStatusView::Starting => HostTargetStatus::Starting,
-        EnvironmentTargetStatusView::Ready => HostTargetStatus::Ready,
-        EnvironmentTargetStatusView::Stopped => HostTargetStatus::Stopped,
-        EnvironmentTargetStatusView::Closing => HostTargetStatus::Closing,
-        EnvironmentTargetStatusView::Closed => HostTargetStatus::Closed,
-        EnvironmentTargetStatusView::Failed => HostTargetStatus::Failed,
-        EnvironmentTargetStatusView::Unknown => HostTargetStatus::Unknown,
-    }
-}
-
-fn api_target_status(value: HostTargetStatus) -> EnvironmentTargetStatusView {
-    match value {
-        HostTargetStatus::Creating => EnvironmentTargetStatusView::Creating,
-        HostTargetStatus::Starting => EnvironmentTargetStatusView::Starting,
-        HostTargetStatus::Ready => EnvironmentTargetStatusView::Ready,
-        HostTargetStatus::Stopped => EnvironmentTargetStatusView::Stopped,
-        HostTargetStatus::Closing => EnvironmentTargetStatusView::Closing,
-        HostTargetStatus::Closed => EnvironmentTargetStatusView::Closed,
-        HostTargetStatus::Failed => EnvironmentTargetStatusView::Failed,
-        HostTargetStatus::Unknown => EnvironmentTargetStatusView::Unknown,
-    }
-}
-
-fn registry_host_scope(value: HostScopeView) -> HostScope {
-    match value {
-        HostScopeView::Default => HostScope::Default,
-        HostScopeView::Session { session_id } => HostScope::Session { session_id },
-    }
-}
-
-fn api_host_scope(value: &HostScope) -> HostScopeView {
-    match value {
-        HostScope::Default => HostScopeView::Default,
-        HostScope::Session { session_id } => HostScopeView::Session {
-            session_id: session_id.clone(),
+pub(super) fn environment_view(record: &EnvironmentRecord) -> EnvironmentView {
+    EnvironmentView {
+        environment_id: record.environment_id.to_string(),
+        request_id: record.request_id.to_string(),
+        source: match &record.source {
+            EnvironmentSource::Provisioned {
+                provider_id,
+                binding_id,
+            } => EnvironmentSourceView::Provisioned {
+                provider_id: provider_id.to_string(),
+                binding_id: binding_id.to_string(),
+            },
+            EnvironmentSource::Enrolled => EnvironmentSourceView::Enrolled,
         },
+        display_name: record.display_name.clone(),
+        status: lifecycle_status_view(record.status),
+        incarnation: EnvironmentIncarnationView {
+            incarnation_id: record.incarnation.incarnation_id.to_string(),
+            provision_request_id: record
+                .incarnation
+                .provision_request_id
+                .as_ref()
+                .map(ToString::to_string),
+            provider_target_id: record
+                .incarnation
+                .provider_target_id
+                .as_ref()
+                .map(ToString::to_string),
+            template_id: record
+                .incarnation
+                .template_id
+                .as_ref()
+                .map(ToString::to_string),
+            created_at_ms: record.incarnation.created_at_ms,
+            updated_at_ms: record.incarnation.updated_at_ms,
+        },
+        metadata: record.metadata.clone(),
+        created_at_ms: record.created_at_ms,
+        updated_at_ms: record.updated_at_ms,
     }
 }
 
-fn registry_host_capabilities(value: HostCapabilitiesView) -> HostCapabilities {
-    HostCapabilities {
-        filesystem_read: value.filesystem_read,
-        filesystem_write: value.filesystem_write,
-        // Not part of the registry view: native search/glob/ranged-read
-        // support is advertised live by the host at data-plane handshake,
-        // which is what the runtime trusts.
-        filesystem_search: false,
-        filesystem_glob: false,
-        filesystem_ranged_read: false,
-        process_start: value.process_start,
-        process_stdin: value.process_stdin,
-        process_terminate: value.process_terminate,
-        process_output_polling: value.process_output_polling,
-        process_output_notifications: value.process_output_notifications,
-        process_pty: value.process_pty,
-        job_start: value.job_start,
-        job_list: value.job_list,
-        job_read: value.job_read,
-        job_cancel: value.job_cancel,
-        job_wait_hint: value.job_wait_hint,
-        job_dependencies: value.job_dependencies,
-        job_queue_keys: value.job_queue_keys,
-        network: value.network,
+fn lifecycle_status_view(value: EnvironmentStatus) -> EnvironmentLifecycleStatusView {
+    match value {
+        EnvironmentStatus::Provisioning => EnvironmentLifecycleStatusView::Provisioning,
+        EnvironmentStatus::Booting => EnvironmentLifecycleStatusView::Booting,
+        EnvironmentStatus::WaitingForDaemon => EnvironmentLifecycleStatusView::WaitingForDaemon,
+        EnvironmentStatus::Ready => EnvironmentLifecycleStatusView::Ready,
+        EnvironmentStatus::Offline => EnvironmentLifecycleStatusView::Offline,
+        EnvironmentStatus::Closing => EnvironmentLifecycleStatusView::Closing,
+        EnvironmentStatus::Closed => EnvironmentLifecycleStatusView::Closed,
+        EnvironmentStatus::Failed => EnvironmentLifecycleStatusView::Failed,
+        EnvironmentStatus::Unknown => EnvironmentLifecycleStatusView::Unknown,
     }
 }
 
-fn api_host_capabilities(value: &HostCapabilities) -> HostCapabilitiesView {
-    HostCapabilitiesView {
-        filesystem_read: value.filesystem_read,
-        filesystem_write: value.filesystem_write,
-        process_start: value.process_start,
-        process_stdin: value.process_stdin,
-        process_terminate: value.process_terminate,
-        process_output_polling: value.process_output_polling,
-        process_output_notifications: value.process_output_notifications,
-        process_pty: value.process_pty,
-        job_start: value.job_start,
-        job_list: value.job_list,
-        job_read: value.job_read,
-        job_cancel: value.job_cancel,
-        job_wait_hint: value.job_wait_hint,
-        job_dependencies: value.job_dependencies,
-        job_queue_keys: value.job_queue_keys,
-        network: value.network,
+pub(super) fn registry_lifecycle_status(
+    value: EnvironmentLifecycleStatusView,
+) -> EnvironmentStatus {
+    match value {
+        EnvironmentLifecycleStatusView::Provisioning => EnvironmentStatus::Provisioning,
+        EnvironmentLifecycleStatusView::Booting => EnvironmentStatus::Booting,
+        EnvironmentLifecycleStatusView::WaitingForDaemon => EnvironmentStatus::WaitingForDaemon,
+        EnvironmentLifecycleStatusView::Ready => EnvironmentStatus::Ready,
+        EnvironmentLifecycleStatusView::Offline => EnvironmentStatus::Offline,
+        EnvironmentLifecycleStatusView::Closing => EnvironmentStatus::Closing,
+        EnvironmentLifecycleStatusView::Closed => EnvironmentStatus::Closed,
+        EnvironmentLifecycleStatusView::Failed => EnvironmentStatus::Failed,
+        EnvironmentLifecycleStatusView::Unknown => EnvironmentStatus::Unknown,
     }
 }
 
-pub(super) fn map_environments_error(error: EnvironmentRegistryError) -> AgentApiError {
+pub(crate) fn map_environments_error(error: EnvironmentRegistryError) -> AgentApiError {
     match error {
         EnvironmentRegistryError::AlreadyExists { kind, id } => {
             AgentApiError::conflict(format!("environment registry {kind} already exists: {id}"))
@@ -479,6 +268,14 @@ pub(super) fn map_environments_error(error: EnvironmentRegistryError) -> AgentAp
         EnvironmentRegistryError::NotFound { kind, id } => {
             AgentApiError::not_found(format!("environment registry {kind} not found: {id}"))
         }
+        EnvironmentRegistryError::RevisionConflict {
+            kind,
+            id,
+            expected,
+            actual,
+        } => AgentApiError::conflict(format!(
+            "environment registry revision conflict for {kind} {id}: expected {expected:?}, actual {actual:?}"
+        )),
         EnvironmentRegistryError::InvalidInput { message } => {
             AgentApiError::invalid_request(message)
         }

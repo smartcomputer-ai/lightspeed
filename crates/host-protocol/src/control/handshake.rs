@@ -24,6 +24,8 @@ pub struct ControllerInitializeResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ControllerCapabilities {
     #[serde(default)]
+    pub list_templates: bool,
+    #[serde(default)]
     pub list_targets: bool,
     #[serde(default)]
     pub create_target: bool,

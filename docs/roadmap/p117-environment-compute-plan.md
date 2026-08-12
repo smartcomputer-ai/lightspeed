@@ -2,7 +2,7 @@
 
 Status: target design agreed 2026-08-10; scope trimmed 2026-08-11 after review
 (trusted-tenant v1, tunnel-first ingress, cursory backend sketches); split into
-delivery milestones 2026-08-11.
+delivery milestones and moved provider policy out of Lightspeed 2026-08-11.
 
 This is the umbrella target architecture for dynamic and directly enrolled
 Lightspeed environments across the `lightspeed` and `ls.bot` repositories.
@@ -48,8 +48,8 @@ appropriately configured environment remains a first-class product path.
 
 1. Register a physical compute provider once at operator scope and safely share
    it across many universes.
-2. Bind an approved provider to a universe with explicit templates, quotas,
-   and ingress policy.
+2. Bind an approved provider to a universe while leaving templates, allocation,
+   quotas, capacity, and ingress policy authoritative in the provider.
 3. Provision universe-owned VMs dynamically through the existing environment
    lifecycle surface.
 4. Enroll an existing laptop, workstation, server, or manually managed VM
@@ -102,8 +102,8 @@ Replace the current model directly:
   the only path for an existing independently owned machine;
 - session-scoped host targets disappear; environments are universe resources
   selected by sessions;
-- raw image names and unrestricted provider options become curated template IDs
-  plus bounded overrides;
+- raw image names and unrestricted provider options become provider-owned,
+  curated template IDs;
 - inbound per-host WebSocket addresses become gateway-routed outbound daemon
   connections; and
 - the current per-universe provider API key is removed from infrastructure
@@ -121,16 +121,17 @@ An operator-approved physical compute backend. It can discover templates and
 create, inspect, and close provider targets. Examples are one shared Incus
 pool, a future Firecracker sandbox pool, or a future KubeVirt cluster.
 
-A provider is global infrastructure. It is registered once, has one physical
-identity and liveness record, and is never owned by a universe or session.
+A provider is global infrastructure. It is registered once with a stable
+identity and authenticated controller connection, and is never owned by a
+universe or session. Lightspeed does not persist provider heartbeat, lease, or
+availability status; controller reachability is observed when it connects.
 
 ### Universe provider binding
 
-A universe's entitlement to use a provider. The binding supplies tenant policy:
-
-- allowed templates;
-- environment, CPU, memory, and disk quotas; and
-- public-ingress permission.
+A universe's admitted routing relationship with a provider. The Lightspeed
+binding supplies stable universe/provider context and an enabled/disabled
+switch. The provider owns template entitlement, resource allocation, aggregate
+quota, capacity, networking, and public-ingress policy for that context.
 
 Several universes can bind the same provider without creating another provider
 process or physical registration.
@@ -298,8 +299,8 @@ Control and data planes remain separate:
 
 Lightspeed is authoritative for:
 
-- global physical provider records and liveness;
-- universe provider bindings and policy;
+- global physical provider identity and authenticated controller connection;
+- universe provider bindings and enabled/disabled admission;
 - stable environment identities and source;
 - desired lifecycle and observed readiness;
 - provisioning request IDs;
@@ -319,6 +320,8 @@ The provider backend is authoritative for:
 - actual VM/container existence and power state;
 - disks, snapshots, backend networks, and backend image cache;
 - physical CPU, memory, disk, and network consumption;
+- template catalogs, per-binding entitlement, allocation, aggregate quota,
+  and public-ingress policy;
 - node-local target placement; and
 - backend-specific failure information.
 
@@ -357,8 +360,8 @@ commercial or administrative policy. It calls Lightspeed operator and universe
 APIs. It does not mirror provider inventory, environment status, template
 catalogs, daemon identity, or session selection.
 
-Future billing plans may determine which provider binding policy the platform
-is allowed to create, but the effective binding remains in Lightspeed.
+Future billing plans may determine which provider offering a universe may
+consume, while the effective compute and ingress policy remains provider-owned.
 
 ### Deployment configuration and secrets
 
@@ -413,16 +416,23 @@ changing it is a configuration change. A programmatic operator API is deferred
 until there is more than one provider or an external operator.
 
 The record contains stable provider identity, authenticated controller
-connection, implementation/protocol version, lifecycle and template
-capabilities, global health, and operator metadata.
+connection, and operator metadata. Protocol version, implementation details,
+and optional controller operations are negotiated transiently with
+`controller/initialize` whenever Lightspeed opens a connection. They are not
+seeded into or mirrored in Postgres. Provider heartbeat, last-seen, lease, and
+availability status are likewise not durable provider fields.
 
 The first Incus provider is an internal service on the trusted application
 plane. Authenticate controller traffic with deployment identity over the
 private network. Do not retain the current universe bearer key as provider
 identity.
 
-An externally operated provider may later establish an authenticated outbound
-control connection, but it still requires operator admission.
+A third-party service may implement the same controller contract. A
+Lightspeed operator registers its endpoint and authentication material, after
+which Lightspeed connects to it. The provider never self-registers, calls the
+Lightspeed operator API, or needs a Lightspeed API credential. Operator
+admission and Lightspeed-to-provider reachability are the only registration
+requirements.
 
 ### Universe bindings
 
@@ -448,34 +458,31 @@ bindingId
 universeId
 providerId
 status
-allowedTemplateIds
-maxEnvironments
-maxCpu
-maxMemoryBytes
-maxDiskBytes
-publicIngressAllowed
 revision
 createdAtMs
 updatedAtMs
+metadata
 ```
 
 There is at most one binding for a `(universeId, providerId)` pair. Binding
-policy is replaced whole with `expectedRevision`; field-level update
+document is replaced whole with `expectedRevision`; field-level update
 vocabulary is not introduced. Disabling a binding prevents new provisioning
 but does not strand existing environments. Deletion is rejected while a
 non-closed environment references the binding.
 
-Bindings store immutable template-version IDs, not moving aliases. Lightspeed
-enforces `maxEnvironments` and aggregate CPU/memory/disk quotas
-transactionally when it persists the environment intent. Provisioning,
-failed, ready, offline, and closing environments retain their reservation;
-only `Closed` releases it. The provider enforces per-instance template limits
-and performs no aggregate quota accounting.
+Bindings do not copy provider template allowlists, CPU/memory/disk fields,
+environment-count quotas, or public-ingress permission. Lightspeed therefore
+has no resource reservation ledger to synchronize with backend inventory. The
+provider filters template discovery by binding and atomically enforces its
+current entitlement, allocation, quota, capacity, and ingress policy when it
+performs the corresponding operation.
 
 Every tenant-affecting target lifecycle request includes an authenticated
-binding context. Global initialize, health, and operator inventory calls use
-operator context instead. The provider must never authorize a raw universe ID
-supplied in opaque user options.
+binding context derived by Lightspeed from its stored environment and binding,
+never from opaque user options. `controller/initialize` uses only the
+authenticated controller connection and has no tenant context. The provider
+authenticates Lightspeed and treats the binding context as the key for its own
+isolation and policy decisions.
 
 Provider target listing is filtered by binding. A caller for binding A cannot
 discover, inspect, or close binding B's targets.
@@ -486,18 +493,19 @@ discover, inspect, or close binding B's targets.
 
 ```text
 1. Universe caller generates a stable requestId and calls
-   environments/create(requestId, bindingId, templateId, options).
-2. Lightspeed validates binding, immutable template entitlement, and quota.
-3. In one transaction Lightspeed reserves quota and allocates/persists:
+   environments/create(requestId, bindingId, templateId).
+2. Lightspeed validates that the binding is admitted and enabled.
+3. In one transaction Lightspeed allocates/persists:
      environmentId
      incarnationId
      provisionRequestId = requestId
      pending daemon-enrollment ticket
 4. Repeating the same requestId returns the same environment.
 5. The Lightspeed lifecycle reconciler calls provider createTarget with stable
-   ids, bounded template parameters, binding context, and the opaque bootstrap
+   ids, binding context, provider-owned template ID, and the opaque bootstrap
    ticket.
-6. Provider idempotently creates or finds the target.
+6. Provider validates template entitlement, allocation policy, aggregate quota,
+   and physical capacity, then idempotently creates or finds the target.
 7. Provider injects bootstrap material through cloud-init, metadata, config
    drive, Kubernetes Secret, or an equivalent backend channel.
 8. envd boots and connects to the environment gateway.
@@ -517,6 +525,11 @@ reconciles provider/gateway observations after process restarts. v1 runs one
 active reconciler; multi-replica operation leasing is deferred. The provider
 does not need its own database: it reconstructs targets from backend inventory
 and immutable Lightspeed metadata.
+
+A provider policy or capacity rejection occurs after Lightspeed has accepted
+the logical intent. The reconciler records a structured terminal failure on the
+environment. Lightspeed does not perform a racy provider preflight or pretend
+that its logical environment rows are physical resource inventory.
 
 Target lifecycle:
 
@@ -756,6 +769,12 @@ controller/listTargets
 controller/closeTarget
 ```
 
+`controller/initialize` is a transient handshake performed immediately after
+opening a controller connection. It verifies protocol compatibility and
+returns implementation information plus supported optional operations for that
+connection. It is not provider registration or a heartbeat, and Lightspeed
+does not persist the response as provider configuration or status.
+
 `createTarget` must include:
 
 ```text
@@ -764,9 +783,13 @@ environmentId
 incarnationId
 providerBindingContext
 templateId
-bounded template parameters
 opaque daemon bootstrap ticket
 ```
+
+The provider owns any future template parameters and validates them against a
+versioned provider schema. P118 sends only the template ID; do not introduce a
+universal CPU/memory/disk override model in Lightspeed before a concrete
+cross-provider requirement exists.
 
 It must not accept arbitrary cloud-init, raw Incus/Kubernetes objects, host
 paths, privileged device mappings, or unrestricted provider JSON from a
@@ -781,9 +804,11 @@ backend metadata safe for the universe
 data-plane connection description or preallocated gateway route
 ```
 
-The provider may return while the target is `Starting`. Heartbeats or explicit
-observations advance status. Repeating the same `requestId` returns the same
-target or the same terminal failure class; it never creates a second target.
+The provider may return while the target is `Starting`. Explicit target
+observations advance status; this target lifecycle observation is distinct from
+a global provider heartbeat, which Lightspeed does not persist. Repeating the
+same `requestId` returns the same target or the same terminal failure class; it
+never creates a second target.
 
 `closeTarget` is also idempotent. A missing already-closed backend object is
 success after ownership metadata has been verified.
@@ -823,7 +848,7 @@ credential redaction, job terminality, and stable error mapping.
 ### Template catalog
 
 Users choose templates, not raw backend images. The provider publishes a typed
-catalog filtered through the universe binding.
+catalog and filters it using the binding context supplied by Lightspeed.
 
 Example deployment configuration:
 
@@ -840,10 +865,6 @@ templates:
       cpu: 8
       memory: 16GiB
       rootDisk: 120GiB
-    limits:
-      maxCpu: 16
-      maxMemory: 32GiB
-      maxRootDisk: 300GiB
     bootstrapRevision: envd-v1
     networkPolicy: development
     lifecycle: durable
@@ -852,9 +873,10 @@ templates:
 ```
 
 Template fields exposed to universes include ID/version, display name,
-description, resource defaults and allowed overrides, durable/ephemeral
-lifecycle, architecture, public-ingress eligibility, capabilities, and
-active/deprecated status.
+description, provider-selected resource shape, durable/ephemeral lifecycle,
+architecture, public-ingress eligibility, capabilities, and active/deprecated
+status. Resource information is descriptive provider output, not a Lightspeed
+quota or reservation schema.
 
 Backend image references, bootstrap internals, node constraints, and privileged
 configuration remain operator-only.
@@ -919,8 +941,9 @@ rather than designing an unused generic cloud SDK.
 Responsibilities:
 
 - expose the provider controller contract;
-- publish the configured template catalog;
-- validate binding policy and bounded overrides;
+- publish a binding-filtered template catalog;
+- own and enforce binding entitlement, allocation, aggregate quota, capacity,
+  and ingress policy;
 - select an eligible node;
 - ensure the exact image exists;
 - create VM, disk, network, and bootstrap configuration idempotently;
@@ -978,8 +1001,8 @@ Joining another root node to the provider pool means:
 
 The provider schedules over independent Incus servers. Nodes do not need a
 shared consensus database or storage system. Initial placement uses hard
-resource fit, architecture/template constraints, binding quota, node health,
-and simple free-capacity preference.
+resource fit, architecture/template constraints, provider-owned binding quota,
+node health, and simple free-capacity preference.
 
 Support node cordon and drain before automatic rebalance. A failed node makes
 its environments unavailable; automatic destructive recreation is a separate
@@ -1014,9 +1037,10 @@ Public ingress is independent of environment control transport.
 First implementation: one Cloudflare Tunnel per environment.
 
 - The development template image includes `cloudflared`.
-- When the binding allows public ingress, a tunnel and a hostname under the
-  platform ingress domain are allocated for the environment. The hostname is
-  recorded in environment metadata.
+- When the provider authorizes public ingress for the binding and template, a
+  tunnel and a hostname under the platform ingress domain are allocated for the
+  environment. Lightspeed stores the resulting hostname and bounded ingress
+  observation, not a duplicate binding permission flag.
 - The tunnel credential is installed only for the system-managed connector
   using a protected service-secret path. It is not a generic environment
   credential and is not injected into arbitrary Lightspeed-started processes
@@ -1155,11 +1179,13 @@ KubeVirt.
 ### Required controls
 
 - Authenticated provider controller connection.
+- Transient controller initialization and protocol-version validation on each
+  new connection; no persisted provider heartbeat or lease.
 - One-time, expiring enrollment tickets stored hashed at rest.
 - Daemon proof-of-possession identity after enrollment.
 - Incarnation fencing on every routed call.
 - Single current connection per daemon/incarnation.
-- Short provider and connection leases.
+- Short enrollment-ticket lifetimes and data-plane connection leases.
 - Explicit filesystem roots and path traversal protection.
 - Frame, file, output, process, job, and concurrency bounds.
 - Secret redaction in errors, debug output, traces, and audit records.
@@ -1168,7 +1194,8 @@ KubeVirt.
 - No raw provider options or cloud-init from universe callers.
 - No Docker socket mounted into public application containers.
 - No trusted-header Lightspeed gateway access from environment networks.
-- Per-binding quotas enforced transactionally by Lightspeed at create.
+- Per-binding entitlement, quota, allocation, capacity, and ingress policy
+  enforced by the provider at the physical operation boundary.
 - Destructive close verifies target ownership metadata before deletion.
 
 ## Reconciliation and failure semantics
@@ -1225,7 +1252,7 @@ independently reports live data-plane connections.
 
 Expose bounded metrics for:
 
-- global provider health and controller latency;
+- controller connection/initialization failures and latency;
 - create/close operations by status and template;
 - node capacity, allocation, and unavailable targets;
 - image cache/fetch latency;
@@ -1234,7 +1261,7 @@ Expose bounded metrics for:
 - host-protocol latency, bytes, errors, and backpressure by method class;
 - environment readiness transition duration;
 - public ingress health; and
-- quota rejection counts.
+- provider policy, quota, and capacity rejection counts.
 
 Do not put universe IDs, paths, command lines, environment variables, file
 contents, tokens, or process output into metric labels.
@@ -1314,9 +1341,9 @@ umbrella document and have no scheduled implementation plan.
 
 ### Unit and contract tests
 
-- Identifier parsing, lifecycle transitions, source invariants, binding policy,
-  quota arithmetic, template validation, token expiry, signature verification,
-  and fencing.
+- Identifier parsing, lifecycle transitions, source invariants, binding
+  revisions, provider-side policy rejection, template validation, token expiry,
+  signature verification, and fencing.
 - Host-protocol serde fixtures and version negotiation.
 - Provider create/close idempotency and ownership checks.
 - Environment readiness derivation from independent provider and gateway
@@ -1335,7 +1362,7 @@ umbrella document and have no scheduled implementation plan.
 - Same provider/template names allowed without target collision.
 - Universe A cannot list, route to, close, credential-bind, or claim ingress for
   universe B's environment.
-- Quota and template policy are independently enforced.
+- Provider-owned quota, template, and ingress policy are isolated by binding.
 - Provider inventory is operator-visible but not leaked through universe APIs.
 
 ### Live infrastructure tests
@@ -1353,7 +1380,7 @@ umbrella document and have no scheduled implementation plan.
 
 1. One operator-scoped Incus provider is registered once.
 2. Two universes have distinct bindings to that provider with different
-   template/quota policy.
+   provider-owned template/quota policy.
 3. Each universe can provision a full VM with no cross-universe visibility or
    control.
 4. Lightspeed persists the environment before provisioning and repeating the
@@ -1383,9 +1410,13 @@ umbrella document and have no scheduled implementation plan.
 | Area | Decision |
 |------|----------|
 | Physical provider scope | Global and operator-managed |
-| Universe access | Explicit provider binding with policy and quota |
+| Provider registration | Operator supplies an authenticated reachable endpoint; provider never self-registers or calls the operator API |
+| Provider initialization | Transient version/capability handshake per controller connection; not persisted and not a heartbeat |
+| Provider presence | No provider heartbeat, lease, last-seen, or status in Lightspeed Postgres |
+| Universe access | Explicit Lightspeed binding for routing and enabled/disabled admission |
 | Tenancy assumption | v1 universes are trusted; baseline binding-network isolation is required, finer untrusted-workload policy is deferred |
-| Aggregate quota | Lightspeed-enforced at create; provider enforces per-instance limits only |
+| Resource and ingress policy | Provider-owned, including templates, allocation, aggregate quota, capacity, and public ingress |
+| Lightspeed resource ledger | None; environment lifecycle rows are not physical capacity reservations |
 | Existing machine | Direct enrolled environment, not singleton provider |
 | Canonical data plane | `lightspeed-envd` through environment gateway |
 | AI terminology | Reserve “agent” for AI agents; infrastructure process is daemon/envd |

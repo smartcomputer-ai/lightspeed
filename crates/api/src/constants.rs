@@ -90,14 +90,13 @@ pub const METHOD_ENVIRONMENTS_CREATE: &str = "environments/create";
 pub const METHOD_ENVIRONMENTS_READ: &str = "environments/read";
 pub const METHOD_ENVIRONMENTS_LIST: &str = "environments/list";
 pub const METHOD_ENVIRONMENTS_CLOSE: &str = "environments/close";
+pub const METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST: &str = "environments/provider-bindings/list";
+pub const METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ: &str = "environments/provider-bindings/read";
+pub const METHOD_ENVIRONMENTS_TEMPLATES_LIST: &str = "environments/templates/list";
+pub const METHOD_ENVIRONMENTS_TEMPLATES_READ: &str = "environments/templates/read";
 pub const METHOD_ENVIRONMENTS_JOBS_CREATE: &str = "environments/jobs/create";
 pub const METHOD_ENVIRONMENTS_JOBS_READ: &str = "environments/jobs/read";
 pub const METHOD_ENVIRONMENTS_JOBS_CANCEL: &str = "environments/jobs/cancel";
-
-pub const METHOD_ENVIRONMENTS_PROVIDERS_REGISTER: &str = "environments/providers/register";
-pub const METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT: &str = "environments/providers/heartbeat";
-pub const METHOD_ENVIRONMENTS_PROVIDERS_UNREGISTER: &str = "environments/providers/unregister";
-pub const METHOD_ENVIRONMENTS_PROVIDERS_LIST: &str = "environments/providers/list";
 
 // ── Universe: auth ──────────────────────────────────────────────────────────
 

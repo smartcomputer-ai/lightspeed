@@ -41,7 +41,11 @@ impl EnvironmentResolver {
             .list_environments(ListEnvironments::default())
             .await?;
         if let Some(allowed) = allowed_providers {
-            environments.retain(|environment| allowed.contains(environment.provider_id.as_str()));
+            environments.retain(|environment| {
+                environment
+                    .provider_id()
+                    .is_some_and(|id| allowed.contains(id.as_str()))
+            });
         }
         Ok(environments)
     }
@@ -52,11 +56,16 @@ impl EnvironmentResolver {
         allowed_providers: Option<&BTreeSet<String>>,
     ) -> Result<EnvironmentRecord, EnvironmentResolveError> {
         let environment = self.environments.read_environment(environment_id).await?;
-        if allowed_providers
-            .is_some_and(|allowed| !allowed.contains(environment.provider_id.as_str()))
-        {
+        if allowed_providers.is_some_and(|allowed| {
+            environment
+                .provider_id()
+                .is_none_or(|id| !allowed.contains(id.as_str()))
+        }) {
             return Err(EnvironmentResolveError::ProviderNotAllowed {
-                provider_id: environment.provider_id.as_str().to_owned(),
+                provider_id: environment
+                    .provider_id()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "enrolled".to_owned()),
             });
         }
         Ok(environment)
@@ -66,25 +75,16 @@ impl EnvironmentResolver {
         &self,
         environment_id: &EnvironmentId,
         allowed_providers: Option<&BTreeSet<String>>,
-        now_ms: i64,
+        _now_ms: i64,
     ) -> Result<EnvironmentRecord, EnvironmentResolveError> {
         let environment = self.read_allowed(environment_id, allowed_providers).await?;
-        let provider = self
-            .providers
-            .read_provider(&environment.provider_id)
-            .await?;
-        if !provider.is_live_at(now_ms) {
-            return Err(EnvironmentResolveError::ProviderUnavailable {
-                provider_id: provider.provider_id.as_str().to_owned(),
-            });
+        if let Some(provider_id) = environment.provider_id() {
+            self.providers.read_provider(provider_id).await?;
         }
-        if !environment.is_attachable() {
-            return Err(EnvironmentResolveError::EnvironmentUnavailable {
-                environment_id: environment.environment_id.as_str().to_owned(),
-                status: format!("{:?}", environment.status).to_lowercase(),
-            });
-        }
-        Ok(environment)
+        Err(EnvironmentResolveError::EnvironmentUnavailable {
+            environment_id: environment.environment_id.as_str().to_owned(),
+            status: "data-plane routing is introduced by P119".to_owned(),
+        })
     }
 }
 
@@ -95,9 +95,6 @@ pub(crate) enum EnvironmentResolveError {
 
     #[error("environment provider is not allowed by session config: {provider_id}")]
     ProviderNotAllowed { provider_id: String },
-
-    #[error("environment provider is unavailable: {provider_id}")]
-    ProviderUnavailable { provider_id: String },
 
     #[error("environment is unavailable: {environment_id} ({status})")]
     EnvironmentUnavailable {
@@ -111,17 +108,13 @@ mod tests {
     use std::collections::BTreeMap;
 
     use environments::{
-        EnvironmentOrigin, EnvironmentProviderCapabilities, EnvironmentProviderId,
-        EnvironmentProviderKind, HostControllerConnectionSpec, ObserveEnvironment,
-        RegisterEnvironmentProvider,
+        CreateEnvironment, EnvironmentIncarnationId, EnvironmentProviderBindingId,
+        EnvironmentProviderBindingStatus, EnvironmentProviderBindingStore, EnvironmentProviderId,
+        EnvironmentProvisionRequestId, EnvironmentStatus, EnvironmentTemplateId,
+        HostControllerConnectionSpec, ObserveProvisionedEnvironment, PutEnvironmentProvider,
+        PutEnvironmentProviderBinding,
     };
-    use host_protocol::{
-        control::targets::HostTargetStatus,
-        shared::{
-            HostCapabilities, HostConnectionSpec, HostPath, HostScope, HostTargetId, HostTransport,
-            ImplementationInfo,
-        },
-    };
+    use host_protocol::shared::{HostTargetId, HostTransport};
 
     use super::*;
 
@@ -129,51 +122,50 @@ mod tests {
         let store = Arc::new(environments::InMemoryEnvironmentRegistryStore::new());
         let provider_id = EnvironmentProviderId::new("allowed");
         store
-            .register_provider(RegisterEnvironmentProvider {
+            .put_provider(PutEnvironmentProvider {
                 provider_id: provider_id.clone(),
-                provider_kind: EnvironmentProviderKind::Bridge,
                 display_name: None,
                 controller_connection: HostControllerConnectionSpec::new(
                     "http://controller.test",
                     HostTransport::Http,
                 ),
-                capabilities: EnvironmentProviderCapabilities {
-                    list_targets: true,
-                    ..EnvironmentProviderCapabilities::default()
-                },
-                implementation: ImplementationInfo {
-                    name: "test".to_owned(),
-                    version: None,
-                },
-                lease_ttl_ms: 100,
                 metadata: BTreeMap::new(),
-                observed_at_ms: 10,
+                updated_at_ms: 10,
             })
             .await
             .expect("provider");
+        store
+            .put_provider_binding(PutEnvironmentProviderBinding {
+                universe_id: store.universe_id(),
+                binding_id: EnvironmentProviderBindingId::new("primary"),
+                provider_id: provider_id.clone(),
+                status: EnvironmentProviderBindingStatus::Enabled,
+                expected_revision: None,
+                metadata: BTreeMap::new(),
+                updated_at_ms: 10,
+            })
+            .await
+            .expect("binding");
         let environment_id = EnvironmentId::new("environment-1");
         let target_id = HostTargetId::new("target-1");
-        let capabilities = HostCapabilities::filesystem(true, true).with_process();
         store
-            .observe_environment(ObserveEnvironment {
+            .create_environment(CreateEnvironment {
+                request_id: EnvironmentProvisionRequestId::new("request-1"),
                 environment_id: environment_id.clone(),
-                provider_id,
-                provider_target_id: target_id.clone(),
-                origin: EnvironmentOrigin::Provided,
+                incarnation_id: EnvironmentIncarnationId::new("incarnation-1"),
+                binding_id: EnvironmentProviderBindingId::new("primary"),
+                template_id: EnvironmentTemplateId::new("test-template"),
                 display_name: None,
-                status: HostTargetStatus::Ready,
-                scope: HostScope::Default,
-                capabilities: capabilities.clone(),
-                connection: HostConnectionSpec {
-                    target_id,
-                    endpoint: "http://host.test".to_owned(),
-                    transport: HostTransport::Http,
-                    scope: HostScope::Default,
-                    default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
-                    capabilities,
-                },
-                default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
                 metadata: BTreeMap::new(),
+                created_at_ms: 10,
+            })
+            .await
+            .expect("create environment");
+        store
+            .observe_provisioned_environment(ObserveProvisionedEnvironment {
+                environment_id: environment_id.clone(),
+                provider_target_id: target_id.clone(),
+                status: EnvironmentStatus::WaitingForDaemon,
                 observed_at_ms: 10,
             })
             .await
@@ -208,12 +200,12 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn selection_checks_provider_lease_but_read_still_explores() {
+    async fn selection_is_deferred_until_p119_but_read_still_explores() {
         let (resolver, environment_id) = resolver().await;
         assert!(resolver.read_allowed(&environment_id, None).await.is_ok());
         assert!(matches!(
             resolver.selectable(&environment_id, None, 111).await,
-            Err(EnvironmentResolveError::ProviderUnavailable { .. })
+            Err(EnvironmentResolveError::EnvironmentUnavailable { .. })
         ));
     }
 }
