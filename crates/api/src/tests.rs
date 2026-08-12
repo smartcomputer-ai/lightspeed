@@ -1833,6 +1833,37 @@ impl AgentApiService for TestService {
         }))
     }
 
+    async fn create_environment_enrollment(
+        &self,
+        _params: EnvironmentEnrollmentCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentCreateResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(EnvironmentEnrollmentCreateResponse {
+            environment: test_enrolled_environment(),
+            enrollment: test_environment_enrollment(),
+            token: Some("<one-time-token>".to_owned()),
+        }))
+    }
+
+    async fn read_environment_enrollment(
+        &self,
+        _params: EnvironmentEnrollmentReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentReadResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(EnvironmentEnrollmentReadResponse {
+            enrollment: test_environment_enrollment(),
+        }))
+    }
+
+    async fn revoke_environment_enrollment(
+        &self,
+        _params: EnvironmentEnrollmentRevokeParams,
+    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentRevokeResponse>, AgentApiError> {
+        let mut enrollment = test_environment_enrollment();
+        enrollment.revoked_at_ms = Some(20);
+        Ok(AgentApiOutcome::new(EnvironmentEnrollmentRevokeResponse {
+            enrollment,
+        }))
+    }
+
     async fn activate_session_environment(
         &self,
         params: SessionEnvironmentActivateParams,
@@ -2419,6 +2450,41 @@ fn test_environment_instance() -> EnvironmentView {
             updated_at_ms: 10,
         },
         metadata: BTreeMap::new(),
+        created_at_ms: 10,
+        updated_at_ms: 10,
+    }
+}
+
+fn test_enrolled_environment() -> EnvironmentView {
+    EnvironmentView {
+        environment_id: "evi_enrolled".to_owned(),
+        request_id: "request-enrolled".to_owned(),
+        source: EnvironmentSourceView::Enrolled,
+        display_name: Some("Enrolled".to_owned()),
+        status: EnvironmentLifecycleStatusView::WaitingForDaemon,
+        incarnation: EnvironmentIncarnationView {
+            incarnation_id: "incarnation-enrolled".to_owned(),
+            provision_request_id: None,
+            provider_target_id: None,
+            template_id: None,
+            created_at_ms: 10,
+            updated_at_ms: 10,
+        },
+        metadata: BTreeMap::new(),
+        created_at_ms: 10,
+        updated_at_ms: 10,
+    }
+}
+
+fn test_environment_enrollment() -> EnvironmentEnrollmentView {
+    EnvironmentEnrollmentView {
+        environment_id: "evi_enrolled".to_owned(),
+        incarnation_id: "incarnation-enrolled".to_owned(),
+        ticket_expires_at_ms: 600_010,
+        ticket_redeemed_at_ms: None,
+        revoked_at_ms: None,
+        daemon_id: None,
+        enrolled_at_ms: None,
         created_at_ms: 10,
         updated_at_ms: 10,
     }

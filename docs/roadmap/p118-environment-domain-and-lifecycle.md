@@ -63,9 +63,10 @@ EnvironmentIncarnation
   templateVersionId?
 ```
 
-`providerTargetId`, enrollment tickets, and daemon admissions are not stable
-environment source identity. Rebuild and reenrollment may replace them while
-the logical environment remains unchanged.
+`providerTargetId` and direct-enrollment tickets/daemon identities are not
+stable environment source identity. Rebuild and reenrollment may replace them
+while the logical environment remains unchanged. Provider-managed
+environments do not require direct daemon-enrollment records.
 
 There is at most one binding for a `(universeId, providerId)` pair. A binding
 is a stable Lightspeed routing and admission relationship, not a mirror of the
@@ -146,8 +147,9 @@ provider-side database, Redis, NATS, or another coordination service.
 
 P118 stops a successfully-created environment at `waitingForDaemon`: it knows
 which provider target it represents, but intentionally stores no data-plane
-route, daemon admission, host capabilities, or liveness observation. P119 owns
-those volatile facts and is the milestone that may make an environment `ready`.
+route, direct daemon enrollment, host capabilities, or liveness observation.
+P119 owns those facts and is the milestone that may make an environment
+`ready`.
 
 ## Host controller contract
 

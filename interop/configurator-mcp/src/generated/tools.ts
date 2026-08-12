@@ -3888,6 +3888,87 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
+    "name": "lightspeed_environments_enrollments_create",
+    "method": "environments/enrollments/create",
+    "summary": "Create an environment enrollment",
+    "description": "Creates a pending directly enrolled environment and returns its short-lived one-time daemon token exactly once.",
+    "paramsType": "EnvironmentEnrollmentCreateParams",
+    "resultType": "AgentApiOutcome<EnvironmentEnrollmentCreateResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expiresInSeconds": {
+          "description": "Requested one-time token lifetime. Defaults to ten minutes and is\ncapped at one hour.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_environments_enrollments_read",
+    "method": "environments/enrollments/read",
+    "summary": "Read an environment enrollment",
+    "description": "Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
+    "paramsType": "EnvironmentEnrollmentReadParams",
+    "resultType": "AgentApiOutcome<EnvironmentEnrollmentReadResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "environmentId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "environmentId"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_environments_enrollments_revoke",
+    "method": "environments/enrollments/revoke",
+    "summary": "Revoke an environment enrollment",
+    "description": "Idempotently revokes a directly enrolled daemon identity; a connected direct route is fenced immediately by the gateway.",
+    "paramsType": "EnvironmentEnrollmentRevokeParams",
+    "resultType": "AgentApiOutcome<EnvironmentEnrollmentRevokeResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "environmentId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "environmentId"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "lightspeed_environments_provider-bindings_list",
     "method": "environments/provider-bindings/list",
     "summary": "List environment provider bindings",

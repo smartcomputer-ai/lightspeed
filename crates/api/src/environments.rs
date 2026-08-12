@@ -87,6 +87,84 @@ pub struct EnvironmentCloseResponse {
     pub environment: EnvironmentView,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentEnrollmentView {
+    pub environment_id: EnvironmentId,
+    pub incarnation_id: EnvironmentIncarnationId,
+    pub ticket_expires_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ticket_redeemed_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daemon_id: Option<EnvironmentDaemonId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enrolled_at_ms: Option<i64>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentEnrollmentCreateParams {
+    pub request_id: EnvironmentProvisionRequestId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
+    /// Requested one-time token lifetime. Defaults to ten minutes and is
+    /// capped at one hour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_in_seconds: Option<u32>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentEnrollmentCreateResponse {
+    pub environment: EnvironmentView,
+    pub enrollment: EnvironmentEnrollmentView,
+    /// Present exactly once, when this call creates the enrollment. A retry
+    /// with the same request ID returns the resource without the token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+impl fmt::Debug for EnvironmentEnrollmentCreateResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EnvironmentEnrollmentCreateResponse")
+            .field("environment", &self.environment)
+            .field("enrollment", &self.enrollment)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentEnrollmentReadParams {
+    pub environment_id: EnvironmentId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentEnrollmentReadResponse {
+    pub enrollment: EnvironmentEnrollmentView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentEnrollmentRevokeParams {
+    pub environment_id: EnvironmentId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentEnrollmentRevokeResponse {
+    pub enrollment: EnvironmentEnrollmentView,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum EnvironmentLifecycleStatusView {

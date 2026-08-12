@@ -1,14 +1,15 @@
 use async_trait::async_trait;
 use auth::{AuthGrantId, AuthProviderId, SecretId};
 use environments::{
-    BeginCloseEnvironment, CreateEnvironment, EnvironmentCredentialRecord,
-    EnvironmentCredentialSource, EnvironmentCredentialStore, EnvironmentId,
-    EnvironmentIncarnationId, EnvironmentIncarnationRecord, EnvironmentProviderBindingId,
-    EnvironmentProviderBindingRecord, EnvironmentProviderBindingStatus,
-    EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderRecord,
-    EnvironmentProviderStore, EnvironmentProvisionRequestId, EnvironmentRecord,
-    EnvironmentRegistryError, EnvironmentSource, EnvironmentStatus, EnvironmentStore,
-    EnvironmentTemplateId, FailEnvironmentLifecycle, FinishCloseEnvironment,
+    BeginCloseEnvironment, CreateEnvironment, CreateEnvironmentEnrollment, EnrollEnvironmentDaemon,
+    EnvironmentCredentialRecord, EnvironmentCredentialSource, EnvironmentCredentialStore,
+    EnvironmentDaemonEnrollmentRecord, EnvironmentDaemonEnrollmentStore, EnvironmentDaemonId,
+    EnvironmentId, EnvironmentIncarnationId, EnvironmentIncarnationRecord,
+    EnvironmentProviderBindingId, EnvironmentProviderBindingRecord,
+    EnvironmentProviderBindingStatus, EnvironmentProviderBindingStore, EnvironmentProviderId,
+    EnvironmentProviderRecord, EnvironmentProviderStore, EnvironmentProvisionRequestId,
+    EnvironmentRecord, EnvironmentRegistryError, EnvironmentSource, EnvironmentStatus,
+    EnvironmentStore, EnvironmentTemplateId, FailEnvironmentLifecycle, FinishCloseEnvironment,
     ListEnvironmentCredentials, ListEnvironmentProviders, ListEnvironments,
     ObserveProvisionedEnvironment, PutEnvironmentCredential, PutEnvironmentProvider,
     PutEnvironmentProviderBinding,
@@ -50,6 +51,12 @@ const ENVIRONMENT_JOIN: &str = r#"
 const CREDENTIAL_COLUMNS: &str = r#"
     environment_id, env_name, source_kind, grant_id, auth_provider_id,
     secret_id, created_at_ms, updated_at_ms
+"#;
+
+const ENROLLMENT_COLUMNS: &str = r#"
+    environment_id, incarnation_id, ticket_hash, ticket_expires_at_ms,
+    ticket_redeemed_at_ms, revoked_at_ms, daemon_id, daemon_public_key,
+    enrolled_at_ms, created_at_ms, updated_at_ms
 "#;
 
 #[async_trait]
@@ -524,6 +531,184 @@ impl EnvironmentStore for PgStore {
 }
 
 #[async_trait]
+impl EnvironmentDaemonEnrollmentStore for PgStore {
+    async fn create_enrollment(
+        &self,
+        request: CreateEnvironmentEnrollment,
+    ) -> Result<
+        (EnvironmentRecord, EnvironmentDaemonEnrollmentRecord, bool),
+        EnvironmentRegistryError,
+    > {
+        let candidate = EnvironmentDaemonEnrollmentRecord {
+            environment_id: request.environment_id.clone(),
+            incarnation_id: request.incarnation_id.clone(),
+            ticket_hash: request.ticket_hash.clone(),
+            ticket_expires_at_ms: request.ticket_expires_at_ms,
+            ticket_redeemed_at_ms: None,
+            revoked_at_ms: None,
+            daemon_id: None,
+            daemon_public_key: None,
+            enrolled_at_ms: None,
+            created_at_ms: request.created_at_ms,
+            updated_at_ms: request.created_at_ms,
+        };
+        candidate.validate()?;
+        self.ensure_universe()
+            .await
+            .map_err(|error| store_error("ensure universe", error))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| sql_error("begin enrollment create", error))?;
+        if let Some(existing_id) = sqlx::query_scalar::<_, String>(
+            "SELECT environment_id FROM environments WHERE universe_id = $1 AND request_id = $2",
+        )
+        .bind(self.config.universe_id)
+        .bind(request.request_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|error| sql_error("deduplicate enrollment create", error))?
+        {
+            tx.commit()
+                .await
+                .map_err(|error| sql_error("commit enrollment dedup", error))?;
+            let environment_id = EnvironmentId::try_new(existing_id)
+                .map_err(|error| store_message(format!("decode environment id: {error}")))?;
+            let environment = self.read_environment(&environment_id).await?;
+            let enrollment = self.read_enrollment(&environment_id).await?;
+            return Ok((environment, enrollment, false));
+        }
+        sqlx::query(
+            r#"
+            INSERT INTO environments (
+                universe_id, environment_id, request_id, source_kind,
+                display_name, status, current_incarnation_id, metadata_json,
+                created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,'enrolled',$4,'waiting_for_daemon',$5,$6,$7,$7)
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(request.request_id.as_str())
+        .bind(request.display_name.as_deref())
+        .bind(request.incarnation_id.as_str())
+        .bind(json_value("encode enrollment metadata", &request.metadata)?)
+        .bind(request.created_at_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_environment_insert_error)?;
+        sqlx::query(
+            r#"
+            INSERT INTO environment_incarnations (
+                universe_id, environment_id, incarnation_id, created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,$4,$4)
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(request.incarnation_id.as_str())
+        .bind(request.created_at_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| sql_error("insert enrolled incarnation", error))?;
+        let query = format!(
+            r#"
+            INSERT INTO environment_daemon_enrollments (
+                universe_id, environment_id, incarnation_id, ticket_hash,
+                ticket_expires_at_ms, created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,$4,$5,$6,$6)
+            RETURNING {ENROLLMENT_COLUMNS}
+            "#
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(request.environment_id.as_str())
+            .bind(request.incarnation_id.as_str())
+            .bind(&request.ticket_hash)
+            .bind(request.ticket_expires_at_ms)
+            .bind(request.created_at_ms)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|error| sql_error("insert environment enrollment", error))?;
+        let enrollment = enrollment_from_row(&row)?;
+        tx.commit()
+            .await
+            .map_err(|error| sql_error("commit enrollment create", error))?;
+        let environment = self.read_environment(&request.environment_id).await?;
+        Ok((environment, enrollment, true))
+    }
+
+    async fn read_enrollment(
+        &self,
+        environment_id: &EnvironmentId,
+    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError> {
+        let query = format!(
+            "SELECT a.{ENROLLMENT_COLUMNS} FROM environment_daemon_enrollments a JOIN environments e ON e.universe_id = a.universe_id AND e.environment_id = a.environment_id AND e.current_incarnation_id = a.incarnation_id WHERE a.universe_id = $1 AND a.environment_id = $2"
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(environment_id.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| sql_error("read environment enrollment", error))?
+            .ok_or_else(|| not_found("environment_enrollment", environment_id))?;
+        enrollment_from_row(&row)
+    }
+
+    async fn enroll_daemon(
+        &self,
+        request: EnrollEnvironmentDaemon,
+    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError> {
+        let query = format!(
+            r#"
+            UPDATE environment_daemon_enrollments SET
+                ticket_redeemed_at_ms = $6, daemon_id = $4,
+                daemon_public_key = $5, enrolled_at_ms = $6, updated_at_ms = $6
+            WHERE universe_id = $1 AND environment_id = $2 AND incarnation_id = $3
+              AND ticket_hash = $7 AND ticket_redeemed_at_ms IS NULL
+              AND revoked_at_ms IS NULL AND ticket_expires_at_ms >= $6
+            RETURNING {ENROLLMENT_COLUMNS}
+            "#
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(request.environment_id.as_str())
+            .bind(request.incarnation_id.as_str())
+            .bind(request.daemon_id.as_str())
+            .bind(&request.daemon_public_key)
+            .bind(request.enrolled_at_ms)
+            .bind(&request.ticket_hash)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| sql_error("enroll environment daemon", error))?
+            .ok_or_else(|| {
+                invalid_error("enrollment token is invalid, expired, redeemed, revoked, or stale")
+            })?;
+        enrollment_from_row(&row)
+    }
+
+    async fn revoke_enrollment(
+        &self,
+        environment_id: &EnvironmentId,
+        revoked_at_ms: i64,
+    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError> {
+        let query = format!(
+            "UPDATE environment_daemon_enrollments a SET revoked_at_ms = COALESCE(a.revoked_at_ms, $3), updated_at_ms = GREATEST(a.updated_at_ms, $3) FROM environments e WHERE a.universe_id = $1 AND a.environment_id = $2 AND e.universe_id = a.universe_id AND e.environment_id = a.environment_id AND e.current_incarnation_id = a.incarnation_id RETURNING a.{ENROLLMENT_COLUMNS}"
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(environment_id.as_str())
+            .bind(revoked_at_ms)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| sql_error("revoke environment enrollment", error))?
+            .ok_or_else(|| not_found("environment_enrollment", environment_id))?;
+        enrollment_from_row(&row)
+    }
+}
+
+#[async_trait]
 impl EnvironmentCredentialStore for PgStore {
     async fn bind_credential(
         &self,
@@ -747,6 +932,42 @@ fn credential_from_row(
         environment_id: parse_id(row, "environment_id", EnvironmentId::try_new)?,
         env_name: column(row, "env_name")?,
         source,
+        created_at_ms: scalar(row, "created_at_ms")?,
+        updated_at_ms: scalar(row, "updated_at_ms")?,
+    };
+    record.validate()?;
+    Ok(record)
+}
+
+fn enrollment_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError> {
+    let daemon_id: Option<String> = row
+        .try_get("daemon_id")
+        .map_err(|error| sql_error("decode enrollment daemon id", error))?;
+    let record = EnvironmentDaemonEnrollmentRecord {
+        environment_id: parse_id(row, "environment_id", EnvironmentId::try_new)?,
+        incarnation_id: parse_id(row, "incarnation_id", EnvironmentIncarnationId::try_new)?,
+        ticket_hash: row
+            .try_get("ticket_hash")
+            .map_err(|error| sql_error("decode enrollment ticket hash", error))?,
+        ticket_expires_at_ms: scalar(row, "ticket_expires_at_ms")?,
+        ticket_redeemed_at_ms: row
+            .try_get("ticket_redeemed_at_ms")
+            .map_err(|error| sql_error("decode enrollment redemption", error))?,
+        revoked_at_ms: row
+            .try_get("revoked_at_ms")
+            .map_err(|error| sql_error("decode enrollment revocation", error))?,
+        daemon_id: daemon_id
+            .map(EnvironmentDaemonId::try_new)
+            .transpose()
+            .map_err(|error| store_message(format!("decode daemon id: {error}")))?,
+        daemon_public_key: row
+            .try_get("daemon_public_key")
+            .map_err(|error| sql_error("decode enrollment daemon public key", error))?,
+        enrolled_at_ms: row
+            .try_get("enrolled_at_ms")
+            .map_err(|error| sql_error("decode enrollment completion", error))?,
         created_at_ms: scalar(row, "created_at_ms")?,
         updated_at_ms: scalar(row, "updated_at_ms")?,
     };

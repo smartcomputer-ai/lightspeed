@@ -95,8 +95,8 @@ For `createTarget`, the provider:
 6. injects the opaque fresh envd bootstrap ticket through cloud-init or config
    drive;
 7. starts the VM and returns while it may still be starting; and
-8. reports backend observations while envd independently connects to the
-   environment gateway.
+8. reports backend observations while its node relay exposes the admitted envd
+   route to the environment gateway.
 
 Required backend metadata includes environment, incarnation, request, binding,
 template-version, image-fingerprint, and creation-time facts. It contains no
@@ -104,6 +104,17 @@ bearer secrets.
 
 Environment readiness requires both an available Incus target and the current
 admitted gateway incarnation. VM running alone is not ready.
+
+The Incus provider must support on-demand data-plane connections. A node-local
+relay keeps one or a small number of authenticated outbound gateway streams,
+multiplexes logical environment routes, and dials envd over the binding's
+private guest network when a routed call arrives. It may close the guest
+connection after a configurable idle timeout and redial on the next call.
+Route frames always carry universe, environment, incarnation, and daemon
+identity; a relay is transport aggregation, not shared authorization.
+
+The VM therefore does not need one permanently open Internet-facing gateway
+socket. The relay's private dial path is the wake/reachability mechanism.
 
 `closeTarget` verifies immutable ownership metadata and is idempotent. A
 missing object is success only after ownership/adoption facts show that it was
@@ -139,7 +150,11 @@ environment state.
       quota/allocation enforcement.
 - [ ] Implement image fingerprint resolution and lazy hz02 caching.
 - [ ] Implement deterministic naming and immutable ownership metadata.
-- [ ] Bootstrap a fresh envd enrollment into each new incarnation.
+- [ ] Authenticate the provider relay and fence every routed daemon stream by
+      provider ownership, enabled binding, environment, and current
+      incarnation; do not create direct-enrollment rows.
+- [ ] Implement a node-local multiplexing relay with on-demand envd dialing,
+      bounded connection establishment, and idle connection reaping.
 - [ ] Reconcile Incus and gateway observations into Lightspeed readiness.
 - [ ] Implement ownership-verified idempotent close.
 - [ ] Update ls.bot template-aware environment creation and status views.

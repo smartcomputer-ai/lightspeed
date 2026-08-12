@@ -2748,6 +2748,33 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
+    async fn create_environment_enrollment(
+        &self,
+        params: EnvironmentEnrollmentCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentCreateResponse>, AgentApiError> {
+        self.create_environment_enrollment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_environment_enrollment(
+        &self,
+        params: EnvironmentEnrollmentReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentReadResponse>, AgentApiError> {
+        self.read_environment_enrollment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn revoke_environment_enrollment(
+        &self,
+        params: EnvironmentEnrollmentRevokeParams,
+    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentRevokeResponse>, AgentApiError> {
+        self.revoke_environment_enrollment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
     async fn activate_session_environment(
         &self,
         params: SessionEnvironmentActivateParams,

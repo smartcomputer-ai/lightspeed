@@ -520,6 +520,57 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfEnvironmentEnrollmentCreateResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/EnvironmentEnrollmentCreateResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfEnvironmentEnrollmentReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/EnvironmentEnrollmentReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfEnvironmentEnrollmentRevokeResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/EnvironmentEnrollmentRevokeResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfEnvironmentJobCancelResponse": {
         "properties": {
           "notifications": {
@@ -3606,6 +3657,161 @@
           "environmentId",
           "envName",
           "source",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "type": "object"
+      },
+      "EnvironmentEnrollmentCreateParams": {
+        "properties": {
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expiresInSeconds": {
+            "description": "Requested one-time token lifetime. Defaults to ten minutes and is\ncapped at one hour.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "requestId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId"
+        ],
+        "type": "object"
+      },
+      "EnvironmentEnrollmentCreateResponse": {
+        "properties": {
+          "enrollment": {
+            "$ref": "#/components/schemas/EnvironmentEnrollmentView"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentView"
+          },
+          "token": {
+            "description": "Present exactly once, when this call creates the enrollment. A retry\nwith the same request ID returns the resource without the token.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "environment",
+          "enrollment"
+        ],
+        "type": "object"
+      },
+      "EnvironmentEnrollmentReadParams": {
+        "properties": {
+          "environmentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentId"
+        ],
+        "type": "object"
+      },
+      "EnvironmentEnrollmentReadResponse": {
+        "properties": {
+          "enrollment": {
+            "$ref": "#/components/schemas/EnvironmentEnrollmentView"
+          }
+        },
+        "required": [
+          "enrollment"
+        ],
+        "type": "object"
+      },
+      "EnvironmentEnrollmentRevokeParams": {
+        "properties": {
+          "environmentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentId"
+        ],
+        "type": "object"
+      },
+      "EnvironmentEnrollmentRevokeResponse": {
+        "properties": {
+          "enrollment": {
+            "$ref": "#/components/schemas/EnvironmentEnrollmentView"
+          }
+        },
+        "required": [
+          "enrollment"
+        ],
+        "type": "object"
+      },
+      "EnvironmentEnrollmentView": {
+        "properties": {
+          "createdAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "daemonId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enrolledAtMs": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "type": "string"
+          },
+          "incarnationId": {
+            "type": "string"
+          },
+          "revokedAtMs": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ticketExpiresAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "ticketRedeemedAtMs": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "updatedAtMs": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "environmentId",
+          "incarnationId",
+          "ticketExpiresAtMs",
           "createdAtMs",
           "updatedAtMs"
         ],
@@ -11125,6 +11331,69 @@
         }
       },
       "summary": "Close an environment"
+    },
+    {
+      "description": "Creates a pending directly enrolled environment and returns its short-lived one-time daemon token exactly once.",
+      "name": "environments/enrollments/create",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EnvironmentEnrollmentCreateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentEnrollmentCreateResponse"
+        }
+      },
+      "summary": "Create an environment enrollment"
+    },
+    {
+      "description": "Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
+      "name": "environments/enrollments/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EnvironmentEnrollmentReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentEnrollmentReadResponse"
+        }
+      },
+      "summary": "Read an environment enrollment"
+    },
+    {
+      "description": "Idempotently revokes a directly enrolled daemon identity; a connected direct route is fenced immediately by the gateway.",
+      "name": "environments/enrollments/revoke",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EnvironmentEnrollmentRevokeParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentEnrollmentRevokeResponse"
+        }
+      },
+      "summary": "Revoke an environment enrollment"
     },
     {
       "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",

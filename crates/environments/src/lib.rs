@@ -98,6 +98,7 @@ registry_string_id!(EnvironmentIncarnationId);
 registry_string_id!(EnvironmentProvisionRequestId);
 registry_string_id!(EnvironmentTemplateId);
 registry_string_id!(EnvironmentJobGroupId);
+registry_string_id!(EnvironmentDaemonId);
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum EnvironmentRegistryError {
@@ -372,6 +373,69 @@ pub struct CreateEnvironment {
     pub created_at_ms: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentDaemonEnrollmentRecord {
+    pub environment_id: EnvironmentId,
+    pub incarnation_id: EnvironmentIncarnationId,
+    pub ticket_hash: Vec<u8>,
+    pub ticket_expires_at_ms: i64,
+    pub ticket_redeemed_at_ms: Option<i64>,
+    pub revoked_at_ms: Option<i64>,
+    pub daemon_id: Option<EnvironmentDaemonId>,
+    pub daemon_public_key: Option<Vec<u8>>,
+    pub enrolled_at_ms: Option<i64>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+impl EnvironmentDaemonEnrollmentRecord {
+    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
+        if self.ticket_hash.len() != 32 {
+            return invalid("enrollment ticket hash must be 32 bytes");
+        }
+        if self
+            .daemon_public_key
+            .as_ref()
+            .is_some_and(|key| key.len() != 32)
+        {
+            return invalid("daemon public key must be 32 bytes");
+        }
+        if self.daemon_id.is_some() != self.daemon_public_key.is_some() {
+            return invalid("daemon id and public key must be enrolled together");
+        }
+        if self.daemon_id.is_some() != self.enrolled_at_ms.is_some() {
+            return invalid("daemon identity and enrollment time must be present together");
+        }
+        validate_timestamps(self.created_at_ms, self.updated_at_ms)?;
+        if self.ticket_expires_at_ms < self.created_at_ms {
+            return invalid("enrollment ticket expiry precedes creation");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateEnvironmentEnrollment {
+    pub request_id: EnvironmentProvisionRequestId,
+    pub environment_id: EnvironmentId,
+    pub incarnation_id: EnvironmentIncarnationId,
+    pub display_name: Option<String>,
+    pub metadata: BTreeMap<String, String>,
+    pub ticket_hash: Vec<u8>,
+    pub ticket_expires_at_ms: i64,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnrollEnvironmentDaemon {
+    pub environment_id: EnvironmentId,
+    pub incarnation_id: EnvironmentIncarnationId,
+    pub ticket_hash: Vec<u8>,
+    pub daemon_id: EnvironmentDaemonId,
+    pub daemon_public_key: Vec<u8>,
+    pub enrolled_at_ms: i64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListEnvironments {
     pub provider_id: Option<EnvironmentProviderId>,
@@ -534,6 +598,30 @@ pub trait EnvironmentStore: Send + Sync {
         &self,
         request: FinishCloseEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+}
+
+#[async_trait]
+pub trait EnvironmentDaemonEnrollmentStore: Send + Sync {
+    async fn create_enrollment(
+        &self,
+        request: CreateEnvironmentEnrollment,
+    ) -> Result<
+        (EnvironmentRecord, EnvironmentDaemonEnrollmentRecord, bool),
+        EnvironmentRegistryError,
+    >;
+    async fn read_enrollment(
+        &self,
+        environment_id: &EnvironmentId,
+    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError>;
+    async fn enroll_daemon(
+        &self,
+        request: EnrollEnvironmentDaemon,
+    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError>;
+    async fn revoke_enrollment(
+        &self,
+        environment_id: &EnvironmentId,
+        revoked_at_ms: i64,
+    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError>;
 }
 
 #[async_trait]

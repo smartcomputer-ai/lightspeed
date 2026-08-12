@@ -18,6 +18,8 @@ async-trait = "0.1"
 auth = { path = "../auth" }
 axum = "0.7"
 base64 = "0.22"
+rand = "0.8"
+sha2 = "0.10"
 clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"
 futures-util = "0.3"

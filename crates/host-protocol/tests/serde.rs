@@ -29,8 +29,8 @@ use host_protocol::{
         },
     },
     shared::{
-        ByteChunk, CURRENT_PROTOCOL_VERSION, HostCapabilities, HostConnectionId,
-        HostConnectionSpec, HostScope, HostTargetId, HostTransport, JobId, ProcessId,
+        ByteChunk, CURRENT_PROTOCOL_VERSION, HostCapabilities, HostConnectionId, HostScope,
+        HostTargetId, JobId, ProcessId,
     },
 };
 use serde::{Serialize, de::DeserializeOwned};
@@ -269,18 +269,16 @@ fn create_target_params_match_provider_fixture() {
                 binding_id: "primary".to_owned(),
             },
             template_id: "lightspeed-dev-v1".to_owned(),
-            bootstrap_ticket: "ticket-1".to_owned(),
         },
         fixture("controller_create_target_params"),
     );
 }
 
 #[test]
-fn create_target_response_carries_data_plane_connection_spec() {
+fn create_target_response_carries_only_provider_lifecycle_state() {
     assert_round_trip(
         CreateTargetResponse {
             target: ready_target_summary(),
-            connection: data_plane_connection_spec(),
         },
         fixture("controller_create_target_response"),
     );
@@ -319,19 +317,6 @@ fn ready_target_summary() -> HostTargetSummary {
         capabilities: remote_host_capabilities(),
         default_cwd: Some("/workspace".try_into().expect("cwd")),
         metadata: BTreeMap::from([("provider".to_owned(), "smolvm".to_owned())]),
-    }
-}
-
-fn data_plane_connection_spec() -> HostConnectionSpec {
-    HostConnectionSpec {
-        target_id: HostTargetId::new("sandbox-123"),
-        endpoint: "wss://host.example/data/sandbox-123".to_owned(),
-        transport: HostTransport::WebSocket,
-        scope: HostScope::Session {
-            session_id: "sandbox-123".to_owned(),
-        },
-        default_cwd: Some("/workspace".try_into().expect("cwd")),
-        capabilities: remote_host_capabilities(),
     }
 }
 

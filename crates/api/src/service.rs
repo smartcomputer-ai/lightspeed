@@ -162,6 +162,21 @@ pub trait AgentApiService: Send + Sync {
         params: EnvironmentCloseParams,
     ) -> Result<AgentApiOutcome<EnvironmentCloseResponse>, AgentApiError>;
 
+    async fn create_environment_enrollment(
+        &self,
+        params: EnvironmentEnrollmentCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentCreateResponse>, AgentApiError>;
+
+    async fn read_environment_enrollment(
+        &self,
+        params: EnvironmentEnrollmentReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentReadResponse>, AgentApiError>;
+
+    async fn revoke_environment_enrollment(
+        &self,
+        params: EnvironmentEnrollmentRevokeParams,
+    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentRevokeResponse>, AgentApiError>;
+
     async fn list_environment_provider_bindings(
         &self,
         _params: EnvironmentProviderBindingListParams,

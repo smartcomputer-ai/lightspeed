@@ -34,6 +34,9 @@ export const METHODS = [
   "environments/read",
   "environments/list",
   "environments/close",
+  "environments/enrollments/create",
+  "environments/enrollments/read",
+  "environments/enrollments/revoke",
   "environments/provider-bindings/list",
   "environments/provider-bindings/read",
   "environments/templates/list",
@@ -237,6 +240,21 @@ export const METHOD_INFO = {
     scope: "universe",
     summary: "Close an environment",
     description: "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.",
+  },
+  "environments/enrollments/create": {
+    scope: "universe",
+    summary: "Create an environment enrollment",
+    description: "Creates a pending directly enrolled environment and returns its short-lived one-time daemon token exactly once.",
+  },
+  "environments/enrollments/read": {
+    scope: "universe",
+    summary: "Read an environment enrollment",
+    description: "Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
+  },
+  "environments/enrollments/revoke": {
+    scope: "universe",
+    summary: "Revoke an environment enrollment",
+    description: "Idempotently revokes a directly enrolled daemon identity; a connected direct route is fenced immediately by the gateway.",
   },
   "environments/provider-bindings/list": {
     scope: "universe",
@@ -793,6 +811,33 @@ export interface MethodMap {
   "environments/close": {
     params: Api.EnvironmentCloseParams;
     result: Api.AgentApiOutcomeOfEnvironmentCloseResponse;
+  };
+  /**
+   * Create an environment enrollment
+   *
+   * Creates a pending directly enrolled environment and returns its short-lived one-time daemon token exactly once.
+   */
+  "environments/enrollments/create": {
+    params: Api.EnvironmentEnrollmentCreateParams;
+    result: Api.AgentApiOutcomeOfEnvironmentEnrollmentCreateResponse;
+  };
+  /**
+   * Read an environment enrollment
+   *
+   * Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.
+   */
+  "environments/enrollments/read": {
+    params: Api.EnvironmentEnrollmentReadParams;
+    result: Api.AgentApiOutcomeOfEnvironmentEnrollmentReadResponse;
+  };
+  /**
+   * Revoke an environment enrollment
+   *
+   * Idempotently revokes a directly enrolled daemon identity; a connected direct route is fenced immediately by the gateway.
+   */
+  "environments/enrollments/revoke": {
+    params: Api.EnvironmentEnrollmentRevokeParams;
+    result: Api.AgentApiOutcomeOfEnvironmentEnrollmentRevokeResponse;
   };
   /**
    * List environment provider bindings
@@ -1539,6 +1584,30 @@ export const rpc = {
    */
   environmentsClose(client: RpcCaller, params: Api.EnvironmentCloseParams): Promise<Api.AgentApiOutcomeOfEnvironmentCloseResponse> {
     return client.call("environments/close", params);
+  },
+  /**
+   * Create an environment enrollment
+   *
+   * Creates a pending directly enrolled environment and returns its short-lived one-time daemon token exactly once.
+   */
+  environmentsEnrollmentsCreate(client: RpcCaller, params: Api.EnvironmentEnrollmentCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentEnrollmentCreateResponse> {
+    return client.call("environments/enrollments/create", params);
+  },
+  /**
+   * Read an environment enrollment
+   *
+   * Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.
+   */
+  environmentsEnrollmentsRead(client: RpcCaller, params: Api.EnvironmentEnrollmentReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentEnrollmentReadResponse> {
+    return client.call("environments/enrollments/read", params);
+  },
+  /**
+   * Revoke an environment enrollment
+   *
+   * Idempotently revokes a directly enrolled daemon identity; a connected direct route is fenced immediately by the gateway.
+   */
+  environmentsEnrollmentsRevoke(client: RpcCaller, params: Api.EnvironmentEnrollmentRevokeParams): Promise<Api.AgentApiOutcomeOfEnvironmentEnrollmentRevokeResponse> {
+    return client.call("environments/enrollments/revoke", params);
   },
   /**
    * List environment provider bindings

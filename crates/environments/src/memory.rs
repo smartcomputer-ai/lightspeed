@@ -7,12 +7,14 @@ use super::*;
 
 type CredentialKey = (EnvironmentId, String);
 type BindingKey = (Uuid, EnvironmentProviderBindingId);
+type DaemonEnrollmentKey = (EnvironmentId, EnvironmentIncarnationId);
 
 struct RegistryState {
     providers: BTreeMap<EnvironmentProviderId, EnvironmentProviderRecord>,
     bindings: BTreeMap<BindingKey, EnvironmentProviderBindingRecord>,
     environments: BTreeMap<EnvironmentId, EnvironmentRecord>,
     requests: BTreeMap<EnvironmentProvisionRequestId, EnvironmentId>,
+    daemon_enrollments: BTreeMap<DaemonEnrollmentKey, EnvironmentDaemonEnrollmentRecord>,
     credentials: BTreeMap<CredentialKey, EnvironmentCredentialRecord>,
 }
 
@@ -23,8 +25,166 @@ impl Default for RegistryState {
             bindings: BTreeMap::new(),
             environments: BTreeMap::new(),
             requests: BTreeMap::new(),
+            daemon_enrollments: BTreeMap::new(),
             credentials: BTreeMap::new(),
         }
+    }
+}
+
+#[async_trait]
+impl EnvironmentDaemonEnrollmentStore for InMemoryEnvironmentRegistryStore {
+    async fn create_enrollment(
+        &self,
+        request: CreateEnvironmentEnrollment,
+    ) -> Result<
+        (EnvironmentRecord, EnvironmentDaemonEnrollmentRecord, bool),
+        EnvironmentRegistryError,
+    > {
+        validate_nonnegative_i64(request.created_at_ms, "created_at_ms")?;
+        let mut state = self.write_state()?;
+        if let Some(environment_id) = state.requests.get(&request.request_id) {
+            let environment = state
+                .environments
+                .get(environment_id)
+                .cloned()
+                .ok_or_else(|| not_found("environment", environment_id))?;
+            let enrollment = state
+                .daemon_enrollments
+                .get(&(
+                    environment_id.clone(),
+                    environment.incarnation.incarnation_id.clone(),
+                ))
+                .cloned()
+                .ok_or_else(|| not_found("environment_enrollment", environment_id))?;
+            return Ok((environment, enrollment, false));
+        }
+        if state.environments.contains_key(&request.environment_id) {
+            return Err(EnvironmentRegistryError::AlreadyExists {
+                kind: "environment",
+                id: request.environment_id.to_string(),
+            });
+        }
+        let environment = EnvironmentRecord {
+            environment_id: request.environment_id.clone(),
+            request_id: request.request_id.clone(),
+            source: EnvironmentSource::Enrolled,
+            display_name: request.display_name,
+            status: EnvironmentStatus::WaitingForDaemon,
+            incarnation: EnvironmentIncarnationRecord {
+                incarnation_id: request.incarnation_id.clone(),
+                provision_request_id: None,
+                provider_target_id: None,
+                template_id: None,
+                created_at_ms: request.created_at_ms,
+                updated_at_ms: request.created_at_ms,
+            },
+            metadata: request.metadata,
+            created_at_ms: request.created_at_ms,
+            updated_at_ms: request.created_at_ms,
+        };
+        environment.validate()?;
+        let enrollment = EnvironmentDaemonEnrollmentRecord {
+            environment_id: request.environment_id.clone(),
+            incarnation_id: request.incarnation_id,
+            ticket_hash: request.ticket_hash,
+            ticket_expires_at_ms: request.ticket_expires_at_ms,
+            ticket_redeemed_at_ms: None,
+            revoked_at_ms: None,
+            daemon_id: None,
+            daemon_public_key: None,
+            enrolled_at_ms: None,
+            created_at_ms: request.created_at_ms,
+            updated_at_ms: request.created_at_ms,
+        };
+        enrollment.validate()?;
+        state
+            .requests
+            .insert(request.request_id, request.environment_id.clone());
+        state
+            .environments
+            .insert(request.environment_id.clone(), environment.clone());
+        state.daemon_enrollments.insert(
+            (request.environment_id, enrollment.incarnation_id.clone()),
+            enrollment.clone(),
+        );
+        Ok((environment, enrollment, true))
+    }
+
+    async fn read_enrollment(
+        &self,
+        environment_id: &EnvironmentId,
+    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError> {
+        let state = self.read_state()?;
+        let environment = state
+            .environments
+            .get(environment_id)
+            .ok_or_else(|| not_found("environment", environment_id))?;
+        state
+            .daemon_enrollments
+            .get(&(
+                environment_id.clone(),
+                environment.incarnation.incarnation_id.clone(),
+            ))
+            .cloned()
+            .ok_or_else(|| not_found("environment_enrollment", environment_id))
+    }
+
+    async fn enroll_daemon(
+        &self,
+        request: EnrollEnvironmentDaemon,
+    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError> {
+        let mut state = self.write_state()?;
+        let enrollment = state
+            .daemon_enrollments
+            .get_mut(&(
+                request.environment_id.clone(),
+                request.incarnation_id.clone(),
+            ))
+            .ok_or_else(|| not_found("environment_enrollment", &request.environment_id))?;
+        if enrollment.incarnation_id != request.incarnation_id {
+            return invalid("stale environment incarnation");
+        }
+        if enrollment.revoked_at_ms.is_some() {
+            return invalid("environment enrollment is revoked");
+        }
+        if enrollment.ticket_redeemed_at_ms.is_some() {
+            return invalid("environment enrollment ticket was already redeemed");
+        }
+        if request.enrolled_at_ms > enrollment.ticket_expires_at_ms {
+            return invalid("environment enrollment ticket expired");
+        }
+        if enrollment.ticket_hash != request.ticket_hash {
+            return invalid("invalid environment enrollment ticket");
+        }
+        enrollment.ticket_redeemed_at_ms = Some(request.enrolled_at_ms);
+        enrollment.daemon_id = Some(request.daemon_id);
+        enrollment.daemon_public_key = Some(request.daemon_public_key);
+        enrollment.enrolled_at_ms = Some(request.enrolled_at_ms);
+        enrollment.updated_at_ms = request.enrolled_at_ms;
+        enrollment.validate()?;
+        Ok(enrollment.clone())
+    }
+
+    async fn revoke_enrollment(
+        &self,
+        environment_id: &EnvironmentId,
+        revoked_at_ms: i64,
+    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError> {
+        let mut state = self.write_state()?;
+        let incarnation_id = state
+            .environments
+            .get(environment_id)
+            .ok_or_else(|| not_found("environment", environment_id))?
+            .incarnation
+            .incarnation_id
+            .clone();
+        let enrollment = state
+            .daemon_enrollments
+            .get_mut(&(environment_id.clone(), incarnation_id))
+            .ok_or_else(|| not_found("environment_enrollment", environment_id))?;
+        enrollment.revoked_at_ms.get_or_insert(revoked_at_ms);
+        enrollment.updated_at_ms = enrollment.updated_at_ms.max(revoked_at_ms);
+        Ok(enrollment.clone())
     }
 }
 

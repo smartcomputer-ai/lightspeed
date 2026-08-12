@@ -62,14 +62,12 @@ pub struct CreateTargetParams {
     pub incarnation_id: String,
     pub binding: ProviderBindingContext,
     pub template_id: String,
-    pub bootstrap_ticket: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateTargetResponse {
     pub target: HostTargetSummary,
-    pub connection: HostConnectionSpec,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

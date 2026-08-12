@@ -9,9 +9,11 @@
 
 ## Goal
 
-Replace the attach-only, inbound `host-bridge` provider with one canonical
-`lightspeed-envd` daemon that connects outbound through an authenticated
-environment gateway.
+Replace the attach-only, publicly inbound `host-bridge` provider with one
+canonical `lightspeed-envd` daemon reached through an authenticated
+environment gateway route. Directly enrolled hosts use an outbound daemon
+connection; provider-managed environments may later use either that form or a
+multiplexed provider relay.
 
 After P119, an existing laptop, workstation, server, or manually managed VM can
 be enrolled directly as a universe environment without creating a physical
@@ -30,16 +32,20 @@ P120.
 
 The environment gateway owns only live transport:
 
-- authenticated outbound daemon sockets;
+- authenticated direct-daemon or provider-relay sockets;
 - route ownership for the current incarnation;
 - multiplexing, correlation, streaming, cancellation, and backpressure;
 - connection leases and immediate availability observations; and
 - per-environment transport limits.
 
-Lightspeed Postgres owns environment/incarnation identity, enrollment ticket
-hashes and expiry, admitted daemon public keys, revocation, and bounded
-availability observations. Ephemeral sockets and `connectionId` values remain
-in gateway memory.
+Lightspeed Postgres owns environment/incarnation identity and, only for
+directly enrolled environments, bootstrap ticket hashes, daemon public keys,
+and revocation. A provider-mediated route is authorized through the provider
+identity, universe binding, environment ownership, and current incarnation; it
+does not create a daemon-enrollment row. Ephemeral sockets, route presence,
+`connectionId` values, and idle timers remain in gateway memory. Environment
+status may carry a bounded availability observation, but an old observation
+never reconstructs a live route.
 
 The gateway does not own environment lifecycle, create machines, execute
 Temporal workflows, grant universe API access, or provide public application
@@ -70,8 +76,24 @@ proves possession on later reconnects.
 Ordinary reconnect keeps environment, incarnation, and daemon IDs but creates
 a new connection ID. Rebuild creates a new incarnation. Approved daemon-key
 rotation retains the environment and may retain the incarnation while revoking
-the previous daemon identity. Only one connection owns a daemon/incarnation
-route; admission of a replacement fences the old connection.
+the previous daemon identity. Only one connection owns a directly enrolled
+daemon/incarnation route; acceptance of a replacement fences the old
+connection.
+
+The durable enrollment record belongs only to the direct-daemon trust path. It
+is not proof that a socket must stay open. Provider provisioning does not
+create one: a provider-mediated route is instead accepted only from the
+authenticated provider assigned to the environment, through an enabled
+universe binding, and for the current incarnation.
+
+```text
+direct route:   daemon key -> daemon enrollment -> current incarnation
+mediated route: provider identity -> binding -> environment -> current incarnation
+```
+
+End-to-end daemon identity behind a provider relay is not required by this
+milestone. It may be added later as an additional proof without making direct
+enrollment a prerequisite for provider-managed environments.
 
 Base images and snapshots contain no live enrollment token or daemon private
 key.
@@ -92,8 +114,17 @@ HTTP/2 remain implementation choices. The protocol must support:
 Workers resolve a stable gateway route outside deterministic session state.
 Worker-to-gateway calls use deployment identity and a resolved
 universe/environment context; a raw environment ID alone grants no route.
-One gateway replica is sufficient for this milestone. Gateway HA and relay-bus
-design remain deferred.
+One gateway replica is sufficient for this milestone. P119 implements direct
+outbound connections but defines route/authentication framing that permits a
+provider relay to multiplex many environments. Gateway HA and a cross-replica
+relay bus remain deferred.
+
+For provider-managed environments, a relay may dial envd over the private
+provider network only when a routed call arrives and close that connection
+after an idle timeout. The provider owns that dial/wake behavior and idle
+policy; the gateway owns logical route correlation and fencing. Directly
+enrolled NAT-bound hosts normally remain connected because no separate wake or
+inbound reachability channel exists.
 
 Keep local/stdio transport for fast tests. Do not route interactive calls
 through Temporal, provider APIs, or Kubernetes control APIs.
@@ -130,8 +161,11 @@ module layout are implementation details.
       registration and inbound serving.
 - [ ] Implement daemon key generation, protected storage, challenge proof,
       rotation, and revocation.
-- [ ] Implement one-time enrollment storage and APIs.
+- [ ] Implement one-time direct-enrollment storage and APIs; provider-managed
+      incarnations must not create enrollment rows.
 - [ ] Implement the environment gateway deployment role and worker routing.
+- [ ] Keep gateway routes transport-neutral across direct, multiplexed relay,
+      and provider-local on-demand connections.
 - [ ] Implement multiplexing, streaming, cancellation, limits, leases, and
       incarnation fencing.
 - [ ] Route existing environment filesystem/process/job adapters through the
@@ -153,8 +187,9 @@ real gateway. Cover:
 - process/PTY streaming, backpressure, cancellation, and bounded output;
 - credential injection without log or state leakage;
 - job terminality and restart reconciliation;
-- token expiry/replay, signature failure, revoked daemon, stale incarnation,
-  duplicate connection, and superseded-route rejection; and
+- direct token expiry/replay, signature failure, revoked daemon, stale
+  incarnation, wrong-provider relay, disabled binding, duplicate connection,
+  and superseded-route rejection; and
 - daemon restart, gateway restart, reconnect, and identity rotation.
 
 The live proof enrolls `ls-dev`, selects it from an ordinary session, and

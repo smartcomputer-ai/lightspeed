@@ -190,6 +190,23 @@ async fn provider_observation_populates_only_the_current_incarnation() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn provisioned_environment_has_no_direct_daemon_enrollment() {
+    let (_, store) = store().await;
+    let environment = store
+        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
+        .await
+        .expect("create");
+
+    assert!(matches!(
+        store.read_enrollment(&environment.environment_id).await,
+        Err(EnvironmentRegistryError::NotFound {
+            kind: "environment_enrollment",
+            ..
+        })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn disabled_binding_blocks_create_and_live_references_block_delete() {
     let (universe_id, store) = store().await;
     let environment = store

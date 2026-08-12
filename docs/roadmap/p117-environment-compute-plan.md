@@ -104,8 +104,8 @@ Replace the current model directly:
   selected by sessions;
 - raw image names and unrestricted provider options become provider-owned,
   curated template IDs;
-- inbound per-host WebSocket addresses become gateway-routed outbound daemon
-  connections; and
+- inbound public per-host WebSocket addresses become gateway routes backed by
+  either direct outbound daemon connections or provider/node relays; and
 - the current per-universe provider API key is removed from infrastructure
   identity.
 
@@ -261,7 +261,7 @@ Control and data planes remain separate:
 - providers own target creation and destruction;
 - Lightspeed owns environment identity, authorization, credentials, and
   selection;
-- the environment gateway owns connection admission and routing;
+- the environment gateway owns transport authentication and routing;
 - `envd` or a conforming provider-native adapter owns execution semantics; and
 - Temporal owns durable environment-job supervision where already defined, not
   individual file or process calls.
@@ -276,8 +276,8 @@ Control and data planes remain separate:
 6. Environment creation and provider creation are idempotent by one stable
    caller-supplied request ID recorded by Lightspeed before provider I/O.
 7. VM running and environment ready are different states.
-8. An environment is ready only when its data plane has negotiated current
-   capabilities.
+8. An environment is ready only when its direct daemon or provider-mediated
+   data plane has negotiated current capabilities.
 9. Every data-plane request is fenced by `environmentId + incarnationId`.
 10. A stale daemon, restored snapshot, or superseded connection cannot serve
     calls after a new incarnation is admitted.
@@ -305,8 +305,8 @@ Lightspeed is authoritative for:
 - desired lifecycle and observed readiness;
 - provisioning request IDs;
 - environment incarnations and fencing generation;
-- enrollment token hashes and expiry;
-- admitted daemon public-key identity and revocation;
+- direct-enrollment token hashes and expiry;
+- directly enrolled daemon public-key identity and revocation;
 - stable gateway routing identity and last observed data-plane availability,
   never the ephemeral socket or `connectionId`;
 - environment credential bindings;
@@ -346,12 +346,30 @@ The environment gateway is authoritative only for live transport facts:
 
 - active sockets and their ephemeral `connectionId` values;
 - current stream correlation, backpressure, and cancellation state;
-- which admitted daemon/incarnation currently owns a route; and
+- which authenticated direct daemon or provider relay currently owns a route;
 - immediate ping/disconnect observations.
 
 These facts remain in gateway memory. Lightspeed may persist a bounded
 availability observation, but a stored observation never makes a dead socket
 live and is not used to reconstruct transport state after restart.
+
+The route abstraction is independent of transport ownership:
+
+- directly enrolled hosts normally keep one outbound envd connection because
+  NAT/firewalls leave no other reachability channel;
+- provider-managed environments may connect envd directly or use an
+  authenticated provider/node relay that multiplexes many independently
+  fenced environment routes over one or a small number of streams; and
+- a provider relay may open a private-network connection to envd on demand and
+  close it after a configured idle period. It must retain a provider-local
+  dial/wake path; Lightspeed cannot summon a daemon that has neither a live
+  route nor an inbound provider-local reachability mechanism.
+
+Multiplexing never merges authorization. Every logical stream carries and is
+fenced by universe, environment, and incarnation. A direct stream is
+additionally authenticated by its enrolled daemon identity; a mediated stream
+is authenticated by the provider identity and checked against the enabled
+binding and environment ownership.
 
 ### ls.bot Postgres
 
@@ -504,18 +522,17 @@ discover, inspect, or close binding B's targets.
      environmentId
      incarnationId
      provisionRequestId = requestId
-     pending daemon-enrollment ticket
 4. Repeating the same requestId returns the same environment.
 5. The Lightspeed lifecycle reconciler calls provider createTarget with stable
-   ids, binding context, provider-owned template ID, and the opaque bootstrap
-   ticket.
+   ids, binding context, and provider-owned template ID.
 6. Provider validates template entitlement, allocation policy, aggregate quota,
    and physical capacity, then idempotently creates or finds the target.
-7. Provider injects bootstrap material through cloud-init, metadata, config
-   drive, Kubernetes Secret, or an equivalent backend channel.
-8. envd boots and connects to the environment gateway.
-9. Gateway validates the ticket, admits the daemon identity, negotiates
-   capabilities, and opens the incarnation lease.
+7. Provider injects its private envd/relay bootstrap configuration through
+   cloud-init, metadata, config drive, Kubernetes Secret, or an equivalent
+   backend channel.
+8. envd boots; the provider relay exposes it directly or on demand.
+9. Gateway authenticates the provider, validates binding/environment/current
+   incarnation ownership, negotiates capabilities, and opens the route.
 10. Provider/backend readiness and gateway data-plane readiness converge.
 11. Lightspeed marks the environment Ready and it becomes selectable.
 ```
@@ -591,18 +608,19 @@ from selection. It does not shut down the underlying laptop or server.
   new `connectionId`.
 - Daemon reinstall with approval: same environment/incarnation, new daemon
   identity, previous identity revoked.
-- Provider VM reboot: normally same environment/incarnation/daemon identity;
-  new connection.
+- Provider VM reboot: normally same environment/incarnation; the provider may
+  expose a new private envd connection behind the same logical route.
 - VM rebuild or restore as replacement: same environment, new incarnation and
-  fresh daemon enrollment.
+  a freshly fenced provider-mediated route.
 - Clone into a distinct environment: new environment, incarnation, and daemon
   identity.
 - Two simultaneous connections for one daemon/incarnation: gateway admits one
   current connection and fences the superseded connection.
 
-Never publish or snapshot an already enrolled golden machine. Base snapshots
-must predate identity generation and receive fresh enrollment material when
-instantiated.
+Never publish or snapshot an already directly enrolled golden machine. Base
+snapshots for provider-managed targets contain neither direct enrollment nor a
+reusable provider credential; each instance receives fresh provider-private
+bootstrap configuration.
 
 ## Environment gateway
 
@@ -611,9 +629,9 @@ and not part of the Incus provider.
 
 Responsibilities:
 
-- accept authenticated outbound daemon connections;
-- redeem one-time enrollment tickets;
-- verify daemon challenge signatures on reconnect;
+- accept authenticated outbound direct-daemon and provider-relay connections;
+- redeem one-time tickets and verify challenge signatures for direct daemons;
+- authenticate provider-mediated routes through provider identity and binding;
 - enforce environment incarnation fencing;
 - negotiate protocol version and capabilities;
 - allocate ephemeral connection IDs;
@@ -635,9 +653,11 @@ The gateway does not:
 
 ### Transport
 
-The default transport is an outbound authenticated, multiplexed connection
-over TLS, using WebSocket or HTTP/2 according to the simplest implementation
-that satisfies streaming and backpressure.
+The gateway transport is an authenticated, multiplexed connection over TLS,
+using WebSocket or HTTP/2 according to the simplest implementation that
+satisfies streaming and backpressure. Direct hosts open it from envd;
+provider-managed fleets may open it from a node relay and multiplex multiple
+independently fenced environments.
 
 The protocol must support:
 
@@ -1111,12 +1131,14 @@ environment gateway
 ```
 
 The microVM need not have general network access for control traffic. The
-provider transports a fresh enrollment ticket into each new incarnation.
+provider authenticates the relay and labels each logical route with the
+environment's current incarnation; it does not transport a direct-enrollment
+ticket into the guest.
 
-Base snapshots are taken before daemon enrollment. Restore recreates the vsock
-backing channel, supplies a fresh incarnation, and establishes a new gateway
-connection. Snapshot state never authorizes two clones as the same live
-environment.
+Base snapshots contain no reusable daemon or provider credential. Restore
+recreates the vsock backing channel, supplies a fresh incarnation, and exposes
+a freshly fenced route. Snapshot state never authorizes two clones as the same
+live environment.
 
 A Firecracker provider may instead implement host protocol outside the guest
 when it owns a deliberately shared workspace and has a faithful execution
@@ -1186,8 +1208,10 @@ KubeVirt.
 - Authenticated provider controller connection.
 - Transient controller initialization and protocol-version validation on each
   new connection; no persisted provider heartbeat or lease.
-- One-time, expiring enrollment tickets stored hashed at rest.
-- Daemon proof-of-possession identity after enrollment.
+- One-time, expiring direct-enrollment tickets stored hashed at rest.
+- Daemon proof-of-possession identity after direct enrollment.
+- Provider identity plus enabled binding/environment/current-incarnation
+  validation for mediated routes, with no daemon-enrollment row.
 - Incarnation fencing on every routed call.
 - Single current connection per daemon/incarnation.
 - Short enrollment-ticket lifetimes and data-plane connection leases.
@@ -1291,7 +1315,7 @@ Target work:
 - accept the stable create request ID and allocate environment/incarnation
   identity before provider calls;
 - add pending/asynchronous lifecycle and reconciliation observations;
-- implement enrollment records and daemon identity;
+- implement direct-enrollment records and daemon identity;
 - add the environment gateway deployment role;
 - rename/refactor `host-bridge` into `environment-daemon`;
 - harden host-protocol control context and connection fencing;
@@ -1390,17 +1414,18 @@ umbrella document and have no scheduled implementation plan.
    control.
 4. Lightspeed persists the environment before provisioning and repeating the
    same request ID cannot create a duplicate VM.
-5. The VM boots an unenrolled image, receives fresh bootstrap material, and
-   connects outbound through `lightspeed-envd` to the environment gateway.
+5. The VM boots an image without direct daemon enrollment; the authenticated
+   provider relay exposes its `lightspeed-envd` route to the environment
+   gateway on demand.
 6. Environment readiness requires both provider target availability and an
-   admitted data-plane incarnation.
+   authenticated, current data-plane route.
 7. A plain session can select the environment and use filesystem, process,
    PTY, credential, and durable-job capabilities.
 8. The environment survives session closure and ordinary VM/daemon restart.
 9. A manually managed host can enroll as an environment without any provider
    record and uses the same envd/gateway data plane.
-10. Stale incarnation, duplicate daemon, and superseded connection attempts are
-    fenced.
+10. Stale incarnation, wrong-provider relay, duplicate direct daemon, and
+    superseded connection attempts are fenced.
 11. Closing a provisioned environment destroys its verified provider target;
     closing an enrolled environment only revokes access.
 12. A session can deploy an API/frontend behind controlled public ingress and a
@@ -1423,7 +1448,7 @@ umbrella document and have no scheduled implementation plan.
 | Resource and ingress policy | Provider-owned, including templates, allocation, aggregate quota, capacity, and public ingress |
 | Lightspeed resource ledger | None; environment lifecycle rows are not physical capacity reservations |
 | Existing machine | Direct enrolled environment, not singleton provider |
-| Canonical data plane | `lightspeed-envd` through environment gateway |
+| Canonical data plane | `lightspeed-envd` through an environment-gateway route: direct outbound or provider-relayed/on-demand |
 | AI terminology | Reserve “agent” for AI agents; infrastructure process is daemon/envd |
 | Provider-native execution | Allowed behind the same host contract, not the general VM default |
 | Dynamic isolation | Full VM by default; trusted system containers remain possible |
@@ -1454,7 +1479,8 @@ umbrella document and have no scheduled implementation plan.
 ## Deferred
 
 - Environment stop/start without close.
-- TTL and idle reaping policy.
+- General environment TTL/reaping policy beyond the required P120 relay
+  connection idle timeout.
 - Operator provider/binding admin UI and provider CRUD API.
 - Node edge-gateway ingress (wildcard DNS, host-terminated TLS, approved-route
   proxying).

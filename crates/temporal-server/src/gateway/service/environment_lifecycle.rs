@@ -5,14 +5,96 @@ use super::environment_providers::{
 use super::*;
 
 use ::environments::{
-    BeginCloseEnvironment, CreateEnvironment, EnvironmentId, EnvironmentIncarnationId,
-    EnvironmentProviderBindingStore, EnvironmentProvisionRequestId, EnvironmentSource,
-    EnvironmentStatus, EnvironmentStore, EnvironmentTemplateId, FailEnvironmentLifecycle,
-    FinishCloseEnvironment, ListEnvironments, ObserveProvisionedEnvironment,
+    BeginCloseEnvironment, CreateEnvironment, CreateEnvironmentEnrollment,
+    EnvironmentDaemonEnrollmentRecord, EnvironmentDaemonEnrollmentStore, EnvironmentId,
+    EnvironmentIncarnationId, EnvironmentProviderBindingStore, EnvironmentProvisionRequestId,
+    EnvironmentSource, EnvironmentStatus, EnvironmentStore, EnvironmentTemplateId,
+    FailEnvironmentLifecycle, FinishCloseEnvironment, ListEnvironments,
+    ObserveProvisionedEnvironment,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use host_protocol::control::targets::{CloseTargetParams, CreateTargetParams, HostTargetStatus};
+use rand::RngCore as _;
+use sha2::{Digest as _, Sha256};
+
+const DEFAULT_ENROLLMENT_TTL_SECONDS: u32 = 10 * 60;
+const MAX_ENROLLMENT_TTL_SECONDS: u32 = 60 * 60;
 
 impl GatewayAgentApi {
+    pub(super) async fn create_environment_enrollment_record(
+        &self,
+        params: EnvironmentEnrollmentCreateParams,
+    ) -> Result<EnvironmentEnrollmentCreateResponse, AgentApiError> {
+        let request_id =
+            EnvironmentProvisionRequestId::try_new(params.request_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid enrollment request id: {error}"))
+            })?;
+        let ttl_seconds = params
+            .expires_in_seconds
+            .unwrap_or(DEFAULT_ENROLLMENT_TTL_SECONDS);
+        if ttl_seconds == 0 || ttl_seconds > MAX_ENROLLMENT_TTL_SECONDS {
+            return Err(AgentApiError::invalid_request(format!(
+                "expiresInSeconds must be between 1 and {MAX_ENROLLMENT_TTL_SECONDS}"
+            )));
+        }
+        let now = now_ms()?;
+        let token = mint_enrollment_token();
+        let ticket_hash = Sha256::digest(token.as_bytes()).to_vec();
+        let (environment, enrollment, created) =
+            EnvironmentDaemonEnrollmentStore::create_enrollment(
+                self.store.as_ref(),
+                CreateEnvironmentEnrollment {
+                    request_id,
+                    environment_id: allocate_environment_id(),
+                    incarnation_id: allocate_incarnation_id(),
+                    display_name: params.display_name,
+                    metadata: params.metadata,
+                    ticket_hash,
+                    ticket_expires_at_ms: now
+                        .checked_add(i64::from(ttl_seconds) * 1_000)
+                        .ok_or_else(|| AgentApiError::internal("enrollment expiry overflow"))?,
+                    created_at_ms: now,
+                },
+            )
+            .await
+            .map_err(map_environments_error)?;
+        Ok(EnvironmentEnrollmentCreateResponse {
+            environment: environment_view(&environment),
+            enrollment: enrollment_view(&enrollment),
+            token: created.then_some(token),
+        })
+    }
+
+    pub(super) async fn read_environment_enrollment_record(
+        &self,
+        params: EnvironmentEnrollmentReadParams,
+    ) -> Result<EnvironmentEnrollmentReadResponse, AgentApiError> {
+        let environment_id = parse_registry_environment_id(params.environment_id)?;
+        let enrollment =
+            EnvironmentDaemonEnrollmentStore::read_enrollment(self.store.as_ref(), &environment_id)
+                .await
+                .map_err(map_environments_error)?;
+        Ok(EnvironmentEnrollmentReadResponse {
+            enrollment: enrollment_view(&enrollment),
+        })
+    }
+
+    pub(super) async fn revoke_environment_enrollment_record(
+        &self,
+        params: EnvironmentEnrollmentRevokeParams,
+    ) -> Result<EnvironmentEnrollmentRevokeResponse, AgentApiError> {
+        let environment_id = parse_registry_environment_id(params.environment_id)?;
+        let enrollment = EnvironmentDaemonEnrollmentStore::revoke_enrollment(
+            self.store.as_ref(),
+            &environment_id,
+            now_ms()?,
+        )
+        .await
+        .map_err(map_environments_error)?;
+        Ok(EnvironmentEnrollmentRevokeResponse {
+            enrollment: enrollment_view(&enrollment),
+        })
+    }
     pub(super) async fn create_environment_record(
         &self,
         params: EnvironmentCreateParams,
@@ -184,9 +266,6 @@ impl GatewayAgentApi {
                 incarnation_id: environment.incarnation.incarnation_id.to_string(),
                 binding: binding_context(&binding),
                 template_id: template_id.to_string(),
-                // P119 replaces this explicit control-plane placeholder with an
-                // expiring daemon-enrollment ticket minted by the gateway.
-                bootstrap_ticket: format!("p118:{}", environment.incarnation.incarnation_id),
             })
             .await?;
         let status = match response.target.status {
@@ -283,4 +362,26 @@ pub(super) fn allocate_environment_id() -> EnvironmentId {
 
 fn allocate_incarnation_id() -> EnvironmentIncarnationId {
     EnvironmentIncarnationId::new(format!("incarnation_{}", uuid::Uuid::new_v4().simple()))
+}
+
+fn mint_enrollment_token() -> String {
+    let mut bytes = [0_u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    format!("lse_{}", URL_SAFE_NO_PAD.encode(bytes))
+}
+
+pub(crate) fn enrollment_view(
+    record: &EnvironmentDaemonEnrollmentRecord,
+) -> EnvironmentEnrollmentView {
+    EnvironmentEnrollmentView {
+        environment_id: record.environment_id.to_string(),
+        incarnation_id: record.incarnation_id.to_string(),
+        ticket_expires_at_ms: record.ticket_expires_at_ms,
+        ticket_redeemed_at_ms: record.ticket_redeemed_at_ms,
+        revoked_at_ms: record.revoked_at_ms,
+        daemon_id: record.daemon_id.as_ref().map(ToString::to_string),
+        enrolled_at_ms: record.enrolled_at_ms,
+        created_at_ms: record.created_at_ms,
+        updated_at_ms: record.updated_at_ms,
+    }
 }

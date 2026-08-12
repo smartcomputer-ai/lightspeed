@@ -2167,6 +2167,72 @@ export interface EnvironmentCredentialUnbindResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfEnvironmentEnrollmentCreateResponse".
+ */
+export interface AgentApiOutcomeOfEnvironmentEnrollmentCreateResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentEnrollmentCreateResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentEnrollmentCreateResponse".
+ */
+export interface EnvironmentEnrollmentCreateResponse {
+  enrollment: EnvironmentEnrollmentView;
+  environment: EnvironmentView;
+  /**
+   * Present exactly once, when this call creates the enrollment. A retry
+   * with the same request ID returns the resource without the token.
+   */
+  token?: string | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentEnrollmentView".
+ */
+export interface EnvironmentEnrollmentView {
+  createdAtMs: number;
+  daemonId?: string | null;
+  enrolledAtMs?: number | null;
+  environmentId: string;
+  incarnationId: string;
+  revokedAtMs?: number | null;
+  ticketExpiresAtMs: number;
+  ticketRedeemedAtMs?: number | null;
+  updatedAtMs: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfEnvironmentEnrollmentReadResponse".
+ */
+export interface AgentApiOutcomeOfEnvironmentEnrollmentReadResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentEnrollmentReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentEnrollmentReadResponse".
+ */
+export interface EnvironmentEnrollmentReadResponse {
+  enrollment: EnvironmentEnrollmentView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfEnvironmentEnrollmentRevokeResponse".
+ */
+export interface AgentApiOutcomeOfEnvironmentEnrollmentRevokeResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentEnrollmentRevokeResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentEnrollmentRevokeResponse".
+ */
+export interface EnvironmentEnrollmentRevokeResponse {
+  enrollment: EnvironmentEnrollmentView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfEnvironmentJobCancelResponse".
  */
 export interface AgentApiOutcomeOfEnvironmentJobCancelResponse {
@@ -3744,6 +3810,36 @@ export interface EnvironmentCredentialListParams {
  */
 export interface EnvironmentCredentialUnbindParams {
   envName: string;
+  environmentId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentEnrollmentCreateParams".
+ */
+export interface EnvironmentEnrollmentCreateParams {
+  displayName?: string | null;
+  /**
+   * Requested one-time token lifetime. Defaults to ten minutes and is
+   * capped at one hour.
+   */
+  expiresInSeconds?: number | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  requestId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentEnrollmentReadParams".
+ */
+export interface EnvironmentEnrollmentReadParams {
+  environmentId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentEnrollmentRevokeParams".
+ */
+export interface EnvironmentEnrollmentRevokeParams {
   environmentId: string;
 }
 /**

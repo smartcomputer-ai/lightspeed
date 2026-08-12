@@ -13,8 +13,8 @@ use host_protocol::{
         },
     },
     shared::{
-        CURRENT_PROTOCOL_VERSION, HostCapabilities, HostConnectionSpec, HostScope, HostTargetId,
-        HostTransport, ImplementationInfo,
+        CURRENT_PROTOCOL_VERSION, HostCapabilities, HostScope, HostTargetId, HostTransport,
+        ImplementationInfo,
     },
 };
 
@@ -218,16 +218,6 @@ impl HostController for FakeHostController {
                     format!("fake:{}", params.template_id),
                 )]),
             },
-            connection: HostConnectionSpec {
-                target_id: host_target_id,
-                endpoint: format!("fake://{target_id}"),
-                transport: HostTransport::Provider {
-                    provider_type: "fake".to_owned(),
-                },
-                scope: HostScope::Default,
-                default_cwd: None,
-                capabilities,
-            },
         };
         backend.requests.insert(key, target_id.clone());
         backend.targets.insert(
@@ -364,7 +354,6 @@ mod tests {
                 binding_id: binding.to_owned(),
             },
             template_id: "rust-v1".to_owned(),
-            bootstrap_ticket: "test-ticket".to_owned(),
         }
     }
 

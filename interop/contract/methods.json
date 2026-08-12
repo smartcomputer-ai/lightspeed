@@ -523,6 +523,60 @@
       "summary": "Close an environment"
     },
     {
+      "description": "Creates a pending directly enrolled environment and returns its short-lived one-time daemon token exactly once.",
+      "method": "environments/enrollments/create",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentEnrollmentCreateParams"
+        },
+        "type": "EnvironmentEnrollmentCreateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentEnrollmentCreateResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentEnrollmentCreateResponse>"
+      },
+      "scope": "universe",
+      "summary": "Create an environment enrollment"
+    },
+    {
+      "description": "Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
+      "method": "environments/enrollments/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentEnrollmentReadParams"
+        },
+        "type": "EnvironmentEnrollmentReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentEnrollmentReadResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentEnrollmentReadResponse>"
+      },
+      "scope": "universe",
+      "summary": "Read an environment enrollment"
+    },
+    {
+      "description": "Idempotently revokes a directly enrolled daemon identity; a connected direct route is fenced immediately by the gateway.",
+      "method": "environments/enrollments/revoke",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentEnrollmentRevokeParams"
+        },
+        "type": "EnvironmentEnrollmentRevokeParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentEnrollmentRevokeResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentEnrollmentRevokeResponse>"
+      },
+      "scope": "universe",
+      "summary": "Revoke an environment enrollment"
+    },
+    {
       "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",
       "method": "environments/provider-bindings/list",
       "params": {
