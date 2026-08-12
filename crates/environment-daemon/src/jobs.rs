@@ -131,7 +131,7 @@ impl JobManager {
                 record.status = JobStatus::Interrupted;
                 record.finished_at_ms = Some(now);
                 record.failure =
-                    Some("host-bridge restarted before this job could be recovered".to_owned());
+                    Some("lightspeed-envd restarted before this job could be recovered".to_owned());
                 persist_record_at(&jobs_root, &record)?;
             }
             state.next_accept_seq = state
@@ -415,7 +415,7 @@ impl JobManager {
             let ready = {
                 let mut state = self.state.lock().await;
                 if let Err(error) = self.mark_dependency_failures(&mut state) {
-                    eprintln!("host-bridge job dependency update failed: {error:?}");
+                    eprintln!("lightspeed-envd job dependency update failed: {error:?}");
                 }
 
                 let mut busy_queues = state
@@ -478,7 +478,7 @@ impl JobManager {
                         record.failure = None;
                         if let Err(error) = self.persist_record(record) {
                             eprintln!(
-                                "host-bridge failed to persist running job {}: {error:?}",
+                                "lightspeed-envd failed to persist running job {}: {error:?}",
                                 job_key_id(&key)
                             );
                         }
@@ -612,7 +612,7 @@ impl JobManager {
                 record.finished_at_ms = Some(now_ms());
                 if let Err(error) = self.persist_record(record) {
                     eprintln!(
-                        "host-bridge failed to persist finished job {}: {error:?}",
+                        "lightspeed-envd failed to persist finished job {}: {error:?}",
                         record.job_id
                     );
                 }
@@ -881,7 +881,7 @@ async fn read_job_stream<R>(
                     record.failure = Some(error.to_string());
                     if let Err(error) = manager.persist_record(record) {
                         eprintln!(
-                            "host-bridge failed to persist stream failure for {job_id}: {error:?}"
+                            "lightspeed-envd failed to persist stream failure for {job_id}: {error:?}"
                         );
                     }
                 }
@@ -905,7 +905,7 @@ async fn read_job_stream<R>(
                 chunk: ByteChunk::from(redact_bytes(&buffer[..read], &redactions)),
             });
             if let Err(error) = manager.persist_record(record) {
-                eprintln!("host-bridge failed to persist output for {job_id}: {error:?}");
+                eprintln!("lightspeed-envd failed to persist output for {job_id}: {error:?}");
             }
         }
         manager.notify.notify_waiters();

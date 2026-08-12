@@ -67,6 +67,7 @@ pub struct SessionTools {
     environment_store: Option<Arc<dyn EnvironmentStore>>,
     environment_resolver: Option<crate::environment_resolver::EnvironmentResolver>,
     environment_credentials: Option<EnvironmentCredentialResolver>,
+    environment_gateway: Option<crate::environment_gateway::EnvironmentGatewayClientConfig>,
     fleet: Option<FleetToolExecutor>,
 }
 
@@ -81,6 +82,7 @@ impl SessionTools {
             environment_store: None,
             environment_resolver: None,
             environment_credentials: None,
+            environment_gateway: None,
             fleet: None,
         }
     }
@@ -114,6 +116,17 @@ impl SessionTools {
         credentials: EnvironmentCredentialResolver,
     ) -> Self {
         self.environment_credentials = Some(credentials);
+        self
+    }
+
+    pub(crate) fn with_environment_gateway(
+        mut self,
+        gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
+    ) -> Self {
+        if let Some(resolver) = self.environment_resolver.take() {
+            self.environment_resolver = Some(resolver.with_gateway(gateway.clone()));
+        }
+        self.environment_gateway = Some(gateway);
         self
     }
 
@@ -1012,10 +1025,22 @@ impl SessionTools {
         session_id: &SessionId,
         resource: EnvironmentRecord,
     ) -> Result<RuntimeEnvironment, CoreAgentIoError> {
-        let connection = resource
-            .connection()
-            .ok_or_else(|| io_error("environment has no admitted data-plane connection"))?;
-        let mut client = connect_host_data_client(connection).await?;
+        let gateway = self
+            .environment_gateway
+            .as_ref()
+            .ok_or_else(|| io_error("environment gateway is not configured on this worker"))?;
+        let connection = gateway.connection_for(
+            self.environment_resolver
+                .as_ref()
+                .map(|resolver| resolver.universe_id())
+                .unwrap_or_default(),
+            &resource,
+        );
+        let mut client = connect_host_data_client(
+            &connection,
+            gateway.connect_options("lightspeed-temporal-server"),
+        )
+        .await?;
         let response = client
             .initialize(&InitializeParams {
                 protocol_version: CURRENT_PROTOCOL_VERSION,
@@ -1034,7 +1059,6 @@ impl SessionTools {
         let cwd = response
             .default_cwd
             .as_deref()
-            .or_else(|| resource.default_cwd().map(|cwd| cwd.as_str()))
             .map(FsPath::new)
             .transpose()
             .map_err(|error| io_error(format!("invalid host data default cwd: {error}")))?;
@@ -1105,8 +1129,6 @@ fn environment_model_view(
         "provider_id": environment.provider_id().map(|id| id.as_str()),
         "display_name": environment.display_name,
         "status": format!("{:?}", environment.status).to_lowercase(),
-        "capabilities": environment.capabilities(),
-        "default_cwd": environment.default_cwd().map(|cwd| cwd.as_str()),
         "active": active == Some(&environment.environment_id),
         "observed_at_ms": environment.observed_at_ms(),
     })
@@ -1208,17 +1230,12 @@ fn model_job_error(handle: Option<JobHandle>, error: String) -> ModelJobResult {
 
 async fn connect_host_data_client(
     connection: &HostConnectionSpec,
+    options: WebSocketConnectOptions,
 ) -> Result<HostDataClient<host_client::WebSocketTransport>, CoreAgentIoError> {
     match &connection.transport {
-        HostTransport::WebSocket => HostDataClient::connect(
-            &connection.endpoint,
-            WebSocketConnectOptions {
-                user_agent: Some("lightspeed-temporal-server".to_owned()),
-                ..WebSocketConnectOptions::default()
-            },
-        )
-        .await
-        .map_err(map_host_client_error),
+        HostTransport::WebSocket => HostDataClient::connect(&connection.endpoint, options)
+            .await
+            .map_err(map_host_client_error),
         HostTransport::Http => Err(unsupported_host_data_transport("http")),
         HostTransport::Stdio => Err(unsupported_host_data_transport("stdio")),
         HostTransport::Ssh => Err(unsupported_host_data_transport("ssh")),

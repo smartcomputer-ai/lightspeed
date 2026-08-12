@@ -278,7 +278,7 @@ Creates a pending directly enrolled environment and returns its short-lived one-
 
 **Read an environment enrollment**
 
-Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.
+Returns bounded direct-enrollment token, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.
 
 - Params: `EnvironmentEnrollmentReadParams`
 - Result: `AgentApiOutcome<EnvironmentEnrollmentReadResponse>`

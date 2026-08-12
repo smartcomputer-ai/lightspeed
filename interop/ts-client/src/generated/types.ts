@@ -2197,8 +2197,8 @@ export interface EnvironmentEnrollmentView {
   environmentId: string;
   incarnationId: string;
   revokedAtMs?: number | null;
-  ticketExpiresAtMs: number;
-  ticketRedeemedAtMs?: number | null;
+  tokenExpiresAtMs: number;
+  tokenRedeemedAtMs?: number | null;
   updatedAtMs: number;
 }
 /**

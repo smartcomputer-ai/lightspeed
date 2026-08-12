@@ -541,7 +541,7 @@
       "summary": "Create an environment enrollment"
     },
     {
-      "description": "Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
+      "description": "Returns bounded direct-enrollment token, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
       "method": "environments/enrollments/read",
       "params": {
         "schema": {

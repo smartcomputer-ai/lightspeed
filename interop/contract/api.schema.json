@@ -3792,11 +3792,11 @@
             "null"
           ]
         },
-        "ticketExpiresAtMs": {
+        "tokenExpiresAtMs": {
           "format": "int64",
           "type": "integer"
         },
-        "ticketRedeemedAtMs": {
+        "tokenRedeemedAtMs": {
           "format": "int64",
           "type": [
             "integer",
@@ -3811,7 +3811,7 @@
       "required": [
         "environmentId",
         "incarnationId",
-        "ticketExpiresAtMs",
+        "tokenExpiresAtMs",
         "createdAtMs",
         "updatedAtMs"
       ],

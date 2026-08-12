@@ -491,6 +491,8 @@ pub struct GatewayAgentApiBuilder {
     model_discovery_openai: Option<Arc<openai::Client>>,
     model_discovery_anthropic: Option<Arc<anthropic::Client>>,
     host_controller_connector: Arc<dyn HostControllerConnector>,
+    environment_routes: Arc<crate::environment_gateway::EnvironmentRouteRegistry>,
+    environment_gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
 }
 
 impl GatewayAgentApiBuilder {
@@ -550,6 +552,16 @@ impl GatewayAgentApiBuilder {
 
     pub fn with_default_model(mut self, model: ModelSelection) -> Self {
         self.default_model = model;
+        self
+    }
+
+    pub fn with_environment_gateway(
+        mut self,
+        routes: Arc<crate::environment_gateway::EnvironmentRouteRegistry>,
+        gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
+    ) -> Self {
+        self.environment_routes = routes;
+        self.environment_gateway = gateway;
         self
     }
 
@@ -633,6 +645,8 @@ impl GatewayAgentApiBuilder {
             github_api,
             model_discovery,
             host_controller_connector: self.host_controller_connector,
+            environment_routes: self.environment_routes,
+            environment_gateway: self.environment_gateway,
         }
     }
 }
@@ -652,10 +666,16 @@ pub struct GatewayAgentApi {
     github_api: Arc<dyn GitHubApiClient>,
     model_discovery: ModelDiscoveryService,
     host_controller_connector: Arc<dyn HostControllerConnector>,
+    pub(crate) environment_routes: Arc<crate::environment_gateway::EnvironmentRouteRegistry>,
+    pub(crate) environment_gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
 }
 
 impl GatewayAgentApi {
     pub fn builder(client: Client, store: Arc<PgStore>) -> GatewayAgentApiBuilder {
+        let environment_gateway = crate::environment_gateway::EnvironmentGatewayClientConfig::new(
+            DEFAULT_PUBLIC_BASE_URL,
+            format!("local-{}", uuid::Uuid::new_v4()),
+        );
         GatewayAgentApiBuilder {
             client,
             store,
@@ -672,7 +692,15 @@ impl GatewayAgentApi {
             model_discovery_openai: None,
             model_discovery_anthropic: None,
             host_controller_connector: Arc::new(WebSocketHostControllerConnector::default()),
+            environment_routes: Arc::new(
+                crate::environment_gateway::EnvironmentRouteRegistry::default(),
+            ),
+            environment_gateway,
         }
+    }
+
+    pub(crate) fn store(&self) -> &Arc<PgStore> {
+        &self.store
     }
 
     pub fn new(client: Client, store: Arc<PgStore>) -> Self {

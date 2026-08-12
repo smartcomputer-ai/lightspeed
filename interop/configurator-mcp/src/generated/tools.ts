@@ -3932,7 +3932,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_environments_enrollments_read",
     "method": "environments/enrollments/read",
     "summary": "Read an environment enrollment",
-    "description": "Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
+    "description": "Returns bounded direct-enrollment token, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
     "paramsType": "EnvironmentEnrollmentReadParams",
     "resultType": "AgentApiOutcome<EnvironmentEnrollmentReadResponse>",
     "inputSchema": {

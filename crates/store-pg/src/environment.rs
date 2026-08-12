@@ -11,8 +11,8 @@ use environments::{
     EnvironmentRecord, EnvironmentRegistryError, EnvironmentSource, EnvironmentStatus,
     EnvironmentStore, EnvironmentTemplateId, FailEnvironmentLifecycle, FinishCloseEnvironment,
     ListEnvironmentCredentials, ListEnvironmentProviders, ListEnvironments,
-    ObserveProvisionedEnvironment, PutEnvironmentCredential, PutEnvironmentProvider,
-    PutEnvironmentProviderBinding,
+    ObserveEnvironmentRoute, ObserveProvisionedEnvironment, PutEnvironmentCredential,
+    PutEnvironmentProvider, PutEnvironmentProviderBinding,
 };
 use host_protocol::shared::HostTargetId;
 use sqlx::{Postgres, Row, Transaction};
@@ -54,8 +54,8 @@ const CREDENTIAL_COLUMNS: &str = r#"
 "#;
 
 const ENROLLMENT_COLUMNS: &str = r#"
-    environment_id, incarnation_id, ticket_hash, ticket_expires_at_ms,
-    ticket_redeemed_at_ms, revoked_at_ms, daemon_id, daemon_public_key,
+    environment_id, incarnation_id, token_hash, token_expires_at_ms,
+    token_redeemed_at_ms, revoked_at_ms, daemon_id, daemon_public_key,
     enrolled_at_ms, created_at_ms, updated_at_ms
 "#;
 
@@ -482,6 +482,36 @@ impl EnvironmentStore for PgStore {
         self.read_environment(&request.environment_id).await
     }
 
+    async fn observe_environment_route(
+        &self,
+        request: ObserveEnvironmentRoute,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        let current = self.read_environment(&request.environment_id).await?;
+        if current.incarnation.incarnation_id != request.incarnation_id {
+            return invalid("stale environment incarnation");
+        }
+        if request.observed_at_ms < current.updated_at_ms {
+            return Ok(current);
+        }
+        let status = if request.connected {
+            "ready"
+        } else {
+            "offline"
+        };
+        sqlx::query(
+            "UPDATE environments SET status=CASE WHEN status IN ('closing','closed') THEN status ELSE $4 END, updated_at_ms=$5 WHERE universe_id=$1 AND environment_id=$2 AND current_incarnation_id=$3",
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(request.incarnation_id.as_str())
+        .bind(status)
+        .bind(request.observed_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| sql_error("observe environment route", error))?;
+        self.read_environment(&request.environment_id).await
+    }
+
     async fn fail_environment_lifecycle(
         &self,
         request: FailEnvironmentLifecycle,
@@ -542,9 +572,9 @@ impl EnvironmentDaemonEnrollmentStore for PgStore {
         let candidate = EnvironmentDaemonEnrollmentRecord {
             environment_id: request.environment_id.clone(),
             incarnation_id: request.incarnation_id.clone(),
-            ticket_hash: request.ticket_hash.clone(),
-            ticket_expires_at_ms: request.ticket_expires_at_ms,
-            ticket_redeemed_at_ms: None,
+            token_hash: request.token_hash.clone(),
+            token_expires_at_ms: request.token_expires_at_ms,
+            token_redeemed_at_ms: None,
             revoked_at_ms: None,
             daemon_id: None,
             daemon_public_key: None,
@@ -615,8 +645,8 @@ impl EnvironmentDaemonEnrollmentStore for PgStore {
         let query = format!(
             r#"
             INSERT INTO environment_daemon_enrollments (
-                universe_id, environment_id, incarnation_id, ticket_hash,
-                ticket_expires_at_ms, created_at_ms, updated_at_ms
+                universe_id, environment_id, incarnation_id, token_hash,
+                token_expires_at_ms, created_at_ms, updated_at_ms
             ) VALUES ($1,$2,$3,$4,$5,$6,$6)
             RETURNING {ENROLLMENT_COLUMNS}
             "#
@@ -625,8 +655,8 @@ impl EnvironmentDaemonEnrollmentStore for PgStore {
             .bind(self.config.universe_id)
             .bind(request.environment_id.as_str())
             .bind(request.incarnation_id.as_str())
-            .bind(&request.ticket_hash)
-            .bind(request.ticket_expires_at_ms)
+            .bind(&request.token_hash)
+            .bind(request.token_expires_at_ms)
             .bind(request.created_at_ms)
             .fetch_one(&mut *tx)
             .await
@@ -663,11 +693,11 @@ impl EnvironmentDaemonEnrollmentStore for PgStore {
         let query = format!(
             r#"
             UPDATE environment_daemon_enrollments SET
-                ticket_redeemed_at_ms = $6, daemon_id = $4,
+                token_redeemed_at_ms = $6, daemon_id = $4,
                 daemon_public_key = $5, enrolled_at_ms = $6, updated_at_ms = $6
             WHERE universe_id = $1 AND environment_id = $2 AND incarnation_id = $3
-              AND ticket_hash = $7 AND ticket_redeemed_at_ms IS NULL
-              AND revoked_at_ms IS NULL AND ticket_expires_at_ms >= $6
+              AND token_hash = $7 AND token_redeemed_at_ms IS NULL
+              AND revoked_at_ms IS NULL AND token_expires_at_ms >= $6
             RETURNING {ENROLLMENT_COLUMNS}
             "#
         );
@@ -678,7 +708,7 @@ impl EnvironmentDaemonEnrollmentStore for PgStore {
             .bind(request.daemon_id.as_str())
             .bind(&request.daemon_public_key)
             .bind(request.enrolled_at_ms)
-            .bind(&request.ticket_hash)
+            .bind(&request.token_hash)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| sql_error("enroll environment daemon", error))?
@@ -948,12 +978,12 @@ fn enrollment_from_row(
     let record = EnvironmentDaemonEnrollmentRecord {
         environment_id: parse_id(row, "environment_id", EnvironmentId::try_new)?,
         incarnation_id: parse_id(row, "incarnation_id", EnvironmentIncarnationId::try_new)?,
-        ticket_hash: row
-            .try_get("ticket_hash")
-            .map_err(|error| sql_error("decode enrollment ticket hash", error))?,
-        ticket_expires_at_ms: scalar(row, "ticket_expires_at_ms")?,
-        ticket_redeemed_at_ms: row
-            .try_get("ticket_redeemed_at_ms")
+        token_hash: row
+            .try_get("token_hash")
+            .map_err(|error| sql_error("decode enrollment token hash", error))?,
+        token_expires_at_ms: scalar(row, "token_expires_at_ms")?,
+        token_redeemed_at_ms: row
+            .try_get("token_redeemed_at_ms")
             .map_err(|error| sql_error("decode enrollment redemption", error))?,
         revoked_at_ms: row
             .try_get("revoked_at_ms")

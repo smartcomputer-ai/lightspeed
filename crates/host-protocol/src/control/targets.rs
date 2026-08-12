@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::shared::{HostCapabilities, HostConnectionSpec, HostPath, HostScope, HostTargetId};
+use crate::shared::{HostCapabilities, HostPath, HostScope, HostTargetId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,19 +70,6 @@ pub struct CreateTargetResponse {
     pub target: HostTargetSummary,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AttachTargetParams {
-    pub request: HostTargetAttachRequest,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AttachTargetResponse {
-    pub target: HostTargetSummary,
-    pub connection: HostConnectionSpec,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTargetParams {
@@ -115,20 +102,6 @@ pub struct CloseTargetResponse {
     pub status: HostTargetStatus,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum HostTargetAttachRequest {
-    Target {
-        #[serde(rename = "targetId")]
-        target_id: HostTargetId,
-    },
-    Provider {
-        #[serde(rename = "providerType")]
-        provider_type: String,
-        spec: serde_json::Value,
-    },
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SandboxTargetSpec {
@@ -140,21 +113,6 @@ pub struct SandboxTargetSpec {
     pub cwd: Option<HostPath>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub labels: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_options: Option<serde_json::Value>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AttachedHostSpec {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub endpoint: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<HostPath>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub labels: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

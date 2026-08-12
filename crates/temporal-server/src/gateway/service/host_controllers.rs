@@ -139,7 +139,6 @@ impl HostController for FakeHostController {
                 list_templates: true,
                 list_targets: true,
                 create_target: true,
-                attach_target: false,
                 get_target: true,
                 close_target: true,
             },

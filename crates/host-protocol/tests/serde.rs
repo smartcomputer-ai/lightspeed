@@ -4,12 +4,12 @@ use host_protocol::{
     control::{
         handshake::ControllerInitializeParams,
         methods::{
-            ATTACH_TARGET_METHOD, CREATE_TARGET_METHOD,
-            INITIALIZE_METHOD as CONTROL_INITIALIZE_METHOD, LIST_TARGETS_METHOD,
+            CREATE_TARGET_METHOD, INITIALIZE_METHOD as CONTROL_INITIALIZE_METHOD,
+            LIST_TARGETS_METHOD,
         },
         targets::{
-            AttachTargetParams, CreateTargetParams, CreateTargetResponse, HostTargetAttachRequest,
-            HostTargetStatus, HostTargetSummary, ListTargetsResponse, ProviderBindingContext,
+            CreateTargetParams, CreateTargetResponse, HostTargetStatus, HostTargetSummary,
+            ListTargetsResponse, ProviderBindingContext,
         },
     },
     data::{
@@ -53,9 +53,6 @@ fn fixture(name: &str) -> Value {
         "controller_create_target_response" => {
             include_str!("../fixtures/controller_create_target_response.json")
         }
-        "controller_attach_target_params" => {
-            include_str!("../fixtures/controller_attach_target_params.json")
-        }
         "controller_list_targets_response" => {
             include_str!("../fixtures/controller_list_targets_response.json")
         }
@@ -91,7 +88,6 @@ fn method_names_match_controller_plane_contract() {
     assert_eq!(CONTROL_INITIALIZE_METHOD, "controller/initialize");
     assert_eq!(LIST_TARGETS_METHOD, "controller/listTargets");
     assert_eq!(CREATE_TARGET_METHOD, "controller/createTarget");
-    assert_eq!(ATTACH_TARGET_METHOD, "controller/attachTarget");
 }
 
 #[test]
@@ -281,18 +277,6 @@ fn create_target_response_carries_only_provider_lifecycle_state() {
             target: ready_target_summary(),
         },
         fixture("controller_create_target_response"),
-    );
-}
-
-#[test]
-fn attach_target_params_match_existing_target_fixture() {
-    assert_round_trip(
-        AttachTargetParams {
-            request: HostTargetAttachRequest::Target {
-                target_id: HostTargetId::new("sandbox-123"),
-            },
-        },
-        fixture("controller_attach_target_params"),
     );
 }
 

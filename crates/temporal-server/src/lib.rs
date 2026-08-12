@@ -6,6 +6,7 @@
 pub mod config;
 pub(crate) mod credential_injection;
 pub mod environment;
+pub mod environment_gateway;
 pub(crate) mod environment_resolver;
 pub mod fleet;
 pub mod gateway;

@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "crates/host-client",
-    "crates/host-bridge",
+    "crates/environment-daemon",
     "crates/host-protocol",
     "crates/llm-clients",
     "crates/api",

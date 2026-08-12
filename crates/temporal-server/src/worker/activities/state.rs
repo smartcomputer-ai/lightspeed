@@ -21,6 +21,7 @@ use vfs::VfsWorkspaceStore;
 use crate::{
     config::pg_store_from_env,
     credential_injection::EnvironmentCredentialResolver,
+    environment_gateway::EnvironmentGatewayClientConfig,
     fleet::FleetChildRuntime,
     worker::{BrokerSecretResolver, SessionTools, StoredProviderKeyResolver},
 };
@@ -73,6 +74,8 @@ pub struct EnvironmentJobActivityDeps {
     pub(super) blob_graph: Option<Arc<dyn BlobGraphStore>>,
     pub(super) environments: Arc<dyn EnvironmentStore>,
     pub(super) credentials: EnvironmentCredentialResolver,
+    pub(super) gateway: Option<EnvironmentGatewayClientConfig>,
+    pub(super) universe_id: uuid::Uuid,
 }
 
 /// Temporal-client deps for the generic start-on-call adapter: starting an
@@ -157,6 +160,7 @@ impl ActivityState {
         llm: Arc<dyn CoreAgentLlm>,
         tools: Arc<dyn CoreAgentTools>,
     ) -> Self {
+        let universe_id = store.config().universe_id;
         let sessions: Arc<dyn SessionStore> = store.clone();
         let blobs: Arc<dyn BlobStore> = store.clone();
         let blob_graph: Arc<dyn BlobGraphStore> = store.clone();
@@ -173,6 +177,8 @@ impl ActivityState {
             blob_graph: Some(blob_graph),
             environments: environment_job_environments,
             credentials: environment_job_credentials,
+            gateway: None,
+            universe_id,
         });
         state
     }
@@ -224,6 +230,7 @@ impl ActivityState {
         fleet_runtime: Option<Arc<dyn FleetChildRuntime>>,
         clients: &DeploymentClients,
         temporal_client: temporalio_client::Client,
+        gateway: EnvironmentGatewayClientConfig,
     ) -> anyhow::Result<Self> {
         let blobs: Arc<dyn BlobStore> = store.clone();
         let broker = registry_token_broker_with_clients(
@@ -248,15 +255,21 @@ impl ActivityState {
         );
         let temporal_client_for_workflow_tools = temporal_client.clone();
         let tools: Arc<dyn CoreAgentTools> = match fleet_runtime {
-            Some(fleet_runtime) => Arc::new(SessionTools::from_pg_store_with_fleet_runtime(
-                store.clone(),
-                fleet_runtime,
-            )),
-            None => Arc::new(SessionTools::from_pg_store(store.clone())),
+            Some(fleet_runtime) => Arc::new(
+                SessionTools::from_pg_store_with_fleet_runtime(store.clone(), fleet_runtime)
+                    .with_environment_gateway(gateway.clone()),
+            ),
+            None => Arc::new(
+                SessionTools::from_pg_store(store.clone())
+                    .with_environment_gateway(gateway.clone()),
+            ),
         };
         let mut state = Self::from_pg_store(store, llm, tools)
             .with_audio_transcriber(transcriber)
             .with_workflow_tool_executions(temporal_client_for_workflow_tools);
+        if let Some(environment_jobs) = state.environment_jobs.as_mut() {
+            environment_jobs.gateway = Some(gateway);
+        }
         if let Some(transcoder) = clients.audio_transcoder.clone() {
             state = state.with_audio_transcoder(transcoder);
         }

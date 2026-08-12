@@ -3,13 +3,13 @@
 use host_protocol::control::{
     handshake::{ControllerInitializeParams, ControllerInitializeResponse},
     methods::{
-        ATTACH_TARGET_METHOD, CLOSE_TARGET_METHOD, CREATE_TARGET_METHOD, GET_TARGET_METHOD,
-        INITIALIZE_METHOD, LIST_TARGETS_METHOD, LIST_TEMPLATES_METHOD,
+        CLOSE_TARGET_METHOD, CREATE_TARGET_METHOD, GET_TARGET_METHOD, INITIALIZE_METHOD,
+        LIST_TARGETS_METHOD, LIST_TEMPLATES_METHOD,
     },
     targets::{
-        AttachTargetParams, AttachTargetResponse, CloseTargetParams, CloseTargetResponse,
-        CreateTargetParams, CreateTargetResponse, GetTargetParams, GetTargetResponse,
-        ListTargetsParams, ListTargetsResponse, ListTemplatesParams, ListTemplatesResponse,
+        CloseTargetParams, CloseTargetResponse, CreateTargetParams, CreateTargetResponse,
+        GetTargetParams, GetTargetResponse, ListTargetsParams, ListTargetsResponse,
+        ListTemplatesParams, ListTemplatesResponse,
     },
 };
 
@@ -67,13 +67,6 @@ where
         params: &CreateTargetParams,
     ) -> HostClientResult<CreateTargetResponse> {
         self.rpc.request(CREATE_TARGET_METHOD, params).await
-    }
-
-    pub async fn attach_target(
-        &mut self,
-        params: &AttachTargetParams,
-    ) -> HostClientResult<AttachTargetResponse> {
-        self.rpc.request(ATTACH_TARGET_METHOD, params).await
     }
 
     pub async fn get_target(

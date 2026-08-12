@@ -127,9 +127,9 @@ CREATE TABLE IF NOT EXISTS environment_daemon_enrollments (
     universe_id uuid NOT NULL,
     environment_id text NOT NULL,
     incarnation_id text NOT NULL,
-    ticket_hash bytea NOT NULL,
-    ticket_expires_at_ms bigint NOT NULL,
-    ticket_redeemed_at_ms bigint,
+    token_hash bytea NOT NULL,
+    token_expires_at_ms bigint NOT NULL,
+    token_redeemed_at_ms bigint,
     revoked_at_ms bigint,
     daemon_id text,
     daemon_public_key bytea,
@@ -140,8 +140,8 @@ CREATE TABLE IF NOT EXISTS environment_daemon_enrollments (
     FOREIGN KEY (universe_id, environment_id, incarnation_id)
         REFERENCES environment_incarnations (universe_id, environment_id, incarnation_id)
         ON DELETE CASCADE,
-    CONSTRAINT environment_daemon_enrollments_ticket_hash_size
-        CHECK (octet_length(ticket_hash) = 32),
+    CONSTRAINT environment_daemon_enrollments_token_hash_size
+        CHECK (octet_length(token_hash) = 32),
     CONSTRAINT environment_daemon_enrollments_identity_complete CHECK (
         (daemon_id IS NULL AND daemon_public_key IS NULL AND enrolled_at_ms IS NULL)
         OR (
@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS environment_daemon_enrollments (
     CONSTRAINT environment_daemon_enrollments_times_valid CHECK (
         created_at_ms >= 0
         AND updated_at_ms >= created_at_ms
-        AND ticket_expires_at_ms >= created_at_ms
+        AND token_expires_at_ms >= created_at_ms
     )
 );
 
@@ -213,7 +213,7 @@ COMMENT ON COLUMN environment_providers.metadata_json IS
 COMMENT ON TABLE environment_provider_bindings IS
     'Revisioned universe routing and admission binding to one provider; allocation and ingress policy remain provider-owned.';
 COMMENT ON TABLE environment_daemon_enrollments IS
-    'One-time bootstrap ticket and daemon public-key identity for a directly enrolled environment incarnation. Provider-mediated environments authenticate through their provider binding and do not have rows here; live route presence remains gateway-memory state.';
+    'One-time enrollment token hash and daemon public-key identity for a directly enrolled environment incarnation. Provider-mediated environments authenticate through their provider binding and do not have rows here; live route presence remains gateway-memory state.';
 COMMENT ON COLUMN environment_provider_bindings.metadata_json IS
     'Non-authoritative binding labels; never provider template, quota, capacity, or ingress policy.';
 COMMENT ON TABLE environments IS

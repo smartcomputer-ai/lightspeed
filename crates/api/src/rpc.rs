@@ -350,7 +350,7 @@ api_methods! {
     METHOD_ENVIRONMENTS_ENROLLMENTS_CREATE => create_environment_enrollment(EnvironmentEnrollmentCreateParams) -> EnvironmentEnrollmentCreateResponse =>
         ["Create an environment enrollment", "Creates a pending directly enrolled environment and returns its short-lived one-time daemon token exactly once."],
     METHOD_ENVIRONMENTS_ENROLLMENTS_READ => read_environment_enrollment(EnvironmentEnrollmentReadParams) -> EnvironmentEnrollmentReadResponse =>
-        ["Read an environment enrollment", "Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource."],
+        ["Read an environment enrollment", "Returns bounded direct-enrollment token, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource."],
     METHOD_ENVIRONMENTS_ENROLLMENTS_REVOKE => revoke_environment_enrollment(EnvironmentEnrollmentRevokeParams) -> EnvironmentEnrollmentRevokeResponse =>
         ["Revoke an environment enrollment", "Idempotently revokes a directly enrolled daemon identity; a connected direct route is fenced immediately by the gateway."],
     METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST => list_environment_provider_bindings(EnvironmentProviderBindingListParams) -> EnvironmentProviderBindingListResponse =>

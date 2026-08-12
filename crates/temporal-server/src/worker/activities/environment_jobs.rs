@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine::{BlobRef, PromiseSourceCheckResult, storage::BlobStore};
-use environments::{EnvironmentId, EnvironmentJobGroupId, EnvironmentStore};
-use host_client::{HostClientError, HostDataClient, WebSocketConnectOptions};
+use environments::{EnvironmentId, EnvironmentJobGroupId};
+use host_client::{HostClientError, HostDataClient};
 use host_protocol::{
     data::{
         handshake::{InitializeParams, InitializedParams},
@@ -135,12 +135,6 @@ pub(super) async fn prepare_workflow_tool(
                 .unwrap_or_else(|| "enrolled".to_owned())
         )));
     }
-    if !instance.capabilities().job_start {
-        return Err(activity_error(anyhow::anyhow!(
-            "environment does not support durable jobs: {environment_id}"
-        )));
-    }
-
     let request_id = format!(
         "jobreq:{}:{}:{}:{}",
         start.invocation.run_id.as_u64(),
@@ -328,15 +322,16 @@ pub(super) async fn start(
         job.secret_env.extend(secret_env);
     }
 
-    start_on_provider(deps.environments.as_ref(), &environment_id, &payload).await
+    start_on_provider(deps, &environment_id, &payload).await
 }
 
 async fn start_on_provider(
-    environments: &dyn EnvironmentStore,
+    deps: &EnvironmentJobActivityDeps,
     environment_id: &EnvironmentId,
     payload: &EnvironmentJobStartPayload,
 ) -> Result<EnvironmentJobStartActivityResult, ActivityError> {
-    let instance = environments
+    let instance = deps
+        .environments
         .read_environment(environment_id)
         .await
         .map_err(activity_error)?;
@@ -348,12 +343,13 @@ async fn start_on_provider(
             "cannot start jobs on closing environment instance {environment_id}"
         )));
     }
-    let connection = instance.connection().ok_or_else(|| {
+    let gateway = deps.gateway.as_ref().ok_or_else(|| {
         non_retryable_activity_error(anyhow::anyhow!(
-            "environment has no admitted data-plane connection"
+            "environment gateway is not configured on this worker"
         ))
     })?;
-    let (mut client, capabilities) = initialized_client(connection).await?;
+    let connection = gateway.connection_for(deps.universe_id, &instance);
+    let (mut client, capabilities) = initialized_client(&connection, gateway).await?;
     if !capabilities.job_start {
         return Err(non_retryable_activity_error(anyhow::anyhow!(
             "environment does not support durable job start: {environment_id}"
@@ -423,12 +419,13 @@ pub(super) async fn poll(
         .read_environment(&environment_id)
         .await
         .map_err(activity_error)?;
-    let connection = instance.connection().ok_or_else(|| {
+    let gateway = deps.gateway.as_ref().ok_or_else(|| {
         non_retryable_activity_error(anyhow::anyhow!(
-            "environment has no admitted data-plane connection"
+            "environment gateway is not configured on this worker"
         ))
     })?;
-    let (mut client, _) = initialized_client(connection).await?;
+    let connection = gateway.connection_for(deps.universe_id, &instance);
+    let (mut client, _) = initialized_client(&connection, gateway).await?;
     let requested_job_ids = request.job_ids.iter().cloned().collect::<BTreeSet<_>>();
     let response = client
         .read_jobs(&ReadJobsParams {
@@ -518,12 +515,13 @@ pub(super) async fn cancel(
         .read_environment(&environment_id)
         .await
         .map_err(activity_error)?;
-    let connection = instance.connection().ok_or_else(|| {
+    let gateway = deps.gateway.as_ref().ok_or_else(|| {
         non_retryable_activity_error(anyhow::anyhow!(
-            "environment has no admitted data-plane connection"
+            "environment gateway is not configured on this worker"
         ))
     })?;
-    let (mut client, _) = initialized_client(connection).await?;
+    let connection = gateway.connection_for(deps.universe_id, &instance);
+    let (mut client, _) = initialized_client(&connection, gateway).await?;
     let response = client
         .cancel_jobs(&CancelJobsParams {
             namespace: environment_id.as_str().to_owned(),
@@ -538,6 +536,7 @@ pub(super) async fn cancel(
 
 async fn initialized_client(
     connection: &HostConnectionSpec,
+    gateway: &crate::environment_gateway::EnvironmentGatewayClientConfig,
 ) -> Result<
     (
         HostDataClient<host_client::WebSocketTransport>,
@@ -553,10 +552,7 @@ async fn initialized_client(
     }
     let mut client = HostDataClient::connect(
         &connection.endpoint,
-        WebSocketConnectOptions {
-            user_agent: Some("lightspeed-environment-job-workflow".to_owned()),
-            ..WebSocketConnectOptions::default()
-        },
+        gateway.connect_options("lightspeed-environment-job-workflow"),
     )
     .await
     .map_err(activity_error)?;

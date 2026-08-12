@@ -3792,11 +3792,11 @@
               "null"
             ]
           },
-          "ticketExpiresAtMs": {
+          "tokenExpiresAtMs": {
             "format": "int64",
             "type": "integer"
           },
-          "ticketRedeemedAtMs": {
+          "tokenRedeemedAtMs": {
             "format": "int64",
             "type": [
               "integer",
@@ -3811,7 +3811,7 @@
         "required": [
           "environmentId",
           "incarnationId",
-          "ticketExpiresAtMs",
+          "tokenExpiresAtMs",
           "createdAtMs",
           "updatedAtMs"
         ],
@@ -11354,7 +11354,7 @@
       "summary": "Create an environment enrollment"
     },
     {
-      "description": "Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
+      "description": "Returns bounded direct-enrollment token, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
       "name": "environments/enrollments/read",
       "paramStructure": "by-name",
       "params": [

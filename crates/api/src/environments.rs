@@ -92,9 +92,9 @@ pub struct EnvironmentCloseResponse {
 pub struct EnvironmentEnrollmentView {
     pub environment_id: EnvironmentId,
     pub incarnation_id: EnvironmentIncarnationId,
-    pub ticket_expires_at_ms: i64,
+    pub token_expires_at_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ticket_redeemed_at_ms: Option<i64>,
+    pub token_redeemed_at_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked_at_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

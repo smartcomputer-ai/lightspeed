@@ -12,7 +12,7 @@ pub use engine::EnvironmentId;
 use engine::{StringIdError, validate_general_string_id};
 use host_protocol::{
     control::targets::EnvironmentTemplate,
-    shared::{HostCapabilities, HostConnectionSpec, HostPath, HostTargetId, HostTransport},
+    shared::{HostTargetId, HostTransport},
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use thiserror::Error;
@@ -304,27 +304,8 @@ impl EnvironmentRecord {
         self.source.binding_id()
     }
 
-    /// P119 replaces this compatibility accessor with live gateway routing.
-    pub fn connection(&self) -> Option<&HostConnectionSpec> {
-        None
-    }
-
-    /// P119 replaces this compatibility accessor with negotiated live capabilities.
-    pub fn capabilities(&self) -> &HostCapabilities {
-        static NONE: std::sync::OnceLock<HostCapabilities> = std::sync::OnceLock::new();
-        NONE.get_or_init(HostCapabilities::default)
-    }
-
-    pub fn default_cwd(&self) -> Option<&HostPath> {
-        None
-    }
-
     pub fn observed_at_ms(&self) -> i64 {
         self.updated_at_ms
-    }
-
-    pub fn is_attachable(&self) -> bool {
-        false
     }
 
     pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
@@ -377,9 +358,9 @@ pub struct CreateEnvironment {
 pub struct EnvironmentDaemonEnrollmentRecord {
     pub environment_id: EnvironmentId,
     pub incarnation_id: EnvironmentIncarnationId,
-    pub ticket_hash: Vec<u8>,
-    pub ticket_expires_at_ms: i64,
-    pub ticket_redeemed_at_ms: Option<i64>,
+    pub token_hash: Vec<u8>,
+    pub token_expires_at_ms: i64,
+    pub token_redeemed_at_ms: Option<i64>,
     pub revoked_at_ms: Option<i64>,
     pub daemon_id: Option<EnvironmentDaemonId>,
     pub daemon_public_key: Option<Vec<u8>>,
@@ -390,8 +371,8 @@ pub struct EnvironmentDaemonEnrollmentRecord {
 
 impl EnvironmentDaemonEnrollmentRecord {
     pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
-        if self.ticket_hash.len() != 32 {
-            return invalid("enrollment ticket hash must be 32 bytes");
+        if self.token_hash.len() != 32 {
+            return invalid("enrollment token hash must be 32 bytes");
         }
         if self
             .daemon_public_key
@@ -407,8 +388,8 @@ impl EnvironmentDaemonEnrollmentRecord {
             return invalid("daemon identity and enrollment time must be present together");
         }
         validate_timestamps(self.created_at_ms, self.updated_at_ms)?;
-        if self.ticket_expires_at_ms < self.created_at_ms {
-            return invalid("enrollment ticket expiry precedes creation");
+        if self.token_expires_at_ms < self.created_at_ms {
+            return invalid("enrollment token expiry precedes creation");
         }
         Ok(())
     }
@@ -421,8 +402,8 @@ pub struct CreateEnvironmentEnrollment {
     pub incarnation_id: EnvironmentIncarnationId,
     pub display_name: Option<String>,
     pub metadata: BTreeMap<String, String>,
-    pub ticket_hash: Vec<u8>,
-    pub ticket_expires_at_ms: i64,
+    pub token_hash: Vec<u8>,
+    pub token_expires_at_ms: i64,
     pub created_at_ms: i64,
 }
 
@@ -430,7 +411,7 @@ pub struct CreateEnvironmentEnrollment {
 pub struct EnrollEnvironmentDaemon {
     pub environment_id: EnvironmentId,
     pub incarnation_id: EnvironmentIncarnationId,
-    pub ticket_hash: Vec<u8>,
+    pub token_hash: Vec<u8>,
     pub daemon_id: EnvironmentDaemonId,
     pub daemon_public_key: Vec<u8>,
     pub enrolled_at_ms: i64,
@@ -448,6 +429,14 @@ pub struct ObserveProvisionedEnvironment {
     pub environment_id: EnvironmentId,
     pub provider_target_id: HostTargetId,
     pub status: EnvironmentStatus,
+    pub observed_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObserveEnvironmentRoute {
+    pub environment_id: EnvironmentId,
+    pub incarnation_id: EnvironmentIncarnationId,
+    pub connected: bool,
     pub observed_at_ms: i64,
 }
 
@@ -585,6 +574,10 @@ pub trait EnvironmentStore: Send + Sync {
     async fn observe_provisioned_environment(
         &self,
         request: ObserveProvisionedEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+    async fn observe_environment_route(
+        &self,
+        request: ObserveEnvironmentRoute,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
     async fn fail_environment_lifecycle(
         &self,

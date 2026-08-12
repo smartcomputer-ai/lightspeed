@@ -7,4 +7,5 @@
 pub mod control;
 pub mod data;
 pub mod error;
+pub mod gateway;
 pub mod shared;

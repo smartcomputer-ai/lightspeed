@@ -2480,8 +2480,8 @@ fn test_environment_enrollment() -> EnvironmentEnrollmentView {
     EnvironmentEnrollmentView {
         environment_id: "evi_enrolled".to_owned(),
         incarnation_id: "incarnation-enrolled".to_owned(),
-        ticket_expires_at_ms: 600_010,
-        ticket_redeemed_at_ms: None,
+        token_expires_at_ms: 600_010,
+        token_redeemed_at_ms: None,
         revoked_at_ms: None,
         daemon_id: None,
         enrolled_at_ms: None,

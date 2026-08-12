@@ -12,7 +12,6 @@ use ::environments::{
     FailEnvironmentLifecycle, FinishCloseEnvironment, ListEnvironments,
     ObserveProvisionedEnvironment,
 };
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use host_protocol::control::targets::{CloseTargetParams, CreateTargetParams, HostTargetStatus};
 use rand::RngCore as _;
 use sha2::{Digest as _, Sha256};
@@ -38,19 +37,25 @@ impl GatewayAgentApi {
             )));
         }
         let now = now_ms()?;
-        let token = mint_enrollment_token();
-        let ticket_hash = Sha256::digest(token.as_bytes()).to_vec();
+        let environment_id = allocate_environment_id();
+        let incarnation_id = allocate_incarnation_id();
+        let token = mint_enrollment_token(
+            self.store.config().universe_id,
+            &environment_id,
+            &incarnation_id,
+        )?;
+        let token_hash = Sha256::digest(token.as_bytes()).to_vec();
         let (environment, enrollment, created) =
             EnvironmentDaemonEnrollmentStore::create_enrollment(
                 self.store.as_ref(),
                 CreateEnvironmentEnrollment {
                     request_id,
-                    environment_id: allocate_environment_id(),
-                    incarnation_id: allocate_incarnation_id(),
+                    environment_id,
+                    incarnation_id,
                     display_name: params.display_name,
                     metadata: params.metadata,
-                    ticket_hash,
-                    ticket_expires_at_ms: now
+                    token_hash,
+                    token_expires_at_ms: now
                         .checked_add(i64::from(ttl_seconds) * 1_000)
                         .ok_or_else(|| AgentApiError::internal("enrollment expiry overflow"))?,
                     created_at_ms: now,
@@ -88,6 +93,29 @@ impl GatewayAgentApi {
             self.store.as_ref(),
             &environment_id,
             now_ms()?,
+        )
+        .await
+        .map_err(map_environments_error)?;
+        let route_key = crate::environment_gateway::RouteKey {
+            universe_id: self.store.config().universe_id,
+            environment_id: enrollment.environment_id.to_string(),
+            incarnation_id: enrollment.incarnation_id.to_string(),
+        };
+        self.environment_routes
+            .fence(&crate::environment_gateway::RouteKey {
+                universe_id: route_key.universe_id,
+                environment_id: route_key.environment_id.clone(),
+                incarnation_id: route_key.incarnation_id.clone(),
+            })
+            .await;
+        EnvironmentStore::observe_environment_route(
+            self.store.as_ref(),
+            ::environments::ObserveEnvironmentRoute {
+                environment_id: enrollment.environment_id.clone(),
+                incarnation_id: enrollment.incarnation_id.clone(),
+                connected: false,
+                observed_at_ms: now_ms()?,
+            },
         )
         .await
         .map_err(map_environments_error)?;
@@ -172,6 +200,16 @@ impl GatewayAgentApi {
         params: EnvironmentCloseParams,
     ) -> Result<EnvironmentCloseResponse, AgentApiError> {
         let environment_id = parse_registry_environment_id(params.environment_id)?;
+        let current = EnvironmentStore::read_environment(self.store.as_ref(), &environment_id)
+            .await
+            .map_err(map_environments_error)?;
+        self.environment_routes
+            .fence(&crate::environment_gateway::RouteKey {
+                universe_id: self.store.config().universe_id,
+                environment_id: current.environment_id.to_string(),
+                incarnation_id: current.incarnation.incarnation_id.to_string(),
+            })
+            .await;
         let environment = EnvironmentStore::begin_close_environment(
             self.store.as_ref(),
             BeginCloseEnvironment {
@@ -364,10 +402,20 @@ fn allocate_incarnation_id() -> EnvironmentIncarnationId {
     EnvironmentIncarnationId::new(format!("incarnation_{}", uuid::Uuid::new_v4().simple()))
 }
 
-fn mint_enrollment_token() -> String {
+fn mint_enrollment_token(
+    universe_id: uuid::Uuid,
+    environment_id: &EnvironmentId,
+    incarnation_id: &EnvironmentIncarnationId,
+) -> Result<String, AgentApiError> {
     let mut bytes = [0_u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
-    format!("lse_{}", URL_SAFE_NO_PAD.encode(bytes))
+    host_protocol::gateway::encode_enrollment_token(
+        &universe_id.to_string(),
+        environment_id.as_str(),
+        incarnation_id.as_str(),
+        &bytes,
+    )
+    .map_err(|error| AgentApiError::internal(format!("encode enrollment token: {error}")))
 }
 
 pub(crate) fn enrollment_view(
@@ -376,8 +424,8 @@ pub(crate) fn enrollment_view(
     EnvironmentEnrollmentView {
         environment_id: record.environment_id.to_string(),
         incarnation_id: record.incarnation_id.to_string(),
-        ticket_expires_at_ms: record.ticket_expires_at_ms,
-        ticket_redeemed_at_ms: record.ticket_redeemed_at_ms,
+        token_expires_at_ms: record.token_expires_at_ms,
+        token_redeemed_at_ms: record.token_redeemed_at_ms,
         revoked_at_ms: record.revoked_at_ms,
         daemon_id: record.daemon_id.as_ref().map(ToString::to_string),
         enrolled_at_ms: record.enrolled_at_ms,

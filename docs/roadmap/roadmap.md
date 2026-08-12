@@ -120,7 +120,7 @@
   routing/admission bindings, transient controller initialization,
   incarnation-scoped physical facts, idempotent asynchronous lifecycle, and a
   Lightspeed-owned reconciler over a provider-owned policy boundary
-- [ ] [P119](p119-environment-daemon-gateway-enrollment.md) — replace
+- [ ] [P119](p119-environment-daemon-gateway-enrollment.md) — core direct-enrollment and gateway data plane implemented; packaging and product UX remain follow-ups. Replace
   attach-only host-bridge registration with `lightspeed-envd`, authenticated
   outbound gateway routing, daemon/incarnation fencing, and direct host
   enrollment

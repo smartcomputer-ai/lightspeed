@@ -33,6 +33,7 @@ use uuid::Uuid;
 
 use crate::{
     config::DeploymentStores,
+    environment_gateway::{EnvironmentGatewayClientConfig, EnvironmentRouteRegistry},
     fleet::AgentApiFleetRuntime,
     gateway::GatewayAgentApi,
     worker::{ActivityState, AudioTranscoder},
@@ -138,6 +139,8 @@ pub struct UniverseRuntime {
     public_base_url: Option<String>,
     stores: DeploymentStores,
     clients: DeploymentClients,
+    environment_routes: Arc<EnvironmentRouteRegistry>,
+    environment_gateway: EnvironmentGatewayClientConfig,
     states: tokio::sync::Mutex<BTreeMap<Uuid, UniverseEntry>>,
 }
 
@@ -148,12 +151,16 @@ impl UniverseRuntime {
         public_base_url: Option<String>,
         stores: DeploymentStores,
     ) -> anyhow::Result<Self> {
+        let environment_gateway =
+            EnvironmentGatewayClientConfig::from_env(public_base_url.as_deref())?;
         Ok(Self {
             client,
             task_queue,
             public_base_url,
             stores,
             clients: DeploymentClients::from_env()?,
+            environment_routes: Arc::new(EnvironmentRouteRegistry::default()),
+            environment_gateway,
             states: tokio::sync::Mutex::new(BTreeMap::new()),
         })
     }
@@ -168,6 +175,14 @@ impl UniverseRuntime {
 
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    pub fn environment_routes(&self) -> &Arc<EnvironmentRouteRegistry> {
+        &self.environment_routes
+    }
+
+    pub fn environment_gateway(&self) -> &EnvironmentGatewayClientConfig {
+        &self.environment_gateway
     }
 
     /// Drop the universe's cached runtime state (operator purge). In-flight
@@ -255,6 +270,10 @@ impl UniverseRuntime {
             .with_model_discovery_clients(
                 self.clients.openai.clone(),
                 self.clients.anthropic.clone(),
+            )
+            .with_environment_gateway(
+                self.environment_routes.clone(),
+                self.environment_gateway.clone(),
             );
         if let Some(public_base_url) = &self.public_base_url {
             api = api.with_public_base_url(public_base_url.clone());
@@ -266,6 +285,7 @@ impl UniverseRuntime {
             Some(fleet_runtime),
             &self.clients,
             self.client.clone(),
+            self.environment_gateway.clone(),
         )?);
         Ok(UniverseState {
             universe_id,

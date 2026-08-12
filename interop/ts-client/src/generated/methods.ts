@@ -249,7 +249,7 @@ export const METHOD_INFO = {
   "environments/enrollments/read": {
     scope: "universe",
     summary: "Read an environment enrollment",
-    description: "Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
+    description: "Returns bounded direct-enrollment token, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
   },
   "environments/enrollments/revoke": {
     scope: "universe",
@@ -824,7 +824,7 @@ export interface MethodMap {
   /**
    * Read an environment enrollment
    *
-   * Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.
+   * Returns bounded direct-enrollment token, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.
    */
   "environments/enrollments/read": {
     params: Api.EnvironmentEnrollmentReadParams;
@@ -1596,7 +1596,7 @@ export const rpc = {
   /**
    * Read an environment enrollment
    *
-   * Returns bounded direct-enrollment ticket, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.
+   * Returns bounded direct-enrollment token, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.
    */
   environmentsEnrollmentsRead(client: RpcCaller, params: Api.EnvironmentEnrollmentReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentEnrollmentReadResponse> {
     return client.call("environments/enrollments/read", params);

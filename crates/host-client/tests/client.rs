@@ -239,7 +239,6 @@ async fn controller_client_sends_typed_initialize_request() {
         "id": 1,
         "result": {
             "capabilities": {
-                "attachTarget": true,
                 "closeTarget": true,
                 "createTarget": true,
                 "getTarget": true,

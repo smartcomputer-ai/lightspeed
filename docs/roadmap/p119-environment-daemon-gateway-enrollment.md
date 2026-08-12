@@ -3,6 +3,8 @@
 **Status**
 
 - Proposed 2026-08-11.
+- Core implementation completed 2026-08-12; provider-relay admission,
+  packaging, and product-specific enrollment UX remain follow-on work.
 - Builds on [P118](p118-environment-domain-and-lifecycle.md).
 - Implements the canonical data plane from
   [P117](p117-environment-compute-plan.md).
@@ -39,7 +41,7 @@ The environment gateway owns only live transport:
 - per-environment transport limits.
 
 Lightspeed Postgres owns environment/incarnation identity and, only for
-directly enrolled environments, bootstrap ticket hashes, daemon public keys,
+directly enrolled environments, enrollment token hashes, daemon public keys,
 and revocation. A provider-mediated route is authorized through the provider
 identity, universe binding, environment ownership, and current incarnation; it
 does not create a daemon-enrollment row. Ephemeral sockets, route presence,
@@ -69,14 +71,31 @@ environments/enrollments/revoke
 ```
 
 An authenticated universe caller creates a pending enrolled environment and
-receives one short-lived token exactly once. Only its hash is stored.
-`lightspeed-envd` generates its private key locally, redeems the token, and
-proves possession on later reconnects.
+receives one self-locating, short-lived token exactly once. It contains the
+non-secret universe, environment, and incarnation IDs plus random secret
+material; only the hash of the complete token is stored. `lightspeed-envd`
+decodes the coordinates locally, generates its private key, redeems the token,
+and proves possession on later reconnects.
+
+First start requires only the gateway URL and enrollment token:
+
+```text
+lightspeed-envd --gateway-url https://lightspeed.example \
+  --enrollment-token lse1.…
+```
+
+envd persists the gateway URL and environment coordinates beside its protected
+private key, but never persists the token. Later starts need only the same state
+directory (the default is `.lightspeed-envd` under cwd):
+
+```text
+lightspeed-envd
+```
 
 Ordinary reconnect keeps environment, incarnation, and daemon IDs but creates
-a new connection ID. Rebuild creates a new incarnation. Approved daemon-key
-rotation retains the environment and may retain the incarnation while revoking
-the previous daemon identity. Only one connection owns a directly enrolled
+a new connection ID. Rebuild creates a new incarnation. Daemon-key rotation is
+a new direct enrollment/incarnation: revoke the old identity and mint a new
+one-time enrollment. Only one connection owns a directly enrolled
 daemon/incarnation route; acceptance of a replacement fences the old
 connection.
 
@@ -155,27 +174,31 @@ module layout are implementation details.
 
 ## Implementation
 
-- [ ] Rename/refactor `host-bridge` to `environment-daemon` /
+- [x] Rename/refactor `host-bridge` to `environment-daemon` /
       `lightspeed-envd`.
-- [ ] Separate local filesystem/process/job execution from provider
+- [x] Separate local filesystem/process/job execution from provider
       registration and inbound serving.
-- [ ] Implement daemon key generation, protected storage, challenge proof,
-      rotation, and revocation.
-- [ ] Implement one-time direct-enrollment storage and APIs; provider-managed
+- [x] Implement daemon key generation, protected storage, challenge proof,
+      reconnect identity, and revocation. Rotation deliberately creates a new
+      direct enrollment/incarnation.
+- [x] Implement one-time direct-enrollment storage and APIs; provider-managed
       incarnations must not create enrollment rows.
-- [ ] Implement the environment gateway deployment role and worker routing.
-- [ ] Keep gateway routes transport-neutral across direct, multiplexed relay,
-      and provider-local on-demand connections.
-- [ ] Implement multiplexing, streaming, cancellation, limits, leases, and
+- [x] Implement the environment gateway deployment role and worker routing.
+- [x] Keep the internal route registry transport-neutral across direct and
+      future multiplexed provider-relay connections.
+- [ ] Admit authenticated provider-relay routes and provider-local on-demand
+      connections (P120).
+- [x] Implement correlated concurrent calls, polling/streaming, cancellation
+      through existing process/job methods, bounded route queues, leases, and
       incarnation fencing.
-- [ ] Route existing environment filesystem/process/job adapters through the
+- [x] Route existing environment filesystem/process/PTY/job adapters through the
       gateway.
 - [ ] Preserve local/stdio transport.
 - [ ] Package envd for systemd and launchd with Linux and macOS builds.
 - [ ] Convert `ls-dev` to direct enrollment and remove its fake provider.
 - [ ] Add ls.bot direct-enrollment UX with one-time token display and bounded
       source/incarnation/availability diagnostics.
-- [ ] Delete `attachTarget`, `AttachedHost`, and inbound per-host endpoint
+- [x] Delete `attachTarget`, `AttachedHost`, and inbound per-host endpoint
       assumptions left after P118.
 
 ## Verification

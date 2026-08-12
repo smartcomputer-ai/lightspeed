@@ -15,9 +15,15 @@ use thiserror::Error;
 pub(crate) struct EnvironmentResolver {
     environments: Arc<dyn EnvironmentStore>,
     providers: Arc<dyn EnvironmentProviderStore>,
+    routes: Option<Arc<crate::environment_gateway::EnvironmentRouteRegistry>>,
+    gateway: Option<crate::environment_gateway::EnvironmentGatewayClientConfig>,
+    universe_id: uuid::Uuid,
 }
 
 impl EnvironmentResolver {
+    pub(crate) fn universe_id(&self) -> uuid::Uuid {
+        self.universe_id
+    }
     pub(crate) fn new(
         environments: Arc<dyn EnvironmentStore>,
         providers: Arc<dyn EnvironmentProviderStore>,
@@ -25,11 +31,33 @@ impl EnvironmentResolver {
         Self {
             environments,
             providers,
+            routes: None,
+            gateway: None,
+            universe_id: uuid::Uuid::nil(),
         }
     }
 
     pub(crate) fn from_pg_store(store: Arc<PgStore>) -> Self {
-        Self::new(store.clone(), store)
+        let universe_id = store.config().universe_id;
+        let mut resolver = Self::new(store.clone(), store);
+        resolver.universe_id = universe_id;
+        resolver
+    }
+
+    pub(crate) fn with_routes(
+        mut self,
+        routes: Arc<crate::environment_gateway::EnvironmentRouteRegistry>,
+    ) -> Self {
+        self.routes = Some(routes);
+        self
+    }
+
+    pub(crate) fn with_gateway(
+        mut self,
+        gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
+    ) -> Self {
+        self.gateway = Some(gateway);
+        self
     }
 
     pub(crate) async fn list_allowed(
@@ -81,9 +109,30 @@ impl EnvironmentResolver {
         if let Some(provider_id) = environment.provider_id() {
             self.providers.read_provider(provider_id).await?;
         }
+        if let Some(routes) = &self.routes {
+            let key = crate::environment_gateway::RouteKey {
+                universe_id: self.universe_id,
+                environment_id: environment.environment_id.to_string(),
+                incarnation_id: environment.incarnation.incarnation_id.to_string(),
+            };
+            if routes.snapshot(&key).await.is_some() {
+                return Ok(environment);
+            }
+        } else if let Some(gateway) = &self.gateway {
+            let connection = gateway.connection_for(self.universe_id, &environment);
+            if host_client::HostDataClient::connect(
+                &connection.endpoint,
+                gateway.connect_options("lightspeed-environment-selection"),
+            )
+            .await
+            .is_ok()
+            {
+                return Ok(environment);
+            }
+        }
         Err(EnvironmentResolveError::EnvironmentUnavailable {
             environment_id: environment.environment_id.as_str().to_owned(),
-            status: "data-plane routing is introduced by P119".to_owned(),
+            status: "no live environment-gateway route".to_owned(),
         })
     }
 }

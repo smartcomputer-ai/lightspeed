@@ -86,9 +86,9 @@ impl EnvironmentDaemonEnrollmentStore for InMemoryEnvironmentRegistryStore {
         let enrollment = EnvironmentDaemonEnrollmentRecord {
             environment_id: request.environment_id.clone(),
             incarnation_id: request.incarnation_id,
-            ticket_hash: request.ticket_hash,
-            ticket_expires_at_ms: request.ticket_expires_at_ms,
-            ticket_redeemed_at_ms: None,
+            token_hash: request.token_hash,
+            token_expires_at_ms: request.token_expires_at_ms,
+            token_redeemed_at_ms: None,
             revoked_at_ms: None,
             daemon_id: None,
             daemon_public_key: None,
@@ -147,16 +147,16 @@ impl EnvironmentDaemonEnrollmentStore for InMemoryEnvironmentRegistryStore {
         if enrollment.revoked_at_ms.is_some() {
             return invalid("environment enrollment is revoked");
         }
-        if enrollment.ticket_redeemed_at_ms.is_some() {
-            return invalid("environment enrollment ticket was already redeemed");
+        if enrollment.token_redeemed_at_ms.is_some() {
+            return invalid("environment enrollment token was already redeemed");
         }
-        if request.enrolled_at_ms > enrollment.ticket_expires_at_ms {
-            return invalid("environment enrollment ticket expired");
+        if request.enrolled_at_ms > enrollment.token_expires_at_ms {
+            return invalid("environment enrollment token expired");
         }
-        if enrollment.ticket_hash != request.ticket_hash {
-            return invalid("invalid environment enrollment ticket");
+        if enrollment.token_hash != request.token_hash {
+            return invalid("invalid environment enrollment token");
         }
-        enrollment.ticket_redeemed_at_ms = Some(request.enrolled_at_ms);
+        enrollment.token_redeemed_at_ms = Some(request.enrolled_at_ms);
         enrollment.daemon_id = Some(request.daemon_id);
         enrollment.daemon_public_key = Some(request.daemon_public_key);
         enrollment.enrolled_at_ms = Some(request.enrolled_at_ms);
@@ -543,6 +543,36 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
         record.updated_at_ms = request.observed_at_ms;
         record.status = request.status;
         record.validate()?;
+        Ok(record.clone())
+    }
+
+    async fn observe_environment_route(
+        &self,
+        request: ObserveEnvironmentRoute,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        let mut state = self.write_state()?;
+        let record = state
+            .environments
+            .get_mut(&request.environment_id)
+            .ok_or_else(|| not_found("environment", &request.environment_id))?;
+        if record.incarnation.incarnation_id != request.incarnation_id {
+            return invalid("stale environment incarnation");
+        }
+        if request.observed_at_ms < record.updated_at_ms {
+            return Ok(record.clone());
+        }
+        if !matches!(
+            record.status,
+            EnvironmentStatus::Closing | EnvironmentStatus::Closed
+        ) {
+            record.status = if request.connected {
+                EnvironmentStatus::Ready
+            } else {
+                EnvironmentStatus::Offline
+            };
+        }
+        record.updated_at_ms = request.observed_at_ms;
+        record.incarnation.updated_at_ms = request.observed_at_ms;
         Ok(record.clone())
     }
 

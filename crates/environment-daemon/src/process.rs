@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    io::{Read as _, Write as _},
     path::{Component, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -9,12 +10,14 @@ use std::{
 use host_protocol::{
     data::process::{
         ProcessOutputChunk, ProcessOutputStream, ReadProcessParams, ReadProcessResponse,
-        StartProcessParams, StartProcessResponse, TerminateProcessParams, TerminateProcessResponse,
-        WriteProcessParams, WriteProcessResponse, WriteProcessStatus,
+        ResizeProcessParams, ResizeProcessResponse, StartProcessParams, StartProcessResponse,
+        TerminateProcessParams, TerminateProcessResponse, WriteProcessParams, WriteProcessResponse,
+        WriteProcessStatus,
     },
     error::{HostError, HostErrorCode},
     shared::{ByteChunk, HostPath, ProcessId},
 };
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     process::{Child, ChildStdin, Command},
@@ -52,9 +55,10 @@ struct ProcessEntry {
 }
 
 struct ProcessState {
-    child: Child,
+    child: ProcessChild,
     pgid: Option<u32>,
-    stdin: Option<ChildStdin>,
+    stdin: Option<ProcessInput>,
+    pty_master: Option<Box<dyn MasterPty + Send>>,
     redactions: Vec<Vec<u8>>,
     chunks: Vec<ProcessOutputChunk>,
     next_seq: u64,
@@ -63,6 +67,16 @@ struct ProcessState {
     orphaned_descendants: bool,
     failure: Option<String>,
     cleanup_scheduled: bool,
+}
+
+enum ProcessChild {
+    Pipe(Child),
+    Pty(Box<dyn portable_pty::Child + Send + Sync>),
+}
+
+enum ProcessInput {
+    Pipe(ChildStdin),
+    Pty(Box<dyn std::io::Write + Send>),
 }
 
 impl ProcessManager {
@@ -78,12 +92,6 @@ impl ProcessManager {
         &self,
         params: StartProcessParams,
     ) -> Result<StartProcessResponse, HostError> {
-        if params.tty {
-            return Err(HostError::new(
-                HostErrorCode::Unsupported,
-                "PTY process execution is not supported by host-bridge",
-            ));
-        }
         if params.argv.is_empty() {
             return Err(HostError::new(
                 HostErrorCode::InvalidRequest,
@@ -103,6 +111,10 @@ impl ProcessManager {
                     format!("process env collides with secret env: {name}"),
                 ));
             }
+        }
+
+        if params.tty {
+            return self.start_pty_process(params, cwd).await;
         }
 
         let mut command = Command::new(&params.argv[0]);
@@ -157,9 +169,10 @@ impl ProcessManager {
             .collect();
         let entry = Arc::new(ProcessEntry {
             state: Mutex::new(ProcessState {
-                child,
+                child: ProcessChild::Pipe(child),
                 pgid,
-                stdin,
+                stdin: stdin.map(ProcessInput::Pipe),
+                pty_master: None,
                 redactions,
                 chunks: Vec::new(),
                 next_seq: 0,
@@ -209,6 +222,92 @@ impl ProcessManager {
         }
         tokio::spawn(watch_exit(entry.clone()));
 
+        Ok(StartProcessResponse { process_id })
+    }
+
+    async fn start_pty_process(
+        &self,
+        params: StartProcessParams,
+        cwd: PathBuf,
+    ) -> Result<StartProcessResponse, HostError> {
+        let pty = native_pty_system()
+            .openpty(PtySize::default())
+            .map_err(process_error("open PTY"))?;
+        let mut command = CommandBuilder::new(&params.argv[0]);
+        command.args(&params.argv[1..]);
+        command.cwd(&cwd);
+        for (name, value) in &params.env {
+            command.env(name, value);
+        }
+        for (name, value) in &params.secret_env {
+            command.env(name, value.expose());
+        }
+        let child = pty
+            .slave
+            .spawn_command(command)
+            .map_err(process_error("spawn PTY process"))?;
+        let reader = pty
+            .master
+            .try_clone_reader()
+            .map_err(process_error("clone PTY reader"))?;
+        let mut stdin = pty
+            .master
+            .take_writer()
+            .map_err(process_error("open PTY writer"))?;
+        if let Some(input) = params.stdin.as_ref() {
+            stdin
+                .write_all(input.as_slice())
+                .map_err(process_error("write initial PTY input"))?;
+            stdin.flush().map_err(process_error("flush PTY input"))?;
+        }
+        let stdin = params.pipe_stdin.then_some(ProcessInput::Pty(stdin));
+        let process_id = params.process_id;
+        let redactions = params
+            .secret_env
+            .values()
+            .filter(|value| !value.is_empty())
+            .map(|value| value.expose().as_bytes().to_vec())
+            .collect();
+        let entry = Arc::new(ProcessEntry {
+            state: Mutex::new(ProcessState {
+                child: ProcessChild::Pty(child),
+                pgid: None,
+                stdin,
+                pty_master: Some(pty.master),
+                redactions,
+                chunks: Vec::new(),
+                next_seq: 0,
+                exited: false,
+                exit_code: None,
+                orphaned_descendants: false,
+                failure: None,
+                cleanup_scheduled: false,
+            }),
+            notify: Notify::new(),
+            readers: Mutex::new(Vec::new()),
+        });
+        {
+            let mut processes = self.processes.lock().await;
+            if processes.contains_key(process_id.as_str()) {
+                return Err(HostError::new(
+                    HostErrorCode::Conflict,
+                    format!("process id already exists: {process_id}"),
+                ));
+            }
+            processes.insert(process_id.to_string(), entry.clone());
+        }
+        entry
+            .readers
+            .lock()
+            .await
+            .push(read_pty_stream(entry.clone(), reader));
+        if let Some(timeout_ms) = params.timeout_ms {
+            tokio::spawn(timeout_process(
+                entry.clone(),
+                Duration::from_millis(timeout_ms),
+            ));
+        }
+        tokio::spawn(watch_exit(entry));
         Ok(StartProcessResponse { process_id })
     }
 
@@ -295,10 +394,11 @@ impl ProcessManager {
             });
         };
         if let Some(chunk) = params.chunk {
-            stdin
-                .write_all(chunk.as_slice())
-                .await
-                .map_err(|error| HostError::new(HostErrorCode::ProcessFailed, error.to_string()))?;
+            match stdin {
+                ProcessInput::Pipe(stdin) => stdin.write_all(chunk.as_slice()).await,
+                ProcessInput::Pty(stdin) => stdin.write_all(chunk.as_slice()),
+            }
+            .map_err(|error| HostError::new(HostErrorCode::ProcessFailed, error.to_string()))?;
         }
         if params.close_stdin {
             state.stdin.take();
@@ -325,17 +425,41 @@ impl ProcessManager {
         if let Some(pgid) = state.pgid {
             process_group::kill_group(pgid);
         }
-        state
-            .child
-            .kill()
-            .await
-            .map_err(|error| HostError::new(HostErrorCode::ProcessFailed, error.to_string()))?;
+        kill_child(&mut state.child).await?;
         state.exited = true;
         state.exit_code = None;
         state.failure = Some("process terminated".to_owned());
         spawn_reader_drain(entry.clone());
         entry.notify.notify_waiters();
         Ok(TerminateProcessResponse { running: true })
+    }
+
+    pub async fn resize_process(
+        &self,
+        params: ResizeProcessParams,
+    ) -> Result<ResizeProcessResponse, HostError> {
+        let Some(entry) = self.entry(&params.process_id).await else {
+            return Err(HostError::new(
+                HostErrorCode::NotFound,
+                format!("unknown process id: {}", params.process_id),
+            ));
+        };
+        let state = entry.state.lock().await;
+        let Some(master) = state.pty_master.as_ref() else {
+            return Err(HostError::new(
+                HostErrorCode::InvalidRequest,
+                "process is not attached to a PTY",
+            ));
+        };
+        master
+            .resize(PtySize {
+                rows: params.size.rows,
+                cols: params.size.cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(process_error("resize PTY"))?;
+        Ok(ResizeProcessResponse {})
     }
 
     fn resolve_cwd(&self, path: &HostPath) -> Result<PathBuf, HostError> {
@@ -429,6 +553,50 @@ where
     }
 }
 
+fn read_pty_stream(
+    entry: Arc<ProcessEntry>,
+    mut reader: Box<dyn std::io::Read + Send>,
+) -> JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        let mut buffer = vec![0; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => {
+                    entry.notify.notify_waiters();
+                    return;
+                }
+                Ok(read) => {
+                    let entry = entry.clone();
+                    let bytes = buffer[..read].to_vec();
+                    tokio::runtime::Handle::current().block_on(async move {
+                        let mut state = entry.state.lock().await;
+                        let chunk = redact_bytes(&bytes, &state.redactions);
+                        let seq = state.next_seq;
+                        state.next_seq += 1;
+                        state.chunks.push(ProcessOutputChunk {
+                            seq,
+                            stream: ProcessOutputStream::Pty,
+                            chunk: ByteChunk::from(chunk),
+                        });
+                        entry.notify.notify_waiters();
+                    });
+                }
+                Err(error) => {
+                    let entry = entry.clone();
+                    tokio::runtime::Handle::current().block_on(async move {
+                        let mut state = entry.state.lock().await;
+                        if state.failure.is_none() && !state.exited {
+                            state.failure = Some(error.to_string());
+                        }
+                        entry.notify.notify_waiters();
+                    });
+                    return;
+                }
+            }
+        }
+    })
+}
+
 /// Observes the child's exit independently of pipe events so a silent child
 /// whose descendants hold the pipes open still completes promptly.
 async fn watch_exit(entry: Arc<ProcessEntry>) {
@@ -465,7 +633,7 @@ async fn timeout_process(entry: Arc<ProcessEntry>, timeout: Duration) {
         if let Some(pgid) = state.pgid {
             process_group::kill_group(pgid);
         }
-        let _ = state.child.kill().await;
+        let _ = kill_child(&mut state.child).await;
         state.exited = true;
         state.exit_code = None;
         state.failure = Some("process timed out".to_owned());
@@ -481,10 +649,18 @@ fn update_exit_status(state: &mut ProcessState) -> Result<Option<u32>, HostError
     if state.exited {
         return Ok(None);
     }
-    match state.child.try_wait() {
+    let result = match &mut state.child {
+        ProcessChild::Pipe(child) => child
+            .try_wait()
+            .map(|status| status.map(|status| status.code())),
+        ProcessChild::Pty(child) => child
+            .try_wait()
+            .map(|status| status.map(|status| Some(status.exit_code() as i32))),
+    };
+    match result {
         Ok(Some(status)) => {
             state.exited = true;
-            state.exit_code = status.code();
+            state.exit_code = status;
             state.stdin.take();
             let sweep = state.pgid.filter(|pgid| process_group::group_alive(*pgid));
             if sweep.is_some() {
@@ -501,6 +677,18 @@ fn update_exit_status(state: &mut ProcessState) -> Result<Option<u32>, HostError
             ))
         }
     }
+}
+
+async fn kill_child(child: &mut ProcessChild) -> Result<(), HostError> {
+    let result = match child {
+        ProcessChild::Pipe(child) => child.kill().await,
+        ProcessChild::Pty(child) => child.kill(),
+    };
+    result.map_err(|error| HostError::new(HostErrorCode::ProcessFailed, error.to_string()))
+}
+
+fn process_error<E: std::fmt::Display>(context: &'static str) -> impl FnOnce(E) -> HostError {
+    move |error| HostError::new(HostErrorCode::ProcessFailed, format!("{context}: {error}"))
 }
 
 /// Sweeps descendants left in the group after the root process exited, then
@@ -762,6 +950,72 @@ mod tests {
             .flat_map(|chunk| chunk.chunk.as_slice().to_vec())
             .collect::<Vec<_>>();
         assert_eq!(stdout, b"hello");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pty_process_accepts_input_output_and_resize() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let manager = ProcessManager::new(root.clone(), root);
+        let process_id = ProcessId::new("proc-pty");
+        manager
+            .start_process(StartProcessParams {
+                process_id: process_id.clone(),
+                argv: vec![
+                    "/bin/sh".to_owned(),
+                    "-c".to_owned(),
+                    "read line; printf '%s' \"$line\"".to_owned(),
+                ],
+                cwd: None,
+                env: BTreeMap::new(),
+                secret_env: BTreeMap::new(),
+                stdin: None,
+                timeout_ms: Some(5_000),
+                tty: true,
+                pipe_stdin: true,
+            })
+            .await
+            .expect("start PTY");
+        manager
+            .resize_process(ResizeProcessParams {
+                process_id: process_id.clone(),
+                size: host_protocol::data::process::TerminalSize {
+                    rows: 40,
+                    cols: 120,
+                },
+            })
+            .await
+            .expect("resize PTY");
+        manager
+            .write_process(WriteProcessParams {
+                process_id: process_id.clone(),
+                chunk: Some(ByteChunk::from(b"hello\n".as_slice())),
+                close_stdin: false,
+            })
+            .await
+            .expect("write PTY");
+        let output = manager
+            .read_process(ReadProcessParams {
+                process_id,
+                after_seq: None,
+                max_bytes: None,
+                wait_ms: None,
+            })
+            .await
+            .expect("read PTY");
+        assert!(output.exited);
+        assert!(
+            output
+                .chunks
+                .iter()
+                .all(|chunk| chunk.stream == ProcessOutputStream::Pty)
+        );
+        let bytes = output
+            .chunks
+            .iter()
+            .flat_map(|chunk| chunk.chunk.as_slice().to_vec())
+            .collect::<Vec<_>>();
+        assert!(String::from_utf8_lossy(&bytes).contains("hello"));
     }
 
     #[cfg(unix)]
