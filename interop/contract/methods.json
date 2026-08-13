@@ -1565,6 +1565,24 @@
       },
       "scope": "operator",
       "summary": "Delete an environment provider binding"
+    },
+    {
+      "description": "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.",
+      "method": "operator/environments/adopt",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorEnvironmentAdoptParams"
+        },
+        "type": "OperatorEnvironmentAdoptParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorEnvironmentAdoptResponse"
+        },
+        "type": "AgentApiOutcome<OperatorEnvironmentAdoptResponse>"
+      },
+      "scope": "operator",
+      "summary": "Adopt a provider environment"
     }
   ],
   "notificationSchema": {

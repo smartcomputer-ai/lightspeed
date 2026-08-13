@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS environment_incarnations (
     provision_request_id text,
     provider_target_id text,
     template_id text,
+    adoption_source_target text,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
     PRIMARY KEY (universe_id, environment_id, incarnation_id),
@@ -113,16 +114,24 @@ CREATE TABLE IF NOT EXISTS environment_incarnations (
             template_id IS NULL
             OR template_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'
         )
+        AND (
+            adoption_source_target IS NULL
+            OR (
+                length(adoption_source_target) BETWEEN 1 AND 255
+                AND adoption_source_target !~ '[[:cntrl:]]'
+            )
+        )
     ),
     CONSTRAINT environment_incarnations_source_fields CHECK (
         (
             provision_request_id IS NOT NULL
-            AND template_id IS NOT NULL
+            AND ((template_id IS NOT NULL) <> (adoption_source_target IS NOT NULL))
         )
         OR (
             provision_request_id IS NULL
             AND provider_target_id IS NULL
             AND template_id IS NULL
+            AND adoption_source_target IS NULL
         )
     ),
     CONSTRAINT environment_incarnations_times_valid CHECK (
@@ -192,6 +201,8 @@ COMMENT ON TABLE environment_incarnations IS
     'Lightspeed-authorized environment generations with stable provider retry and target linkage; not provider inventory or live gateway state.';
 COMMENT ON COLUMN environment_incarnations.provider_target_id IS
     'Opaque provider-scoped target handle returned by createTarget; interpreted with the environment provider identity.';
+COMMENT ON COLUMN environment_incarnations.adoption_source_target IS
+    'Provider-native source reference for an explicit operator-managed adoption; retained for idempotent lifecycle retries.';
 COMMENT ON COLUMN environments.public_endpoint IS
     'Provider-realized public HTTPS endpoint; port, private target, proxy configuration, TLS, health, and policy remain provider-owned.';
 COMMENT ON TABLE environment_credentials IS

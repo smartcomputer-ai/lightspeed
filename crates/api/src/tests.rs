@@ -2699,6 +2699,19 @@ impl OperatorApiService for TestOperatorService {
             },
         ))
     }
+
+    async fn adopt_environment(
+        &self,
+        params: OperatorEnvironmentAdoptParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentAdoptResponse>, AgentApiError> {
+        let mut environment = test_environment_instance();
+        environment.request_id = params.request_id;
+        environment.display_name = params.display_name;
+        environment.incarnation.template_id = None;
+        Ok(AgentApiOutcome::new(OperatorEnvironmentAdoptResponse {
+            environment,
+        }))
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2748,6 +2761,31 @@ async fn operator_environment_provider_methods_dispatch() {
             "{method}"
         );
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn operator_environment_adoption_dispatches_explicit_ownership_transfer() {
+    let response = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_OPERATOR_ENVIRONMENTS_ADOPT.to_owned(),
+            params: Some(json!({
+                "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f",
+                "requestId": "adopt-1",
+                "bindingId": "primary",
+                "sourceTarget": "legacy/hand-built-vm",
+                "takeOwnership": true,
+                "displayName": "Imported VM"
+            })),
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let environment = &response.result.expect("result")["result"]["environment"];
+    assert_eq!(environment["requestId"], "adopt-1");
+    assert_eq!(environment["displayName"], "Imported VM");
+    assert!(environment["incarnation"].get("templateId").is_none());
 }
 
 #[tokio::test(flavor = "current_thread")]

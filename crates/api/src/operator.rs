@@ -30,6 +30,7 @@ pub const METHOD_OPERATOR_PROVIDER_BINDINGS_PUT: &str =
     "operator/environment-providers/bindings/put";
 pub const METHOD_OPERATOR_PROVIDER_BINDINGS_DELETE: &str =
     "operator/environment-providers/bindings/delete";
+pub const METHOD_OPERATOR_ENVIRONMENTS_ADOPT: &str = "operator/environments/adopt";
 
 pub fn is_operator_method(method: &str) -> bool {
     method.starts_with(OPERATOR_METHOD_PREFIX)
@@ -300,6 +301,31 @@ pub struct OperatorProviderBindingDeleteResponse {
     pub binding: EnvironmentProviderBindingView,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentAdoptParams {
+    pub universe_id: String,
+    /// Stable caller-generated retry identity inside the destination universe.
+    pub request_id: EnvironmentProvisionRequestId,
+    pub binding_id: EnvironmentProviderBindingId,
+    /// Provider-native source reference. The Incus provider accepts
+    /// `<project>/<instance>` or an instance name in the `default` project.
+    pub source_target: String,
+    /// Required acknowledgement that Lightspeed will move, reconfigure, and
+    /// delete the target as part of its ordinary managed lifecycle.
+    pub take_ownership: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorEnvironmentAdoptResponse {
+    pub environment: EnvironmentView,
+}
+
 #[async_trait]
 pub trait OperatorApiService: Send + Sync {
     async fn create_universe(
@@ -390,6 +416,15 @@ pub trait OperatorApiService: Send + Sync {
             "environment provider bindings are unavailable",
         ))
     }
+
+    async fn adopt_environment(
+        &self,
+        _params: OperatorEnvironmentAdoptParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentAdoptResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "managed environment adoption is unavailable",
+        ))
+    }
 }
 
 macro_rules! operator_api_methods {
@@ -462,4 +497,6 @@ operator_api_methods! {
         ["Put an environment provider binding", "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe."],
     METHOD_OPERATOR_PROVIDER_BINDINGS_DELETE => delete_environment_provider_binding(OperatorProviderBindingDeleteParams) -> OperatorProviderBindingDeleteResponse =>
         ["Delete an environment provider binding", "Deletes a universe provider binding only after every referencing environment has reached Closed."],
+    METHOD_OPERATOR_ENVIRONMENTS_ADOPT => adopt_environment(OperatorEnvironmentAdoptParams) -> OperatorEnvironmentAdoptResponse =>
+        ["Adopt a provider environment", "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer."],
 }

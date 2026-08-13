@@ -280,6 +280,9 @@ pub struct EnvironmentIncarnationRecord {
     pub provision_request_id: Option<EnvironmentProvisionRequestId>,
     pub provider_target_id: Option<HostTargetId>,
     pub template_id: Option<EnvironmentTemplateId>,
+    /// Provider-native reference used only while explicitly adopting an
+    /// existing target. The provider converts it into `provider_target_id`.
+    pub adoption_source_target: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
@@ -334,11 +337,23 @@ impl EnvironmentRecord {
         }
         match &self.source {
             EnvironmentSource::Provisioned { .. } => {
-                if self.incarnation.provision_request_id.is_none()
-                    || self.incarnation.template_id.is_none()
+                if self.incarnation.provision_request_id.is_none() {
+                    return invalid("provisioned incarnation requires a provision request id");
+                }
+                if self.incarnation.template_id.is_some()
+                    == self.incarnation.adoption_source_target.is_some()
                 {
                     return invalid(
-                        "provisioned incarnation requires provision request and template ids",
+                        "provisioned incarnation requires exactly one template or adoption source",
+                    );
+                }
+                if let Some(source) = self.incarnation.adoption_source_target.as_deref()
+                    && (source.is_empty()
+                        || source.len() > 255
+                        || source.chars().any(char::is_control))
+                {
+                    return invalid(
+                        "adoption_source_target must be non-empty, at most 255 bytes, and contain no control characters",
                     );
                 }
             }
@@ -347,6 +362,7 @@ impl EnvironmentRecord {
                 if self.incarnation.provision_request_id.is_some()
                     || self.incarnation.provider_target_id.is_some()
                     || self.incarnation.template_id.is_some()
+                    || self.incarnation.adoption_source_target.is_some()
                 {
                     return invalid("external incarnation must not have provider linkage");
                 }
@@ -363,6 +379,18 @@ pub struct CreateEnvironment {
     pub incarnation_id: EnvironmentIncarnationId,
     pub binding_id: EnvironmentProviderBindingId,
     pub template_id: EnvironmentTemplateId,
+    pub display_name: Option<String>,
+    pub metadata: BTreeMap<String, String>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdoptEnvironment {
+    pub request_id: EnvironmentProvisionRequestId,
+    pub environment_id: EnvironmentId,
+    pub incarnation_id: EnvironmentIncarnationId,
+    pub binding_id: EnvironmentProviderBindingId,
+    pub source_target: String,
     pub display_name: Option<String>,
     pub metadata: BTreeMap<String, String>,
     pub created_at_ms: i64,
@@ -517,6 +545,10 @@ pub trait EnvironmentStore: Send + Sync {
     async fn create_environment(
         &self,
         request: CreateEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+    async fn adopt_environment(
+        &self,
+        request: AdoptEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
     async fn create_external_environment(
         &self,

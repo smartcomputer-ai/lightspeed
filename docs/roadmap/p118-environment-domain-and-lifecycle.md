@@ -68,6 +68,7 @@ EnvironmentIncarnation
   provisionRequestId?
   providerTargetId?
   templateVersionId?
+  adoptionSourceTarget?  # internal retry fact; mutually exclusive with templateVersionId
 ```
 
 `providerTargetId` and direct-enrollment tickets/daemon identities are not
@@ -99,6 +100,7 @@ operator/environment-providers/read
 operator/environment-providers/delete
 operator/environment-providers/bindings/put
 operator/environment-providers/bindings/delete
+operator/environments/adopt
 ```
 
 Universe-scoped:
@@ -119,10 +121,9 @@ Binding `put` replaces the whole binding document and requires
 universe API. Multiple providers, including third-party services, are
 registered by a Lightspeed operator by supplying their controller connection.
 A provider never has to self-register and does not need access to Lightspeed's
-operator API; Lightspeed only needs to be able to reach it. Provider
-authentication uses a write-only bearer credential on provider registration.
-The credential is AEAD-encrypted at rest, omitted from provider views, and is
-never placed in metadata.
+operator API; Lightspeed only needs to be able to reach it. Application-level
+provider authentication is deferred; the deployment transport/network is the
+current trust boundary.
 
 `environments/create` accepts a caller-generated stable `requestId`,
 `bindingId`, and provider-owned immutable `templateId`. The unique key
@@ -136,6 +137,19 @@ the provider's current global policy and backend capacity rules. A rejection
 is recorded asynchronously as a failed environment. P118 does not introduce
 generic resource overrides; a later protocol version may add versioned,
 provider-validated template parameters when a concrete need exists.
+
+`operator/environments/adopt` is the deliberate exception to template-based
+creation. An operator supplies the destination universe and binding, a stable
+request ID, a provider-native `sourceTarget`, and `takeOwnership: true`.
+Lightspeed persists a normal provisioned environment intent and retains the
+source reference only as an internal incarnation retry fact. It is not exposed
+through the universe environment view.
+
+Adoption is an ownership transfer, not discovery or mirroring: the provider may
+stop, move, rename, re-network, restart, and eventually delete the physical
+target. Unmanaged provider inventory is ignored unless an operator explicitly
+adopts it. v1 does not run reverse synchronization or create read-only foreign
+environment records.
 
 ## Lifecycle reconciliation
 
@@ -167,6 +181,7 @@ Replace arbitrary target creation with binding-aware operations:
 controller/initialize
 controller/listTemplates
 controller/createTarget
+controller/adoptTarget
 controller/getTarget
 controller/listTargets
 controller/closeTarget
@@ -186,9 +201,17 @@ of idempotent creation. The request does not accept arbitrary
 cloud-init, raw backend objects, host paths, privileged device maps, or
 unrestricted provider JSON.
 
+`adoptTarget` carries the same stable ownership identities plus the opaque
+provider-native source reference. The provider validates that reference and
+performs the provider-specific takeover. A retry must return the same managed
+target after any partial move. Provider implementations may reject adoption;
+the Incus v1 implementation accepts only non-ephemeral virtual machines with
+envd already installed.
+
 `createTarget` and `closeTarget` are idempotent. Close verifies immutable
 ownership metadata before deleting a backend object. Target listing and lookup
-are filtered by authenticated binding context.
+are filtered by the binding ownership context on the Lightspeed-initiated
+controller connection.
 
 ## Session and authorization boundary
 
@@ -230,6 +253,8 @@ administrator roles are deferred rather than implied by the API vocabulary.
 - [x] Regenerate contract artifacts and both TypeScript consumers.
 - [x] Update profile validation's provider view to read universe bindings.
 - [x] Delete obsolete provider self-registration and compatibility code.
+- [x] Add explicit operator-managed target adoption without reverse inventory
+      synchronization or a second provider state store.
 
 ## Verification
 

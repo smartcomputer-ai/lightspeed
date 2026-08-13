@@ -860,6 +860,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfOperatorEnvironmentAdoptResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorEnvironmentAdoptResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse": {
         "properties": {
           "notifications": {
@@ -5785,6 +5802,59 @@
         "required": [
           "keyPrefix",
           "createdAtMs"
+        ],
+        "type": "object"
+      },
+      "OperatorEnvironmentAdoptParams": {
+        "properties": {
+          "bindingId": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "requestId": {
+            "description": "Stable caller-generated retry identity inside the destination universe.",
+            "type": "string"
+          },
+          "sourceTarget": {
+            "description": "Provider-native source reference. The Incus provider accepts\n`<project>/<instance>` or an instance name in the `default` project.",
+            "type": "string"
+          },
+          "takeOwnership": {
+            "description": "Required acknowledgement that Lightspeed will move, reconfigure, and\ndelete the target as part of its ordinary managed lifecycle.",
+            "type": "boolean"
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId",
+          "requestId",
+          "bindingId",
+          "sourceTarget",
+          "takeOwnership"
+        ],
+        "type": "object"
+      },
+      "OperatorEnvironmentAdoptResponse": {
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentView"
+          }
+        },
+        "required": [
+          "environment"
         ],
         "type": "object"
       },
@@ -12507,6 +12577,27 @@
         }
       },
       "summary": "Delete an environment provider binding"
+    },
+    {
+      "description": "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.",
+      "name": "operator/environments/adopt",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorEnvironmentAdoptParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorEnvironmentAdoptResponse"
+        }
+      },
+      "summary": "Adopt a provider environment"
     }
   ],
   "openrpc": "1.3.2"

@@ -188,7 +188,7 @@ pub(super) fn environment_template_view(
     }
 }
 
-pub(super) fn environment_view(record: &EnvironmentRecord) -> EnvironmentView {
+pub(crate) fn environment_view(record: &EnvironmentRecord) -> EnvironmentView {
     EnvironmentView {
         environment_id: record.environment_id.to_string(),
         request_id: record.request_id.to_string(),

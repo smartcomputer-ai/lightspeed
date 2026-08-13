@@ -5,7 +5,10 @@ use host_client::{
     HostClientError, HostClientResult, HostControllerClient, HostDataClient, JsonRpcTransport,
 };
 use host_protocol::{
-    control::handshake::ControllerInitializeParams,
+    control::{
+        handshake::ControllerInitializeParams,
+        targets::{AdoptTargetParams, ProviderBindingContext},
+    },
     data::{
         fs::ReadFileParams,
         jobs::{JobDependencyPolicy, JobStartSpec, ListJobsParams, StartJobsParams},
@@ -267,4 +270,43 @@ async fn controller_client_sends_typed_initialize_request() {
     let transport = client.into_rpc().into_inner();
     assert_eq!(transport.sent[0]["method"], "controller/initialize");
     assert_eq!(transport.sent[0]["params"]["clientName"], "lightspeed-test");
+}
+
+#[tokio::test]
+async fn controller_client_sends_typed_adoption_request() {
+    let transport = MockTransport::with_recv([json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "target": {
+                "targetId": "target-adopted",
+                "status": "starting",
+                "scope": { "type": "default" },
+                "capabilities": {}
+            }
+        }
+    })]);
+    let mut client = HostControllerClient::new(transport);
+
+    let response = client
+        .adopt_target(&AdoptTargetParams {
+            request_id: "adopt-1".to_owned(),
+            environment_id: "environment-1".to_owned(),
+            incarnation_id: "incarnation-1".to_owned(),
+            binding: ProviderBindingContext {
+                universe_id: "universe-1".to_owned(),
+                binding_id: "primary".to_owned(),
+            },
+            source_target: "legacy/hand-built-vm".to_owned(),
+        })
+        .await
+        .expect("response");
+    assert_eq!(response.target.target_id.as_str(), "target-adopted");
+
+    let transport = client.into_rpc().into_inner();
+    assert_eq!(transport.sent[0]["method"], "controller/adoptTarget");
+    assert_eq!(
+        transport.sent[0]["params"]["sourceTarget"],
+        "legacy/hand-built-vm"
+    );
 }

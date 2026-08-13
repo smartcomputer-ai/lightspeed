@@ -10,9 +10,9 @@ use host_protocol::{
             EnsureIngressParams, IngressResponse, ProviderIngressStatus, RemoveIngressParams,
         },
         targets::{
-            CloseTargetParams, CloseTargetResponse, CreateTargetParams, CreateTargetResponse,
-            EnvironmentTemplate, HostTargetStatus, HostTargetSummary, ListTemplatesParams,
-            ListTemplatesResponse,
+            AdoptTargetParams, AdoptTargetResponse, CloseTargetParams, CloseTargetResponse,
+            CreateTargetParams, CreateTargetResponse, EnvironmentTemplate, HostTargetStatus,
+            HostTargetSummary, ListTemplatesParams, ListTemplatesResponse,
         },
     },
     shared::{
@@ -38,6 +38,11 @@ pub(crate) trait HostController: Send {
         &mut self,
         params: &CreateTargetParams,
     ) -> Result<CreateTargetResponse, AgentApiError>;
+
+    async fn adopt_target(
+        &mut self,
+        params: &AdoptTargetParams,
+    ) -> Result<AdoptTargetResponse, AgentApiError>;
 
     async fn list_templates(
         &mut self,
@@ -151,6 +156,7 @@ impl HostController for FakeHostController {
                 list_templates: true,
                 list_targets: true,
                 create_target: true,
+                adopt_target: true,
                 get_target: true,
                 close_target: true,
                 ingress: true,
@@ -182,7 +188,7 @@ impl HostController for FakeHostController {
         &mut self,
         params: &CreateTargetParams,
     ) -> Result<CreateTargetResponse, AgentApiError> {
-        if params.template_id != "rust-v1" {
+        if params.template_id != "rust-v1" && !params.template_id.starts_with("adopted:") {
             return Err(AgentApiError::rejected(
                 "fake provider policy rejected the template",
             ));
@@ -243,6 +249,23 @@ impl HostController for FakeHostController {
             },
         );
         Ok(response)
+    }
+
+    async fn adopt_target(
+        &mut self,
+        params: &AdoptTargetParams,
+    ) -> Result<AdoptTargetResponse, AgentApiError> {
+        let create = CreateTargetParams {
+            request_id: params.request_id.clone(),
+            environment_id: params.environment_id.clone(),
+            incarnation_id: params.incarnation_id.clone(),
+            binding: params.binding.clone(),
+            template_id: format!("adopted:{}", params.source_target),
+        };
+        let response = self.create_target(&create).await?;
+        Ok(AdoptTargetResponse {
+            target: response.target,
+        })
     }
 
     async fn close_target(
@@ -312,6 +335,15 @@ where
         params: &CreateTargetParams,
     ) -> Result<CreateTargetResponse, AgentApiError> {
         HostControllerClient::create_target(self, params)
+            .await
+            .map_err(map_host_client_error)
+    }
+
+    async fn adopt_target(
+        &mut self,
+        params: &AdoptTargetParams,
+    ) -> Result<AdoptTargetResponse, AgentApiError> {
+        HostControllerClient::adopt_target(self, params)
             .await
             .map_err(map_host_client_error)
     }
@@ -444,6 +476,24 @@ mod tests {
             .await
             .expect("isolated create");
         assert_ne!(isolated.target.target_id, created.target.target_id);
+
+        let imported = after_restart
+            .adopt_target(&AdoptTargetParams {
+                request_id: "adopt-request-1".to_owned(),
+                environment_id: "environment-imported".to_owned(),
+                incarnation_id: "incarnation-imported".to_owned(),
+                binding: ProviderBindingContext {
+                    universe_id: "universe-c".to_owned(),
+                    binding_id: "binding-c".to_owned(),
+                },
+                source_target: "legacy/hand-built-vm".to_owned(),
+            })
+            .await
+            .expect("explicit adoption");
+        assert_eq!(
+            imported.target.metadata.get("imageFingerprint"),
+            Some(&"fake:adopted:legacy/hand-built-vm".to_owned())
+        );
 
         let wrong_owner = after_restart
             .close_target(&CloseTargetParams {

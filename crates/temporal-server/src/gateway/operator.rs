@@ -16,6 +16,7 @@ use api::{
     AgentApiError, AgentApiOutcome, OperatorApiKeyCreateParams, OperatorApiKeyCreateResponse,
     OperatorApiKeyListParams, OperatorApiKeyListResponse, OperatorApiKeyRevokeParams,
     OperatorApiKeyRevokeResponse, OperatorApiKeyView, OperatorApiService,
+    OperatorEnvironmentAdoptParams, OperatorEnvironmentAdoptResponse,
     OperatorEnvironmentProviderConnection, OperatorEnvironmentProviderDeleteParams,
     OperatorEnvironmentProviderDeleteResponse, OperatorEnvironmentProviderListParams,
     OperatorEnvironmentProviderListResponse, OperatorEnvironmentProviderPutParams,
@@ -32,9 +33,10 @@ use async_trait::async_trait;
 use auth::ApiKeyStore as _;
 use engine::SessionId;
 use environments::{
-    EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
-    EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderRecord,
-    EnvironmentProviderStore, HostControllerConnectionSpec, ListEnvironmentProviders,
+    AdoptEnvironment, EnvironmentId, EnvironmentIncarnationId, EnvironmentProviderBindingId,
+    EnvironmentProviderBindingStatus, EnvironmentProviderBindingStore, EnvironmentProviderId,
+    EnvironmentProviderRecord, EnvironmentProviderStore, EnvironmentProvisionRequestId,
+    EnvironmentStore, HostControllerConnectionSpec, ListEnvironmentProviders,
     PutEnvironmentProvider, PutEnvironmentProviderBinding,
 };
 use host_protocol::shared::HostTransport;
@@ -279,6 +281,54 @@ impl OperatorApiService for GatewayOperatorApi {
         ))
     }
 
+    async fn adopt_environment(
+        &self,
+        params: OperatorEnvironmentAdoptParams,
+    ) -> Result<AgentApiOutcome<OperatorEnvironmentAdoptResponse>, AgentApiError> {
+        if !params.take_ownership {
+            return Err(AgentApiError::invalid_request(
+                "takeOwnership must be true because adoption transfers lifecycle ownership to Lightspeed",
+            ));
+        }
+        let universe_id = parse_universe_id(&params.universe_id)?;
+        self.require_universe(universe_id).await?;
+        let request_id =
+            EnvironmentProvisionRequestId::try_new(params.request_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid environment request id: {error}"))
+            })?;
+        let binding_id =
+            EnvironmentProviderBindingId::try_new(params.binding_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid binding id: {error}"))
+            })?;
+        validate_adoption_source(&params.source_target)?;
+        let store = self.runtime.stores().store_for(universe_id);
+        let environment = EnvironmentStore::adopt_environment(
+            store.as_ref(),
+            AdoptEnvironment {
+                request_id,
+                environment_id: EnvironmentId::new(format!(
+                    "environment_{}",
+                    Uuid::new_v4().simple()
+                )),
+                incarnation_id: EnvironmentIncarnationId::new(format!(
+                    "incarnation_{}",
+                    Uuid::new_v4().simple()
+                )),
+                binding_id,
+                source_target: params.source_target,
+                display_name: params.display_name,
+                metadata: params.metadata,
+                created_at_ms: i64::try_from(current_time_ms()?)
+                    .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?,
+            },
+        )
+        .await
+        .map_err(super::service::environment_providers::map_environments_error)?;
+        Ok(AgentApiOutcome::new(OperatorEnvironmentAdoptResponse {
+            environment: super::service::environment_providers::environment_view(&environment),
+        }))
+    }
+
     async fn list_universes(
         &self,
         _params: OperatorUniverseListParams,
@@ -475,6 +525,15 @@ impl OperatorApiService for GatewayOperatorApi {
 fn parse_universe_id(value: &str) -> Result<Uuid, AgentApiError> {
     Uuid::parse_str(value.trim())
         .map_err(|error| AgentApiError::invalid_request(format!("invalid universe id: {error}")))
+}
+
+fn validate_adoption_source(value: &str) -> Result<(), AgentApiError> {
+    if value.is_empty() || value.len() > 255 || value.chars().any(char::is_control) {
+        return Err(AgentApiError::invalid_request(
+            "sourceTarget must be a non-empty provider-native reference of at most 255 bytes",
+        ));
+    }
+    Ok(())
 }
 
 fn parse_environment_provider_id(value: String) -> Result<EnvironmentProviderId, AgentApiError> {

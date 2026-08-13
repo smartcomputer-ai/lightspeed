@@ -790,3 +790,12 @@ Deletes a universe provider binding only after every referencing environment has
 - Params: `OperatorProviderBindingDeleteParams`
 - Result: `AgentApiOutcome<OperatorProviderBindingDeleteResponse>`
 
+### `operator/environments/adopt`
+
+**Adopt a provider environment**
+
+Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.
+
+- Params: `OperatorEnvironmentAdoptParams`
+- Result: `AgentApiOutcome<OperatorEnvironmentAdoptResponse>`
+

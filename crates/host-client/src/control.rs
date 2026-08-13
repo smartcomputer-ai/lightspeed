@@ -4,13 +4,14 @@ use host_protocol::control::{
     handshake::{ControllerInitializeParams, ControllerInitializeResponse},
     ingress::{EnsureIngressParams, IngressResponse, RemoveIngressParams},
     methods::{
-        CLOSE_TARGET_METHOD, CREATE_TARGET_METHOD, ENSURE_INGRESS_METHOD, GET_TARGET_METHOD,
-        INITIALIZE_METHOD, LIST_TARGETS_METHOD, LIST_TEMPLATES_METHOD, REMOVE_INGRESS_METHOD,
+        ADOPT_TARGET_METHOD, CLOSE_TARGET_METHOD, CREATE_TARGET_METHOD, ENSURE_INGRESS_METHOD,
+        GET_TARGET_METHOD, INITIALIZE_METHOD, LIST_TARGETS_METHOD, LIST_TEMPLATES_METHOD,
+        REMOVE_INGRESS_METHOD,
     },
     targets::{
-        CloseTargetParams, CloseTargetResponse, CreateTargetParams, CreateTargetResponse,
-        GetTargetParams, GetTargetResponse, ListTargetsParams, ListTargetsResponse,
-        ListTemplatesParams, ListTemplatesResponse,
+        AdoptTargetParams, AdoptTargetResponse, CloseTargetParams, CloseTargetResponse,
+        CreateTargetParams, CreateTargetResponse, GetTargetParams, GetTargetResponse,
+        ListTargetsParams, ListTargetsResponse, ListTemplatesParams, ListTemplatesResponse,
     },
 };
 
@@ -68,6 +69,13 @@ where
         params: &CreateTargetParams,
     ) -> HostClientResult<CreateTargetResponse> {
         self.rpc.request(CREATE_TARGET_METHOD, params).await
+    }
+
+    pub async fn adopt_target(
+        &mut self,
+        params: &AdoptTargetParams,
+    ) -> HostClientResult<AdoptTargetResponse> {
+        self.rpc.request(ADOPT_TARGET_METHOD, params).await
     }
 
     pub async fn get_target(

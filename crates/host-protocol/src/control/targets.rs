@@ -70,6 +70,26 @@ pub struct CreateTargetResponse {
     pub target: HostTargetSummary,
 }
 
+/// Explicit ownership transfer of an existing provider target into a
+/// Lightspeed-managed binding namespace.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptTargetParams {
+    pub request_id: String,
+    pub environment_id: String,
+    pub incarnation_id: String,
+    pub binding: ProviderBindingContext,
+    /// Provider-native reference to the existing target. Incus uses
+    /// `<project>/<instance>` and defaults the project to `default`.
+    pub source_target: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptTargetResponse {
+    pub target: HostTargetSummary,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTargetParams {

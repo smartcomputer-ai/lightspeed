@@ -2621,6 +2621,7 @@ mod tests {
                 provision_request_id: Some(EnvironmentProvisionRequestId::new("request-test")),
                 provider_target_id: Some(target_id.clone()),
                 template_id: Some(EnvironmentTemplateId::new("test-template")),
+                adoption_source_target: None,
                 created_at_ms: 1,
                 updated_at_ms: 1,
             },

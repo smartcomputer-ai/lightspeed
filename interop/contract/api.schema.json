@@ -860,6 +860,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfOperatorEnvironmentAdoptResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorEnvironmentAdoptResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse": {
       "properties": {
         "notifications": {
@@ -5785,6 +5802,59 @@
       "required": [
         "keyPrefix",
         "createdAtMs"
+      ],
+      "type": "object"
+    },
+    "OperatorEnvironmentAdoptParams": {
+      "properties": {
+        "bindingId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "requestId": {
+          "description": "Stable caller-generated retry identity inside the destination universe.",
+          "type": "string"
+        },
+        "sourceTarget": {
+          "description": "Provider-native source reference. The Incus provider accepts\n`<project>/<instance>` or an instance name in the `default` project.",
+          "type": "string"
+        },
+        "takeOwnership": {
+          "description": "Required acknowledgement that Lightspeed will move, reconfigure, and\ndelete the target as part of its ordinary managed lifecycle.",
+          "type": "boolean"
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "requestId",
+        "bindingId",
+        "sourceTarget",
+        "takeOwnership"
+      ],
+      "type": "object"
+    },
+    "OperatorEnvironmentAdoptResponse": {
+      "properties": {
+        "environment": {
+          "$ref": "#/definitions/EnvironmentView"
+        }
+      },
+      "required": [
+        "environment"
       ],
       "type": "object"
     },

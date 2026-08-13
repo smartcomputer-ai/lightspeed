@@ -144,6 +144,50 @@ async fn stable_request_id_returns_the_original_environment() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn adoption_creates_a_provisioned_environment_without_a_template() {
+    let (_, store) = store().await;
+    let adopted = store
+        .adopt_environment(AdoptEnvironment {
+            request_id: EnvironmentProvisionRequestId::new("adopt-request-1"),
+            environment_id: EnvironmentId::new("environment-adopted"),
+            incarnation_id: EnvironmentIncarnationId::new("incarnation-adopted"),
+            binding_id: EnvironmentProviderBindingId::new("primary"),
+            source_target: "legacy/hand-built-vm".to_owned(),
+            display_name: Some("Hand-built VM".to_owned()),
+            metadata: BTreeMap::new(),
+            created_at_ms: 2_000,
+        })
+        .await
+        .expect("adopt");
+
+    assert_eq!(adopted.status, EnvironmentStatus::Provisioning);
+    assert!(matches!(
+        adopted.source,
+        EnvironmentSource::Provisioned { .. }
+    ));
+    assert_eq!(adopted.incarnation.template_id, None);
+    assert_eq!(
+        adopted.incarnation.adoption_source_target.as_deref(),
+        Some("legacy/hand-built-vm")
+    );
+
+    let retry = store
+        .adopt_environment(AdoptEnvironment {
+            request_id: EnvironmentProvisionRequestId::new("adopt-request-1"),
+            environment_id: EnvironmentId::new("ignored-on-retry"),
+            incarnation_id: EnvironmentIncarnationId::new("ignored-on-retry"),
+            binding_id: EnvironmentProviderBindingId::new("primary"),
+            source_target: "legacy/another-vm".to_owned(),
+            display_name: None,
+            metadata: BTreeMap::new(),
+            created_at_ms: 3_000,
+        })
+        .await
+        .expect("idempotent retry");
+    assert_eq!(retry.environment_id, adopted.environment_id);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn lightspeed_does_not_enforce_provider_quota() {
     let (_, store) = store().await;
     let first = store

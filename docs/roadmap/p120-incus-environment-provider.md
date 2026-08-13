@@ -131,6 +131,30 @@ The provider's private dial path is the reachability mechanism.
 missing object is success only after ownership/adoption facts show that it was
 the requested target.
 
+## Explicit VM adoption
+
+An operator can turn an existing Incus VM into a normal managed environment
+through `operator/environments/adopt`. `sourceTarget` is either an instance in
+the Incus `default` project or `<project>/<instance>`. This is explicit
+takeover, not reverse synchronization: the provider never scans arbitrary
+Incus inventory into Lightspeed.
+
+The v1 provider accepts a non-ephemeral `virtual-machine` that is not already
+Lightspeed-managed. It stops the VM, moves and deterministically renames it
+into the destination binding project and configured storage pool, replaces its
+profiles with the binding baseline, fences source-local NICs onto the binding
+network, writes immutable ownership metadata, and restarts it. Existing guest
+configuration and disks are preserved by the Incus move. The VM must already
+contain a working `lightspeed-envd`; v1 does not inject or install it during
+adoption.
+
+Retries identify the destination by its deterministic name and exact ownership
+plus original-source metadata, including after a response is lost following
+the Incus move. Once adopted, ordinary readiness, data routing, credential,
+job, and close behavior applies. Close deletes the VM. Because an adopted VM
+has no provider template version, template-derived public ingress is not
+enabled for it in v1.
+
 ## Recovery
 
 After provider restart:
@@ -172,6 +196,8 @@ environment state.
 - [x] Reconcile Incus/envd observations into Lightspeed readiness and probe the
       complete data path during selection.
 - [x] Implement ownership-verified idempotent close.
+- [x] Implement explicit operator-driven adoption of an existing Incus VM,
+      including stop/move/re-network/start and partial-move recovery.
 - [ ] Update ls.bot template-aware environment creation and status views.
 
 The provider has no database or durable local operation ledger. Its JSON
@@ -204,6 +230,9 @@ Incus-assigned binding subnet.
   credentials, durable jobs, and restart survival.
 - Prove a snapshot/clone cannot be adopted or routed as the current target
   without matching provider-owned target metadata.
+- Prove explicit VM adoption is request-idempotent, survives a lost move
+  response, ignores unrelated inventory, requires envd, and transfers delete
+  ownership.
 
 ## Done
 
@@ -217,4 +246,6 @@ Lightspeed/provider/gateway restarts converge without any provider database.
 - Additional Incus nodes and scheduling: P122.
 - Stop/start without close, TTL reaping, user images, snapshots as a product,
   automatic recovery, GPUs, and Windows guests.
+- Automatic reverse discovery/synchronization and adopting containers or VMs
+  without a preinstalled envd.
 - Firecracker and KubeVirt implementations.

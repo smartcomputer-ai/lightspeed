@@ -14,7 +14,9 @@ use ::environments::{
 use host_protocol::control::ingress::{
     EnsureIngressParams, ProviderIngressStatus, RemoveIngressParams,
 };
-use host_protocol::control::targets::{CloseTargetParams, CreateTargetParams, HostTargetStatus};
+use host_protocol::control::targets::{
+    AdoptTargetParams, CloseTargetParams, CreateTargetParams, HostTargetStatus,
+};
 
 impl GatewayAgentApi {
     pub(super) async fn put_environment_ingress_record(
@@ -292,25 +294,45 @@ impl GatewayAgentApi {
         )
         .await
         .map_err(map_environments_error)?;
-        let template_id = environment
-            .incarnation
-            .template_id
-            .as_ref()
-            .ok_or_else(|| AgentApiError::internal("provisioned incarnation has no template id"))?;
         let mut controller = self
             .host_controller_connector
             .connect(&provider.controller_connection)
             .await?;
-        let response = controller
-            .create_target(&CreateTargetParams {
-                request_id: environment.request_id.to_string(),
-                environment_id: environment.environment_id.to_string(),
-                incarnation_id: environment.incarnation.incarnation_id.to_string(),
-                binding: binding_context(&binding),
-                template_id: template_id.to_string(),
-            })
-            .await?;
-        let status = match response.target.status {
+        let target = match (
+            environment.incarnation.template_id.as_ref(),
+            environment.incarnation.adoption_source_target.as_ref(),
+        ) {
+            (Some(template_id), None) => {
+                controller
+                    .create_target(&CreateTargetParams {
+                        request_id: environment.request_id.to_string(),
+                        environment_id: environment.environment_id.to_string(),
+                        incarnation_id: environment.incarnation.incarnation_id.to_string(),
+                        binding: binding_context(&binding),
+                        template_id: template_id.to_string(),
+                    })
+                    .await?
+                    .target
+            }
+            (None, Some(source_target)) => {
+                controller
+                    .adopt_target(&AdoptTargetParams {
+                        request_id: environment.request_id.to_string(),
+                        environment_id: environment.environment_id.to_string(),
+                        incarnation_id: environment.incarnation.incarnation_id.to_string(),
+                        binding: binding_context(&binding),
+                        source_target: source_target.clone(),
+                    })
+                    .await?
+                    .target
+            }
+            _ => {
+                return Err(AgentApiError::internal(
+                    "provisioned incarnation has invalid realization",
+                ));
+            }
+        };
+        let status = match target.status {
             // A passive provider reports Ready only after its private envd is
             // reachable. No provider presence has to register separately.
             HostTargetStatus::Ready => EnvironmentStatus::Ready,
@@ -322,14 +344,13 @@ impl GatewayAgentApi {
             HostTargetStatus::Unknown => EnvironmentStatus::Unknown,
         };
         let changed = environment.status != status
-            || environment.incarnation.provider_target_id.as_ref()
-                != Some(&response.target.target_id);
+            || environment.incarnation.provider_target_id.as_ref() != Some(&target.target_id);
         if changed {
             EnvironmentStore::observe_provisioned_environment(
                 self.store.as_ref(),
                 ObserveProvisionedEnvironment {
                     environment_id: environment.environment_id.clone(),
-                    provider_target_id: response.target.target_id,
+                    provider_target_id: target.target_id,
                     status,
                     observed_at_ms: now_ms()?,
                 },

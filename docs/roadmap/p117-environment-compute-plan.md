@@ -236,6 +236,13 @@ The provider's physical object, such as an Incus VM name, Firecracker microVM,
 or KubeVirt `VirtualMachine`. A provider target is not a Lightspeed environment
 until it is associated with a universe-owned `environmentId`.
 
+That association can be created either by template provisioning or by an
+explicit operator adoption. Adoption is a destructive ownership transfer into
+the provider-managed lifecycle, not background reverse synchronization:
+unmanaged inventory stays invisible until selected by an operator, and close
+may delete an adopted target. For Incus v1, envd must already be installed in
+the VM before adoption.
+
 ### Environment template
 
 A supported environment contract, not merely a boot image. A template selects
@@ -1435,25 +1442,28 @@ umbrella document and have no scheduled implementation plan.
    control.
 4. Lightspeed persists the environment before provisioning and repeating the
    same request ID cannot create a duplicate VM.
-5. The VM boots an image without direct daemon enrollment; Lightspeed opens a
+5. An operator can explicitly adopt an existing Incus VM into a universe;
+   retrying the request converges on one provider-managed target and unrelated
+   Incus inventory never appears automatically.
+6. The VM boots an image without direct daemon enrollment; Lightspeed opens a
    target-specific provider route on demand and the provider dials
    `lightspeed-envd` privately.
-6. Environment readiness requires provider target and envd availability;
+7. Environment readiness requires provider target and envd availability;
    selection probes the authenticated current data path.
-7. A plain session can select the environment and use filesystem, process,
+8. A plain session can select the environment and use filesystem, process,
    PTY, credential, and durable-job capabilities.
-8. The environment survives session closure and ordinary VM/daemon restart.
-9. A manually managed host can enroll as an environment without any provider
+9. The environment survives session closure and ordinary VM/daemon restart.
+10. A manually managed host can enroll as an environment without any provider
    record and uses the same envd/gateway data plane.
-10. Stale incarnation, wrong provider/target, duplicate direct daemon, and
+11. Stale incarnation, wrong provider/target, duplicate direct daemon, and
     superseded connection attempts are fenced.
-11. Closing a provisioned environment destroys its verified provider target;
+12. Closing a provisioned environment destroys its verified provider target;
     closing an enrolled environment only revokes access.
-12. A session can deploy an API/frontend behind controlled public ingress and a
+13. A session can deploy an API/frontend behind controlled public ingress and a
     backend can call only its own Lightspeed universe using a dedicated key.
-13. Provider and gateway restarts recover from Lightspeed and backend truth
+14. Provider and gateway restarts recover from Lightspeed and backend truth
     without a provider database.
-14. The UI shows provider binding, template, source, lifecycle, public endpoint,
+15. The UI shows provider binding, template, source, lifecycle, public endpoint,
     and bounded diagnostics without mirroring environment state in ls.bot.
 
 ## Decisions

@@ -15,7 +15,9 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use host_protocol::{
-    control::targets::{CreateTargetParams, HostTargetStatus, ProviderBindingContext},
+    control::targets::{
+        AdoptTargetParams, CreateTargetParams, HostTargetStatus, ProviderBindingContext,
+    },
     shared::HostTargetId,
 };
 
@@ -35,6 +37,7 @@ pub struct OwnedTarget {
     pub request_id: String,
     pub template_id: String,
     pub image_fingerprint: String,
+    pub adoption_source: Option<String>,
     pub status: HostTargetStatus,
     pub ipv4_address: Option<String>,
     pub ingress_hostname: Option<String>,
@@ -64,6 +67,11 @@ pub trait IncusBackend: Clone + Send + Sync + 'static {
         binding: &ProviderBindingContext,
         template: &TemplatePolicy,
         params: &CreateTargetParams,
+    ) -> anyhow::Result<OwnedTarget>;
+    async fn adopt_vm(
+        &self,
+        binding: &ProviderBindingContext,
+        params: &AdoptTargetParams,
     ) -> anyhow::Result<OwnedTarget>;
     async fn delete_vm(
         &self,
@@ -445,6 +453,23 @@ impl IncusClient {
         owned_from_instance(instance, state).map(Some)
     }
 
+    async fn raw_instance(&self, project: &str, name: &str) -> anyhow::Result<Option<Instance>> {
+        if !self
+            .exists(&format!("/instances/{name}"), Some(project))
+            .await?
+        {
+            return Ok(None);
+        }
+        self.request(
+            Method::GET,
+            &format!("/instances/{name}"),
+            Some(project),
+            None,
+        )
+        .await
+        .map(Some)
+    }
+
     async fn reconcile_network_acls(&self) -> anyhow::Result<()> {
         let projects: Vec<Project> = self
             .request(Method::GET, "/projects?recursion=1", None, None)
@@ -796,6 +821,145 @@ impl IncusBackend for IncusClient {
             .ok_or_else(|| anyhow::anyhow!("created Incus instance disappeared"))
     }
 
+    async fn adopt_vm(
+        &self,
+        binding: &ProviderBindingContext,
+        params: &AdoptTargetParams,
+    ) -> anyhow::Result<OwnedTarget> {
+        let project = policy::project_name(binding);
+        let destination = policy::instance_name(
+            &binding.universe_id,
+            &binding.binding_id,
+            &params.environment_id,
+            &params.incarnation_id,
+        );
+        if let Some(target) = self.instance(&project, &destination).await? {
+            verify_adopted_target(&target, params)?;
+            return ensure_instance_started(self, &project, &destination, target).await;
+        }
+
+        let (source_project, source_name) = parse_source_target(&params.source_target)?;
+        let source = self
+            .raw_instance(source_project, source_name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Incus adoption source target not found"))?;
+        if source.kind != "virtual-machine" {
+            anyhow::bail!("only Incus virtual-machine instances can be adopted")
+        }
+        if source.ephemeral {
+            anyhow::bail!("ephemeral Incus instances cannot be adopted")
+        }
+        if source
+            .config
+            .get(&format!("{}managed", policy::META_PREFIX))
+            .is_some_and(|value| value == "true")
+        {
+            anyhow::bail!("Incus source target is already Lightspeed-managed")
+        }
+
+        // Incus merges these overrides with the instance's existing local
+        // configuration during a cross-project move. User configuration is
+        // therefore preserved while ownership metadata is added.
+        let config = BTreeMap::from([
+            (format!("{}managed", policy::META_PREFIX), "true".to_owned()),
+            (
+                format!("{}universe", policy::META_PREFIX),
+                binding.universe_id.clone(),
+            ),
+            (
+                format!("{}binding", policy::META_PREFIX),
+                binding.binding_id.clone(),
+            ),
+            (
+                format!("{}environment", policy::META_PREFIX),
+                params.environment_id.clone(),
+            ),
+            (
+                format!("{}incarnation", policy::META_PREFIX),
+                params.incarnation_id.clone(),
+            ),
+            (
+                format!("{}request", policy::META_PREFIX),
+                params.request_id.clone(),
+            ),
+            (
+                format!("{}template", policy::META_PREFIX),
+                "adopted".to_owned(),
+            ),
+            (
+                format!("{}image", policy::META_PREFIX),
+                "adopted".to_owned(),
+            ),
+            (
+                format!("{}adoption_source", policy::META_PREFIX),
+                params.source_target.clone(),
+            ),
+        ]);
+
+        // Replace arbitrary source profiles with the binding baseline. Local
+        // NICs would override its managed eth0, so explicitly disable all
+        // source-local NICs except an eth0 override, which is rewritten onto
+        // the managed binding network.
+        let mut devices = BTreeMap::new();
+        for (name, device) in &source.devices {
+            if device.get("type").and_then(Value::as_str) != Some("nic") {
+                continue;
+            }
+            let replacement = if name == "eth0" {
+                json!({
+                    "type":"nic",
+                    "network":policy::network_name(binding),
+                    "security.port_isolation":"true",
+                    "security.ipv4_filtering":"true"
+                })
+            } else {
+                json!({"type":"none"})
+            };
+            devices.insert(name.clone(), replacement);
+        }
+
+        if source.status != "Stopped" {
+            self.request_unit(
+                Method::PUT,
+                &format!("/instances/{source_name}/state"),
+                Some(source_project),
+                Some(json!({"action":"stop","timeout":30,"force":true})),
+            )
+            .await
+            .context("stop Incus source target before adoption")?;
+        }
+
+        if let Err(move_error) = self
+            .request_unit(
+                Method::POST,
+                &format!("/instances/{source_name}"),
+                Some(source_project),
+                Some(json!({
+                    "name":destination,
+                    "migration":true,
+                    "live":false,
+                    "project":project,
+                    "pool":self.config.incus.storage_pool,
+                    "instance_only":false,
+                    "config":config,
+                    "devices":devices,
+                    "profiles":[policy::profile_name(binding)]
+                })),
+            )
+            .await
+        {
+            if self.instance(&project, &destination).await?.is_none() {
+                return Err(move_error);
+            }
+        }
+        let target = self
+            .instance(&project, &destination)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("adopted Incus target is not visible"))?;
+        verify_adopted_target(&target, params)?;
+        ensure_instance_started(self, &project, &destination, target).await
+    }
+
     async fn delete_vm(
         &self,
         binding: &ProviderBindingContext,
@@ -886,6 +1050,8 @@ struct Envelope<T> {
 #[derive(Deserialize)]
 struct Instance {
     name: String,
+    #[serde(default, rename = "type")]
+    kind: String,
     #[serde(default)]
     description: String,
     #[serde(default)]
@@ -1028,6 +1194,77 @@ fn ipv4_cidrs_overlap(left: &str, right: &str) -> bool {
     left_start <= right_end && right_start <= left_end
 }
 
+fn parse_source_target(value: &str) -> anyhow::Result<(&str, &str)> {
+    let (project, name) = value.split_once('/').unwrap_or(("default", value));
+    if project.is_empty()
+        || name.is_empty()
+        || name.contains('/')
+        || [project, name].into_iter().any(|part| {
+            part.len() > 63
+                || part.starts_with('-')
+                || part.ends_with('-')
+                || part
+                    .chars()
+                    .any(|character| !character.is_ascii_alphanumeric() && character != '-')
+        })
+    {
+        anyhow::bail!("invalid Incus source target; expected instance or project/instance")
+    }
+    Ok((project, name))
+}
+
+async fn ensure_instance_started(
+    client: &IncusClient,
+    project: &str,
+    name: &str,
+    target: OwnedTarget,
+) -> anyhow::Result<OwnedTarget> {
+    if matches!(
+        target.status,
+        HostTargetStatus::Ready | HostTargetStatus::Starting
+    ) {
+        return Ok(target);
+    }
+    if let Err(error) = client
+        .request_unit(
+            Method::PUT,
+            &format!("/instances/{name}/state"),
+            Some(project),
+            Some(json!({"action":"start","timeout":30,"force":false})),
+        )
+        .await
+    {
+        let observed = client.instance(project, name).await?;
+        if !observed.as_ref().is_some_and(|target| {
+            matches!(
+                target.status,
+                HostTargetStatus::Starting | HostTargetStatus::Ready
+            )
+        }) {
+            return Err(error);
+        }
+    }
+    client
+        .instance(project, name)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("adopted Incus target disappeared while starting"))
+}
+
+fn verify_adopted_target(target: &OwnedTarget, params: &AdoptTargetParams) -> anyhow::Result<()> {
+    if target.universe_id != params.binding.universe_id
+        || target.binding_id != params.binding.binding_id
+        || target.environment_id != params.environment_id
+        || target.incarnation_id != params.incarnation_id
+        || target.request_id != params.request_id
+        || target.template_id != "adopted"
+        || target.image_fingerprint != "adopted"
+        || target.adoption_source.as_deref() != Some(params.source_target.as_str())
+    {
+        anyhow::bail!("existing target metadata conflicts with adoption request")
+    }
+    Ok(())
+}
+
 fn owned_from_instance(instance: Instance, state: InstanceState) -> anyhow::Result<OwnedTarget> {
     let name = instance.name.clone();
     let get = |key: &str| {
@@ -1065,6 +1302,10 @@ fn owned_from_instance(instance: Instance, state: InstanceState) -> anyhow::Resu
         request_id: get("request")?,
         template_id: get("template")?,
         image_fingerprint: get("image")?,
+        adoption_source: instance
+            .config
+            .get(&format!("{}adoption_source", policy::META_PREFIX))
+            .cloned(),
         status: match instance.status.as_str() {
             "Running" => HostTargetStatus::Ready,
             "Starting" => HostTargetStatus::Starting,
@@ -1116,5 +1357,18 @@ mod tests {
             ..project
         };
         assert!(!spoofed.is_lightspeed_managed());
+    }
+
+    #[test]
+    fn adoption_source_defaults_to_the_default_project() {
+        assert_eq!(
+            parse_source_target("manual-vm").unwrap(),
+            ("default", "manual-vm")
+        );
+        assert_eq!(
+            parse_source_target("staging/manual-vm").unwrap(),
+            ("staging", "manual-vm")
+        );
+        assert!(parse_source_target("too/many/parts").is_err());
     }
 }

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use auth::{AuthGrantId, AuthProviderId, SecretId};
 use environments::{
-    BeginCloseEnvironment, CreateEnvironment, CreateExternalEnvironment,
+    AdoptEnvironment, BeginCloseEnvironment, CreateEnvironment, CreateExternalEnvironment,
     EnvironmentCredentialRecord, EnvironmentCredentialSource, EnvironmentCredentialStore,
     EnvironmentId, EnvironmentIncarnationId, EnvironmentIncarnationRecord,
     EnvironmentProviderBindingId, EnvironmentProviderBindingRecord,
@@ -34,7 +34,7 @@ const ENVIRONMENT_COLUMNS: &str = r#"
     e.display_name, e.status, e.public_ingress_enabled, e.public_endpoint, e.metadata_json,
     e.created_at_ms, e.updated_at_ms,
     i.incarnation_id, i.provision_request_id, i.provider_target_id,
-    i.template_id,
+    i.template_id, i.adoption_source_target,
     i.created_at_ms AS incarnation_created_at_ms,
     i.updated_at_ms AS incarnation_updated_at_ms
 "#;
@@ -371,6 +371,106 @@ impl EnvironmentStore for PgStore {
         self.read_environment(&request.environment_id).await
     }
 
+    async fn adopt_environment(
+        &self,
+        request: AdoptEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        self.ensure_universe()
+            .await
+            .map_err(|error| store_error("ensure universe", error))?;
+        if request.created_at_ms < 0 {
+            return invalid("environment timestamp must be nonnegative");
+        }
+        if request.source_target.is_empty()
+            || request.source_target.len() > 255
+            || request.source_target.chars().any(char::is_control)
+        {
+            return invalid(
+                "adoption source must be non-empty, at most 255 bytes, and contain no control characters",
+            );
+        }
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| sql_error("begin environment adoption", error))?;
+        if let Some(existing_id) = sqlx::query_scalar::<_, String>(
+            "SELECT environment_id FROM environments WHERE universe_id = $1 AND request_id = $2",
+        )
+        .bind(self.config.universe_id)
+        .bind(request.request_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|error| sql_error("deduplicate environment adoption", error))?
+        {
+            tx.commit()
+                .await
+                .map_err(|error| sql_error("commit environment adoption dedup", error))?;
+            let environment_id = EnvironmentId::try_new(existing_id)
+                .map_err(|error| store_message(format!("decode environment id: {error}")))?;
+            return self.read_environment(&environment_id).await;
+        }
+        let query = format!(
+            "SELECT {BINDING_COLUMNS} FROM environment_provider_bindings WHERE universe_id = $1 AND binding_id = $2 FOR UPDATE"
+        );
+        let binding_row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(request.binding_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| sql_error("lock provider binding for adoption", error))?
+            .ok_or_else(|| not_found("environment_provider_binding", &request.binding_id))?;
+        let binding = binding_from_row(&binding_row)?;
+        if binding.status != EnvironmentProviderBindingStatus::Enabled {
+            return invalid("environment provider binding is disabled");
+        }
+        sqlx::query(
+            r#"
+            INSERT INTO environments (
+                universe_id, environment_id, request_id, source_kind, provider_id, binding_id,
+                display_name, status, current_incarnation_id, metadata_json,
+                created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,'provisioned',$4,$5,$6,'provisioning',$7,$8,$9,$9)
+        "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(request.request_id.as_str())
+        .bind(binding.provider_id.as_str())
+        .bind(request.binding_id.as_str())
+        .bind(request.display_name.as_deref())
+        .bind(request.incarnation_id.as_str())
+        .bind(json_value(
+            "encode environment metadata",
+            &request.metadata,
+        )?)
+        .bind(request.created_at_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_environment_insert_error)?;
+        sqlx::query(
+            r#"
+            INSERT INTO environment_incarnations (
+                universe_id, environment_id, incarnation_id, provision_request_id,
+                adoption_source_target, created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,$4,$5,$6,$6)
+        "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(request.incarnation_id.as_str())
+        .bind(request.request_id.as_str())
+        .bind(&request.source_target)
+        .bind(request.created_at_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| sql_error("insert adopted environment incarnation", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| sql_error("commit environment adoption", error))?;
+        self.read_environment(&request.environment_id).await
+    }
+
     async fn create_external_environment(
         &self,
         request: CreateExternalEnvironment,
@@ -394,6 +494,7 @@ impl EnvironmentStore for PgStore {
                 provision_request_id: None,
                 provider_target_id: None,
                 template_id: None,
+                adoption_source_target: None,
                 created_at_ms: request.created_at_ms,
                 updated_at_ms: request.created_at_ms,
             },
@@ -836,6 +937,9 @@ fn environment_from_row(
             )?,
             provider_target_id: target.map(HostTargetId::new),
             template_id: optional_id(row, "template_id", EnvironmentTemplateId::try_new)?,
+            adoption_source_target: row
+                .try_get("adoption_source_target")
+                .map_err(|e| sql_error("decode adoption source target", e))?,
             created_at_ms: scalar(row, "incarnation_created_at_ms")?,
             updated_at_ms: scalar(row, "incarnation_updated_at_ms")?,
         },

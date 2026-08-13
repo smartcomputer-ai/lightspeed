@@ -269,6 +269,76 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
                 provision_request_id: Some(request.request_id.clone()),
                 provider_target_id: None,
                 template_id: Some(request.template_id),
+                adoption_source_target: None,
+                created_at_ms: request.created_at_ms,
+                updated_at_ms: request.created_at_ms,
+            },
+            public_ingress_enabled: false,
+            public_endpoint: None,
+            metadata: request.metadata,
+            created_at_ms: request.created_at_ms,
+            updated_at_ms: request.created_at_ms,
+        };
+        record.validate()?;
+        state
+            .requests
+            .insert(request.request_id, request.environment_id.clone());
+        state
+            .environments
+            .insert(request.environment_id, record.clone());
+        Ok(record)
+    }
+
+    async fn adopt_environment(
+        &self,
+        request: AdoptEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        validate_nonnegative_i64(request.created_at_ms, "created_at_ms")?;
+        if request.source_target.is_empty()
+            || request.source_target.len() > 255
+            || request.source_target.chars().any(char::is_control)
+        {
+            return invalid(
+                "adoption source must be non-empty, at most 255 bytes, and contain no control characters",
+            );
+        }
+        let mut state = self.write_state()?;
+        if let Some(environment_id) = state.requests.get(&request.request_id) {
+            return state
+                .environments
+                .get(environment_id)
+                .cloned()
+                .ok_or_else(|| not_found("environment", environment_id));
+        }
+        let binding = state
+            .bindings
+            .get(&(self.universe_id, request.binding_id.clone()))
+            .cloned()
+            .ok_or_else(|| not_found("environment_provider_binding", &request.binding_id))?;
+        if binding.status != EnvironmentProviderBindingStatus::Enabled {
+            return invalid("environment provider binding is disabled");
+        }
+        if state.environments.contains_key(&request.environment_id) {
+            return Err(EnvironmentRegistryError::AlreadyExists {
+                kind: "environment",
+                id: request.environment_id.to_string(),
+            });
+        }
+        let record = EnvironmentRecord {
+            environment_id: request.environment_id.clone(),
+            request_id: request.request_id.clone(),
+            source: EnvironmentSource::Provisioned {
+                provider_id: binding.provider_id,
+                binding_id: request.binding_id,
+            },
+            display_name: request.display_name,
+            status: EnvironmentStatus::Provisioning,
+            incarnation: EnvironmentIncarnationRecord {
+                incarnation_id: request.incarnation_id,
+                provision_request_id: Some(request.request_id.clone()),
+                provider_target_id: None,
+                template_id: None,
+                adoption_source_target: Some(request.source_target),
                 created_at_ms: request.created_at_ms,
                 updated_at_ms: request.created_at_ms,
             },
@@ -321,6 +391,7 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
                 provision_request_id: None,
                 provider_target_id: None,
                 template_id: None,
+                adoption_source_target: None,
                 created_at_ms: request.created_at_ms,
                 updated_at_ms: request.created_at_ms,
             },

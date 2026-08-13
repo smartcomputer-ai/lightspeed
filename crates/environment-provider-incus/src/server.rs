@@ -164,6 +164,7 @@ async fn dispatch<B: IncusBackend>(app: &App<B>, text: &str) -> Value {
                         list_templates: true,
                         list_targets: true,
                         create_target: true,
+                        adopt_target: true,
                         get_target: true,
                         close_target: true,
                         ingress: app.config.ingress.is_some(),
@@ -178,6 +179,7 @@ async fn dispatch<B: IncusBackend>(app: &App<B>, text: &str) -> Value {
         LIST_TEMPLATES_METHOD => list_templates(app, decode(params)).await.and_then(encode),
         LIST_TARGETS_METHOD => list_targets(app, decode(params)).await.and_then(encode),
         CREATE_TARGET_METHOD => create_target(app, decode(params)).await.and_then(encode),
+        ADOPT_TARGET_METHOD => adopt_target(app, decode(params)).await.and_then(encode),
         GET_TARGET_METHOD => get_target(app, decode(params)).await.and_then(encode),
         CLOSE_TARGET_METHOD => close_target(app, decode(params)).await.and_then(encode),
         ENSURE_INGRESS_METHOD => ensure_ingress(app, decode(params)).await.and_then(encode),
@@ -323,6 +325,29 @@ async fn create_target<B: IncusBackend>(
     })
 }
 
+async fn adopt_target<B: IncusBackend>(
+    app: &App<B>,
+    params: anyhow::Result<AdoptTargetParams>,
+) -> anyhow::Result<AdoptTargetResponse> {
+    let params = params?;
+    let binding = params.binding.clone();
+    let binding_lock = {
+        let mut locks = app.binding_locks.lock().await;
+        locks
+            .entry((binding.universe_id.clone(), binding.binding_id.clone()))
+            .or_default()
+            .clone()
+    };
+    let _binding_guard = binding_lock.lock().await;
+    app.backend.reconcile_binding(&binding).await?;
+    let mut target = app.backend.adopt_vm(&binding, &params).await?;
+    verify_adoption(&target, &params)?;
+    observe_daemon_readiness(&app.config, &mut target).await;
+    Ok(AdoptTargetResponse {
+        target: summary(target),
+    })
+}
+
 async fn close_target<B: IncusBackend>(
     app: &App<B>,
     params: anyhow::Result<CloseTargetParams>,
@@ -464,6 +489,21 @@ fn verify_create(
     }
     Ok(())
 }
+
+fn verify_adoption(target: &OwnedTarget, params: &AdoptTargetParams) -> anyhow::Result<()> {
+    if target.universe_id != params.binding.universe_id
+        || target.binding_id != params.binding.binding_id
+        || target.environment_id != params.environment_id
+        || target.incarnation_id != params.incarnation_id
+        || target.request_id != params.request_id
+        || target.template_id != "adopted"
+        || target.image_fingerprint != "adopted"
+        || target.adoption_source.as_deref() != Some(params.source_target.as_str())
+    {
+        anyhow::bail!("existing target metadata conflicts with adoption request")
+    }
+    Ok(())
+}
 async fn observe_daemon_readiness(config: &Config, target: &mut OwnedTarget) {
     if target.status == HostTargetStatus::Ready && !relay::probe_guest(config, target).await {
         target.status = HostTargetStatus::Starting;
@@ -515,6 +555,7 @@ mod tests {
             request_id: "r-a".to_owned(),
             template_id: "dev-small-v1".to_owned(),
             image_fingerprint: "fingerprint-a".to_owned(),
+            adoption_source: None,
             status: HostTargetStatus::Ready,
             ipv4_address: Some("10.0.0.2".to_owned()),
             ingress_hostname: None,

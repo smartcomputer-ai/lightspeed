@@ -30,6 +30,8 @@ pub struct ControllerCapabilities {
     #[serde(default)]
     pub create_target: bool,
     #[serde(default)]
+    pub adopt_target: bool,
+    #[serde(default)]
     pub get_target: bool,
     #[serde(default)]
     pub close_target: bool,

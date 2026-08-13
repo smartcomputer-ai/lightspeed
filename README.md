@@ -63,7 +63,8 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
   and selection is a separate, default-off `selectionTools` grant. Ordinary
   file and process tools always operate on the selected environment and never
   on linked VFS content. The in-repo stateless Incus provider supplies
-  authenticated durable full-VM provisioning and on-demand envd routes; real
+  durable full-VM provisioning, explicit takeover of existing VMs, and
+  on-demand envd routes; real
   Incus deployment still requires node certificates, an immutable image, and
   provider policy configuration
 - [x] **Provider-owned jobs** for long-running work: downloads, experiments,

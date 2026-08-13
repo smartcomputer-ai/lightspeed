@@ -92,6 +92,7 @@ export const METHODS = [
   "operator/environment-providers/delete",
   "operator/environment-providers/bindings/put",
   "operator/environment-providers/bindings/delete",
+  "operator/environments/adopt",
 ] as const;
 
 export const METHOD_INFO = {
@@ -529,6 +530,11 @@ export const METHOD_INFO = {
     scope: "operator",
     summary: "Delete an environment provider binding",
     description: "Deletes a universe provider binding only after every referencing environment has reached Closed.",
+  },
+  "operator/environments/adopt": {
+    scope: "operator",
+    summary: "Adopt a provider environment",
+    description: "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.",
   },
 } as const;
 
@@ -1328,6 +1334,15 @@ export interface MethodMap {
     params: Api.OperatorProviderBindingDeleteParams;
     result: Api.AgentApiOutcomeOfOperatorProviderBindingDeleteResponse;
   };
+  /**
+   * Adopt a provider environment
+   *
+   * Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.
+   */
+  "operator/environments/adopt": {
+    params: Api.OperatorEnvironmentAdoptParams;
+    result: Api.AgentApiOutcomeOfOperatorEnvironmentAdoptResponse;
+  };
 }
 
 export type MethodParams<M extends Method> = MethodMap[M]["params"];
@@ -2033,5 +2048,13 @@ export const rpc = {
    */
   operatorEnvironmentProvidersBindingsDelete(client: RpcCaller, params: Api.OperatorProviderBindingDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorProviderBindingDeleteResponse> {
     return client.call("operator/environment-providers/bindings/delete", params);
+  },
+  /**
+   * Adopt a provider environment
+   *
+   * Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.
+   */
+  operatorEnvironmentsAdopt(client: RpcCaller, params: Api.OperatorEnvironmentAdoptParams): Promise<Api.AgentApiOutcomeOfOperatorEnvironmentAdoptResponse> {
+    return client.call("operator/environments/adopt", params);
   },
 } as const;

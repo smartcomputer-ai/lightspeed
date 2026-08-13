@@ -54,6 +54,7 @@ mod tests {
             request_id: "request-a".to_owned(),
             template_id: "template-a".to_owned(),
             image_fingerprint: "fingerprint-a".to_owned(),
+            adoption_source: None,
             status: HostTargetStatus::Ready,
             ipv4_address: Some("10.0.0.2".to_owned()),
             ingress_hostname: None,

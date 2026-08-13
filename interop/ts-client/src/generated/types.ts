@@ -2725,6 +2725,21 @@ export interface OperatorApiKeyRevokeResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorEnvironmentAdoptResponse".
+ */
+export interface AgentApiOutcomeOfOperatorEnvironmentAdoptResponse {
+  notifications?: AgentNotification[];
+  result: OperatorEnvironmentAdoptResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentAdoptResponse".
+ */
+export interface OperatorEnvironmentAdoptResponse {
+  environment: EnvironmentView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse".
  */
 export interface AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse {
@@ -4074,6 +4089,32 @@ export interface OperatorApiKeyListParams {
  */
 export interface OperatorApiKeyRevokeParams {
   keyPrefix: string;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorEnvironmentAdoptParams".
+ */
+export interface OperatorEnvironmentAdoptParams {
+  bindingId: string;
+  displayName?: string | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * Stable caller-generated retry identity inside the destination universe.
+   */
+  requestId: string;
+  /**
+   * Provider-native source reference. The Incus provider accepts
+   * `<project>/<instance>` or an instance name in the `default` project.
+   */
+  sourceTarget: string;
+  /**
+   * Required acknowledgement that Lightspeed will move, reconfigure, and
+   * delete the target as part of its ordinary managed lifecycle.
+   */
+  takeOwnership: boolean;
   universeId: string;
 }
 /**
