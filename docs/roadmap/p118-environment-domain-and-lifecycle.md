@@ -258,6 +258,11 @@ administrator roles are deferred rather than implied by the API vocabulary.
 
 ## Verification
 
+- The maintained `environment_provider_live` acceptance test uses real
+  Postgres plus the real deployment reconciler with the deterministic
+  in-process provider. It covers operator registration/binding, template
+  discovery, create and adoption retry identity, cross-universe isolation,
+  public-ingress realization, and close without requiring Incus.
 - Unit-test identifier, source/incarnation, lifecycle, binding-revision, and
   template invariants.
 - Prove two calls with the same request ID return one environment and cause one

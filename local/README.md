@@ -121,6 +121,16 @@ source local/env.sh
 cargo test -p temporal-server --test temporal_live temporal_live_session_start_then_run_start_completes_fake_runs -- --ignored --nocapture
 ```
 
+Run the minimal live environment control-plane acceptance test. This uses real
+Postgres and the real lifecycle reconciler with an in-process provider, so it
+does not require Incus:
+
+```bash
+source local/env.sh
+cargo test -p temporal-server --test environment_provider_live \
+  -- --ignored --test-threads=1 --nocapture
+```
+
 Run only the OpenAI-backed hosted-agent live test:
 
 ```bash
