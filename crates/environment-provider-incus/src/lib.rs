@@ -7,4 +7,4 @@ pub mod relay;
 pub mod server;
 
 pub use config::{Config, ProviderArgs};
-pub use incus::{IncusBackend, IncusClient};
+pub use incus::{IncusBackend, IncusClient, IncusMemberStatus, IncusTopology};

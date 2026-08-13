@@ -1,13 +1,18 @@
 {
   "controllerListen": "127.0.0.1:19090",
   "incus": {
-    "mode": "single",
-    "endpoints": ["https://hz02.example.ts.net:8443"],
+    "mode": "cluster",
+    "endpoints": [
+      "https://incus-a.example.ts.net:8443",
+      "https://incus-b.example.ts.net:8443",
+      "https://incus-c.example.ts.net:8443"
+    ],
     "clientCertificatePem": "/run/secrets/incus-client.crt",
     "clientPrivateKeyPem": "/run/secrets/incus-client.key",
-    "serverCaPem": "/run/secrets/incus-server-ca.crt",
+    "serverCaPem": "/run/secrets/incus-cluster-ca.crt",
     "storagePool": "default",
-    "imageServerUrl": "https://hz01-image-builder.example.ts.net:8443"
+    "clusterNetworkUplink": "UPLINK",
+    "imageServerUrl": "https://image-builder.example.ts.net:8443"
   },
   "relayIdleSeconds": 60,
   "dialTimeoutSeconds": 10,
@@ -25,13 +30,14 @@
       "maxEnvironments": 10,
       "templates": [
         {
-          "templateId": "dev-small-v1",
-          "displayName": "Small development VM",
+          "templateId": "dev-small-x86-v1",
+          "displayName": "Small x86 development VM",
           "description": "2 vCPU, 4 GiB RAM, 40 GiB disk",
           "imageFingerprint": "replace-with-immutable-sha256-fingerprint",
           "cpu": 2,
           "memory": "4GiB",
           "disk": "40GiB",
+          "clusterGroup": "x86-production",
           "publicIngress": true,
           "ingressPort": 8080
         }

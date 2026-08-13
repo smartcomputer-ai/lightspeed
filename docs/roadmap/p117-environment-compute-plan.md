@@ -944,9 +944,10 @@ variants.
 - Refuse image deletion while a retained target or supported rollback depends
   on it.
 
-For independent Incus nodes, the provider checks the selected node's cache and
-copies/imports the exact fingerprint lazily. Add a dedicated image distribution
-service only when node count or rollout latency justifies it.
+For a standalone Incus server, the provider checks the local cache and imports
+the exact fingerprint lazily. In cluster mode, Incus owns image replication
+through its native cluster policy. Add a dedicated image distribution service
+only when rollout latency demonstrates that native behavior is insufficient.
 
 Arbitrary user images, Dockerfiles as VM definitions, and raw image aliases are
 deferred.
@@ -979,9 +980,9 @@ Responsibilities:
 
 - expose the provider controller contract;
 - publish a binding-filtered template catalog;
-- own and enforce binding entitlement, allocation, aggregate quota, capacity,
-  and ingress policy;
-- select an eligible node;
+- own and enforce binding entitlement, allocation, aggregate quota, and ingress
+  policy;
+- delegate member placement and physical capacity admission to Incus;
 - ensure the exact image exists;
 - create VM, disk, network, and bootstrap configuration idempotently;
 - observe VM power/health state;
@@ -989,14 +990,16 @@ Responsibilities:
 - close targets safely; and
 - report capacity and bounded metrics.
 
-### Single-node first
+### Explicit Incus modes
 
-The initial provider has one configured node, hz02. Scheduling is therefore
-trivial, but target names and metadata must already be globally unique and
-multi-node-safe.
+The provider supports an explicit standalone mode for one Incus server and a
+cluster mode for one native Incus cluster. Cluster mode may configure multiple
+failover API endpoints, all of which must expose the same cluster. The provider
+does not pool unrelated standalone servers or implement another scheduler.
 
-Do not create a one-node abstraction that assumes every target lives on hz02
-or stores an unqualified local VM name as its global identity.
+Target names are deterministic and valid in both the standalone and
+cluster-wide namespaces. Cluster member location is diagnostic metadata and is
+not part of the durable target identity.
 
 ### VM defaults
 
@@ -1025,29 +1028,32 @@ Gated on the first untrusted tenant (v1 assumes trusted universes):
 - project CPU, memory, disk, and instance limits beyond defaults; and
 - an end-to-end public-application-compromise threat model.
 
-### Independent node pool
+### Native Incus cluster
 
-Joining another root node to the provider pool means:
+Joining another root node to the cluster means:
 
 1. install and initialize Incus reproducibly;
 2. configure storage, managed network, firewall, and remote API;
 3. establish tailnet identity and provider trust;
-4. register node ID, failure domain, architecture, labels, and capacity;
-5. reconcile projects, profiles, and template images; and
-6. admit the node for scheduling.
+4. join it to the native Incus cluster;
+5. initialize member-local storage and the shared/routed networking substrate;
+6. assign failure domain and cluster groups; and
+7. admit the member through native Incus scheduling state.
 
-The provider schedules over independent Incus servers. Nodes do not need a
-shared consensus database or storage system. Initial placement uses hard
-resource fit, architecture/template constraints, provider-owned binding quota,
-node health, and simple free-capacity preference.
+Incus owns member discovery, health, cluster-wide inventory, image replication,
+capacity admission, and placement. Templates may target an Incus cluster group
+as a hard compatibility set; otherwise the native scheduler selects any
+schedulable member. The provider does not mirror capacity or maintain a
+reservation ledger.
 
-Support node cordon and drain before automatic rebalance. A failed node makes
-its environments unavailable; automatic destructive recreation is a separate
-policy, not an implicit scheduler behavior.
+Native `scheduler.instance=manual` provides cordon. Drain and evacuation remain
+explicit operator workflows. Automatic healing and rebalance are initially
+disabled. A failed member with local storage makes its environments unavailable;
+automatic destructive recreation is a separate policy.
 
-Use an Incus cluster only when at least three sufficiently homogeneous nodes in
-one datacenter need its unified scheduling, shared storage, or migration. A
-cross-region Incus quorum is not the default pool design.
+Two-member clusters are supported with a quorum warning. At least three
+sufficiently homogeneous, low-latency members are recommended for production.
+A cross-region Incus quorum is not supported by this design.
 
 ## Lightspeed API access from environments
 
@@ -1367,8 +1373,9 @@ Implementation is tracked in five independently completable plans:
    delivers the first dynamically provisioned VM path on hz02.
 4. [P121 — Environment Public Ingress](p121-environment-public-ingress.md)
    adds controlled application ingress and its credential boundary.
-5. [P122 — Independent Incus Multi-Node Pool](p122-incus-multi-node-pool.md)
-   adds scheduling, image distribution, cordon/drain, and node-loss behavior.
+5. [P122 — Single-Node and Clustered Incus Provider](p122-incus-multi-node-pool.md)
+   adds native Incus clustering, endpoint failover, cluster-group placement,
+   cordon/drain guidance, and explicit member-loss behavior.
 
 Security, negative testing, reconciliation, and observability are acceptance
 work in the milestone that introduces each boundary, not a separate late
@@ -1462,8 +1469,8 @@ umbrella document and have no scheduled implementation plan.
 | Provider-native execution | Allowed behind the same host contract, not the general VM default |
 | Dynamic isolation | Full VM by default; trusted system containers remain possible |
 | First backend | Incus/KVM on hz02 |
-| Initial pool | Independent Incus node(s), centrally scheduled |
-| Incus clustering | Only for 3+ suitable same-datacenter nodes when justified |
+| Incus topology | Explicit standalone server or one native Incus cluster |
+| Incus clustering | Any Incus-supported member count; 3+ low-latency members recommended for production |
 | Kubernetes | Future backend detail, not current substrate requirement |
 | Firecracker | Cursory future sketch; prefer envd over vsock; no scheduled work |
 | Provider persistence | None initially; derive from Lightspeed + backend |

@@ -113,7 +113,7 @@
   operator-registered reachable compute providers, lightweight universe
   bindings, provider-owned allocation/ingress policy, stable environment
   identity, reachable external environments, on-demand data connections,
-  managed Incus VMs, public ingress, and a future independent-node pool;
+  managed Incus VMs, public ingress, and standalone/native-cluster Incus modes;
   delivery is split across P118-P122
 - [ ] [P118](p118-environment-domain-and-lifecycle.md) — replace the
   provider-as-singleton model with operator providers, revisioned universe
@@ -132,9 +132,11 @@
   DNS/TLS and no agent or platform credential inside the VM; core API,
   protocol, Incus-provider, and stateless proxy are implemented, while
   deployment and live acceptance remain
-- [ ] [P122](p122-incus-multi-node-pool.md) — extend the stateless Incus
-  provider to independently managed nodes with placement, image distribution,
-  cordon/drain, and explicit node-loss behavior
+- [ ] [P122](p122-incus-multi-node-pool.md) — run the stateless Incus provider
+  against either one standalone server or one native Incus cluster, with API
+  endpoint failover, cluster-group placement, bounded topology health, and
+  explicit non-destructive member-loss behavior; live cluster acceptance and
+  deployment remain
 - [x] [P113](p113-explicit-vfs-and-environment-tool-domains.md) — separate
   dedicated VFS tools from ordinary active-environment file/process tools,
   remove generic execution targets and the fused filesystem, and make prompts

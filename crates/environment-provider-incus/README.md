@@ -1,7 +1,8 @@
 # Incus environment provider
 
 `lightspeed-provider-incus` is a stateless P118 controller, passive P119 data
-endpoint, and optional P121 application edge. It depends on the public host
+endpoint, optional P121 application edge, and P122 single-node/cluster Incus
+adapter. It depends on the public host
 protocol crate, not Lightspeed's database, API implementation, engine, or
 Temporal runtime.
 
@@ -10,6 +11,55 @@ the provider endpoint and private envd endpoint is intentionally deferred.
 Protect those listeners with the deployment network/transport boundary for
 now. The Incus client certificate and key remain deployment files mounted into
 the provider process.
+
+## Incus topology
+
+The provider has two explicit modes:
+
+- `single` connects to exactly one standalone Incus server; and
+- `cluster` connects through one or more failover API endpoints belonging to
+  the same native Incus cluster.
+
+`config.example.json` demonstrates single mode and
+`config.cluster.example.json` demonstrates cluster mode. The provider checks
+the topology at startup. In cluster mode, every reachable configured endpoint
+must report identical member names and addresses. A two-member cluster is
+accepted with a quorum warning; three or more members are recommended for
+production.
+
+The provider does not form the cluster, join or remove members, initialize
+member-local storage/uplinks, evacuate instances, or recover quorum. Perform
+those operations with deployment tooling and the Incus CLI.
+
+Cluster mode uses one provider-managed OVN network per binding over the
+existing `incus.clusterNetworkUplink`. The provider and optional public edge
+must be able to route to addresses on those networks. Standalone mode retains
+provider-managed bridge networks.
+
+Templates can set `clusterGroup` to target native Incus placement at that
+group. Omitting it lets Incus choose from all schedulable members. The provider
+does not duplicate Incus capacity accounting or scheduling.
+
+Use native Incus controls for maintenance:
+
+```bash
+# Prevent automatic placement on one member while existing VMs keep running.
+incus cluster set member-a scheduler.instance manual
+
+# Inspect environments before an explicit drain decision.
+incus list location=member-a
+
+# Re-admit the member after maintenance.
+incus cluster unset member-a scheduler.instance
+```
+
+Do not enable automatic healing or rebalance for the initial Lightspeed
+deployment. An evacuation or move is an explicit operator action. With local
+member storage, an offline member's environments remain unavailable rather
+than being destructively recreated.
+
+`GET /health` checks the active Incus topology and returns only bounded
+diagnostics: mode and each member's name, status, and schedulability.
 
 There is intentionally no provider ID in this configuration. The operator
 assigns that identity when registering the reachable controller endpoint.

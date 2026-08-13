@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{
         Path, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
@@ -40,6 +40,7 @@ struct App<B> {
 pub async fn serve<B: IncusBackend>(config: Config, backend: B) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(config.controller_listen).await?;
     let app = Router::new()
+        .route("/health", get(health::<B>))
         .route("/control", get(upgrade::<B>))
         .route(
             "/routes/:universe/:binding/:environment/:incarnation/:target",
@@ -52,6 +53,13 @@ pub async fn serve<B: IncusBackend>(config: Config, backend: B) -> anyhow::Resul
         });
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+async fn health<B: IncusBackend>(State(app): State<App<B>>) -> Response {
+    match app.backend.topology().await {
+        Ok(topology) => Json(topology).into_response(),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
 }
 
 async fn upgrade<B: IncusBackend>(
@@ -492,6 +500,13 @@ async fn observe_daemon_readiness(config: &Config, target: &mut OwnedTarget) {
     }
 }
 fn summary(target: OwnedTarget) -> HostTargetSummary {
+    let mut metadata = BTreeMap::from([
+        ("templateId".to_owned(), target.template_id),
+        ("imageFingerprint".to_owned(), target.image_fingerprint),
+    ]);
+    if let Some(location) = target.location {
+        metadata.insert("incusMember".to_owned(), location);
+    }
     HostTargetSummary {
         target_id: target.target_id,
         display_name: Some(target.environment_id),
@@ -502,10 +517,7 @@ fn summary(target: OwnedTarget) -> HostTargetSummary {
             .with_process()
             .with_jobs(),
         default_cwd: None,
-        metadata: BTreeMap::from([
-            ("templateId".to_owned(), target.template_id),
-            ("imageFingerprint".to_owned(), target.image_fingerprint),
-        ]),
+        metadata,
     }
 }
 fn decode<T: DeserializeOwned>(value: Value) -> anyhow::Result<T> {
@@ -537,6 +549,7 @@ mod tests {
             ipv4_address: Some("10.0.0.2".to_owned()),
             ingress_hostname: None,
             ingress_port: None,
+            location: Some("member-a".to_owned()),
         }
     }
 
@@ -574,6 +587,7 @@ mod tests {
             cpu: 2,
             memory: "4GiB".to_owned(),
             disk: "40GiB".to_owned(),
+            cluster_group: None,
             public_ingress: false,
             ingress_port: None,
             deprecated: false,
@@ -581,5 +595,15 @@ mod tests {
         assert!(verify_create(&target(), &params, &template).is_ok());
         template.image_fingerprint = "fingerprint-b".to_owned();
         assert!(verify_create(&target(), &params, &template).is_err());
+    }
+
+    #[test]
+    fn summary_reports_member_without_changing_target_identity() {
+        let summary = summary(target());
+        assert_eq!(summary.target_id.as_str(), "target-a");
+        assert_eq!(
+            summary.metadata.get("incusMember").map(String::as_str),
+            Some("member-a")
+        );
     }
 }

@@ -58,6 +58,7 @@ mod tests {
             ipv4_address: Some("10.0.0.2".to_owned()),
             ingress_hostname: None,
             ingress_port: None,
+            location: Some("member-a".to_owned()),
         }
     }
 

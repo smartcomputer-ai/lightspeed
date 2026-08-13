@@ -50,8 +50,9 @@ implementation so it can move to a separate repository later.
 - Guests receive no Incus, node-root, tailnet, or general universe credential.
 - Dynamically provisioned development environments use full KVM/QEMU VMs.
 
-v1 configures one Incus node. Names, IDs, and metadata must still be
-multi-node-safe so P122 does not require another identity migration.
+P120 configures one Incus node. Names, IDs, and metadata are also valid in the
+native cluster-wide namespace introduced by P122, so clustered operation does
+not require another identity migration.
 
 ## Projects and networking
 
