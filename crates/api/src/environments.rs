@@ -89,6 +89,19 @@ pub struct EnvironmentCloseResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct EnvironmentIngressPutParams {
+    pub environment_id: EnvironmentId,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentIngressPutResponse {
+    pub environment: EnvironmentView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct EnvironmentExternalCreateParams {
     pub request_id: EnvironmentProvisionRequestId,
     /// Connection to an envd instance reachable from Lightspeed.
@@ -175,6 +188,9 @@ pub struct EnvironmentView {
     pub display_name: Option<String>,
     pub status: EnvironmentLifecycleStatusView,
     pub incarnation: EnvironmentIncarnationView,
+    pub public_ingress_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_endpoint: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
     pub created_at_ms: i64,

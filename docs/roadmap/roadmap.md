@@ -129,7 +129,9 @@
   publication, ls.bot UX, and live isolation/acceptance proofs remain
 - [ ] [P121](p121-environment-public-ingress.md) — add provider-authorized
   per-environment HTTPS ingress through a shared node-edge proxy with wildcard
-  DNS/TLS and no agent or platform credential inside the VM
+  DNS/TLS and no agent or platform credential inside the VM; core API,
+  protocol, Incus-provider, and stateless proxy are implemented, while
+  deployment and live acceptance remain
 - [ ] [P122](p122-incus-multi-node-pool.md) — extend the stateless Incus
   provider to independently managed nodes with placement, image distribution,
   cordon/drain, and explicit node-loss behavior

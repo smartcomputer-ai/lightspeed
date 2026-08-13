@@ -541,6 +541,24 @@
       "summary": "Register an external environment"
     },
     {
+      "description": "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
+      "method": "environments/ingress/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentIngressPutParams"
+        },
+        "type": "EnvironmentIngressPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentIngressPutResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentIngressPutResponse>"
+      },
+      "scope": "universe",
+      "summary": "Configure environment public ingress"
+    },
+    {
       "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",
       "method": "environments/provider-bindings/list",
       "params": {

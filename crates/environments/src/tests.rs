@@ -190,6 +190,71 @@ async fn provider_observation_populates_only_the_current_incarnation() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn public_ingress_is_a_realized_environment_facet() {
+    let (_, store) = store().await;
+    let environment = store
+        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
+        .await
+        .expect("create");
+    let enabled = store
+        .set_environment_ingress(SetEnvironmentIngress {
+            environment_id: environment.environment_id.clone(),
+            enabled: true,
+            public_endpoint: Some("https://opaque.env.example".to_owned()),
+            updated_at_ms: 3_000,
+        })
+        .await
+        .expect("enable ingress");
+    assert!(enabled.public_ingress_enabled);
+    assert_eq!(
+        enabled.public_endpoint.as_deref(),
+        Some("https://opaque.env.example")
+    );
+    let disabled = store
+        .set_environment_ingress(SetEnvironmentIngress {
+            environment_id: environment.environment_id,
+            enabled: false,
+            public_endpoint: None,
+            updated_at_ms: 4_000,
+        })
+        .await
+        .expect("disable ingress");
+    assert!(!disabled.public_ingress_enabled);
+    assert_eq!(disabled.public_endpoint, None);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn external_environment_cannot_enable_provider_managed_ingress() {
+    let store = InMemoryEnvironmentRegistryStore::new();
+    let environment = store
+        .create_external_environment(CreateExternalEnvironment {
+            request_id: EnvironmentProvisionRequestId::new("external-request"),
+            environment_id: EnvironmentId::new("external-environment"),
+            incarnation_id: EnvironmentIncarnationId::new("external-incarnation"),
+            connection: EnvironmentConnectionSpec::new(
+                "ws://envd.example",
+                HostTransport::WebSocket,
+            ),
+            display_name: None,
+            metadata: BTreeMap::new(),
+            created_at_ms: 1_000,
+        })
+        .await
+        .expect("external");
+    assert!(matches!(
+        store
+            .set_environment_ingress(SetEnvironmentIngress {
+                environment_id: environment.environment_id,
+                enabled: true,
+                public_endpoint: Some("https://invalid.example".to_owned()),
+                updated_at_ms: 2_000,
+            })
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn external_environment_persists_a_typed_connection() {
     let store = InMemoryEnvironmentRegistryStore::new();
     let environment = store

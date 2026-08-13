@@ -35,6 +35,7 @@ export const METHODS = [
   "environments/list",
   "environments/close",
   "environments/external/create",
+  "environments/ingress/put",
   "environments/provider-bindings/list",
   "environments/provider-bindings/read",
   "environments/templates/list",
@@ -243,6 +244,11 @@ export const METHOD_INFO = {
     scope: "universe",
     summary: "Register an external environment",
     description: "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.",
+  },
+  "environments/ingress/put": {
+    scope: "universe",
+    summary: "Configure environment public ingress",
+    description: "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
   },
   "environments/provider-bindings/list": {
     scope: "universe",
@@ -808,6 +814,15 @@ export interface MethodMap {
   "environments/external/create": {
     params: Api.EnvironmentExternalCreateParams;
     result: Api.AgentApiOutcomeOfEnvironmentExternalCreateResponse;
+  };
+  /**
+   * Configure environment public ingress
+   *
+   * Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.
+   */
+  "environments/ingress/put": {
+    params: Api.EnvironmentIngressPutParams;
+    result: Api.AgentApiOutcomeOfEnvironmentIngressPutResponse;
   };
   /**
    * List environment provider bindings
@@ -1562,6 +1577,14 @@ export const rpc = {
    */
   environmentsExternalCreate(client: RpcCaller, params: Api.EnvironmentExternalCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentExternalCreateResponse> {
     return client.call("environments/external/create", params);
+  },
+  /**
+   * Configure environment public ingress
+   *
+   * Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.
+   */
+  environmentsIngressPut(client: RpcCaller, params: Api.EnvironmentIngressPutParams): Promise<Api.AgentApiOutcomeOfEnvironmentIngressPutResponse> {
+    return client.call("environments/ingress/put", params);
   },
   /**
    * List environment provider bindings

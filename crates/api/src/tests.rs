@@ -782,6 +782,30 @@ async fn dispatch_json_rpc_routes_environments_create() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_environment_ingress_put() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_ENVIRONMENTS_INGRESS_PUT.to_owned(),
+            params: Some(json!({
+                "environmentId": "evi_test",
+                "enabled": true
+            })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    let environment = &response.result.expect("result")["result"]["environment"];
+    assert_eq!(environment["publicIngressEnabled"], json!(true));
+    assert_eq!(
+        environment["publicEndpoint"],
+        json!("https://opaque.env.example")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn dispatch_json_rpc_routes_session_environments_activate() {
     let response = dispatch_json_rpc(
         &TestService,
@@ -1842,6 +1866,20 @@ impl AgentApiService for TestService {
         }))
     }
 
+    async fn put_environment_ingress(
+        &self,
+        params: EnvironmentIngressPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentIngressPutResponse>, AgentApiError> {
+        let mut environment = test_environment_instance();
+        environment.public_ingress_enabled = params.enabled;
+        environment.public_endpoint = params
+            .enabled
+            .then(|| "https://opaque.env.example".to_owned());
+        Ok(AgentApiOutcome::new(EnvironmentIngressPutResponse {
+            environment,
+        }))
+    }
+
     async fn activate_session_environment(
         &self,
         params: SessionEnvironmentActivateParams,
@@ -2427,6 +2465,8 @@ fn test_environment_instance() -> EnvironmentView {
             created_at_ms: 10,
             updated_at_ms: 10,
         },
+        public_ingress_enabled: false,
+        public_endpoint: None,
         metadata: BTreeMap::new(),
         created_at_ms: 10,
         updated_at_ms: 10,
@@ -2453,6 +2493,8 @@ fn test_external_environment() -> EnvironmentView {
             created_at_ms: 10,
             updated_at_ms: 10,
         },
+        public_ingress_enabled: false,
+        public_endpoint: None,
         metadata: BTreeMap::new(),
         created_at_ms: 10,
         updated_at_ms: 10,

@@ -11,9 +11,105 @@ use ::environments::{
     FailEnvironmentLifecycle, FinishCloseEnvironment, ListEnvironments,
     ObserveProvisionedEnvironment,
 };
+use host_protocol::control::ingress::{
+    EnsureIngressParams, ProviderIngressStatus, RemoveIngressParams,
+};
 use host_protocol::control::targets::{CloseTargetParams, CreateTargetParams, HostTargetStatus};
 
 impl GatewayAgentApi {
+    pub(super) async fn put_environment_ingress_record(
+        &self,
+        params: EnvironmentIngressPutParams,
+    ) -> Result<EnvironmentIngressPutResponse, AgentApiError> {
+        let environment_id = parse_registry_environment_id(params.environment_id)?;
+        let environment = EnvironmentStore::read_environment(self.store.as_ref(), &environment_id)
+            .await
+            .map_err(map_environments_error)?;
+        if !matches!(
+            environment.status,
+            EnvironmentStatus::Ready | EnvironmentStatus::Offline
+        ) {
+            return Err(AgentApiError::rejected(
+                "public ingress requires a ready or offline environment",
+            ));
+        }
+        let EnvironmentSource::Provisioned {
+            provider_id,
+            binding_id,
+        } = &environment.source
+        else {
+            return Err(AgentApiError::rejected(
+                "provider-managed ingress is unavailable for external environments",
+            ));
+        };
+        let target_id = environment
+            .incarnation
+            .provider_target_id
+            .clone()
+            .ok_or_else(|| AgentApiError::rejected("environment has no provider target"))?;
+        let provider = self.read_environment_provider(provider_id).await?;
+        let binding = EnvironmentProviderBindingStore::read_provider_binding(
+            self.store.as_ref(),
+            self.store.config().universe_id,
+            binding_id,
+        )
+        .await
+        .map_err(map_environments_error)?;
+        let mut controller = self
+            .host_controller_connector
+            .connect(&provider.controller_connection)
+            .await?;
+        let public_endpoint = if params.enabled {
+            let response = controller
+                .ensure_ingress(&EnsureIngressParams {
+                    request_id: format!("ingress-enable:{}", environment.request_id),
+                    environment_id: environment.environment_id.to_string(),
+                    incarnation_id: environment.incarnation.incarnation_id.to_string(),
+                    binding: binding_context(&binding),
+                    target_id,
+                })
+                .await?;
+            if response.status != ProviderIngressStatus::Ready {
+                return Err(AgentApiError::rejected(
+                    "provider did not realize public ingress",
+                ));
+            }
+            Some(response.public_endpoint.ok_or_else(|| {
+                AgentApiError::rejected("provider returned ready ingress without a public endpoint")
+            })?)
+        } else {
+            let response = controller
+                .remove_ingress(&RemoveIngressParams {
+                    request_id: format!("ingress-disable:{}", environment.request_id),
+                    environment_id: environment.environment_id.to_string(),
+                    incarnation_id: environment.incarnation.incarnation_id.to_string(),
+                    binding: binding_context(&binding),
+                    target_id,
+                })
+                .await?;
+            if response.status != ProviderIngressStatus::Disabled {
+                return Err(AgentApiError::rejected(
+                    "provider did not remove public ingress",
+                ));
+            }
+            None
+        };
+        let environment = EnvironmentStore::set_environment_ingress(
+            self.store.as_ref(),
+            ::environments::SetEnvironmentIngress {
+                environment_id,
+                enabled: params.enabled,
+                public_endpoint,
+                updated_at_ms: now_ms()?,
+            },
+        )
+        .await
+        .map_err(map_environments_error)?;
+        Ok(EnvironmentIngressPutResponse {
+            environment: environment_view(&environment),
+        })
+    }
+
     pub(super) async fn create_external_environment_record(
         &self,
         params: EnvironmentExternalCreateParams,
@@ -279,6 +375,20 @@ impl GatewayAgentApi {
             .host_controller_connector
             .connect(&provider.controller_connection)
             .await?;
+        let ingress_response = controller
+            .remove_ingress(&RemoveIngressParams {
+                request_id: format!("ingress-close:{}", environment.request_id),
+                environment_id: environment.environment_id.to_string(),
+                incarnation_id: environment.incarnation.incarnation_id.to_string(),
+                binding: binding_context(&binding),
+                target_id: target_id.clone(),
+            })
+            .await?;
+        if ingress_response.status != ProviderIngressStatus::Disabled {
+            return Err(AgentApiError::rejected(
+                "provider did not remove ingress before target close",
+            ));
+        }
         let response = controller
             .close_target(&CloseTargetParams {
                 request_id: format!("close:{}", environment.request_id),

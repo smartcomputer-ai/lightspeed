@@ -16,6 +16,9 @@ use host_protocol::{
         handshake::{
             ControllerCapabilities, ControllerInitializeParams, ControllerInitializeResponse,
         },
+        ingress::{
+            EnsureIngressParams, IngressResponse, ProviderIngressStatus, RemoveIngressParams,
+        },
         methods::*,
         targets::*,
     },
@@ -25,7 +28,7 @@ use host_protocol::{
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::{Config, IncusBackend, incus::OwnedTarget, policy, relay};
+use crate::{Config, IncusBackend, incus::OwnedTarget, ingress, policy, relay};
 
 #[derive(Clone)]
 struct App<B> {
@@ -155,6 +158,7 @@ async fn dispatch<B: IncusBackend>(app: &App<B>, text: &str) -> Value {
                         create_target: true,
                         get_target: true,
                         close_target: true,
+                        ingress: app.config.ingress.is_some(),
                     },
                     implementation: ImplementationInfo {
                         name: "lightspeed-provider-incus".to_owned(),
@@ -168,6 +172,8 @@ async fn dispatch<B: IncusBackend>(app: &App<B>, text: &str) -> Value {
         CREATE_TARGET_METHOD => create_target(app, decode(params)).await.and_then(encode),
         GET_TARGET_METHOD => get_target(app, decode(params)).await.and_then(encode),
         CLOSE_TARGET_METHOD => close_target(app, decode(params)).await.and_then(encode),
+        ENSURE_INGRESS_METHOD => ensure_ingress(app, decode(params)).await.and_then(encode),
+        REMOVE_INGRESS_METHOD => remove_ingress(app, decode(params)).await.and_then(encode),
         _ => Err(anyhow::anyhow!("unknown controller method: {method}")),
     };
     match result {
@@ -368,6 +374,92 @@ async fn close_target<B: IncusBackend>(
     })
 }
 
+async fn ensure_ingress<B: IncusBackend>(
+    app: &App<B>,
+    params: anyhow::Result<EnsureIngressParams>,
+) -> anyhow::Result<IngressResponse> {
+    let params = params?;
+    let binding = app
+        .config
+        .binding(&params.binding.universe_id, &params.binding.binding_id)?;
+    let mut target = app
+        .backend
+        .get_owned(binding, &params.target_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("target not found"))?;
+    verify_ingress_target(
+        &target,
+        binding,
+        &params.environment_id,
+        &params.incarnation_id,
+    )?;
+    let template = binding
+        .templates
+        .iter()
+        .find(|template| template.template_id == target.template_id)
+        .ok_or_else(|| anyhow::anyhow!("target template is no longer configured"))?;
+    let port = template
+        .ingress_port
+        .ok_or_else(|| anyhow::anyhow!("template does not permit public ingress"))?;
+    let (hostname, endpoint) = ingress::endpoint(&app.config, &target)?;
+    target = app
+        .backend
+        .set_ingress(binding, &target, Some(&hostname), Some(port))
+        .await?;
+    verify_ingress_target(
+        &target,
+        binding,
+        &params.environment_id,
+        &params.incarnation_id,
+    )?;
+    Ok(IngressResponse {
+        status: ProviderIngressStatus::Ready,
+        public_endpoint: Some(endpoint),
+    })
+}
+
+async fn remove_ingress<B: IncusBackend>(
+    app: &App<B>,
+    params: anyhow::Result<RemoveIngressParams>,
+) -> anyhow::Result<IngressResponse> {
+    let params = params?;
+    let binding = app
+        .config
+        .binding(&params.binding.universe_id, &params.binding.binding_id)?;
+    let Some(target) = app.backend.get_owned(binding, &params.target_id).await? else {
+        return Ok(IngressResponse {
+            status: ProviderIngressStatus::Disabled,
+            public_endpoint: None,
+        });
+    };
+    verify_ingress_target(
+        &target,
+        binding,
+        &params.environment_id,
+        &params.incarnation_id,
+    )?;
+    app.backend
+        .set_ingress(binding, &target, None, None)
+        .await?;
+    Ok(IngressResponse {
+        status: ProviderIngressStatus::Disabled,
+        public_endpoint: None,
+    })
+}
+
+fn verify_ingress_target(
+    target: &OwnedTarget,
+    binding: &crate::config::BindingPolicy,
+    environment: &str,
+    incarnation: &str,
+) -> anyhow::Result<()> {
+    verify_binding(target, binding)?;
+    if target.environment_id != environment || target.incarnation_id != incarnation {
+        anyhow::bail!("target ownership does not match ingress request")
+    }
+    Ok(())
+}
+
 fn verify_binding(
     target: &OwnedTarget,
     binding: &crate::config::BindingPolicy,
@@ -443,6 +535,8 @@ mod tests {
             image_fingerprint: "fingerprint-a".to_owned(),
             status: HostTargetStatus::Ready,
             ipv4_address: Some("10.0.0.2".to_owned()),
+            ingress_hostname: None,
+            ingress_port: None,
         }
     }
 
@@ -481,6 +575,7 @@ mod tests {
             memory: "4GiB".to_owned(),
             disk: "40GiB".to_owned(),
             public_ingress: false,
+            ingress_port: None,
             deprecated: false,
         };
         assert!(verify_create(&target(), &params, &template).is_ok());

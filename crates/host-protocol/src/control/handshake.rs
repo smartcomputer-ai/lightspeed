@@ -33,6 +33,8 @@ pub struct ControllerCapabilities {
     pub get_target: bool,
     #[serde(default)]
     pub close_target: bool,
+    #[serde(default)]
+    pub ingress: bool,
 }
 
 fn default_protocol_version() -> u32 {

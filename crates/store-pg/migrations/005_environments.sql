@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS environments (
     display_name text,
     status text NOT NULL,
     current_incarnation_id text NOT NULL,
+    public_ingress_enabled boolean NOT NULL DEFAULT false,
+    public_endpoint text,
     metadata_json jsonb NOT NULL DEFAULT '{}',
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
@@ -76,6 +78,10 @@ CREATE TABLE IF NOT EXISTS environments (
     )),
     CONSTRAINT environments_metadata_object
         CHECK (jsonb_typeof(metadata_json) = 'object'),
+    CONSTRAINT environments_public_ingress_fields CHECK (
+        (public_ingress_enabled AND source_kind = 'provisioned' AND public_endpoint IS NOT NULL AND public_endpoint <> '')
+        OR (NOT public_ingress_enabled AND public_endpoint IS NULL)
+    ),
     CONSTRAINT environments_times_valid CHECK (
         created_at_ms >= 0 AND updated_at_ms >= created_at_ms
     )
@@ -186,5 +192,7 @@ COMMENT ON TABLE environment_incarnations IS
     'Lightspeed-authorized environment generations with stable provider retry and target linkage; not provider inventory or live gateway state.';
 COMMENT ON COLUMN environment_incarnations.provider_target_id IS
     'Opaque provider-scoped target handle returned by createTarget; interpreted with the environment provider identity.';
+COMMENT ON COLUMN environments.public_endpoint IS
+    'Provider-realized public HTTPS endpoint; port, private target, proxy configuration, TLS, health, and policy remain provider-owned.';
 COMMENT ON TABLE environment_credentials IS
     'Universe-owned credential bindings for an environment.';

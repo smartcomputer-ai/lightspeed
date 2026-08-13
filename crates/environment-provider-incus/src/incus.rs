@@ -28,6 +28,8 @@ pub struct OwnedTarget {
     pub image_fingerprint: String,
     pub status: HostTargetStatus,
     pub ipv4_address: Option<String>,
+    pub ingress_hostname: Option<String>,
+    pub ingress_port: Option<u16>,
 }
 
 #[async_trait]
@@ -52,6 +54,13 @@ pub trait IncusBackend: Clone + Send + Sync + 'static {
         target: &OwnedTarget,
         force: bool,
     ) -> anyhow::Result<()>;
+    async fn set_ingress(
+        &self,
+        binding: &BindingPolicy,
+        target: &OwnedTarget,
+        hostname: Option<&str>,
+        port: Option<u16>,
+    ) -> anyhow::Result<OwnedTarget>;
 }
 
 #[derive(Clone)]
@@ -392,6 +401,45 @@ impl IncusBackend for IncusClient {
         )
         .await
     }
+
+    async fn set_ingress(
+        &self,
+        binding: &BindingPolicy,
+        target: &OwnedTarget,
+        hostname: Option<&str>,
+        port: Option<u16>,
+    ) -> anyhow::Result<OwnedTarget> {
+        if hostname.is_some() != port.is_some() {
+            anyhow::bail!("ingress hostname and port must be set together")
+        }
+        let project = policy::project_name(binding);
+        let instance: Instance = self
+            .request(
+                Method::GET,
+                &format!("/instances/{}", target.name),
+                Some(&project),
+                None,
+            )
+            .await?;
+        let mut config = instance.config;
+        match (hostname, port) {
+            (Some(hostname), Some(port)) => {
+                config.insert(
+                    "user.lightspeed.ingress_hostname".to_owned(),
+                    hostname.to_owned(),
+                );
+                config.insert("user.lightspeed.ingress_port".to_owned(), port.to_string());
+            }
+            _ => {
+                config.remove("user.lightspeed.ingress_hostname");
+                config.remove("user.lightspeed.ingress_port");
+            }
+        }
+        self.request_unit(Method::PUT, &format!("/instances/{}", target.name), Some(&project), Some(json!({"config":config,"description":instance.description,"profiles":instance.profiles,"devices":instance.devices,"ephemeral":instance.ephemeral}))).await?;
+        self.instance(&project, &target.name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("target disappeared while updating ingress"))
+    }
 }
 
 #[derive(Deserialize)]
@@ -404,6 +452,14 @@ struct Envelope<T> {
 #[derive(Deserialize)]
 struct Instance {
     name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    profiles: Vec<String>,
+    #[serde(default)]
+    devices: BTreeMap<String, Value>,
+    #[serde(default)]
+    ephemeral: bool,
     #[serde(default)]
     status: String,
     #[serde(default)]
@@ -471,5 +527,13 @@ fn owned_from_instance(instance: Instance, state: InstanceState) -> anyhow::Resu
             _ => HostTargetStatus::Unknown,
         },
         ipv4_address,
+        ingress_hostname: instance
+            .config
+            .get(&format!("{}ingress_hostname", policy::META_PREFIX))
+            .cloned(),
+        ingress_port: instance
+            .config
+            .get(&format!("{}ingress_port", policy::META_PREFIX))
+            .and_then(|value| value.parse().ok()),
     })
 }

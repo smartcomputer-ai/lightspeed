@@ -292,6 +292,8 @@ pub struct EnvironmentRecord {
     pub display_name: Option<String>,
     pub status: EnvironmentStatus,
     pub incarnation: EnvironmentIncarnationRecord,
+    pub public_ingress_enabled: bool,
+    pub public_endpoint: Option<String>,
     pub metadata: BTreeMap<String, String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
@@ -318,6 +320,15 @@ impl EnvironmentRecord {
             self.incarnation.created_at_ms,
             self.incarnation.updated_at_ms,
         )?;
+        validate_nonempty_optional("public_endpoint", self.public_endpoint.as_deref())?;
+        if self.public_ingress_enabled != self.public_endpoint.is_some() {
+            return invalid("public ingress requires exactly one public endpoint when enabled");
+        }
+        if self.public_ingress_enabled
+            && !matches!(self.source, EnvironmentSource::Provisioned { .. })
+        {
+            return invalid("external environments cannot have provider-managed ingress");
+        }
         if let Some(target_id) = &self.incarnation.provider_target_id {
             validate_host_target_id(target_id)?;
         }
@@ -400,6 +411,14 @@ pub struct BeginCloseEnvironment {
 pub struct FinishCloseEnvironment {
     pub environment_id: EnvironmentId,
     pub observed_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetEnvironmentIngress {
+    pub environment_id: EnvironmentId,
+    pub enabled: bool,
+    pub public_endpoint: Option<String>,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -533,6 +552,10 @@ pub trait EnvironmentStore: Send + Sync {
     async fn finish_close_environment(
         &self,
         request: FinishCloseEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+    async fn set_environment_ingress(
+        &self,
+        request: SetEnvironmentIngress,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
 }
 

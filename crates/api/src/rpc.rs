@@ -349,6 +349,8 @@ api_methods! {
         ["Close an environment", "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed."],
     METHOD_ENVIRONMENTS_EXTERNAL_CREATE => create_external_environment(EnvironmentExternalCreateParams) -> EnvironmentExternalCreateResponse =>
         ["Register an external environment", "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand."],
+    METHOD_ENVIRONMENTS_INGRESS_PUT => put_environment_ingress(EnvironmentIngressPutParams) -> EnvironmentIngressPutResponse =>
+        ["Configure environment public ingress", "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health."],
     METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST => list_environment_provider_bindings(EnvironmentProviderBindingListParams) -> EnvironmentProviderBindingListResponse =>
         ["List environment provider bindings", "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers."],
     METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ => read_environment_provider_binding(EnvironmentProviderBindingReadParams) -> EnvironmentProviderBindingReadResponse =>

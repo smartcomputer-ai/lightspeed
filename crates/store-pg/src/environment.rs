@@ -11,7 +11,7 @@ use environments::{
     EnvironmentStore, EnvironmentTemplateId, FailEnvironmentLifecycle, FinishCloseEnvironment,
     ListEnvironmentCredentials, ListEnvironmentProviders, ListEnvironments,
     ObserveProvisionedEnvironment, PutEnvironmentCredential, PutEnvironmentProvider,
-    PutEnvironmentProviderBinding,
+    PutEnvironmentProviderBinding, SetEnvironmentIngress,
 };
 use host_protocol::shared::HostTargetId;
 use sqlx::{Postgres, Row, Transaction};
@@ -31,7 +31,7 @@ const BINDING_COLUMNS: &str = r#"
 
 const ENVIRONMENT_COLUMNS: &str = r#"
     e.environment_id, e.request_id, e.source_kind, e.provider_id, e.binding_id, e.daemon_connection_json,
-    e.display_name, e.status, e.metadata_json,
+    e.display_name, e.status, e.public_ingress_enabled, e.public_endpoint, e.metadata_json,
     e.created_at_ms, e.updated_at_ms,
     i.incarnation_id, i.provision_request_id, i.provider_target_id,
     i.template_id,
@@ -397,6 +397,8 @@ impl EnvironmentStore for PgStore {
                 created_at_ms: request.created_at_ms,
                 updated_at_ms: request.created_at_ms,
             },
+            public_ingress_enabled: false,
+            public_endpoint: None,
             metadata: request.metadata.clone(),
             created_at_ms: request.created_at_ms,
             updated_at_ms: request.created_at_ms,
@@ -608,12 +610,44 @@ impl EnvironmentStore for PgStore {
         sqlx::query("UPDATE environment_incarnations SET updated_at_ms=$4 WHERE universe_id=$1 AND environment_id=$2 AND incarnation_id=$3")
             .bind(self.config.universe_id).bind(request.environment_id.as_str()).bind(current.incarnation.incarnation_id.as_str()).bind(request.observed_at_ms)
             .execute(&mut *tx).await.map_err(|error| sql_error("close environment incarnation", error))?;
-        sqlx::query("UPDATE environments SET status='closed', updated_at_ms=$3 WHERE universe_id=$1 AND environment_id=$2")
+        sqlx::query("UPDATE environments SET status='closed', public_ingress_enabled=false, public_endpoint=NULL, updated_at_ms=$3 WHERE universe_id=$1 AND environment_id=$2")
             .bind(self.config.universe_id).bind(request.environment_id.as_str()).bind(request.observed_at_ms)
             .execute(&mut *tx).await.map_err(|error| sql_error("finish environment close", error))?;
         tx.commit()
             .await
             .map_err(|error| sql_error("commit environment close", error))?;
+        self.read_environment(&request.environment_id).await
+    }
+
+    async fn set_environment_ingress(
+        &self,
+        request: SetEnvironmentIngress,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        validate_ingress_request_time(request.updated_at_ms)?;
+        let environment = self.read_environment(&request.environment_id).await?;
+        if !matches!(environment.source, EnvironmentSource::Provisioned { .. }) {
+            return invalid_store("provider-managed ingress requires a provisioned environment");
+        }
+        if request.enabled
+            && matches!(
+                environment.status,
+                EnvironmentStatus::Closing | EnvironmentStatus::Closed
+            )
+        {
+            return invalid_store("cannot enable ingress for a closing environment");
+        }
+        if request.enabled != request.public_endpoint.is_some() {
+            return invalid_store(
+                "enabled ingress requires a public endpoint and disabled ingress forbids one",
+            );
+        }
+        sqlx::query("UPDATE environments SET public_ingress_enabled=$3, public_endpoint=$4, updated_at_ms=GREATEST(updated_at_ms,$5) WHERE universe_id=$1 AND environment_id=$2")
+            .bind(self.config.universe_id)
+            .bind(request.environment_id.as_str())
+            .bind(request.enabled)
+            .bind(request.public_endpoint)
+            .bind(request.updated_at_ms)
+            .execute(&self.pool).await.map_err(|error| sql_error("set environment ingress", error))?;
         self.read_environment(&request.environment_id).await
     }
 }
@@ -805,6 +839,12 @@ fn environment_from_row(
             created_at_ms: scalar(row, "incarnation_created_at_ms")?,
             updated_at_ms: scalar(row, "incarnation_updated_at_ms")?,
         },
+        public_ingress_enabled: row
+            .try_get("public_ingress_enabled")
+            .map_err(|e| sql_error("decode public ingress enabled", e))?,
+        public_endpoint: row
+            .try_get("public_endpoint")
+            .map_err(|e| sql_error("decode public endpoint", e))?,
         metadata: json_column(row, "metadata_json")?,
         created_at_ms: scalar(row, "created_at_ms")?,
         updated_at_ms: scalar(row, "updated_at_ms")?,
@@ -914,6 +954,18 @@ fn environment_status_from_str(value: &str) -> Result<EnvironmentStatus, Environ
             "unknown environment status: {other}"
         ))),
     }
+}
+
+fn validate_ingress_request_time(value: i64) -> Result<(), EnvironmentRegistryError> {
+    if value < 0 {
+        invalid("updated_at_ms must be nonnegative")
+    } else {
+        Ok(())
+    }
+}
+
+fn invalid_store<T>(message: impl Into<String>) -> Result<T, EnvironmentRegistryError> {
+    invalid(message)
 }
 
 fn parse_id<T, E>(

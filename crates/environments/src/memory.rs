@@ -272,6 +272,8 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
                 created_at_ms: request.created_at_ms,
                 updated_at_ms: request.created_at_ms,
             },
+            public_ingress_enabled: false,
+            public_endpoint: None,
             metadata: request.metadata,
             created_at_ms: request.created_at_ms,
             updated_at_ms: request.created_at_ms,
@@ -322,6 +324,8 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
                 created_at_ms: request.created_at_ms,
                 updated_at_ms: request.created_at_ms,
             },
+            public_ingress_enabled: false,
+            public_endpoint: None,
             metadata: request.metadata,
             created_at_ms: request.created_at_ms,
             updated_at_ms: request.created_at_ms,
@@ -480,8 +484,42 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
             .get_mut(&request.environment_id)
             .ok_or_else(|| not_found("environment", &request.environment_id))?;
         record.status = EnvironmentStatus::Closed;
+        record.public_ingress_enabled = false;
+        record.public_endpoint = None;
         record.incarnation.updated_at_ms = request.observed_at_ms;
         record.updated_at_ms = request.observed_at_ms;
+        Ok(record.clone())
+    }
+
+    async fn set_environment_ingress(
+        &self,
+        request: SetEnvironmentIngress,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        validate_nonnegative_i64(request.updated_at_ms, "updated_at_ms")?;
+        let mut state = self.write_state()?;
+        let record = state
+            .environments
+            .get_mut(&request.environment_id)
+            .ok_or_else(|| not_found("environment", &request.environment_id))?;
+        if !matches!(record.source, EnvironmentSource::Provisioned { .. }) {
+            return invalid("provider-managed ingress requires a provisioned environment");
+        }
+        if matches!(
+            record.status,
+            EnvironmentStatus::Closing | EnvironmentStatus::Closed
+        ) && request.enabled
+        {
+            return invalid("cannot enable ingress for a closing environment");
+        }
+        if request.enabled != request.public_endpoint.is_some() {
+            return invalid(
+                "enabled ingress requires a public endpoint and disabled ingress forbids one",
+            );
+        }
+        record.public_ingress_enabled = request.enabled;
+        record.public_endpoint = request.public_endpoint;
+        record.updated_at_ms = record.updated_at_ms.max(request.updated_at_ms);
+        record.validate()?;
         Ok(record.clone())
     }
 }

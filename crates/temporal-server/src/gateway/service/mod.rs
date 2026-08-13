@@ -2777,6 +2777,15 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
+    async fn put_environment_ingress(
+        &self,
+        params: EnvironmentIngressPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentIngressPutResponse>, AgentApiError> {
+        self.put_environment_ingress_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
     async fn activate_session_environment(
         &self,
         params: SessionEnvironmentActivateParams,

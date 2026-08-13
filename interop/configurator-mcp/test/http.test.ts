@@ -25,7 +25,7 @@ describe("Streamable HTTP configurator", () => {
 
     await client.connect(transport as Parameters<typeof client.connect>[0]);
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(68);
+    expect(listed.tools).toHaveLength(69);
     expect(listed.tools.some((tool) => tool.name.startsWith("lightspeed_operator_"))).toBe(false);
     expect(listed.tools.find((tool) => tool.name === "lightspeed_session_config_put")?.description)
       .toContain("omitted features are revoked");

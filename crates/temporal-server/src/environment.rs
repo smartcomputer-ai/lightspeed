@@ -100,6 +100,8 @@ mod tests {
                 created_at_ms: 1,
                 updated_at_ms: 1,
             },
+            public_ingress_enabled: false,
+            public_endpoint: None,
             metadata: BTreeMap::from([("fsRoot".to_owned(), "/sandbox".to_owned())]),
             created_at_ms: 1,
             updated_at_ms: 1,

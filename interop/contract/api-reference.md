@@ -274,6 +274,15 @@ Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint.
 - Params: `EnvironmentExternalCreateParams`
 - Result: `AgentApiOutcome<EnvironmentExternalCreateResponse>`
 
+### `environments/ingress/put`
+
+**Configure environment public ingress**
+
+Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.
+
+- Params: `EnvironmentIngressPutParams`
+- Result: `AgentApiOutcome<EnvironmentIngressPutResponse>`
+
 ### `environments/provider-bindings/list`
 
 **List environment provider bindings**

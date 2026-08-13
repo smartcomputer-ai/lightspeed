@@ -537,6 +537,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfEnvironmentIngressPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/EnvironmentIngressPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfEnvironmentJobCancelResponse": {
         "properties": {
           "notifications": {
@@ -3758,6 +3775,32 @@
         ],
         "type": "object"
       },
+      "EnvironmentIngressPutParams": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "environmentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentId",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "EnvironmentIngressPutResponse": {
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentView"
+          }
+        },
+        "required": [
+          "environment"
+        ],
+        "type": "object"
+      },
       "EnvironmentJobCancelParams": {
         "properties": {
           "force": {
@@ -4205,6 +4248,15 @@
             },
             "type": "object"
           },
+          "publicEndpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "publicIngressEnabled": {
+            "type": "boolean"
+          },
           "requestId": {
             "type": "string"
           },
@@ -4225,6 +4277,7 @@
           "source",
           "status",
           "incarnation",
+          "publicIngressEnabled",
           "createdAtMs",
           "updatedAtMs"
         ],
@@ -11257,6 +11310,27 @@
         }
       },
       "summary": "Register an external environment"
+    },
+    {
+      "description": "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
+      "name": "environments/ingress/put",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EnvironmentIngressPutParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentIngressPutResponse"
+        }
+      },
+      "summary": "Configure environment public ingress"
     },
     {
       "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",

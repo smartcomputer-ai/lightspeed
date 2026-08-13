@@ -5,6 +5,9 @@
 - Proposed 2026-08-11.
 - Rewritten 2026-08-13 to use direct node-edge ingress rather than a
   per-environment Cloudflare Tunnel.
+- Core Lightspeed, provider-protocol, Incus-provider, and stateless edge-proxy
+  implementation completed 2026-08-13. Wildcard DNS/TLS deployment, live
+  infrastructure acceptance, and ls.bot UX remain.
 - Optional and not required to complete P120.
 - Builds on [P120](p120-incus-environment-provider.md).
 
@@ -45,29 +48,30 @@ by an environment provider.
 
 ## Ownership and durable state
 
-Lightspeed owns the universe's ingress intent and its bounded observation:
+Lightspeed stores only the last successfully realized provider-neutral facts
+on the environment: `publicIngressEnabled` and the optional `publicEndpoint`.
+It has no ingress status machine, route collection, or ingress revision.
+Lightspeed does not store a desired state before provider I/O succeeds.
 
-- whether ingress is requested;
-- the current environment and incarnation;
-- the allocated public hostname;
-- a small lifecycle status such as `provisioning`, `ready`, `disabled`, or
-  `failed`; and
-- a revision and timestamps for idempotent reconciliation.
-
-Lightspeed does not store provider network configuration, proxy configuration,
-TLS keys, or a duplicate binding-level `publicIngressAllowed` policy flag.
+Lightspeed does not store the approved port, private address, provider network
+configuration, proxy configuration, TLS keys, health, or a duplicate
+binding-level `publicIngressAllowed` policy flag.
 
 The provider owns authorization and realization. It validates that the
 binding and template permit ingress, chooses the hostname and approved guest
 port, resolves the current target's private address, and idempotently creates,
-updates, observes, or removes the edge route. Repeated requests use stable
+updates, or removes the edge route. Repeated requests use stable
 request, environment, incarnation, and target identities.
 
 The provider remains stateless. Durable route state lives in the edge proxy's
 configuration, while ownership facts remain attached to the Incus target.
-After restart, the provider reconstructs the requested route from the call and
-backend inventory and reconciles the proxy. It must never adopt or delete a
-route whose ownership facts do not match.
+After restart, a repeated Lightspeed request lets the provider reconstruct the
+route from the call and backend inventory and reconcile the proxy. It must
+never adopt or delete a route whose ownership facts do not match.
+
+Enable and disable are synchronous at the Lightspeed API boundary. The
+provider operation completes first, then Lightspeed records the realized
+endpoint. A crash in between is recovered by retrying the idempotent call.
 
 Closing an environment disables its ingress before or alongside target
 deletion. A changed incarnation cannot inherit a previous incarnation's route
@@ -85,20 +89,18 @@ networks. Firewall policy allows it to reach the approved ingress port and
 does not give it general access to envd, SSH, Incus, Docker, the trusted
 control plane, or sibling environment services.
 
-The exact proxy implementation is a deployment choice. Caddy, HAProxy,
-Traefik, or a small dedicated ingress service are all acceptable if they
-provide:
+The Incus provider includes a small stateless HTTP/WebSocket edge proxy. A
+deployment may replace it with Caddy, HAProxy, or Traefik later if the same
+ownership and routing contract is preserved. The edge provides:
 
-- an idempotent management interface;
-- atomic route replacement;
 - hostname-based routing;
 - WebSocket and streaming support;
-- bounded health observation; and
-- auditable route ownership metadata.
+- route resolution from current Incus ownership metadata; and
+- no provider-local route database.
 
-The provider-to-proxy management path is a deployment-internal control path.
-Any management credential or TLS private key remains in provider/edge
-deployment configuration and never enters Lightspeed Postgres or a VM.
+Wildcard TLS terminates in front of this private listener. Its TLS private key
+remains in edge deployment configuration and never enters Lightspeed Postgres
+or a VM.
 
 ## Hostnames and application behavior
 
@@ -132,22 +134,24 @@ application remains responsible for its own user-facing authentication.
 
 ## Implementation
 
-- [ ] Add a minimal universe API to request, read, and disable ingress for a
+- [x] Add a minimal universe API to enable and disable ingress for a
       provisioned environment.
-- [ ] Persist revisioned ingress intent and bounded observation in Lightspeed.
-- [ ] Extend the provider protocol with idempotent ensure, observe, and remove
+- [x] Persist only realized `publicIngressEnabled` and `publicEndpoint` facts
+      on the environment.
+- [x] Extend the provider protocol with idempotent ensure and remove
       ingress operations.
-- [ ] Add provider template policy for ingress eligibility and one approved
+- [x] Add provider template policy for ingress eligibility and one approved
       guest port.
-- [ ] Deploy wildcard DNS, TLS termination, and the shared edge proxy.
-- [ ] Implement provider reconciliation of hostname routes to current owned
+- [ ] Deploy wildcard DNS and TLS termination in front of the implemented
+      shared provider edge proxy.
+- [x] Implement provider reconciliation of hostname routes to current owned
       Incus targets.
-- [ ] Fence routes by universe, binding, environment, incarnation, and target
+- [x] Fence routes by universe, binding, environment, incarnation, and target
       ownership.
-- [ ] Remove ingress during environment close and recover safely from partial
+- [x] Remove ingress during environment close and recover safely from partial
       enable/disable operations.
-- [ ] Expose the public hostname and bounded status without leaking private
-      addresses or edge configuration.
+- [x] Expose the public endpoint without leaking the approved port, private
+      address, or edge configuration.
 - [ ] Update ls.bot to show and manage the optional public endpoint.
 
 The exact proxy product and final API DTO names may be chosen during

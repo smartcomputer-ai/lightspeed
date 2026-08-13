@@ -2088,6 +2088,8 @@ export interface EnvironmentView {
   metadata?: {
     [k: string]: string;
   };
+  publicEndpoint?: string | null;
+  publicIngressEnabled: boolean;
   requestId: string;
   source: EnvironmentSourceView;
   status: EnvironmentLifecycleStatusView;
@@ -2197,6 +2199,21 @@ export interface AgentApiOutcomeOfEnvironmentExternalCreateResponse {
  * via the `definition` "EnvironmentExternalCreateResponse".
  */
 export interface EnvironmentExternalCreateResponse {
+  environment: EnvironmentView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfEnvironmentIngressPutResponse".
+ */
+export interface AgentApiOutcomeOfEnvironmentIngressPutResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentIngressPutResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentIngressPutResponse".
+ */
+export interface EnvironmentIngressPutResponse {
   environment: EnvironmentView;
 }
 /**
@@ -3794,6 +3811,14 @@ export interface EnvironmentExternalCreateParams {
     [k: string]: string;
   };
   requestId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentIngressPutParams".
+ */
+export interface EnvironmentIngressPutParams {
+  enabled: boolean;
+  environmentId: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

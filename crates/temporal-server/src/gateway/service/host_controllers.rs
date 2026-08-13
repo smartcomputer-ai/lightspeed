@@ -6,6 +6,9 @@ use host_client::{HostClientError, HostControllerClient, WebSocketConnectOptions
 use host_protocol::{
     control::{
         handshake::{ControllerInitializeParams, ControllerInitializeResponse},
+        ingress::{
+            EnsureIngressParams, IngressResponse, ProviderIngressStatus, RemoveIngressParams,
+        },
         targets::{
             CloseTargetParams, CloseTargetResponse, CreateTargetParams, CreateTargetResponse,
             EnvironmentTemplate, HostTargetStatus, HostTargetSummary, ListTemplatesParams,
@@ -45,6 +48,14 @@ pub(crate) trait HostController: Send {
         &mut self,
         params: &CloseTargetParams,
     ) -> Result<CloseTargetResponse, AgentApiError>;
+    async fn ensure_ingress(
+        &mut self,
+        params: &EnsureIngressParams,
+    ) -> Result<IngressResponse, AgentApiError>;
+    async fn remove_ingress(
+        &mut self,
+        params: &RemoveIngressParams,
+    ) -> Result<IngressResponse, AgentApiError>;
 }
 
 #[async_trait]
@@ -142,6 +153,7 @@ impl HostController for FakeHostController {
                 create_target: true,
                 get_target: true,
                 close_target: true,
+                ingress: true,
             },
             implementation: ImplementationInfo {
                 name: "lightspeed-fake-environment-provider".to_owned(),
@@ -259,6 +271,26 @@ impl HostController for FakeHostController {
             status: HostTargetStatus::Closed,
         })
     }
+
+    async fn ensure_ingress(
+        &mut self,
+        _params: &EnsureIngressParams,
+    ) -> Result<IngressResponse, AgentApiError> {
+        Ok(IngressResponse {
+            status: ProviderIngressStatus::Ready,
+            public_endpoint: Some("https://fake.env.test".to_owned()),
+        })
+    }
+
+    async fn remove_ingress(
+        &mut self,
+        _params: &RemoveIngressParams,
+    ) -> Result<IngressResponse, AgentApiError> {
+        Ok(IngressResponse {
+            status: ProviderIngressStatus::Disabled,
+            public_endpoint: None,
+        })
+    }
 }
 
 #[async_trait]
@@ -298,6 +330,24 @@ where
         params: &CloseTargetParams,
     ) -> Result<CloseTargetResponse, AgentApiError> {
         HostControllerClient::close_target(self, params)
+            .await
+            .map_err(map_host_client_error)
+    }
+
+    async fn ensure_ingress(
+        &mut self,
+        params: &EnsureIngressParams,
+    ) -> Result<IngressResponse, AgentApiError> {
+        HostControllerClient::ensure_ingress(self, params)
+            .await
+            .map_err(map_host_client_error)
+    }
+
+    async fn remove_ingress(
+        &mut self,
+        params: &RemoveIngressParams,
+    ) -> Result<IngressResponse, AgentApiError> {
+        HostControllerClient::remove_ingress(self, params)
             .await
             .map_err(map_host_client_error)
     }

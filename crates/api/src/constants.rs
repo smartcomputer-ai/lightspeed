@@ -91,6 +91,7 @@ pub const METHOD_ENVIRONMENTS_READ: &str = "environments/read";
 pub const METHOD_ENVIRONMENTS_LIST: &str = "environments/list";
 pub const METHOD_ENVIRONMENTS_CLOSE: &str = "environments/close";
 pub const METHOD_ENVIRONMENTS_EXTERNAL_CREATE: &str = "environments/external/create";
+pub const METHOD_ENVIRONMENTS_INGRESS_PUT: &str = "environments/ingress/put";
 pub const METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST: &str = "environments/provider-bindings/list";
 pub const METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ: &str = "environments/provider-bindings/read";
 pub const METHOD_ENVIRONMENTS_TEMPLATES_LIST: &str = "environments/templates/list";

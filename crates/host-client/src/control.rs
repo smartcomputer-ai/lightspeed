@@ -2,9 +2,10 @@
 
 use host_protocol::control::{
     handshake::{ControllerInitializeParams, ControllerInitializeResponse},
+    ingress::{EnsureIngressParams, IngressResponse, RemoveIngressParams},
     methods::{
-        CLOSE_TARGET_METHOD, CREATE_TARGET_METHOD, GET_TARGET_METHOD, INITIALIZE_METHOD,
-        LIST_TARGETS_METHOD, LIST_TEMPLATES_METHOD,
+        CLOSE_TARGET_METHOD, CREATE_TARGET_METHOD, ENSURE_INGRESS_METHOD, GET_TARGET_METHOD,
+        INITIALIZE_METHOD, LIST_TARGETS_METHOD, LIST_TEMPLATES_METHOD, REMOVE_INGRESS_METHOD,
     },
     targets::{
         CloseTargetParams, CloseTargetResponse, CreateTargetParams, CreateTargetResponse,
@@ -81,6 +82,20 @@ where
         params: &CloseTargetParams,
     ) -> HostClientResult<CloseTargetResponse> {
         self.rpc.request(CLOSE_TARGET_METHOD, params).await
+    }
+
+    pub async fn ensure_ingress(
+        &mut self,
+        params: &EnsureIngressParams,
+    ) -> HostClientResult<IngressResponse> {
+        self.rpc.request(ENSURE_INGRESS_METHOD, params).await
+    }
+
+    pub async fn remove_ingress(
+        &mut self,
+        params: &RemoveIngressParams,
+    ) -> HostClientResult<IngressResponse> {
+        self.rpc.request(REMOVE_INGRESS_METHOD, params).await
     }
 }
 

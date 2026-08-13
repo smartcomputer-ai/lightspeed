@@ -20,6 +20,7 @@ struct RawConfig {
     relay_idle_seconds: Option<u64>,
     dial_timeout_seconds: Option<u64>,
     envd_port: Option<u16>,
+    ingress: Option<IngressConfig>,
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +34,7 @@ pub struct ConfigInner {
     pub relay_idle_seconds: u64,
     pub dial_timeout_seconds: u64,
     pub envd_port: u16,
+    pub ingress: Option<IngressConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -73,7 +75,16 @@ pub struct TemplatePolicy {
     #[serde(default)]
     pub public_ingress: bool,
     #[serde(default)]
+    pub ingress_port: Option<u16>,
+    #[serde(default)]
     pub deprecated: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IngressConfig {
+    pub public_base_url: String,
+    pub listen: SocketAddr,
 }
 
 impl ProviderArgs {
@@ -93,6 +104,47 @@ impl ProviderArgs {
                 bail!("duplicate universe/binding policy")
             }
         }
+        for binding in bindings.values() {
+            for template in &binding.templates {
+                if template.public_ingress != template.ingress_port.is_some() {
+                    bail!(
+                        "template {} must set both publicIngress=true and ingressPort, or neither",
+                        template.template_id
+                    )
+                }
+                if let Some(port) = template.ingress_port {
+                    if port == 0
+                        || port == raw.envd_port.unwrap_or(19091)
+                        || matches!(port, 22 | 2375 | 2376)
+                    {
+                        bail!(
+                            "template {} uses a reserved management port for ingress",
+                            template.template_id
+                        )
+                    }
+                    if raw.ingress.is_none() {
+                        bail!(
+                            "template {} permits ingress but provider ingress is not configured",
+                            template.template_id
+                        )
+                    }
+                }
+            }
+        }
+        if let Some(ingress) = &raw.ingress {
+            let url = reqwest::Url::parse(&ingress.public_base_url)
+                .context("parse ingress publicBaseUrl")?;
+            if url.scheme() != "https"
+                || url.host_str().is_none()
+                || url.path() != "/"
+                || url.query().is_some()
+                || url.fragment().is_some()
+            {
+                bail!(
+                    "ingress publicBaseUrl must be an HTTPS origin without path, query, or fragment"
+                )
+            }
+        }
         Ok(Config(Arc::new(ConfigInner {
             controller_listen: raw.controller_listen,
             incus: raw.incus,
@@ -100,6 +152,7 @@ impl ProviderArgs {
             relay_idle_seconds: raw.relay_idle_seconds.unwrap_or(60).max(1),
             dial_timeout_seconds: raw.dial_timeout_seconds.unwrap_or(10).max(1),
             envd_port: raw.envd_port.unwrap_or(19091),
+            ingress: raw.ingress,
         })))
     }
     pub fn config_path(&self) -> &PathBuf {

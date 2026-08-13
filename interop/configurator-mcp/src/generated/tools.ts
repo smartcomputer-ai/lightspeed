@@ -3980,6 +3980,30 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
+    "name": "lightspeed_environments_ingress_put",
+    "method": "environments/ingress/put",
+    "summary": "Configure environment public ingress",
+    "description": "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
+    "paramsType": "EnvironmentIngressPutParams",
+    "resultType": "AgentApiOutcome<EnvironmentIngressPutResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "environmentId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "environmentId",
+        "enabled"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "lightspeed_environments_provider-bindings_list",
     "method": "environments/provider-bindings/list",
     "summary": "List environment provider bindings",

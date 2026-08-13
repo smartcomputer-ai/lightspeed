@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { GENERATED_TOOLS } from "../src/generated/tools.js";
 
 describe("generated universe tools", () => {
-  it("contains the configured 68-method surface and no operator methods", () => {
-    expect(GENERATED_TOOLS).toHaveLength(68);
-    expect(new Set(GENERATED_TOOLS.map((tool) => tool.name)).size).toBe(68);
+  it("contains the configured 69-method surface and no operator methods", () => {
+    expect(GENERATED_TOOLS).toHaveLength(69);
+    expect(new Set(GENERATED_TOOLS.map((tool) => tool.name)).size).toBe(69);
     expect(GENERATED_TOOLS.some((tool) => tool.method.startsWith("operator/"))).toBe(false);
     expect(GENERATED_TOOLS.find((tool) => tool.method === "session/config/put")?.name).toBe(
       "lightspeed_session_config_put",

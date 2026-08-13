@@ -537,6 +537,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfEnvironmentIngressPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentIngressPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfEnvironmentJobCancelResponse": {
       "properties": {
         "notifications": {
@@ -3758,6 +3775,32 @@
       ],
       "type": "object"
     },
+    "EnvironmentIngressPutParams": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "environmentId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "environmentId",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "EnvironmentIngressPutResponse": {
+      "properties": {
+        "environment": {
+          "$ref": "#/definitions/EnvironmentView"
+        }
+      },
+      "required": [
+        "environment"
+      ],
+      "type": "object"
+    },
     "EnvironmentJobCancelParams": {
       "properties": {
         "force": {
@@ -4205,6 +4248,15 @@
           },
           "type": "object"
         },
+        "publicEndpoint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "publicIngressEnabled": {
+          "type": "boolean"
+        },
         "requestId": {
           "type": "string"
         },
@@ -4225,6 +4277,7 @@
         "source",
         "status",
         "incarnation",
+        "publicIngressEnabled",
         "createdAtMs",
         "updatedAtMs"
       ],

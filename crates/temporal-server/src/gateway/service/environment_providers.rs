@@ -247,6 +247,8 @@ pub(super) fn environment_view(record: &EnvironmentRecord) -> EnvironmentView {
             created_at_ms: record.incarnation.created_at_ms,
             updated_at_ms: record.incarnation.updated_at_ms,
         },
+        public_ingress_enabled: record.public_ingress_enabled,
+        public_endpoint: record.public_endpoint.clone(),
         metadata: record.metadata.clone(),
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
