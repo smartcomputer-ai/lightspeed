@@ -111,7 +111,7 @@
 ## Environments & Sandboxes
 - [x] [P117](p117-environment-compute-plan.md) — agreed target architecture for
   operator-registered reachable compute providers, lightweight universe
-  bindings, provider-owned allocation/ingress policy, stable environment
+  bindings, provider-wide offering/ingress policy, stable environment
   identity, reachable external environments, on-demand data connections,
   managed Incus VMs, public ingress, and standalone/native-cluster Incus modes;
   delivery is split across P118-P122
@@ -124,7 +124,7 @@
   `lightspeed-envd` and on-demand gateway data plane implemented; packaging,
   deployment authentication, and product UX remain follow-ups
 - [ ] [P120](p120-incus-environment-provider.md) — core standalone stateless
-  Incus controller, passive on-demand data endpoint, immutable image recipe, per-binding policy,
+  Incus controller, passive on-demand data endpoint, immutable image recipe, provider-wide policy,
   and durable VM provisioning are implemented; hz01/hz02 deployment, image
   publication, ls.bot UX, and live isolation/acceptance proofs remain
 - [ ] [P121](p121-environment-public-ingress.md) — add provider-authorized

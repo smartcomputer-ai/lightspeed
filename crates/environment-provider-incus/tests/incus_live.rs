@@ -4,7 +4,7 @@ use environment_provider_incus::{IncusBackend as _, IncusClient, ProviderArgs};
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires a reachable standalone Incus server or Incus cluster"]
-async fn configured_topology_and_binding_reconciliation_are_live() {
+async fn configured_topology_and_owned_inventory_are_live() {
     let config_path = std::env::var("LIGHTSPEED_INCUS_PROVIDER_CONFIG")
         .map(PathBuf::from)
         .expect("LIGHTSPEED_INCUS_PROVIDER_CONFIG must name a live provider config");
@@ -21,21 +21,13 @@ async fn configured_topology_and_binding_reconciliation_are_live() {
     assert_eq!(topology.mode, config.incus_mode_name());
     assert!(!topology.members.is_empty());
 
-    for binding in config.bindings.values() {
-        backend
-            .reconcile_binding(binding)
-            .await
-            .expect("reconcile live provider binding");
-        let targets = backend
-            .list_owned(binding)
-            .await
-            .expect("list live owned targets");
-        for target in targets {
-            assert_eq!(target.universe_id, binding.universe_id);
-            assert_eq!(target.binding_id, binding.binding_id);
-            if topology.mode == "cluster" {
-                assert!(target.location.is_some());
-            }
+    let targets = backend
+        .list_all_owned()
+        .await
+        .expect("list live owned targets");
+    for target in targets {
+        if topology.mode == "cluster" {
+            assert!(target.location.is_some());
         }
     }
 }

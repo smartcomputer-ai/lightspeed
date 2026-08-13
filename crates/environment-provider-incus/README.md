@@ -36,9 +36,10 @@ existing `incus.clusterNetworkUplink`. The provider and optional public edge
 must be able to route to addresses on those networks. Standalone mode retains
 provider-managed bridge networks.
 
-Templates can set `clusterGroup` to target native Incus placement at that
-group. Omitting it lets Incus choose from all schedulable members. The provider
-does not duplicate Incus capacity accounting or scheduling.
+Templates are provider-wide. They can set `clusterGroup` to target native Incus
+placement at that group. Omitting it lets Incus choose from all schedulable
+members. The provider does not duplicate Incus capacity accounting or
+scheduling.
 
 Use native Incus controls for maintenance:
 
@@ -76,10 +77,23 @@ cargo run -p environment-provider-incus -- \
 Register its controller as `ws://127.0.0.1:19090/control`. Lightspeed derives
 the sibling `/routes/...` endpoint and connects only while an environment is
 being used; the provider then dials private envd and reaps idle connections.
-Bindings are
-configured twice for different purposes: Lightspeed stores only admission and
-routing identity, while this file is the provider's authoritative entitlement,
-quota, template, and physical-network policy.
+Registering the provider and creating an enabled binding in Lightspeed is
+sufficient to use it. Provider configuration contains no universe or binding
+allowlist. Every request carries a binding context, and the provider lazily
+creates a deterministic restricted Incus project, managed network, ACL, and
+profile for that ownership namespace. Incus chooses and persists an unused
+subnet, so adding a universe does not require editing or restarting the
+provider.
+
+The provider configuration owns only provider-wide offerings and physical
+policy: templates, blocked egress destinations, Incus topology, storage, and
+optional ingress. A blocked CIDR must not overlap a subnet Incus assigns to a
+binding network; the provider rejects that conflict during lazy reconciliation.
+The provider also derives sibling-network ACL rules from live Incus inventory.
+Lightspeed owns whether a universe may route to this provider. Per-universe
+commercial quotas or specialized offerings would need a future provider
+administration mechanism; they are intentionally not modeled as deployment
+JSON entries.
 
 Optional P121 ingress uses one provider-approved guest port per template. Set
 `ingress.publicBaseUrl` to the wildcard HTTPS base and `ingress.listen` to the
@@ -88,8 +102,9 @@ provider edge listener behind deployment-managed wildcard TLS. For a template,
 enable or disable the resulting endpoint; they cannot select a port, private
 address, hostname, or proxy configuration.
 
-The stateless edge resolves each request hostname from current Incus target
-metadata and proxies HTTP, streaming bodies, and WebSockets to the approved
-private guest port. The provider records the realized hostname and port in
-`user.lightspeed.*` Incus target metadata so route operations remain
-ownership-fenced and reconstructible without a provider database.
+The stateless edge discovers provider-managed Incus projects and resolves each
+request hostname from current target metadata. It proxies HTTP, streaming
+bodies, and WebSockets to the approved private guest port. The provider records
+the realized hostname and port in `user.lightspeed.*` Incus target metadata so
+route operations remain ownership-fenced and reconstructible without a
+provider database or configured universe list.

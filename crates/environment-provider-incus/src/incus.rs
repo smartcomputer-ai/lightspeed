@@ -15,12 +15,12 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use host_protocol::{
-    control::targets::{CreateTargetParams, HostTargetStatus},
+    control::targets::{CreateTargetParams, HostTargetStatus, ProviderBindingContext},
     shared::HostTargetId,
 };
 
 use crate::{
-    config::{BindingPolicy, Config, IncusMode, TemplatePolicy},
+    config::{Config, IncusMode, TemplatePolicy},
     policy,
 };
 
@@ -47,29 +47,33 @@ pub struct OwnedTarget {
 #[async_trait]
 pub trait IncusBackend: Clone + Send + Sync + 'static {
     async fn topology(&self) -> anyhow::Result<IncusTopology>;
-    async fn reconcile_binding(&self, binding: &BindingPolicy) -> anyhow::Result<()>;
+    async fn reconcile_binding(&self, binding: &ProviderBindingContext) -> anyhow::Result<()>;
     async fn ensure_image(&self, fingerprint: &str) -> anyhow::Result<()>;
-    async fn list_owned(&self, binding: &BindingPolicy) -> anyhow::Result<Vec<OwnedTarget>>;
+    async fn list_owned(
+        &self,
+        binding: &ProviderBindingContext,
+    ) -> anyhow::Result<Vec<OwnedTarget>>;
+    async fn list_all_owned(&self) -> anyhow::Result<Vec<OwnedTarget>>;
     async fn get_owned(
         &self,
-        binding: &BindingPolicy,
+        binding: &ProviderBindingContext,
         target_id: &HostTargetId,
     ) -> anyhow::Result<Option<OwnedTarget>>;
     async fn create_vm(
         &self,
-        binding: &BindingPolicy,
+        binding: &ProviderBindingContext,
         template: &TemplatePolicy,
         params: &CreateTargetParams,
     ) -> anyhow::Result<OwnedTarget>;
     async fn delete_vm(
         &self,
-        binding: &BindingPolicy,
+        binding: &ProviderBindingContext,
         target: &OwnedTarget,
         force: bool,
     ) -> anyhow::Result<()>;
     async fn set_ingress(
         &self,
-        binding: &BindingPolicy,
+        binding: &ProviderBindingContext,
         target: &OwnedTarget,
         hostname: Option<&str>,
         port: Option<u16>,
@@ -96,6 +100,7 @@ pub struct IncusClient {
     config: Config,
     http: Client,
     preferred_endpoint: Arc<AtomicUsize>,
+    reconcile_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl IncusClient {
@@ -115,6 +120,7 @@ impl IncusClient {
             config,
             http,
             preferred_endpoint: Arc::new(AtomicUsize::new(0)),
+            reconcile_lock: Arc::new(tokio::sync::Mutex::new(())),
         };
         client.validate_topology().await?;
         Ok(client)
@@ -438,6 +444,106 @@ impl IncusClient {
             .unwrap_or_default();
         owned_from_instance(instance, state).map(Some)
     }
+
+    async fn reconcile_network_acls(&self) -> anyhow::Result<()> {
+        let projects: Vec<Project> = self
+            .request(Method::GET, "/projects?recursion=1", None, None)
+            .await?;
+        let mut networks = Vec::new();
+        for project in projects.into_iter().filter(Project::is_lightspeed_managed) {
+            let network_name = format!("{}-net", project.name);
+            if !self
+                .exists(&format!("/networks/{network_name}"), Some(&project.name))
+                .await?
+            {
+                continue;
+            }
+            let network: Network = self
+                .request(
+                    Method::GET,
+                    &format!("/networks/{network_name}"),
+                    Some(&project.name),
+                    None,
+                )
+                .await?;
+            let Some(cidr) = network
+                .config
+                .get("ipv4.address")
+                .filter(|value| value.as_str() != "none" && value.as_str() != "auto")
+                .cloned()
+            else {
+                continue;
+            };
+            networks.push((project.name, cidr));
+        }
+
+        for (_, own_cidr) in &networks {
+            if let Some(denied) = self
+                .config
+                .network
+                .denied_egress_cidrs
+                .iter()
+                .find(|denied| ipv4_cidrs_overlap(own_cidr, denied))
+            {
+                anyhow::bail!(
+                    "provider denied egress CIDR {denied} overlaps Incus-assigned binding network {own_cidr}"
+                )
+            }
+        }
+
+        for (project, own_cidr) in &networks {
+            let siblings = networks
+                .iter()
+                .filter(|(_, cidr)| cidr != own_cidr)
+                .map(|(_, cidr)| cidr);
+            let ingress: Vec<Value> = siblings
+                .clone()
+                .map(|source| {
+                    json!({
+                        "action":"reject",
+                        "state":"enabled",
+                        "source":source,
+                        "description":"block sibling Lightspeed binding network"
+                    })
+                })
+                .collect();
+            let egress: Vec<Value> = self
+                .config
+                .network
+                .denied_egress_cidrs
+                .iter()
+                .map(|destination| {
+                    json!({
+                        "action":"reject",
+                        "state":"enabled",
+                        "destination":destination,
+                        "description":"block provider control/trusted network"
+                    })
+                })
+                .chain(siblings.map(|destination| {
+                    json!({
+                        "action":"reject",
+                        "state":"enabled",
+                        "destination":destination,
+                        "description":"block sibling Lightspeed binding network"
+                    })
+                }))
+                .collect();
+            self.request_unit(
+                Method::PUT,
+                &format!("/network-acls/{project}-acl"),
+                Some(project),
+                Some(json!({
+                    "description":"Lightspeed binding baseline",
+                    "ingress":ingress,
+                    "egress":egress,
+                    "config":{}
+                })),
+            )
+            .await?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -475,27 +581,17 @@ impl IncusBackend for IncusClient {
         })
     }
 
-    async fn reconcile_binding(&self, binding: &BindingPolicy) -> anyhow::Result<()> {
+    async fn reconcile_binding(&self, binding: &ProviderBindingContext) -> anyhow::Result<()> {
+        let _reconcile_guard = self.reconcile_lock.lock().await;
         let project = policy::project_name(binding);
-        self.ensure_resource(&format!("/projects/{project}"), "/projects", None, json!({"name":project,"description":"Lightspeed managed binding","config":{"features.images":"true","features.networks":"true","features.profiles":"true","restricted":"true","restricted.devices.nic":"managed","restricted.devices.disk":"managed","restricted.networks.access":policy::network_name(binding)}})).await?;
-        let denied = binding.denied_egress_cidrs.iter().chain(
-            self.config
-                .bindings
-                .values()
-                .filter(|other| {
-                    other.universe_id != binding.universe_id
-                        || other.binding_id != binding.binding_id
-                })
-                .map(|other| &other.ipv4_cidr),
-        );
-        let egress: Vec<Value> = denied.map(|destination| json!({"action":"reject","state":"enabled","destination":destination,"description":"block trusted/control or sibling binding network"})).collect();
-        self.ensure_resource(&format!("/network-acls/{}", policy::acl_name(binding)), "/network-acls", Some(&project), json!({"name":policy::acl_name(binding),"description":"Lightspeed binding baseline","ingress":[],"egress":egress,"config":{}})).await?;
+        self.ensure_resource(&format!("/projects/{project}"), "/projects", None, json!({"name":project,"description":"Lightspeed managed binding","config":{"features.images":"false","features.networks":"true","features.profiles":"true","restricted":"true","restricted.devices.nic":"managed","restricted.devices.disk":"managed","restricted.networks.access":policy::network_name(binding),"user.lightspeed.managed":"true","user.lightspeed.universe":binding.universe_id,"user.lightspeed.binding":binding.binding_id}})).await?;
+        self.ensure_resource(&format!("/network-acls/{}", policy::acl_name(binding)), "/network-acls", Some(&project), json!({"name":policy::acl_name(binding),"description":"Lightspeed binding baseline","ingress":[],"egress":[],"config":{}})).await?;
         let network = match self.config.incus.mode {
             IncusMode::Single => {
-                json!({"name":policy::network_name(binding),"type":"bridge","config":{"ipv4.address":binding.ipv4_cidr,"ipv4.nat":"true","ipv6.address":"none","security.acls":policy::acl_name(binding),"security.acls.default.ingress.action":"allow","security.acls.default.egress.action":"allow"}})
+                json!({"name":policy::network_name(binding),"type":"bridge","config":{"ipv4.address":"auto","ipv4.nat":"true","ipv6.address":"none","security.acls":policy::acl_name(binding),"security.acls.default.ingress.action":"allow","security.acls.default.egress.action":"allow"}})
             }
             IncusMode::Cluster => {
-                json!({"name":policy::network_name(binding),"type":"ovn","config":{"network":self.config.incus.cluster_network_uplink.as_deref().expect("validated cluster uplink"),"ipv4.address":binding.ipv4_cidr,"ipv4.nat":"true","ipv6.address":"none","security.acls":policy::acl_name(binding),"security.acls.default.ingress.action":"allow","security.acls.default.egress.action":"allow"}})
+                json!({"name":policy::network_name(binding),"type":"ovn","config":{"network":self.config.incus.cluster_network_uplink.as_deref().expect("validated cluster uplink"),"ipv4.address":"auto","ipv4.nat":"true","ipv6.address":"none","security.acls":policy::acl_name(binding),"security.acls.default.ingress.action":"allow","security.acls.default.egress.action":"allow"}})
             }
         };
         self.ensure_resource(
@@ -505,6 +601,7 @@ impl IncusBackend for IncusClient {
             network,
         )
         .await?;
+        self.reconcile_network_acls().await?;
         self.ensure_resource(&format!("/profiles/{}", policy::profile_name(binding)), "/profiles", Some(&project), json!({"name":policy::profile_name(binding),"description":"Lightspeed VM baseline","config":{},"devices":{"eth0":{"type":"nic","network":policy::network_name(binding),"security.port_isolation":"true","security.ipv4_filtering":"true"},"root":{"type":"disk","pool":self.config.incus.storage_pool,"path":"/"}}})).await
     }
 
@@ -524,8 +621,14 @@ impl IncusBackend for IncusClient {
         Ok(())
     }
 
-    async fn list_owned(&self, binding: &BindingPolicy) -> anyhow::Result<Vec<OwnedTarget>> {
+    async fn list_owned(
+        &self,
+        binding: &ProviderBindingContext,
+    ) -> anyhow::Result<Vec<OwnedTarget>> {
         let project = policy::project_name(binding);
+        if !self.exists(&format!("/projects/{project}"), None).await? {
+            return Ok(Vec::new());
+        }
         let instances: Vec<Instance> = self
             .request(Method::GET, "/instances?recursion=1", Some(&project), None)
             .await?;
@@ -547,9 +650,47 @@ impl IncusBackend for IncusClient {
         Ok(targets)
     }
 
+    async fn list_all_owned(&self) -> anyhow::Result<Vec<OwnedTarget>> {
+        let projects: Vec<Project> = self
+            .request(Method::GET, "/projects?recursion=1", None, None)
+            .await?;
+        let mut targets = Vec::new();
+        for project in projects.into_iter().filter(Project::is_lightspeed_managed) {
+            let instances: Vec<Instance> = self
+                .request(
+                    Method::GET,
+                    "/instances?recursion=1",
+                    Some(&project.name),
+                    None,
+                )
+                .await?;
+            for instance in instances {
+                let state = self
+                    .request(
+                        Method::GET,
+                        &format!("/instances/{}/state", instance.name),
+                        Some(&project.name),
+                        None,
+                    )
+                    .await
+                    .unwrap_or_default();
+                if let Ok(target) = owned_from_instance(instance, state) {
+                    let binding = ProviderBindingContext {
+                        universe_id: target.universe_id.clone(),
+                        binding_id: target.binding_id.clone(),
+                    };
+                    if project.name == policy::project_name(&binding) {
+                        targets.push(target);
+                    }
+                }
+            }
+        }
+        Ok(targets)
+    }
+
     async fn get_owned(
         &self,
-        binding: &BindingPolicy,
+        binding: &ProviderBindingContext,
         target_id: &HostTargetId,
     ) -> anyhow::Result<Option<OwnedTarget>> {
         self.instance(&policy::project_name(binding), target_id.as_str())
@@ -558,7 +699,7 @@ impl IncusBackend for IncusClient {
 
     async fn create_vm(
         &self,
-        binding: &BindingPolicy,
+        binding: &ProviderBindingContext,
         template: &TemplatePolicy,
         params: &CreateTargetParams,
     ) -> anyhow::Result<OwnedTarget> {
@@ -657,7 +798,7 @@ impl IncusBackend for IncusClient {
 
     async fn delete_vm(
         &self,
-        binding: &BindingPolicy,
+        binding: &ProviderBindingContext,
         target: &OwnedTarget,
         force: bool,
     ) -> anyhow::Result<()> {
@@ -690,7 +831,7 @@ impl IncusBackend for IncusClient {
 
     async fn set_ingress(
         &self,
-        binding: &BindingPolicy,
+        binding: &ProviderBindingContext,
         target: &OwnedTarget,
         hostname: Option<&str>,
         port: Option<u16>,
@@ -778,6 +919,42 @@ struct ClusterMember {
     config: BTreeMap<String, String>,
 }
 
+#[derive(Deserialize)]
+struct Project {
+    name: String,
+    #[serde(default)]
+    config: BTreeMap<String, String>,
+}
+
+impl Project {
+    fn is_lightspeed_managed(&self) -> bool {
+        if !self
+            .config
+            .get("user.lightspeed.managed")
+            .is_some_and(|value| value == "true")
+        {
+            return false;
+        }
+        let Some(universe_id) = self.config.get("user.lightspeed.universe") else {
+            return false;
+        };
+        let Some(binding_id) = self.config.get("user.lightspeed.binding") else {
+            return false;
+        };
+        self.name
+            == policy::project_name(&ProviderBindingContext {
+                universe_id: universe_id.clone(),
+                binding_id: binding_id.clone(),
+            })
+    }
+}
+
+#[derive(Deserialize)]
+struct Network {
+    #[serde(default)]
+    config: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Error)]
 #[error("{source}")]
 struct IncusRequestFailure {
@@ -824,6 +1001,31 @@ struct Address {
     family: String,
     scope: String,
     address: String,
+}
+
+fn ipv4_cidrs_overlap(left: &str, right: &str) -> bool {
+    fn range(cidr: &str) -> Option<(u32, u32)> {
+        let (address, prefix) = cidr.split_once('/')?;
+        let address = u32::from(address.parse::<std::net::Ipv4Addr>().ok()?);
+        let prefix = prefix.parse::<u32>().ok()?;
+        if prefix > 32 {
+            return None;
+        }
+        let mask = if prefix == 0 {
+            0
+        } else {
+            u32::MAX << (32 - prefix)
+        };
+        let start = address & mask;
+        Some((start, start | !mask))
+    }
+    let Some((left_start, left_end)) = range(left) else {
+        return false;
+    };
+    let Some((right_start, right_end)) = range(right) else {
+        return false;
+    };
+    left_start <= right_end && right_start <= left_end
 }
 
 fn owned_from_instance(instance: Instance, state: InstanceState) -> anyhow::Result<OwnedTarget> {
@@ -881,4 +1083,38 @@ fn owned_from_instance(instance: Instance, state: InstanceState) -> anyhow::Resu
             .and_then(|value| value.parse().ok()),
         location: (!instance.location.is_empty()).then_some(instance.location),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cidr_overlap_handles_host_and_network_notation() {
+        assert!(ipv4_cidrs_overlap("10.42.7.1/24", "10.0.0.0/8"));
+        assert!(ipv4_cidrs_overlap("169.254.169.0/24", "169.254.169.254/32"));
+        assert!(!ipv4_cidrs_overlap("10.42.7.1/24", "100.64.0.0/10"));
+    }
+
+    #[test]
+    fn managed_projects_require_matching_binding_metadata() {
+        let binding = ProviderBindingContext {
+            universe_id: "u".to_owned(),
+            binding_id: "b".to_owned(),
+        };
+        let project = Project {
+            name: policy::project_name(&binding),
+            config: BTreeMap::from([
+                ("user.lightspeed.managed".to_owned(), "true".to_owned()),
+                ("user.lightspeed.universe".to_owned(), "u".to_owned()),
+                ("user.lightspeed.binding".to_owned(), "b".to_owned()),
+            ]),
+        };
+        assert!(project.is_lightspeed_managed());
+        let spoofed = Project {
+            name: "ls-spoofed".to_owned(),
+            ..project
+        };
+        assert!(!spoofed.is_lightspeed_managed());
+    }
 }

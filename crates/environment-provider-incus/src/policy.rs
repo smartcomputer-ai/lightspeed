@@ -1,6 +1,6 @@
 use sha2::{Digest as _, Sha256};
 
-use crate::config::BindingPolicy;
+use host_protocol::control::targets::ProviderBindingContext;
 
 pub const META_PREFIX: &str = "user.lightspeed.";
 
@@ -14,20 +14,20 @@ pub fn stable_component(kind: &str, parts: &[&str]) -> String {
     hex(&hash.finalize()[..10])
 }
 
-pub fn project_name(binding: &BindingPolicy) -> String {
+pub fn project_name(binding: &ProviderBindingContext) -> String {
     format!(
         "ls-{}",
         stable_component("binding", &[&binding.universe_id, &binding.binding_id])
     )
 }
 
-pub fn network_name(binding: &BindingPolicy) -> String {
+pub fn network_name(binding: &ProviderBindingContext) -> String {
     format!("{}-net", project_name(binding))
 }
-pub fn profile_name(binding: &BindingPolicy) -> String {
+pub fn profile_name(binding: &ProviderBindingContext) -> String {
     format!("{}-vm", project_name(binding))
 }
-pub fn acl_name(binding: &BindingPolicy) -> String {
+pub fn acl_name(binding: &ProviderBindingContext) -> String {
     format!("{}-acl", project_name(binding))
 }
 

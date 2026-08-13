@@ -82,21 +82,21 @@ async fn data_upgrade<B: IncusBackend>(
     )>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    let binding = match app.config.binding(&universe, &binding_id) {
-        Ok(binding) => binding,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    let binding = ProviderBindingContext {
+        universe_id: universe.clone(),
+        binding_id: binding_id.clone(),
     };
     let expected = policy::instance_name(&universe, &binding_id, &environment, &incarnation);
     if expected != target_id {
         return StatusCode::CONFLICT.into_response();
     }
     let target_id = host_protocol::shared::HostTargetId::new(target_id);
-    let target = match app.backend.get_owned(binding, &target_id).await {
+    let target = match app.backend.get_owned(&binding, &target_id).await {
         Ok(Some(target)) => target,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
     };
-    if verify_binding(&target, binding).is_err()
+    if verify_binding(&target, &binding).is_err()
         || target.environment_id != environment
         || target.incarnation_id != incarnation
     {
@@ -194,14 +194,12 @@ async fn list_templates<B: IncusBackend>(
     app: &App<B>,
     params: anyhow::Result<ListTemplatesParams>,
 ) -> anyhow::Result<ListTemplatesResponse> {
-    let params = params?;
-    let binding = app
-        .config
-        .binding(&params.binding.universe_id, &params.binding.binding_id)?;
+    let _params = params?;
     Ok(ListTemplatesResponse {
-        templates: binding
+        templates: app
+            .config
             .templates
-            .iter()
+            .values()
             .map(|template| EnvironmentTemplate {
                 template_id: template.template_id.clone(),
                 display_name: template.display_name.clone(),
@@ -227,9 +225,7 @@ async fn list_targets<B: IncusBackend>(
     params: anyhow::Result<ListTargetsParams>,
 ) -> anyhow::Result<ListTargetsResponse> {
     let params = params?;
-    let binding = app
-        .config
-        .binding(&params.binding.universe_id, &params.binding.binding_id)?;
+    let binding = &params.binding;
     let config = app.config.clone();
     let mut targets = stream::iter(app.backend.list_owned(binding).await?)
         .map(move |mut target| {
@@ -255,9 +251,7 @@ async fn get_target<B: IncusBackend>(
     params: anyhow::Result<GetTargetParams>,
 ) -> anyhow::Result<GetTargetResponse> {
     let params = params?;
-    let binding = app
-        .config
-        .binding(&params.binding.universe_id, &params.binding.binding_id)?;
+    let binding = &params.binding;
     let mut target = app
         .backend
         .get_owned(binding, &params.target_id)
@@ -275,9 +269,7 @@ async fn create_target<B: IncusBackend>(
     params: anyhow::Result<CreateTargetParams>,
 ) -> anyhow::Result<CreateTargetResponse> {
     let params = params?;
-    let binding = app
-        .config
-        .binding(&params.binding.universe_id, &params.binding.binding_id)?;
+    let binding = params.binding.clone();
     let binding_lock = {
         let mut locks = app.binding_locks.lock().await;
         locks
@@ -289,12 +281,8 @@ async fn create_target<B: IncusBackend>(
             .clone()
     };
     let _binding_guard = binding_lock.lock().await;
-    let template = binding
-        .templates
-        .iter()
-        .find(|template| template.template_id == params.template_id && !template.deprecated)
-        .ok_or_else(|| anyhow::anyhow!("template is not entitled for this binding"))?;
-    app.backend.reconcile_binding(binding).await?;
+    let template = app.config.template(&params.template_id)?;
+    app.backend.reconcile_binding(&binding).await?;
     app.backend
         .ensure_image(&template.image_fingerprint)
         .await?;
@@ -306,7 +294,7 @@ async fn create_target<B: IncusBackend>(
     );
     if let Some(mut target) = app
         .backend
-        .get_owned(binding, &expected_target_id.clone().into())
+        .get_owned(&binding, &expected_target_id.clone().into())
         .await?
     {
         verify_create(&target, &params, template)?;
@@ -315,7 +303,7 @@ async fn create_target<B: IncusBackend>(
             target: summary(target),
         });
     }
-    let existing = app.backend.list_owned(binding).await?;
+    let existing = app.backend.list_owned(&binding).await?;
     if let Some(target) = existing
         .iter()
         .find(|target| target.request_id == params.request_id)
@@ -327,16 +315,7 @@ async fn create_target<B: IncusBackend>(
             target: summary(target),
         });
     }
-    if binding.max_environments.is_some_and(|max| {
-        existing
-            .iter()
-            .filter(|target| target.status != HostTargetStatus::Closed)
-            .count()
-            >= max as usize
-    }) {
-        anyhow::bail!("binding environment quota exceeded")
-    }
-    let mut target = app.backend.create_vm(binding, template, &params).await?;
+    let mut target = app.backend.create_vm(&binding, template, &params).await?;
     verify_create(&target, &params, template)?;
     observe_daemon_readiness(&app.config, &mut target).await;
     Ok(CreateTargetResponse {
@@ -349,9 +328,7 @@ async fn close_target<B: IncusBackend>(
     params: anyhow::Result<CloseTargetParams>,
 ) -> anyhow::Result<CloseTargetResponse> {
     let params = params?;
-    let binding = app
-        .config
-        .binding(&params.binding.universe_id, &params.binding.binding_id)?;
+    let binding = &params.binding;
     let expected_target_id = policy::instance_name(
         &params.binding.universe_id,
         &params.binding.binding_id,
@@ -387,9 +364,7 @@ async fn ensure_ingress<B: IncusBackend>(
     params: anyhow::Result<EnsureIngressParams>,
 ) -> anyhow::Result<IngressResponse> {
     let params = params?;
-    let binding = app
-        .config
-        .binding(&params.binding.universe_id, &params.binding.binding_id)?;
+    let binding = &params.binding;
     let mut target = app
         .backend
         .get_owned(binding, &params.target_id)
@@ -401,10 +376,10 @@ async fn ensure_ingress<B: IncusBackend>(
         &params.environment_id,
         &params.incarnation_id,
     )?;
-    let template = binding
+    let template = app
+        .config
         .templates
-        .iter()
-        .find(|template| template.template_id == target.template_id)
+        .get(&target.template_id)
         .ok_or_else(|| anyhow::anyhow!("target template is no longer configured"))?;
     let port = template
         .ingress_port
@@ -431,9 +406,7 @@ async fn remove_ingress<B: IncusBackend>(
     params: anyhow::Result<RemoveIngressParams>,
 ) -> anyhow::Result<IngressResponse> {
     let params = params?;
-    let binding = app
-        .config
-        .binding(&params.binding.universe_id, &params.binding.binding_id)?;
+    let binding = &params.binding;
     let Some(target) = app.backend.get_owned(binding, &params.target_id).await? else {
         return Ok(IngressResponse {
             status: ProviderIngressStatus::Disabled,
@@ -457,7 +430,7 @@ async fn remove_ingress<B: IncusBackend>(
 
 fn verify_ingress_target(
     target: &OwnedTarget,
-    binding: &crate::config::BindingPolicy,
+    binding: &ProviderBindingContext,
     environment: &str,
     incarnation: &str,
 ) -> anyhow::Result<()> {
@@ -468,10 +441,7 @@ fn verify_ingress_target(
     Ok(())
 }
 
-fn verify_binding(
-    target: &OwnedTarget,
-    binding: &crate::config::BindingPolicy,
-) -> anyhow::Result<()> {
+fn verify_binding(target: &OwnedTarget, binding: &ProviderBindingContext) -> anyhow::Result<()> {
     if target.universe_id != binding.universe_id || target.binding_id != binding.binding_id {
         anyhow::bail!("target belongs to another binding")
     }
@@ -555,16 +525,12 @@ mod tests {
 
     #[test]
     fn ownership_checks_fence_cross_binding_and_changed_image_adoption() {
-        let binding = crate::config::BindingPolicy {
+        let binding = ProviderBindingContext {
             universe_id: "u-a".to_owned(),
             binding_id: "b-a".to_owned(),
-            ipv4_cidr: "10.0.0.1/24".to_owned(),
-            denied_egress_cidrs: Vec::new(),
-            max_environments: None,
-            templates: Vec::new(),
         };
         assert!(verify_binding(&target(), &binding).is_ok());
-        let other = crate::config::BindingPolicy {
+        let other = ProviderBindingContext {
             universe_id: "u-b".to_owned(),
             ..binding.clone()
         };

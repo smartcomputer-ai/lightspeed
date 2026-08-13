@@ -81,12 +81,12 @@ provider's template, quota, capacity, or ingress policy. Disabling a binding
 rejects new creates while existing environments remain operable. Deletion is
 rejected while a non-closed environment references the binding.
 
-The provider owns the template catalog, binding entitlements, resource sizing,
-aggregate quota, physical capacity, and public-ingress policy. The initial
-provider may derive allocations from backend inventory and immutable target
-metadata without a database. A provider that later needs durable coordination
-may add it behind the controller contract without changing Lightspeed's domain
-model.
+The provider owns a provider-wide template catalog, resource shapes, physical
+network policy, and public-ingress policy. The compute backend owns physical
+capacity admission. The binding context is an ownership and isolation
+namespace, not a second provider-side configuration record. A provider that
+later needs durable coordination may add it behind the controller contract
+without changing Lightspeed's domain model.
 
 ## APIs
 
@@ -132,7 +132,7 @@ incarnation, and returns the provisioning resource before provider I/O.
 
 Lightspeed does not persist or enforce environment-count, CPU, memory, disk,
 template-entitlement, or ingress quotas. Provider creation atomically applies
-the provider's current binding policy and physical-capacity rules. A rejection
+the provider's current global policy and backend capacity rules. A rejection
 is recorded asynchronously as a failed environment. P118 does not introduce
 generic resource overrides; a later protocol version may add versioned,
 provider-validated template parameters when a concrete need exists.
@@ -180,8 +180,9 @@ or maintain provider status, last-seen, or lease-expiry state in Postgres.
 
 `createTarget` carries the stable request, environment, incarnation, binding,
 provider-owned template version, and opaque bootstrap facts. The provider
-authoritatively validates binding entitlement, quota, resource allocation, and
-capacity as part of idempotent creation. The request does not accept arbitrary
+authoritatively validates the provider-wide template while the binding context
+fences ownership and isolation. The backend enforces physical capacity as part
+of idempotent creation. The request does not accept arbitrary
 cloud-init, raw backend objects, host paths, privileged device maps, or
 unrestricted provider JSON.
 

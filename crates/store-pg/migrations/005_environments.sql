@@ -183,7 +183,7 @@ COMMENT ON TABLE environment_providers IS
 COMMENT ON COLUMN environment_providers.metadata_json IS
     'Non-authoritative operator metadata; never provider capability, health, or allocation policy.';
 COMMENT ON TABLE environment_provider_bindings IS
-    'Revisioned universe routing and admission binding to one provider; allocation and ingress policy remain provider-owned.';
+    'Revisioned universe routing and admission binding to one provider; it is not a provider policy document.';
 COMMENT ON COLUMN environment_provider_bindings.metadata_json IS
     'Non-authoritative binding labels; never provider template, quota, capacity, or ingress policy.';
 COMMENT ON TABLE environments IS

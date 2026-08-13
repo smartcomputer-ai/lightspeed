@@ -11207,7 +11207,7 @@
       "summary": "Unbind an environment credential"
     },
     {
-      "description": "Records an idempotent provisioning intent against an enabled universe binding. The provider validates the template, entitlement, allocation, and capacity asynchronously.",
+      "description": "Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.",
       "name": "environments/create",
       "paramStructure": "by-name",
       "params": [
@@ -11354,7 +11354,7 @@
       "summary": "List environment provider bindings"
     },
     {
-      "description": "Returns one universe routing and admission binding. Provider template entitlement, capacity, quota, and ingress policy remain provider-owned.",
+      "description": "Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.",
       "name": "environments/provider-bindings/read",
       "paramStructure": "by-name",
       "params": [
@@ -12467,7 +12467,7 @@
       "summary": "Delete an environment provider"
     },
     {
-      "description": "Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.",
+      "description": "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.",
       "name": "operator/environment-providers/bindings/put",
       "paramStructure": "by-name",
       "params": [

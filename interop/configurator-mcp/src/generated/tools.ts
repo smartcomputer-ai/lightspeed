@@ -3757,7 +3757,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_environments_create",
     "method": "environments/create",
     "summary": "Create an environment",
-    "description": "Records an idempotent provisioning intent against an enabled universe binding. The provider validates the template, entitlement, allocation, and capacity asynchronously.",
+    "description": "Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.",
     "paramsType": "EnvironmentCreateParams",
     "resultType": "AgentApiOutcome<EnvironmentCreateResponse>",
     "inputSchema": {
@@ -4019,7 +4019,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_environments_provider-bindings_read",
     "method": "environments/provider-bindings/read",
     "summary": "Read an environment provider binding",
-    "description": "Returns one universe routing and admission binding. Provider template entitlement, capacity, quota, and ingress policy remain provider-owned.",
+    "description": "Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.",
     "paramsType": "EnvironmentProviderBindingReadParams",
     "resultType": "AgentApiOutcome<EnvironmentProviderBindingReadResponse>",
     "inputSchema": {

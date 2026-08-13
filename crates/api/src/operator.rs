@@ -459,7 +459,7 @@ operator_api_methods! {
     METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_DELETE => delete_environment_provider(OperatorEnvironmentProviderDeleteParams) -> OperatorEnvironmentProviderDeleteResponse =>
         ["Delete an environment provider", "Deletes a deployment provider only when no universe binding references it."],
     METHOD_OPERATOR_PROVIDER_BINDINGS_PUT => put_environment_provider_binding(OperatorProviderBindingPutParams) -> OperatorProviderBindingPutResponse =>
-        ["Put an environment provider binding", "Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe."],
+        ["Put an environment provider binding", "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe."],
     METHOD_OPERATOR_PROVIDER_BINDINGS_DELETE => delete_environment_provider_binding(OperatorProviderBindingDeleteParams) -> OperatorProviderBindingDeleteResponse =>
         ["Delete an environment provider binding", "Deletes a universe provider binding only after every referencing environment has reached Closed."],
 }

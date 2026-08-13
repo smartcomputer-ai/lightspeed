@@ -10,7 +10,6 @@ async fn main() -> anyhow::Result<()> {
         let listener = tokio::net::TcpListener::bind(ingress.listen).await?;
         let edge = tokio::spawn(environment_provider_incus::edge::serve(
             listener,
-            config.clone(),
             backend.clone(),
         ));
         tokio::select! {

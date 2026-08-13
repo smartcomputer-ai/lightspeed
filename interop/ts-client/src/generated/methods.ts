@@ -223,7 +223,7 @@ export const METHOD_INFO = {
   "environments/create": {
     scope: "universe",
     summary: "Create an environment",
-    description: "Records an idempotent provisioning intent against an enabled universe binding. The provider validates the template, entitlement, allocation, and capacity asynchronously.",
+    description: "Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.",
   },
   "environments/read": {
     scope: "universe",
@@ -258,7 +258,7 @@ export const METHOD_INFO = {
   "environments/provider-bindings/read": {
     scope: "universe",
     summary: "Read an environment provider binding",
-    description: "Returns one universe routing and admission binding. Provider template entitlement, capacity, quota, and ingress policy remain provider-owned.",
+    description: "Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.",
   },
   "environments/templates/list": {
     scope: "universe",
@@ -523,7 +523,7 @@ export const METHOD_INFO = {
   "operator/environment-providers/bindings/put": {
     scope: "operator",
     summary: "Put an environment provider binding",
-    description: "Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.",
+    description: "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.",
   },
   "operator/environment-providers/bindings/delete": {
     scope: "operator",
@@ -773,7 +773,7 @@ export interface MethodMap {
   /**
    * Create an environment
    *
-   * Records an idempotent provisioning intent against an enabled universe binding. The provider validates the template, entitlement, allocation, and capacity asynchronously.
+   * Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.
    */
   "environments/create": {
     params: Api.EnvironmentCreateParams;
@@ -836,7 +836,7 @@ export interface MethodMap {
   /**
    * Read an environment provider binding
    *
-   * Returns one universe routing and admission binding. Provider template entitlement, capacity, quota, and ingress policy remain provider-owned.
+   * Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.
    */
   "environments/provider-bindings/read": {
     params: Api.EnvironmentProviderBindingReadParams;
@@ -1313,7 +1313,7 @@ export interface MethodMap {
   /**
    * Put an environment provider binding
    *
-   * Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.
+   * Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.
    */
   "operator/environment-providers/bindings/put": {
     params: Api.OperatorProviderBindingPutParams;
@@ -1541,7 +1541,7 @@ export const rpc = {
   /**
    * Create an environment
    *
-   * Records an idempotent provisioning intent against an enabled universe binding. The provider validates the template, entitlement, allocation, and capacity asynchronously.
+   * Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.
    */
   environmentsCreate(client: RpcCaller, params: Api.EnvironmentCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentCreateResponse> {
     return client.call("environments/create", params);
@@ -1597,7 +1597,7 @@ export const rpc = {
   /**
    * Read an environment provider binding
    *
-   * Returns one universe routing and admission binding. Provider template entitlement, capacity, quota, and ingress policy remain provider-owned.
+   * Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.
    */
   environmentsProviderBindingsRead(client: RpcCaller, params: Api.EnvironmentProviderBindingReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderBindingReadResponse> {
     return client.call("environments/provider-bindings/read", params);
@@ -2021,7 +2021,7 @@ export const rpc = {
   /**
    * Put an environment provider binding
    *
-   * Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.
+   * Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.
    */
   operatorEnvironmentProvidersBindingsPut(client: RpcCaller, params: Api.OperatorProviderBindingPutParams): Promise<Api.AgentApiOutcomeOfOperatorProviderBindingPutResponse> {
     return client.call("operator/environment-providers/bindings/put", params);

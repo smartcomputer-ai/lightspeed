@@ -16,7 +16,9 @@ pub struct ProviderArgs {
 struct RawConfig {
     controller_listen: SocketAddr,
     incus: IncusConfig,
-    bindings: Vec<BindingPolicy>,
+    templates: Vec<TemplatePolicy>,
+    #[serde(default)]
+    network: NetworkPolicy,
     relay_idle_seconds: Option<u64>,
     dial_timeout_seconds: Option<u64>,
     envd_port: Option<u16>,
@@ -30,7 +32,8 @@ pub struct Config(Arc<ConfigInner>);
 pub struct ConfigInner {
     pub controller_listen: SocketAddr,
     pub incus: IncusConfig,
-    pub bindings: BTreeMap<(String, String), BindingPolicy>,
+    pub templates: BTreeMap<String, TemplatePolicy>,
+    pub network: NetworkPolicy,
     pub relay_idle_seconds: u64,
     pub dial_timeout_seconds: u64,
     pub envd_port: u16,
@@ -61,16 +64,11 @@ pub enum IncusMode {
     Cluster,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BindingPolicy {
-    pub universe_id: String,
-    pub binding_id: String,
-    pub ipv4_cidr: String,
+pub struct NetworkPolicy {
     #[serde(default)]
     pub denied_egress_cidrs: Vec<String>,
-    pub max_environments: Option<u32>,
-    pub templates: Vec<TemplatePolicy>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -109,52 +107,51 @@ impl ProviderArgs {
         let raw: RawConfig =
             serde_json::from_slice(&bytes).context("decode provider config JSON")?;
         validate_incus(&raw.incus)?;
-        let mut bindings = BTreeMap::new();
-        for binding in raw.bindings {
-            if binding.templates.is_empty() {
-                bail!("binding {} has no templates", binding.binding_id)
-            }
-            let key = (binding.universe_id.clone(), binding.binding_id.clone());
-            if bindings.insert(key, binding).is_some() {
-                bail!("duplicate universe/binding policy")
-            }
+        for cidr in &raw.network.denied_egress_cidrs {
+            validate_ipv4_cidr(cidr)
+                .with_context(|| format!("network deniedEgressCidrs entry {cidr}"))?;
         }
-        for binding in bindings.values() {
-            for template in &binding.templates {
-                if template.cluster_group.is_some() && raw.incus.mode != IncusMode::Cluster {
+        if raw.templates.is_empty() {
+            bail!("provider must configure at least one template")
+        }
+        let mut templates = BTreeMap::new();
+        for template in raw.templates {
+            if template.cluster_group.is_some() && raw.incus.mode != IncusMode::Cluster {
+                bail!(
+                    "template {} selects a clusterGroup in single mode",
+                    template.template_id
+                )
+            }
+            if let Some(group) = &template.cluster_group {
+                validate_cluster_group(group)
+                    .with_context(|| format!("template {} clusterGroup", template.template_id))?;
+            }
+            if template.public_ingress != template.ingress_port.is_some() {
+                bail!(
+                    "template {} must set both publicIngress=true and ingressPort, or neither",
+                    template.template_id
+                )
+            }
+            if let Some(port) = template.ingress_port {
+                if port == 0
+                    || port == raw.envd_port.unwrap_or(19091)
+                    || matches!(port, 22 | 2375 | 2376)
+                {
                     bail!(
-                        "template {} selects a clusterGroup in single mode",
+                        "template {} uses a reserved management port for ingress",
                         template.template_id
                     )
                 }
-                if let Some(group) = &template.cluster_group {
-                    validate_cluster_group(group).with_context(|| {
-                        format!("template {} clusterGroup", template.template_id)
-                    })?;
-                }
-                if template.public_ingress != template.ingress_port.is_some() {
+                if raw.ingress.is_none() {
                     bail!(
-                        "template {} must set both publicIngress=true and ingressPort, or neither",
+                        "template {} permits ingress but provider ingress is not configured",
                         template.template_id
                     )
                 }
-                if let Some(port) = template.ingress_port {
-                    if port == 0
-                        || port == raw.envd_port.unwrap_or(19091)
-                        || matches!(port, 22 | 2375 | 2376)
-                    {
-                        bail!(
-                            "template {} uses a reserved management port for ingress",
-                            template.template_id
-                        )
-                    }
-                    if raw.ingress.is_none() {
-                        bail!(
-                            "template {} permits ingress but provider ingress is not configured",
-                            template.template_id
-                        )
-                    }
-                }
+            }
+            let template_id = template.template_id.clone();
+            if templates.insert(template_id.clone(), template).is_some() {
+                bail!("duplicate provider template: {template_id}")
             }
         }
         if let Some(ingress) = &raw.ingress {
@@ -174,7 +171,8 @@ impl ProviderArgs {
         Ok(Config(Arc::new(ConfigInner {
             controller_listen: raw.controller_listen,
             incus: raw.incus,
-            bindings,
+            templates,
+            network: raw.network,
             relay_idle_seconds: raw.relay_idle_seconds.unwrap_or(60).max(1),
             dial_timeout_seconds: raw.dial_timeout_seconds.unwrap_or(10).max(1),
             envd_port: raw.envd_port.unwrap_or(19091),
@@ -234,6 +232,22 @@ fn validate_cluster_group(group: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn validate_ipv4_cidr(cidr: &str) -> anyhow::Result<()> {
+    let (address, prefix) = cidr
+        .split_once('/')
+        .ok_or_else(|| anyhow::anyhow!("must be an IPv4 CIDR"))?;
+    address
+        .parse::<std::net::Ipv4Addr>()
+        .context("must contain a valid IPv4 address")?;
+    let prefix = prefix
+        .parse::<u8>()
+        .context("must contain a numeric prefix")?;
+    if prefix > 32 {
+        bail!("IPv4 prefix must be between 0 and 32")
+    }
+    Ok(())
+}
+
 impl std::ops::Deref for Config {
     type Target = ConfigInner;
     fn deref(&self) -> &Self::Target {
@@ -242,10 +256,11 @@ impl std::ops::Deref for Config {
 }
 
 impl Config {
-    pub fn binding(&self, universe: &str, binding: &str) -> anyhow::Result<&BindingPolicy> {
-        self.bindings
-            .get(&(universe.to_owned(), binding.to_owned()))
-            .ok_or_else(|| anyhow::anyhow!("binding is not admitted by this provider"))
+    pub fn template(&self, template_id: &str) -> anyhow::Result<&TemplatePolicy> {
+        self.templates
+            .get(template_id)
+            .filter(|template| !template.deprecated)
+            .ok_or_else(|| anyhow::anyhow!("template is not offered by this provider"))
     }
 
     pub fn incus_mode_name(&self) -> &'static str {
@@ -261,19 +276,14 @@ mod tests {
     use super::*;
 
     #[tokio::test(flavor = "current_thread")]
-    async fn config_rejects_duplicate_bindings_and_preserves_nullable_quota() {
+    async fn config_loads_provider_wide_templates_without_universe_bindings() {
         let directory = tempfile::tempdir().expect("tempdir");
         let path = directory.path().join("provider.json");
-        let binding = serde_json::json!({
-            "universeId":"00000000-0000-0000-0000-000000000001",
-            "bindingId":"primary",
-            "ipv4Cidr":"10.1.0.1/24",
-            "templates":[{"templateId":"dev-small-v1","displayName":"Small","imageFingerprint":"abc","cpu":2,"memory":"4GiB","disk":"40GiB"}]
-        });
         let document = serde_json::json!({
             "controllerListen":"127.0.0.1:0",
             "incus":{"mode":"single","endpoints":["https://incus.test"],"clientCertificatePem":"cert","clientPrivateKeyPem":"key","serverCaPem":"ca","storagePool":"default"},
-            "bindings":[binding]
+            "network":{"deniedEgressCidrs":["100.64.0.0/10"]},
+            "templates":[{"templateId":"dev-small-v1","displayName":"Small","imageFingerprint":"abc","cpu":2,"memory":"4GiB","disk":"40GiB"}]
         });
         tokio::fs::write(&path, serde_json::to_vec(&document).unwrap())
             .await
@@ -284,20 +294,31 @@ mod tests {
         .load()
         .await
         .expect("config");
-        assert_eq!(
-            config
-                .binding("00000000-0000-0000-0000-000000000001", "primary")
-                .unwrap()
-                .max_environments,
-            None
-        );
+        assert!(config.template("dev-small-v1").is_ok());
+        assert_eq!(config.network.denied_egress_cidrs, ["100.64.0.0/10"]);
         let mut duplicate = document;
-        let first_binding = duplicate["bindings"][0].clone();
-        duplicate["bindings"]
+        let first_template = duplicate["templates"][0].clone();
+        duplicate["templates"]
             .as_array_mut()
             .unwrap()
-            .push(first_binding);
+            .push(first_template);
         tokio::fs::write(&path, serde_json::to_vec(&duplicate).unwrap())
+            .await
+            .unwrap();
+        assert!(ProviderArgs { config: path }.load().await.is_err());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn config_rejects_invalid_provider_network_cidr() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("provider.json");
+        let document = serde_json::json!({
+            "controllerListen":"127.0.0.1:0",
+            "incus":{"mode":"single","endpoints":["https://incus.test"],"clientCertificatePem":"cert","clientPrivateKeyPem":"key","serverCaPem":"ca","storagePool":"default"},
+            "network":{"deniedEgressCidrs":["not-a-cidr"]},
+            "templates":[{"templateId":"dev-small-v1","displayName":"Small","imageFingerprint":"abc","cpu":2,"memory":"4GiB","disk":"40GiB"}]
+        });
+        tokio::fs::write(&path, serde_json::to_vec(&document).unwrap())
             .await
             .unwrap();
         assert!(ProviderArgs { config: path }.load().await.is_err());
@@ -310,7 +331,8 @@ mod tests {
         let base = serde_json::json!({
             "controllerListen":"127.0.0.1:0",
             "incus":{"mode":"single","endpoints":["https://one.test","https://two.test"],"clientCertificatePem":"cert","clientPrivateKeyPem":"key","serverCaPem":"ca","storagePool":"default"},
-            "bindings":[{"universeId":"u","bindingId":"b","ipv4Cidr":"10.1.0.1/24","templates":[{"templateId":"t","displayName":"T","imageFingerprint":"abc","cpu":1,"memory":"1GiB","disk":"10GiB"}]}]
+            "network":{"deniedEgressCidrs":[]},
+            "templates":[{"templateId":"t","displayName":"T","imageFingerprint":"abc","cpu":1,"memory":"1GiB","disk":"10GiB"}]
         });
         tokio::fs::write(&path, serde_json::to_vec(&base).unwrap())
             .await
@@ -327,8 +349,7 @@ mod tests {
         let mut clustered = base;
         clustered["incus"]["mode"] = serde_json::json!("cluster");
         clustered["incus"]["clusterNetworkUplink"] = serde_json::json!("UPLINK");
-        clustered["bindings"][0]["templates"][0]["clusterGroup"] =
-            serde_json::json!("x86-production");
+        clustered["templates"][0]["clusterGroup"] = serde_json::json!("x86-production");
         tokio::fs::write(&path, serde_json::to_vec(&clustered).unwrap())
             .await
             .unwrap();

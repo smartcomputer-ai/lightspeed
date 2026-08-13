@@ -86,9 +86,8 @@ key, environment credential, or populated envd state directory.
 
 The provider:
 
-- publishes typed immutable template versions;
-- owns and validates per-binding template entitlement, allocation policy,
-  aggregate quota, and public-ingress eligibility;
+- publishes provider-wide typed immutable template versions;
+- applies provider-wide resource, network, and public-ingress policy;
 - ensures the exact image fingerprint is cached on hz02;
 - records template version and image fingerprint on every target; and
 - never accepts arbitrary images, cloud-init, backend JSON, privileged devices,
@@ -98,9 +97,9 @@ The provider:
 
 For `createTarget`, the provider:
 
-1. validates binding and template context;
-2. atomically enforces its binding quota and physical-capacity policy against
-   Incus inventory;
+1. validates the provider-wide template and uses the request binding context as
+   an ownership/isolation namespace;
+2. lets Incus enforce physical-capacity admission;
 3. finds an existing target with the same provision request ID or selects hz02;
 4. creates the project/network/profile resources idempotently;
 5. creates the VM with deterministic naming and immutable ownership metadata;
@@ -160,8 +159,8 @@ environment state.
 - [x] Add a versioned immutable development-image build recipe and systemd
       unit. Publishing its production fingerprint on hz02 remains deployment
       work.
-- [x] Implement binding-filtered typed template discovery and provider-owned
-      quota/allocation enforcement.
+- [x] Implement provider-wide typed template discovery for every
+      Lightspeed-admitted binding, with no provider-side universe allowlist.
 - [x] Implement exact image-fingerprint resolution and optional lazy caching
       from a configured trusted Incus image server.
 - [x] Implement deterministic naming and immutable ownership metadata.
@@ -176,15 +175,23 @@ environment state.
 - [ ] Update ls.bot template-aware environment creation and status views.
 
 The provider has no database or durable local operation ledger. Its JSON
-configuration is authoritative for binding policy, templates, physical
-networking, and Incus client credentials. Target/request recovery is derived
+configuration is authoritative for provider-wide templates, physical
+networking, and Incus client credentials; it contains no universe or binding
+records. Target/request recovery is derived
 from Incus inventory and `user.lightspeed.*` ownership metadata. No provider
 or envd application credential enters Lightspeed.
 
+Binding networks use Incus-assigned persistent subnets. Sibling-network ACL
+rules are derived from current Incus inventory whenever a binding is lazily
+reconciled, so network isolation does not require a configured universe list or
+provider database. Provider-wide blocked egress CIDRs must not overlap an
+Incus-assigned binding subnet.
+
 ## Verification
 
-- Bind one provider to two test universes with distinct provider-owned template
-  and quota policy.
+- Bind one provider to two test universes solely through Lightspeed and prove
+  both immediately discover the provider-wide templates without provider
+  configuration changes or restart.
 - Prove neither universe can list, inspect, route to, credential-bind, or close
   the other's targets.
 - Prove repeated create adoption, provider restart during create, partial

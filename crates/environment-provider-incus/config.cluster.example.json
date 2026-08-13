@@ -21,27 +21,21 @@
     "publicBaseUrl": "https://env.example.com",
     "listen": "127.0.0.1:19092"
   },
-  "bindings": [
+  "network": {
+    "deniedEgressCidrs": ["100.64.0.0/10", "169.254.169.254/32"]
+  },
+  "templates": [
     {
-      "universeId": "00000000-0000-0000-0000-000000000001",
-      "bindingId": "primary",
-      "ipv4Cidr": "10.210.1.1/24",
-      "deniedEgressCidrs": ["100.64.0.0/10", "10.0.0.0/8"],
-      "maxEnvironments": 10,
-      "templates": [
-        {
-          "templateId": "dev-small-x86-v1",
-          "displayName": "Small x86 development VM",
-          "description": "2 vCPU, 4 GiB RAM, 40 GiB disk",
-          "imageFingerprint": "replace-with-immutable-sha256-fingerprint",
-          "cpu": 2,
-          "memory": "4GiB",
-          "disk": "40GiB",
-          "clusterGroup": "x86-production",
-          "publicIngress": true,
-          "ingressPort": 8080
-        }
-      ]
+      "templateId": "dev-small-x86-v1",
+      "displayName": "Small x86 development VM",
+      "description": "2 vCPU, 4 GiB RAM, 40 GiB disk",
+      "imageFingerprint": "replace-with-immutable-sha256-fingerprint",
+      "cpu": 2,
+      "memory": "4GiB",
+      "disk": "40GiB",
+      "clusterGroup": "x86-production",
+      "publicIngress": true,
+      "ingressPort": 8080
     }
   ]
 }

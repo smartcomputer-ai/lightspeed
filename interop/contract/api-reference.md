@@ -233,7 +233,7 @@ Removes one variable-to-credential mapping without deleting the underlying grant
 
 **Create an environment**
 
-Records an idempotent provisioning intent against an enabled universe binding. The provider validates the template, entitlement, allocation, and capacity asynchronously.
+Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.
 
 - Params: `EnvironmentCreateParams`
 - Result: `AgentApiOutcome<EnvironmentCreateResponse>`
@@ -296,7 +296,7 @@ Lists this universe's revisioned routing and admission bindings to deployment-sc
 
 **Read an environment provider binding**
 
-Returns one universe routing and admission binding. Provider template entitlement, capacity, quota, and ingress policy remain provider-owned.
+Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.
 
 - Params: `EnvironmentProviderBindingReadParams`
 - Result: `AgentApiOutcome<EnvironmentProviderBindingReadResponse>`
@@ -776,7 +776,7 @@ Deletes a deployment provider only when no universe binding references it.
 
 **Put an environment provider binding**
 
-Creates or replaces one universe's complete revisioned provider policy document. A deployment provider may have at most one binding in a universe.
+Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.
 
 - Params: `OperatorProviderBindingPutParams`
 - Result: `AgentApiOutcome<OperatorProviderBindingPutResponse>`

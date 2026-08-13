@@ -11,24 +11,21 @@ use axum::{
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio_tungstenite::{connect_async, tungstenite::Message as UpstreamMessage};
 
-use crate::{Config, IncusBackend};
+use crate::IncusBackend;
 
 #[derive(Clone)]
 struct EdgeState<B> {
-    config: Config,
     backend: B,
     http: reqwest::Client,
 }
 
 pub async fn serve<B: IncusBackend>(
     listener: tokio::net::TcpListener,
-    config: Config,
     backend: B,
 ) -> anyhow::Result<()> {
     let app = Router::new()
         .fallback(any(proxy::<B>))
         .with_state(EdgeState {
-            config,
             backend,
             http: reqwest::Client::new(),
         });
@@ -105,14 +102,12 @@ async fn resolve<B: IncusBackend>(
     state: &EdgeState<B>,
     hostname: &str,
 ) -> anyhow::Result<Option<Route>> {
-    for binding in state.config.bindings.values() {
-        for target in state.backend.list_owned(binding).await? {
-            if target.ingress_hostname.as_deref() == Some(hostname)
-                && target.status == host_protocol::control::targets::HostTargetStatus::Ready
-                && let (Some(address), Some(port)) = (target.ipv4_address, target.ingress_port)
-            {
-                return Ok(Some(Route { address, port }));
-            }
+    for target in state.backend.list_all_owned().await? {
+        if target.ingress_hostname.as_deref() == Some(hostname)
+            && target.status == host_protocol::control::targets::HostTargetStatus::Ready
+            && let (Some(address), Some(port)) = (target.ipv4_address, target.ingress_port)
+        {
+            return Ok(Some(Route { address, port }));
         }
     }
     Ok(None)

@@ -340,7 +340,7 @@ api_methods! {
     METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND => unbind_environment_credential(EnvironmentCredentialUnbindParams) -> EnvironmentCredentialUnbindResponse =>
         ["Unbind an environment credential", "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret."],
     METHOD_ENVIRONMENTS_CREATE => create_environment(EnvironmentCreateParams) -> EnvironmentCreateResponse =>
-        ["Create an environment", "Records an idempotent provisioning intent against an enabled universe binding. The provider validates the template, entitlement, allocation, and capacity asynchronously."],
+        ["Create an environment", "Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously."],
     METHOD_ENVIRONMENTS_READ => read_environment(EnvironmentReadParams) -> EnvironmentReadResponse =>
         ["Read an environment", "Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity."],
     METHOD_ENVIRONMENTS_LIST => list_environments(EnvironmentListParams) -> EnvironmentListResponse =>
@@ -354,7 +354,7 @@ api_methods! {
     METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST => list_environment_provider_bindings(EnvironmentProviderBindingListParams) -> EnvironmentProviderBindingListResponse =>
         ["List environment provider bindings", "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers."],
     METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ => read_environment_provider_binding(EnvironmentProviderBindingReadParams) -> EnvironmentProviderBindingReadResponse =>
-        ["Read an environment provider binding", "Returns one universe routing and admission binding. Provider template entitlement, capacity, quota, and ingress policy remain provider-owned."],
+        ["Read an environment provider binding", "Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned."],
     METHOD_ENVIRONMENTS_TEMPLATES_LIST => list_environment_templates(EnvironmentTemplateListParams) -> EnvironmentTemplateListResponse =>
         ["List environment templates", "Reads immutable templates directly from the selected bound provider controller."],
     METHOD_ENVIRONMENTS_TEMPLATES_READ => read_environment_template(EnvironmentTemplateReadParams) -> EnvironmentTemplateReadResponse =>

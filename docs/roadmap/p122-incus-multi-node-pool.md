@@ -87,6 +87,14 @@ The provider does not mirror member capacity or calculate free capacity. If
 the native scheduler later proves insufficient, use an Incus placement
 scriptlet before adding a scheduler to the provider.
 
+Templates and physical network policy are provider-wide. New Lightspeed
+bindings are not copied into provider configuration: the first create lazily
+reconciles a deterministic restricted project, ACL, managed network, and
+profile from the request binding context. Incus chooses and persists the
+binding network subnet (`ipv4.address=auto`). The provider derives sibling
+network denies from realized Incus inventory and rejects provider-wide denied
+CIDRs that overlap an assigned binding subnet.
+
 ## Idempotency and ownership
 
 The provider remains database-free. Durable truth consists of Lightspeed
