@@ -1,5 +1,12 @@
 # P120: Incus Environment Provider
 
+> **Update (2026-08-13):** Lightspeed initiates application-protocol
+> connections to both provider endpoints, and the provider initiates the
+> connection to private envd. Application-level authentication is currently
+> absent; deployment network/transport controls are the trust boundary.
+> Controller bearer and daemon-token configuration have been removed and richer
+> authentication is deferred.
+
 **Status**
 
 - Core implementation completed 2026-08-12; hz01/hz02 deployment and live
@@ -24,8 +31,8 @@ kinds of connection. It performs the transient `controller/initialize`
 handshake on controller connections and opens a target-specific data
 connection only when an environment is used. The provider does not
 self-register, call Lightspeed's operator API, or need a Lightspeed API
-credential. Its optional controller bearer may be omitted when the deployment
-protects the endpoint with network or transport identity. The same contract
+credential. Its endpoints are currently protected by the deployment network
+or transport boundary rather than application credentials. The same contract
 may be implemented by a third-party provider reachable from Lightspeed.
 
 Keep the provider contract as the extraction seam. The implementation starts
@@ -38,8 +45,8 @@ implementation so it can move to a separate repository later.
 - The provider runs on hz01's trusted application plane.
 - It talks to the hz02 Incus HTTPS API over the tailnet with a restricted
   deployment credential.
-- Controller and data traffic may use one optional operator-configured bearer,
-  or deployment network/mTLS identity. This is not a universe credential.
+- Controller and data traffic rely on deployment network/transport isolation;
+  application authentication is deferred.
 - Guests receive no Incus, node-root, tailnet, or general universe credential.
 - Dynamically provisioned development environments use full KVM/QEMU VMs.
 
@@ -70,7 +77,7 @@ Start with one canonical versioned image and at most:
 - `dev-large-v1`.
 
 Both are durable full VMs with Git, Docker, common toolchains, and an
-unenrolled `lightspeed-envd`. Resource size does not create a separate image.
+passive `lightspeed-envd`. Resource size does not create a separate image.
 
 Images are built from a versioned CI recipe and addressed by immutable
 fingerprint. They contain no daemon identity, enrollment token, universe API
@@ -90,16 +97,15 @@ The provider:
 
 For `createTarget`, the provider:
 
-1. validates authenticated binding and template context;
+1. validates binding and template context;
 2. atomically enforces its binding quota and physical-capacity policy against
    Incus inventory;
 3. finds an existing target with the same provision request ID or selects hz02;
 4. creates the project/network/profile resources idempotently;
 5. creates the VM with deterministic naming and immutable ownership metadata;
-6. injects an opaque target-bound envd bootstrap token through cloud-init or config
-   drive;
+6. configures the passive envd listener through cloud-init;
 7. starts the VM and returns while it may still be starting; and
-8. reports `Ready` only after it can authenticate and reach envd over the
+8. reports `Ready` only after it can reach envd over the
    private guest network.
 
 Required backend metadata includes environment, incarnation, request, binding,
@@ -145,7 +151,7 @@ environment state.
 ## Implementation
 
 - [x] Add the standalone `environment-provider-incus` crate and binary.
-- [x] Implement the authenticated P118 controller contract over the Incus
+- [x] Implement the P118 controller contract over the Incus
       remote HTTPS API.
 - [ ] Configure restricted tailnet-only Incus access from hz01 to hz02.
 - [x] Reconcile per-binding projects, managed networks, baseline rules, and VM
@@ -169,13 +175,10 @@ environment state.
 - [ ] Update ls.bot template-aware environment creation and status views.
 
 The provider has no database or durable local operation ledger. Its JSON
-configuration is authoritative only for its optional incoming bearer, private
-envd token-derivation key, binding policy, templates, and physical networking.
-Target/request recovery is derived from Incus inventory and
-`user.lightspeed.*` ownership metadata. The optional operator bearer is
-write-only in the API and AEAD-encrypted in Postgres; it never appears in
-provider views or binding metadata. The envd token key remains provider-local
-and never enters Lightspeed.
+configuration is authoritative for binding policy, templates, physical
+networking, and Incus client credentials. Target/request recovery is derived
+from Incus inventory and `user.lightspeed.*` ownership metadata. No provider
+or envd application credential enters Lightspeed.
 
 ## Verification
 
@@ -191,7 +194,8 @@ and never enters Lightspeed.
 - Provision through the universe API, select from a plain session, and exercise
   repository development, Docker Compose, filesystem/process/PTY operations,
   credentials, durable jobs, and restart survival.
-- Prove a snapshot/clone cannot authenticate two copies as one incarnation.
+- Prove a snapshot/clone cannot be adopted or routed as the current target
+  without matching provider-owned target metadata.
 
 ## Done
 

@@ -520,7 +520,7 @@
       ],
       "type": "object"
     },
-    "AgentApiOutcomeOfEnvironmentEnrollmentCreateResponse": {
+    "AgentApiOutcomeOfEnvironmentExternalCreateResponse": {
       "properties": {
         "notifications": {
           "items": {
@@ -529,41 +529,7 @@
           "type": "array"
         },
         "result": {
-          "$ref": "#/definitions/EnvironmentEnrollmentCreateResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfEnvironmentEnrollmentReadResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/EnvironmentEnrollmentReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfEnvironmentEnrollmentRevokeResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/EnvironmentEnrollmentRevokeResponse"
+          "$ref": "#/definitions/EnvironmentExternalCreateResponse"
         }
       },
       "required": [
@@ -3458,6 +3424,54 @@
       ],
       "type": "object"
     },
+    "EnvironmentConnectionTransportView": {
+      "oneOf": [
+        {
+          "enum": [
+            "webSocket",
+            "http",
+            "stdio",
+            "ssh"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "properties": {
+                "provider_type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "provider_type"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "provider"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "EnvironmentConnectionView": {
+      "properties": {
+        "endpoint": {
+          "type": "string"
+        },
+        "transport": {
+          "$ref": "#/definitions/EnvironmentConnectionTransportView"
+        }
+      },
+      "required": [
+        "endpoint",
+        "transport"
+      ],
+      "type": "object"
+    },
     "EnvironmentCreateParams": {
       "properties": {
         "bindingId": {
@@ -3662,20 +3676,19 @@
       ],
       "type": "object"
     },
-    "EnvironmentEnrollmentCreateParams": {
+    "EnvironmentExternalCreateParams": {
       "properties": {
+        "connection": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EnvironmentConnectionView"
+            }
+          ],
+          "description": "Connection to an envd instance reachable from Lightspeed."
+        },
         "displayName": {
           "type": [
             "string",
-            "null"
-          ]
-        },
-        "expiresInSeconds": {
-          "description": "Requested one-time token lifetime. Defaults to ten minutes and is\ncapped at one hour.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
             "null"
           ]
         },
@@ -3690,130 +3703,19 @@
         }
       },
       "required": [
-        "requestId"
+        "requestId",
+        "connection"
       ],
       "type": "object"
     },
-    "EnvironmentEnrollmentCreateResponse": {
+    "EnvironmentExternalCreateResponse": {
       "properties": {
-        "enrollment": {
-          "$ref": "#/definitions/EnvironmentEnrollmentView"
-        },
         "environment": {
           "$ref": "#/definitions/EnvironmentView"
-        },
-        "token": {
-          "description": "Present exactly once, when this call creates the enrollment. A retry\nwith the same request ID returns the resource without the token.",
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "required": [
-        "environment",
-        "enrollment"
-      ],
-      "type": "object"
-    },
-    "EnvironmentEnrollmentReadParams": {
-      "properties": {
-        "environmentId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "environmentId"
-      ],
-      "type": "object"
-    },
-    "EnvironmentEnrollmentReadResponse": {
-      "properties": {
-        "enrollment": {
-          "$ref": "#/definitions/EnvironmentEnrollmentView"
-        }
-      },
-      "required": [
-        "enrollment"
-      ],
-      "type": "object"
-    },
-    "EnvironmentEnrollmentRevokeParams": {
-      "properties": {
-        "environmentId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "environmentId"
-      ],
-      "type": "object"
-    },
-    "EnvironmentEnrollmentRevokeResponse": {
-      "properties": {
-        "enrollment": {
-          "$ref": "#/definitions/EnvironmentEnrollmentView"
-        }
-      },
-      "required": [
-        "enrollment"
-      ],
-      "type": "object"
-    },
-    "EnvironmentEnrollmentView": {
-      "properties": {
-        "createdAtMs": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "daemonId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "enrolledAtMs": {
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "environmentId": {
-          "type": "string"
-        },
-        "incarnationId": {
-          "type": "string"
-        },
-        "revokedAtMs": {
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "tokenExpiresAtMs": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "tokenRedeemedAtMs": {
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "updatedAtMs": {
-          "format": "int64",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "environmentId",
-        "incarnationId",
-        "tokenExpiresAtMs",
-        "createdAtMs",
-        "updatedAtMs"
+        "environment"
       ],
       "type": "object"
     },
@@ -3988,7 +3890,6 @@
       "enum": [
         "provisioning",
         "booting",
-        "waitingForDaemon",
         "ready",
         "offline",
         "closing",
@@ -4170,13 +4071,17 @@
         },
         {
           "properties": {
+            "connection": {
+              "$ref": "#/definitions/EnvironmentConnectionView"
+            },
             "type": {
-              "const": "enrolled",
+              "const": "external",
               "type": "string"
             }
           },
           "required": [
-            "type"
+            "type",
+            "connection"
           ],
           "type": "object"
         }
@@ -5845,28 +5750,6 @@
       ],
       "type": "object"
     },
-    "OperatorEnvironmentProviderConnectionInput": {
-      "properties": {
-        "bearerToken": {
-          "description": "Optional write-only bearer used by Lightspeed for both controller and\ndata-plane connections. Read and list responses never return it.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "endpoint": {
-          "type": "string"
-        },
-        "transport": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderTransport"
-        }
-      },
-      "required": [
-        "endpoint",
-        "transport"
-      ],
-      "type": "object"
-    },
     "OperatorEnvironmentProviderDeleteParams": {
       "properties": {
         "providerId": {
@@ -5909,7 +5792,7 @@
     "OperatorEnvironmentProviderPutParams": {
       "properties": {
         "controllerConnection": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderConnectionInput"
+          "$ref": "#/definitions/OperatorEnvironmentProviderConnection"
         },
         "displayName": {
           "type": [

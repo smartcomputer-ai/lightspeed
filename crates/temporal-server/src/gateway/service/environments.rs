@@ -21,7 +21,7 @@ impl GatewayAgentApi {
             .as_ref()
             .map(|providers| providers.iter().cloned().collect::<BTreeSet<_>>());
         crate::environment_resolver::EnvironmentResolver::from_pg_store(self.store.clone())
-            .with_routes(self.environment_routes.clone())
+            .with_gateway(self.environment_gateway.clone())
             .selectable(environment_id, allowed.as_ref(), now_ms()?)
             .await
             .map_err(|error| match error {

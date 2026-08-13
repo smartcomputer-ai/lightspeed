@@ -79,12 +79,15 @@ impl GatewayAgentApi {
         let key = self
             .environment_gateway
             .route_key(self.store.config().universe_id, &instance);
-        let route = self
-            .environment_routes
-            .snapshot(&key)
-            .await
-            .ok_or_else(|| AgentApiError::rejected("environment has no live gateway route"))?;
-        if !route.capabilities.job_start {
+        let connection = self.environment_gateway.connection(&key);
+        let (_client, capabilities) = connect_initialized_host_data_client(
+            &connection,
+            self.environment_gateway
+                .connect_options("lightspeed-temporal-server"),
+        )
+        .await
+        .map_err(|error| AgentApiError::rejected(error.to_string()))?;
+        if !capabilities.job_start {
             return Err(AgentApiError::rejected(format!(
                 "environment does not support durable job start: {}",
                 instance.environment_id
@@ -412,12 +415,7 @@ impl GatewayAgentApi {
         let key = self
             .environment_gateway
             .route_key(self.store.config().universe_id, &instance);
-        let snapshot = self
-            .environment_routes
-            .snapshot(&key)
-            .await
-            .ok_or_else(|| "environment has no live gateway route".to_owned())?;
-        let connection = self.environment_gateway.connection(&key, Some(&snapshot));
+        let connection = self.environment_gateway.connection(&key);
         let (client, capabilities) = connect_initialized_host_data_client(
             &connection,
             self.environment_gateway

@@ -4,13 +4,11 @@
 data endpoint. It depends on the public host protocol crate, not Lightspeed's
 database, API implementation, engine, or Temporal runtime.
 
-Start from `config.example.json`. `controllerToken` is optional; when present,
-register the same write-only value as
-`controllerConnection.bearerToken`. When absent, the operator asserts that the
-provider endpoint is protected by its network or transport. `daemonTokenKey` is
-a separate required provider-local secret used to derive target-bound envd
-credentials. It is never registered in Lightspeed. The Incus client certificate
-and key remain deployment files mounted into the provider process.
+Start from `config.example.json`. Application-level authentication for both
+the provider endpoint and private envd endpoint is intentionally deferred.
+Protect those listeners with the deployment network/transport boundary for
+now. The Incus client certificate and key remain deployment files mounted into
+the provider process.
 
 There is intentionally no provider ID in this configuration. The operator
 assigns that identity when registering the reachable controller endpoint.

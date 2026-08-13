@@ -1,11 +1,8 @@
-use aes_gcm::aead::{Aead, Payload};
-use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 use async_trait::async_trait;
 use auth::{AuthGrantId, AuthProviderId, SecretId};
 use environments::{
-    BeginCloseEnvironment, CreateEnvironment, CreateEnvironmentEnrollment, EnrollEnvironmentDaemon,
+    BeginCloseEnvironment, CreateEnvironment, CreateExternalEnvironment,
     EnvironmentCredentialRecord, EnvironmentCredentialSource, EnvironmentCredentialStore,
-    EnvironmentDaemonEnrollmentRecord, EnvironmentDaemonEnrollmentStore, EnvironmentDaemonId,
     EnvironmentId, EnvironmentIncarnationId, EnvironmentIncarnationRecord,
     EnvironmentProviderBindingId, EnvironmentProviderBindingRecord,
     EnvironmentProviderBindingStatus, EnvironmentProviderBindingStore, EnvironmentProviderId,
@@ -13,20 +10,17 @@ use environments::{
     EnvironmentRecord, EnvironmentRegistryError, EnvironmentSource, EnvironmentStatus,
     EnvironmentStore, EnvironmentTemplateId, FailEnvironmentLifecycle, FinishCloseEnvironment,
     ListEnvironmentCredentials, ListEnvironmentProviders, ListEnvironments,
-    ObserveEnvironmentRoute, ObserveProvisionedEnvironment, PutEnvironmentCredential,
-    PutEnvironmentProvider, PutEnvironmentProviderBinding,
+    ObserveProvisionedEnvironment, PutEnvironmentCredential, PutEnvironmentProvider,
+    PutEnvironmentProviderBinding,
 };
 use host_protocol::shared::HostTargetId;
-use rand::RngCore as _;
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use crate::PgStore;
 
 const PROVIDER_COLUMNS: &str = r#"
-    provider_id, display_name, controller_connection_json,
-    controller_secret_key_id, controller_secret_nonce, controller_secret_ciphertext,
-    metadata_json,
+    provider_id, display_name, controller_connection_json, metadata_json,
     created_at_ms, updated_at_ms
 "#;
 
@@ -36,7 +30,7 @@ const BINDING_COLUMNS: &str = r#"
 "#;
 
 const ENVIRONMENT_COLUMNS: &str = r#"
-    e.environment_id, e.request_id, e.source_kind, e.provider_id, e.binding_id,
+    e.environment_id, e.request_id, e.source_kind, e.provider_id, e.binding_id, e.daemon_connection_json,
     e.display_name, e.status, e.metadata_json,
     e.created_at_ms, e.updated_at_ms,
     i.incarnation_id, i.provision_request_id, i.provider_target_id,
@@ -58,39 +52,22 @@ const CREDENTIAL_COLUMNS: &str = r#"
     secret_id, created_at_ms, updated_at_ms
 "#;
 
-const ENROLLMENT_COLUMNS: &str = r#"
-    environment_id, incarnation_id, token_hash, token_expires_at_ms,
-    token_redeemed_at_ms, revoked_at_ms, daemon_id, daemon_public_key,
-    enrolled_at_ms, created_at_ms, updated_at_ms
-"#;
-
 #[async_trait]
 impl EnvironmentProviderStore for PgStore {
     async fn put_provider(
         &self,
         request: PutEnvironmentProvider,
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        let mut record = request.into_record()?;
-        let sealed = record
-            .controller_connection
-            .bearer_token
-            .as_ref()
-            .map(|token| seal_provider_secret(self, &record.provider_id, token))
-            .transpose()?;
-        record.controller_connection.bearer_token = None;
+        let record = request.into_record()?;
         let query = format!(
             r#"
             INSERT INTO environment_providers (
                 provider_id, display_name, controller_connection_json,
-                controller_secret_key_id, controller_secret_nonce, controller_secret_ciphertext,
                 metadata_json, created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            ) VALUES ($1,$2,$3,$4,$5,$6)
             ON CONFLICT (provider_id) DO UPDATE SET
                 display_name = EXCLUDED.display_name,
                 controller_connection_json = EXCLUDED.controller_connection_json,
-                controller_secret_key_id = EXCLUDED.controller_secret_key_id,
-                controller_secret_nonce = EXCLUDED.controller_secret_nonce,
-                controller_secret_ciphertext = EXCLUDED.controller_secret_ciphertext,
                 metadata_json = EXCLUDED.metadata_json,
                 updated_at_ms = EXCLUDED.updated_at_ms
             RETURNING {PROVIDER_COLUMNS}
@@ -103,16 +80,13 @@ impl EnvironmentProviderStore for PgStore {
                 "encode provider controller connection",
                 &record.controller_connection,
             )?)
-            .bind(sealed.as_ref().map(|value| value.0))
-            .bind(sealed.as_ref().map(|value| value.1.as_slice()))
-            .bind(sealed.as_ref().map(|value| value.2.as_slice()))
             .bind(json_value("encode provider metadata", &record.metadata)?)
             .bind(record.created_at_ms)
             .bind(record.updated_at_ms)
             .fetch_one(&self.pool)
             .await
             .map_err(|error| sql_error("put environment provider", error))?;
-        provider_from_row(self, &row)
+        provider_from_row(&row)
     }
 
     async fn read_provider(
@@ -127,7 +101,7 @@ impl EnvironmentProviderStore for PgStore {
             .await
             .map_err(|error| sql_error("read environment provider", error))?
             .ok_or_else(|| not_found("environment_provider", provider_id))?;
-        provider_from_row(self, &row)
+        provider_from_row(&row)
     }
 
     async fn list_providers(
@@ -140,9 +114,7 @@ impl EnvironmentProviderStore for PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list environment providers", error))?;
-        rows.iter()
-            .map(|row| provider_from_row(self, row))
-            .collect()
+        rows.iter().map(provider_from_row).collect()
     }
 
     async fn delete_provider(
@@ -168,7 +140,7 @@ impl EnvironmentProviderStore for PgStore {
             .await
             .map_err(map_provider_delete_error)?
             .ok_or_else(|| not_found("environment_provider", provider_id))?;
-        provider_from_row(self, &row)
+        provider_from_row(&row)
     }
 }
 
@@ -399,6 +371,101 @@ impl EnvironmentStore for PgStore {
         self.read_environment(&request.environment_id).await
     }
 
+    async fn create_external_environment(
+        &self,
+        request: CreateExternalEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        self.ensure_universe()
+            .await
+            .map_err(|error| store_error("ensure universe", error))?;
+        if request.created_at_ms < 0 {
+            return invalid("environment timestamp must be nonnegative");
+        }
+        let candidate = EnvironmentRecord {
+            environment_id: request.environment_id.clone(),
+            request_id: request.request_id.clone(),
+            source: EnvironmentSource::External {
+                connection: request.connection.clone(),
+            },
+            display_name: request.display_name.clone(),
+            status: EnvironmentStatus::Ready,
+            incarnation: EnvironmentIncarnationRecord {
+                incarnation_id: request.incarnation_id.clone(),
+                provision_request_id: None,
+                provider_target_id: None,
+                template_id: None,
+                created_at_ms: request.created_at_ms,
+                updated_at_ms: request.created_at_ms,
+            },
+            metadata: request.metadata.clone(),
+            created_at_ms: request.created_at_ms,
+            updated_at_ms: request.created_at_ms,
+        };
+        candidate.validate()?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| sql_error("begin external environment create", error))?;
+        if let Some(existing_id) = sqlx::query_scalar::<_, String>(
+            "SELECT environment_id FROM environments WHERE universe_id = $1 AND request_id = $2",
+        )
+        .bind(self.config.universe_id)
+        .bind(request.request_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|error| sql_error("deduplicate external environment create", error))?
+        {
+            tx.commit()
+                .await
+                .map_err(|error| sql_error("commit external environment dedup", error))?;
+            let environment_id = EnvironmentId::try_new(existing_id)
+                .map_err(|error| store_message(format!("decode environment id: {error}")))?;
+            return self.read_environment(&environment_id).await;
+        }
+        sqlx::query(
+            r#"
+            INSERT INTO environments (
+                universe_id, environment_id, request_id, source_kind, daemon_connection_json,
+                display_name, status, current_incarnation_id, metadata_json,
+                created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,'external',$4,$5,'ready',$6,$7,$8,$8)
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(request.request_id.as_str())
+        .bind(json_value("encode daemon connection", &request.connection)?)
+        .bind(request.display_name.as_deref())
+        .bind(request.incarnation_id.as_str())
+        .bind(json_value(
+            "encode external environment metadata",
+            &request.metadata,
+        )?)
+        .bind(request.created_at_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_environment_insert_error)?;
+        sqlx::query(
+            r#"
+            INSERT INTO environment_incarnations (
+                universe_id, environment_id, incarnation_id, created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,$4,$4)
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(request.incarnation_id.as_str())
+        .bind(request.created_at_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| sql_error("insert external environment incarnation", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| sql_error("commit external environment create", error))?;
+        self.read_environment(&request.environment_id).await
+    }
+
     async fn read_environment(
         &self,
         environment_id: &EnvironmentId,
@@ -503,36 +570,6 @@ impl EnvironmentStore for PgStore {
         self.read_environment(&request.environment_id).await
     }
 
-    async fn observe_environment_route(
-        &self,
-        request: ObserveEnvironmentRoute,
-    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let current = self.read_environment(&request.environment_id).await?;
-        if current.incarnation.incarnation_id != request.incarnation_id {
-            return invalid("stale environment incarnation");
-        }
-        if request.observed_at_ms < current.updated_at_ms {
-            return Ok(current);
-        }
-        let status = if request.connected {
-            "ready"
-        } else {
-            "offline"
-        };
-        sqlx::query(
-            "UPDATE environments SET status=CASE WHEN status IN ('closing','closed') THEN status ELSE $4 END, updated_at_ms=$5 WHERE universe_id=$1 AND environment_id=$2 AND current_incarnation_id=$3",
-        )
-        .bind(self.config.universe_id)
-        .bind(request.environment_id.as_str())
-        .bind(request.incarnation_id.as_str())
-        .bind(status)
-        .bind(request.observed_at_ms)
-        .execute(&self.pool)
-        .await
-        .map_err(|error| sql_error("observe environment route", error))?;
-        self.read_environment(&request.environment_id).await
-    }
-
     async fn fail_environment_lifecycle(
         &self,
         request: FailEnvironmentLifecycle,
@@ -578,184 +615,6 @@ impl EnvironmentStore for PgStore {
             .await
             .map_err(|error| sql_error("commit environment close", error))?;
         self.read_environment(&request.environment_id).await
-    }
-}
-
-#[async_trait]
-impl EnvironmentDaemonEnrollmentStore for PgStore {
-    async fn create_enrollment(
-        &self,
-        request: CreateEnvironmentEnrollment,
-    ) -> Result<
-        (EnvironmentRecord, EnvironmentDaemonEnrollmentRecord, bool),
-        EnvironmentRegistryError,
-    > {
-        let candidate = EnvironmentDaemonEnrollmentRecord {
-            environment_id: request.environment_id.clone(),
-            incarnation_id: request.incarnation_id.clone(),
-            token_hash: request.token_hash.clone(),
-            token_expires_at_ms: request.token_expires_at_ms,
-            token_redeemed_at_ms: None,
-            revoked_at_ms: None,
-            daemon_id: None,
-            daemon_public_key: None,
-            enrolled_at_ms: None,
-            created_at_ms: request.created_at_ms,
-            updated_at_ms: request.created_at_ms,
-        };
-        candidate.validate()?;
-        self.ensure_universe()
-            .await
-            .map_err(|error| store_error("ensure universe", error))?;
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|error| sql_error("begin enrollment create", error))?;
-        if let Some(existing_id) = sqlx::query_scalar::<_, String>(
-            "SELECT environment_id FROM environments WHERE universe_id = $1 AND request_id = $2",
-        )
-        .bind(self.config.universe_id)
-        .bind(request.request_id.as_str())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|error| sql_error("deduplicate enrollment create", error))?
-        {
-            tx.commit()
-                .await
-                .map_err(|error| sql_error("commit enrollment dedup", error))?;
-            let environment_id = EnvironmentId::try_new(existing_id)
-                .map_err(|error| store_message(format!("decode environment id: {error}")))?;
-            let environment = self.read_environment(&environment_id).await?;
-            let enrollment = self.read_enrollment(&environment_id).await?;
-            return Ok((environment, enrollment, false));
-        }
-        sqlx::query(
-            r#"
-            INSERT INTO environments (
-                universe_id, environment_id, request_id, source_kind,
-                display_name, status, current_incarnation_id, metadata_json,
-                created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,'enrolled',$4,'waiting_for_daemon',$5,$6,$7,$7)
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(request.environment_id.as_str())
-        .bind(request.request_id.as_str())
-        .bind(request.display_name.as_deref())
-        .bind(request.incarnation_id.as_str())
-        .bind(json_value("encode enrollment metadata", &request.metadata)?)
-        .bind(request.created_at_ms)
-        .execute(&mut *tx)
-        .await
-        .map_err(map_environment_insert_error)?;
-        sqlx::query(
-            r#"
-            INSERT INTO environment_incarnations (
-                universe_id, environment_id, incarnation_id, created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,$4,$4)
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(request.environment_id.as_str())
-        .bind(request.incarnation_id.as_str())
-        .bind(request.created_at_ms)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| sql_error("insert enrolled incarnation", error))?;
-        let query = format!(
-            r#"
-            INSERT INTO environment_daemon_enrollments (
-                universe_id, environment_id, incarnation_id, token_hash,
-                token_expires_at_ms, created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,$4,$5,$6,$6)
-            RETURNING {ENROLLMENT_COLUMNS}
-            "#
-        );
-        let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(request.environment_id.as_str())
-            .bind(request.incarnation_id.as_str())
-            .bind(&request.token_hash)
-            .bind(request.token_expires_at_ms)
-            .bind(request.created_at_ms)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|error| sql_error("insert environment enrollment", error))?;
-        let enrollment = enrollment_from_row(&row)?;
-        tx.commit()
-            .await
-            .map_err(|error| sql_error("commit enrollment create", error))?;
-        let environment = self.read_environment(&request.environment_id).await?;
-        Ok((environment, enrollment, true))
-    }
-
-    async fn read_enrollment(
-        &self,
-        environment_id: &EnvironmentId,
-    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError> {
-        let query = format!(
-            "SELECT a.{ENROLLMENT_COLUMNS} FROM environment_daemon_enrollments a JOIN environments e ON e.universe_id = a.universe_id AND e.environment_id = a.environment_id AND e.current_incarnation_id = a.incarnation_id WHERE a.universe_id = $1 AND a.environment_id = $2"
-        );
-        let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(environment_id.as_str())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| sql_error("read environment enrollment", error))?
-            .ok_or_else(|| not_found("environment_enrollment", environment_id))?;
-        enrollment_from_row(&row)
-    }
-
-    async fn enroll_daemon(
-        &self,
-        request: EnrollEnvironmentDaemon,
-    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError> {
-        let query = format!(
-            r#"
-            UPDATE environment_daemon_enrollments SET
-                token_redeemed_at_ms = $6, daemon_id = $4,
-                daemon_public_key = $5, enrolled_at_ms = $6, updated_at_ms = $6
-            WHERE universe_id = $1 AND environment_id = $2 AND incarnation_id = $3
-              AND token_hash = $7 AND token_redeemed_at_ms IS NULL
-              AND revoked_at_ms IS NULL AND token_expires_at_ms >= $6
-            RETURNING {ENROLLMENT_COLUMNS}
-            "#
-        );
-        let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(request.environment_id.as_str())
-            .bind(request.incarnation_id.as_str())
-            .bind(request.daemon_id.as_str())
-            .bind(&request.daemon_public_key)
-            .bind(request.enrolled_at_ms)
-            .bind(&request.token_hash)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| sql_error("enroll environment daemon", error))?
-            .ok_or_else(|| {
-                invalid_error("enrollment token is invalid, expired, redeemed, revoked, or stale")
-            })?;
-        enrollment_from_row(&row)
-    }
-
-    async fn revoke_enrollment(
-        &self,
-        environment_id: &EnvironmentId,
-        revoked_at_ms: i64,
-    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError> {
-        let query = format!(
-            "UPDATE environment_daemon_enrollments a SET revoked_at_ms = COALESCE(a.revoked_at_ms, $3), updated_at_ms = GREATEST(a.updated_at_ms, $3) FROM environments e WHERE a.universe_id = $1 AND a.environment_id = $2 AND e.universe_id = a.universe_id AND e.environment_id = a.environment_id AND e.current_incarnation_id = a.incarnation_id RETURNING a.{ENROLLMENT_COLUMNS}"
-        );
-        let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(environment_id.as_str())
-            .bind(revoked_at_ms)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| sql_error("revoke environment enrollment", error))?
-            .ok_or_else(|| not_found("environment_enrollment", environment_id))?;
-        enrollment_from_row(&row)
     }
 }
 
@@ -855,13 +714,11 @@ async fn read_environment_on(
 }
 
 fn provider_from_row(
-    store: &PgStore,
     row: &sqlx::postgres::PgRow,
 ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
     let provider_id = parse_id(row, "provider_id", EnvironmentProviderId::try_new)?;
-    let mut connection: environments::HostControllerConnectionSpec =
+    let connection: environments::HostControllerConnectionSpec =
         json_column(row, "controller_connection_json")?;
-    connection.bearer_token = open_provider_secret(store, &provider_id, row)?;
     let record = EnvironmentProviderRecord {
         provider_id,
         display_name: row
@@ -874,81 +731,6 @@ fn provider_from_row(
     };
     record.validate()?;
     Ok(record)
-}
-
-const PROVIDER_SECRET_KEY_ID: &str = "local-v1";
-
-fn provider_secret_aad(provider_id: &EnvironmentProviderId) -> Vec<u8> {
-    format!("environment-provider/{}", provider_id.as_str()).into_bytes()
-}
-
-fn seal_provider_secret(
-    store: &PgStore,
-    provider_id: &EnvironmentProviderId,
-    value: &auth::SecretValue,
-) -> Result<(&'static str, Vec<u8>, Vec<u8>), EnvironmentRegistryError> {
-    let key = store.config.secrets_master_key.as_ref().ok_or_else(|| {
-        store_message("secrets master key is required to store a provider credential")
-    })?;
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.bytes()));
-    let mut nonce = [0_u8; 12];
-    rand::rngs::OsRng.fill_bytes(&mut nonce);
-    let ciphertext = cipher
-        .encrypt(
-            Nonce::from_slice(&nonce),
-            Payload {
-                msg: value.expose().as_bytes(),
-                aad: &provider_secret_aad(provider_id),
-            },
-        )
-        .map_err(|_| store_message("provider credential encryption failed"))?;
-    Ok((PROVIDER_SECRET_KEY_ID, nonce.to_vec(), ciphertext))
-}
-
-fn open_provider_secret(
-    store: &PgStore,
-    provider_id: &EnvironmentProviderId,
-    row: &sqlx::postgres::PgRow,
-) -> Result<Option<auth::SecretValue>, EnvironmentRegistryError> {
-    let key_id: Option<String> = row
-        .try_get("controller_secret_key_id")
-        .map_err(|error| sql_error("decode provider credential key id", error))?;
-    let Some(key_id) = key_id else {
-        return Ok(None);
-    };
-    if key_id != PROVIDER_SECRET_KEY_ID {
-        return Err(store_message(format!(
-            "unsupported provider credential key id '{key_id}'"
-        )));
-    }
-    let nonce: Vec<u8> = row
-        .try_get("controller_secret_nonce")
-        .map_err(|error| sql_error("decode provider credential nonce", error))?;
-    let ciphertext: Vec<u8> = row
-        .try_get("controller_secret_ciphertext")
-        .map_err(|error| sql_error("decode provider credential ciphertext", error))?;
-    if nonce.len() != 12 {
-        return Err(store_message(
-            "stored provider credential nonce has invalid length",
-        ));
-    }
-    let key = store.config.secrets_master_key.as_ref().ok_or_else(|| {
-        store_message("secrets master key is required to read a provider credential")
-    })?;
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.bytes()));
-    let plaintext = cipher
-        .decrypt(
-            Nonce::from_slice(&nonce),
-            Payload {
-                msg: &ciphertext,
-                aad: &provider_secret_aad(provider_id),
-            },
-        )
-        .map_err(|_| store_message("provider credential decryption failed"))?;
-    String::from_utf8(plaintext)
-        .map(auth::SecretValue::new)
-        .map(Some)
-        .map_err(|_| store_message("provider credential is not valid UTF-8"))
 }
 
 fn binding_from_row(
@@ -991,7 +773,9 @@ fn environment_from_row(
             )
             .map_err(|e| store_message(format!("decode binding id: {e}")))?,
         },
-        "enrolled" => EnvironmentSource::Enrolled,
+        "external" => EnvironmentSource::External {
+            connection: json_column(row, "daemon_connection_json")?,
+        },
         other => {
             return Err(store_message(format!(
                 "unknown environment source: {other}"
@@ -1070,42 +854,6 @@ fn credential_from_row(
     Ok(record)
 }
 
-fn enrollment_from_row(
-    row: &sqlx::postgres::PgRow,
-) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError> {
-    let daemon_id: Option<String> = row
-        .try_get("daemon_id")
-        .map_err(|error| sql_error("decode enrollment daemon id", error))?;
-    let record = EnvironmentDaemonEnrollmentRecord {
-        environment_id: parse_id(row, "environment_id", EnvironmentId::try_new)?,
-        incarnation_id: parse_id(row, "incarnation_id", EnvironmentIncarnationId::try_new)?,
-        token_hash: row
-            .try_get("token_hash")
-            .map_err(|error| sql_error("decode enrollment token hash", error))?,
-        token_expires_at_ms: scalar(row, "token_expires_at_ms")?,
-        token_redeemed_at_ms: row
-            .try_get("token_redeemed_at_ms")
-            .map_err(|error| sql_error("decode enrollment redemption", error))?,
-        revoked_at_ms: row
-            .try_get("revoked_at_ms")
-            .map_err(|error| sql_error("decode enrollment revocation", error))?,
-        daemon_id: daemon_id
-            .map(EnvironmentDaemonId::try_new)
-            .transpose()
-            .map_err(|error| store_message(format!("decode daemon id: {error}")))?,
-        daemon_public_key: row
-            .try_get("daemon_public_key")
-            .map_err(|error| sql_error("decode enrollment daemon public key", error))?,
-        enrolled_at_ms: row
-            .try_get("enrolled_at_ms")
-            .map_err(|error| sql_error("decode enrollment completion", error))?,
-        created_at_ms: scalar(row, "created_at_ms")?,
-        updated_at_ms: scalar(row, "updated_at_ms")?,
-    };
-    record.validate()?;
-    Ok(record)
-}
-
 fn credential_source_columns(
     source: &EnvironmentCredentialSource,
 ) -> (&'static str, Option<&str>, Option<&str>, Option<&str>) {
@@ -1144,7 +892,6 @@ fn environment_status_to_str(value: EnvironmentStatus) -> &'static str {
     match value {
         EnvironmentStatus::Provisioning => "provisioning",
         EnvironmentStatus::Booting => "booting",
-        EnvironmentStatus::WaitingForDaemon => "waiting_for_daemon",
         EnvironmentStatus::Ready => "ready",
         EnvironmentStatus::Offline => "offline",
         EnvironmentStatus::Closing => "closing",
@@ -1157,7 +904,6 @@ fn environment_status_from_str(value: &str) -> Result<EnvironmentStatus, Environ
     match value {
         "provisioning" => Ok(EnvironmentStatus::Provisioning),
         "booting" => Ok(EnvironmentStatus::Booting),
-        "waiting_for_daemon" => Ok(EnvironmentStatus::WaitingForDaemon),
         "ready" => Ok(EnvironmentStatus::Ready),
         "offline" => Ok(EnvironmentStatus::Offline),
         "closing" => Ok(EnvironmentStatus::Closing),

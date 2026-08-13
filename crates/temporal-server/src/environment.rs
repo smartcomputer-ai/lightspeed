@@ -91,7 +91,7 @@ mod tests {
                 binding_id: EnvironmentProviderBindingId::new("binding-a"),
             },
             display_name: None,
-            status: EnvironmentStatus::WaitingForDaemon,
+            status: EnvironmentStatus::Offline,
             incarnation: EnvironmentIncarnationRecord {
                 incarnation_id: EnvironmentIncarnationId::new("incarnation-a"),
                 provision_request_id: Some(EnvironmentProvisionRequestId::new("request-a")),

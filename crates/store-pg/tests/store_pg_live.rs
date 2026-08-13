@@ -1096,7 +1096,7 @@ async fn pg_live_universe_environments_are_independent_of_sessions() {
         .observe_provisioned_environment(ObserveProvisionedEnvironment {
             environment_id: environment_id.clone(),
             provider_target_id: target_id.clone(),
-            status: EnvironmentStatus::WaitingForDaemon,
+            status: EnvironmentStatus::Offline,
             observed_at_ms: 30,
         })
         .await
@@ -1106,7 +1106,7 @@ async fn pg_live_universe_environments_are_independent_of_sessions() {
             .list_environments(ListEnvironments {
                 provider_id: Some(provider_id.clone()),
                 binding_id: Some(EnvironmentProviderBindingId::new("primary")),
-                status: Some(EnvironmentStatus::WaitingForDaemon),
+                status: Some(EnvironmentStatus::Offline),
             })
             .await
             .expect("list instances"),

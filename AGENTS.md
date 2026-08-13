@@ -128,7 +128,9 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   workspaces, transient workspace-link resolution, and store traits.
 - `crates/host-protocol/`, `crates/host-client/`, and
   `crates/environment-daemon/` — environment host wire protocol, gateway
-  client, and direct/provider-mediated `lightspeed-envd` execution daemon.
+  client, and passive `lightspeed-envd` execution daemon. Lightspeed reaches
+  external daemons directly and provider-managed daemons through the provider,
+  opening both routes on demand.
 - `crates/environment-provider-incus/` — standalone stateless Incus controller
   and passive on-demand data endpoint. It depends only on the host protocol
   boundary and reconstructs target state from Incus inventory and deployment

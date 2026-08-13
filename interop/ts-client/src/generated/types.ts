@@ -775,7 +775,19 @@ export type EnvironmentSourceView =
       type: "provisioned";
     }
   | {
-      type: "enrolled";
+      connection: EnvironmentConnectionView;
+      type: "external";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentConnectionTransportView".
+ */
+export type EnvironmentConnectionTransportView =
+  | ("webSocket" | "http" | "stdio" | "ssh")
+  | {
+      provider: {
+        provider_type: string;
+      };
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -784,7 +796,6 @@ export type EnvironmentSourceView =
 export type EnvironmentLifecycleStatusView =
   | "provisioning"
   | "booting"
-  | "waitingForDaemon"
   | "ready"
   | "offline"
   | "closing"
@@ -2096,6 +2107,14 @@ export interface EnvironmentIncarnationView {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentConnectionView".
+ */
+export interface EnvironmentConnectionView {
+  endpoint: string;
+  transport: EnvironmentConnectionTransportView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfEnvironmentCreateResponse".
  */
 export interface AgentApiOutcomeOfEnvironmentCreateResponse {
@@ -2167,69 +2186,18 @@ export interface EnvironmentCredentialUnbindResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentEnrollmentCreateResponse".
+ * via the `definition` "AgentApiOutcomeOfEnvironmentExternalCreateResponse".
  */
-export interface AgentApiOutcomeOfEnvironmentEnrollmentCreateResponse {
+export interface AgentApiOutcomeOfEnvironmentExternalCreateResponse {
   notifications?: AgentNotification[];
-  result: EnvironmentEnrollmentCreateResponse;
+  result: EnvironmentExternalCreateResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentEnrollmentCreateResponse".
+ * via the `definition` "EnvironmentExternalCreateResponse".
  */
-export interface EnvironmentEnrollmentCreateResponse {
-  enrollment: EnvironmentEnrollmentView;
+export interface EnvironmentExternalCreateResponse {
   environment: EnvironmentView;
-  /**
-   * Present exactly once, when this call creates the enrollment. A retry
-   * with the same request ID returns the resource without the token.
-   */
-  token?: string | null;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentEnrollmentView".
- */
-export interface EnvironmentEnrollmentView {
-  createdAtMs: number;
-  daemonId?: string | null;
-  enrolledAtMs?: number | null;
-  environmentId: string;
-  incarnationId: string;
-  revokedAtMs?: number | null;
-  tokenExpiresAtMs: number;
-  tokenRedeemedAtMs?: number | null;
-  updatedAtMs: number;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentEnrollmentReadResponse".
- */
-export interface AgentApiOutcomeOfEnvironmentEnrollmentReadResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentEnrollmentReadResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentEnrollmentReadResponse".
- */
-export interface EnvironmentEnrollmentReadResponse {
-  enrollment: EnvironmentEnrollmentView;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentEnrollmentRevokeResponse".
- */
-export interface AgentApiOutcomeOfEnvironmentEnrollmentRevokeResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentEnrollmentRevokeResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentEnrollmentRevokeResponse".
- */
-export interface EnvironmentEnrollmentRevokeResponse {
-  enrollment: EnvironmentEnrollmentView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3814,33 +3782,18 @@ export interface EnvironmentCredentialUnbindParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentEnrollmentCreateParams".
+ * via the `definition` "EnvironmentExternalCreateParams".
  */
-export interface EnvironmentEnrollmentCreateParams {
-  displayName?: string | null;
+export interface EnvironmentExternalCreateParams {
   /**
-   * Requested one-time token lifetime. Defaults to ten minutes and is
-   * capped at one hour.
+   * Connection to an envd instance reachable from Lightspeed.
    */
-  expiresInSeconds?: number | null;
+  connection: EnvironmentConnectionView;
+  displayName?: string | null;
   metadata?: {
     [k: string]: string;
   };
   requestId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentEnrollmentReadParams".
- */
-export interface EnvironmentEnrollmentReadParams {
-  environmentId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentEnrollmentRevokeParams".
- */
-export interface EnvironmentEnrollmentRevokeParams {
-  environmentId: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -4100,19 +4053,6 @@ export interface OperatorApiKeyRevokeParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderConnectionInput".
- */
-export interface OperatorEnvironmentProviderConnectionInput {
-  /**
-   * Optional write-only bearer used by Lightspeed for both controller and
-   * data-plane connections. Read and list responses never return it.
-   */
-  bearerToken?: string | null;
-  endpoint: string;
-  transport: OperatorEnvironmentProviderTransport;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OperatorEnvironmentProviderDeleteParams".
  */
 export interface OperatorEnvironmentProviderDeleteParams {
@@ -4128,7 +4068,7 @@ export interface OperatorEnvironmentProviderListParams {}
  * via the `definition` "OperatorEnvironmentProviderPutParams".
  */
 export interface OperatorEnvironmentProviderPutParams {
-  controllerConnection: OperatorEnvironmentProviderConnectionInput;
+  controllerConnection: OperatorEnvironmentProviderConnection;
   displayName?: string | null;
   metadata?: {
     [k: string]: string;

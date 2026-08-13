@@ -1,5 +1,14 @@
 # P117: Environment Compute Target Architecture
 
+> **Superseding transport decision (2026-08-13):** Both external and
+> provider-managed envd instances are passive and reachable from Lightspeed.
+> Connections are opened on demand and closed when unused. Direct enrollment,
+> daemon-initiated transport, daemon keys/tokens, admission rows, and the
+> in-memory route registry have been removed. Provider and external daemon
+> application authentication is deferred; deployment network/transport
+> controls protect those endpoints. See P118-P120 for the normative design;
+> older enrollment discussion below is retained only as design history.
+
 Status: target design agreed 2026-08-10; scope trimmed 2026-08-11 after review
 (trusted-tenant v1, tunnel-first ingress, cursory backend sketches); split into
 delivery milestones and moved provider policy out of Lightspeed 2026-08-11.

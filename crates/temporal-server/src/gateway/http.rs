@@ -15,32 +15,17 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 use futures_util::{SinkExt as _, StreamExt as _};
-use host_protocol::{
-    gateway::{
-        DEFAULT_LEASE_MS, DIRECT_DAEMON_PATH, DirectDaemonAuthenticate, GatewayAccepted,
-        GatewayChallenge, GatewayRejected, PROVIDER_DATA_PATH_PREFIX, ROUTE_PATH_PREFIX,
-        direct_auth_message,
-    },
-    shared::CURRENT_PROTOCOL_VERSION,
-};
-use rand::RngCore as _;
+use host_protocol::gateway::{PROVIDER_DATA_PATH_PREFIX, ROUTE_PATH_PREFIX};
 use serde::Deserialize;
-use serde_json::Value;
-use sha2::{Digest as _, Sha256};
 use store_pg::{PgApiKeyStore, PgStore};
 use temporalio_client::Client;
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::{Message as ProviderMessage, client::IntoClientRequest as _},
-};
+use tokio_tungstenite::{connect_async, tungstenite::Message as ProviderMessage};
 use uuid::Uuid;
 
 use crate::{
     config::{DeploymentStores, GatewayAuthMode, gateway_auth_mode_from_env},
-    environment_gateway::{RouteCommand, RouteKey, RouteOwner, bearer_matches, close_message},
+    environment_gateway::{RouteKey, bearer_matches, close_message},
     universe::{UniverseError, UniverseRuntime},
 };
 
@@ -201,13 +186,6 @@ impl GatewayState {
                 .await
                 .map(|state| state.api.clone())
                 .map_err(map_universe_error),
-        }
-    }
-
-    fn environment_routes(&self) -> Arc<crate::environment_gateway::EnvironmentRouteRegistry> {
-        match &self.resolution {
-            UniverseResolution::FixedApi { api } => api.environment_routes.clone(),
-            UniverseResolution::Multi { runtime, .. } => runtime.environment_routes().clone(),
         }
     }
 
@@ -448,26 +426,12 @@ pub fn gateway_router(state: Arc<GatewayState>, max_request_body_bytes: usize) -
         .route("/rpc", post(rpc))
         .route("/auth/callback", get(oauth_callback))
         .route("/auth/client-metadata.json", get(cimd_document))
-        .route(DIRECT_DAEMON_PATH, get(direct_daemon_upgrade))
         .route(
             &format!("{ROUTE_PATH_PREFIX}/:universe/:environment/:incarnation"),
             get(environment_route_upgrade),
         )
         .layer(DefaultBodyLimit::max(max_request_body_bytes))
         .with_state(state)
-}
-
-async fn direct_daemon_upgrade(
-    State(state): State<Arc<GatewayState>>,
-    upgrade: WebSocketUpgrade,
-) -> Response {
-    upgrade
-        .max_message_size(64 * 1024 * 1024)
-        .on_upgrade(move |socket| async move {
-            if let Err(error) = serve_direct_daemon(state, socket).await {
-                tracing::warn!(target: "temporal_server", %error, "direct environment daemon disconnected");
-            }
-        })
 }
 
 async fn environment_route_upgrade(
@@ -508,13 +472,22 @@ async fn environment_route_upgrade(
         return StatusCode::CONFLICT.into_response();
     }
     match &environment.source {
-        environments::EnvironmentSource::Enrolled => {
-            if state.environment_routes().snapshot(&key).await.is_none() {
-                return StatusCode::CONFLICT.into_response();
+        environments::EnvironmentSource::External { connection } => {
+            if connection.transport != host_protocol::shared::HostTransport::WebSocket {
+                return StatusCode::BAD_GATEWAY.into_response();
             }
+            let endpoint = daemon_data_endpoint(&connection.endpoint);
+            let daemon_socket = match connect_async(&endpoint).await {
+                Ok((socket, _)) => socket,
+                Err(error) => {
+                    tracing::warn!(target: "temporal_server", %error, %endpoint, "external environment connection failed");
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
+            };
             upgrade
+                .max_message_size(64 * 1024 * 1024)
                 .on_upgrade(move |socket| {
-                    proxy_worker_route(state.environment_routes(), key, socket)
+                    proxy_external_route(state, key, endpoint, socket, daemon_socket)
                 })
                 .into_response()
         }
@@ -550,17 +523,7 @@ async fn environment_route_upgrade(
                 Ok(endpoint) => endpoint,
                 Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
             };
-            let mut request = match endpoint.as_str().into_client_request() {
-                Ok(request) => request,
-                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
-            };
-            if let Some(token) = provider.controller_connection.bearer_token.as_ref() {
-                let Ok(value) = format!("Bearer {}", token.expose()).parse() else {
-                    return StatusCode::BAD_GATEWAY.into_response();
-                };
-                request.headers_mut().insert("authorization", value);
-            }
-            let provider_socket = match connect_async(request).await {
+            let provider_socket = match connect_async(&endpoint).await {
                 Ok((socket, _)) => socket,
                 Err(error) => {
                     tracing::warn!(target: "temporal_server", %error, %endpoint, "provider data connection failed");
@@ -623,6 +586,48 @@ fn provider_data_endpoint(
         .push(&key.incarnation_id)
         .push(target_id);
     Ok(endpoint.into())
+}
+
+fn daemon_data_endpoint(endpoint: &str) -> String {
+    if let Some(rest) = endpoint.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else if let Some(rest) = endpoint.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else {
+        endpoint.to_owned()
+    }
+}
+
+async fn authorize_external_route(
+    state: &GatewayState,
+    key: &RouteKey,
+    endpoint: &str,
+) -> anyhow::Result<()> {
+    let api = state
+        .api_for_daemon(key.universe_id)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+    let environment_id = environments::EnvironmentId::try_new(key.environment_id.clone())?;
+    let environment =
+        environments::EnvironmentStore::read_environment(api.store().as_ref(), &environment_id)
+            .await?;
+    let environments::EnvironmentSource::External {
+        connection: assigned_connection,
+    } = &environment.source
+    else {
+        anyhow::bail!("external route no longer belongs to an external environment")
+    };
+    if assigned_connection.transport != host_protocol::shared::HostTransport::WebSocket
+        || daemon_data_endpoint(&assigned_connection.endpoint) != endpoint
+        || environment.incarnation.incarnation_id.as_str() != key.incarnation_id
+        || matches!(
+            environment.status,
+            environments::EnvironmentStatus::Closing | environments::EnvironmentStatus::Closed
+        )
+    {
+        anyhow::bail!("external environment route is stale or no longer authorized")
+    }
+    Ok(())
 }
 
 async fn authorize_provisioned_route(
@@ -732,382 +737,55 @@ async fn proxy_provider_route(
     }
 }
 
-async fn proxy_worker_route(
-    routes: Arc<crate::environment_gateway::EnvironmentRouteRegistry>,
-    key: RouteKey,
-    mut socket: WebSocket,
-) {
-    while let Some(message) = socket.recv().await {
-        match message {
-            Ok(Message::Text(text)) => {
-                let value: Value = match serde_json::from_str(&text) {
-                    Ok(value) => value,
-                    Err(_) => break,
-                };
-                if value.get("id").is_some() {
-                    let id = value.get("id").cloned().unwrap_or(Value::Null);
-                    match routes.call(&key, value).await {
-                        Ok(response) => {
-                            if socket
-                                .send(Message::Text(response.to_string()))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        Err(message) => {
-                            let error = host_protocol::error::HostError::new(
-                                host_protocol::error::HostErrorCode::TransportClosed,
-                                message,
-                            );
-                            let response =
-                                serde_json::json!({"jsonrpc":"2.0","id":id,"error":error});
-                            let _ = socket.send(Message::Text(response.to_string())).await;
-                            break;
-                        }
-                    }
-                } else if routes.notify(&key, value).await.is_err() {
-                    break;
-                }
-            }
-            Ok(Message::Ping(bytes)) => {
-                let _ = socket.send(Message::Pong(bytes)).await;
-            }
-            Ok(Message::Pong(_)) => {}
-            Ok(Message::Close(_)) | Err(_) => break,
-            Ok(Message::Binary(_)) => break,
-        }
-    }
-}
-
-async fn serve_direct_daemon(
+async fn proxy_external_route(
     state: Arc<GatewayState>,
-    mut socket: WebSocket,
-) -> anyhow::Result<()> {
-    let mut nonce = [0_u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut nonce);
-    let challenge = GatewayChallenge::new(URL_SAFE_NO_PAD.encode(nonce), DEFAULT_LEASE_MS);
-    socket
-        .send(Message::Text(serde_json::to_string(&challenge)?))
-        .await?;
-    let auth = tokio::time::timeout(Duration::from_secs(10), socket.recv())
-        .await
-        .map_err(|_| anyhow::anyhow!("daemon authentication timed out"))?
-        .ok_or_else(|| anyhow::anyhow!("daemon disconnected before authentication"))??;
-    let Message::Text(auth) = auth else {
-        anyhow::bail!("daemon authentication must be text JSON")
-    };
-    let auth: DirectDaemonAuthenticate = serde_json::from_str(&auth)?;
-    match authenticate_direct_daemon(&state, &challenge, &auth).await {
-        Ok((api, key)) => {
-            let connection_id = format!("connection_{}", Uuid::new_v4().simple());
-            socket
-                .send(Message::Text(serde_json::to_string(&GatewayAccepted {
-                    connection_id: connection_id.clone(),
-                    lease_ms: DEFAULT_LEASE_MS,
-                })?))
-                .await?;
-            let (command_tx, command_rx) = tokio::sync::mpsc::channel(64);
-            let fence = state
-                .environment_routes()
-                .register(
-                    key.clone(),
-                    connection_id.clone(),
-                    RouteOwner::DirectDaemon {
-                        daemon_id: auth.daemon_id.clone(),
-                    },
-                    auth.capabilities.clone(),
-                    auth.default_cwd.clone(),
-                    command_tx,
-                )
-                .await;
-            if let Err(error) = authorize_registered_direct_daemon(&api, &auth).await {
-                state
-                    .environment_routes()
-                    .unregister(&key, &connection_id)
-                    .await;
-                let _ = socket.send(close_message("authorization changed")).await;
-                return Err(error);
-            }
-            observe_route(&api, &key, true).await;
-            run_daemon_route(socket, command_rx, fence).await;
-            if state
-                .environment_routes()
-                .unregister(&key, &connection_id)
-                .await
-            {
-                observe_route(&api, &key, false).await;
-            }
-            Ok(())
-        }
-        Err(error) => {
-            let _ = socket
-                .send(Message::Text(serde_json::to_string(&GatewayRejected {
-                    message: error.to_string(),
-                })?))
-                .await;
-            let _ = socket.send(close_message("authentication rejected")).await;
-            Err(error)
-        }
-    }
-}
-
-async fn authorize_registered_direct_daemon(
-    api: &GatewayAgentApi,
-    auth: &DirectDaemonAuthenticate,
-) -> anyhow::Result<()> {
-    let environment_id = environments::EnvironmentId::try_new(auth.environment_id.clone())?;
-    let environment =
-        environments::EnvironmentStore::read_environment(api.store().as_ref(), &environment_id)
-            .await?;
-    if environment.incarnation.incarnation_id.as_str() != auth.incarnation_id
-        || matches!(
-            environment.status,
-            environments::EnvironmentStatus::Closing | environments::EnvironmentStatus::Closed
-        )
-    {
-        anyhow::bail!("environment incarnation is no longer authorized");
-    }
-    let enrollment = environments::EnvironmentDaemonEnrollmentStore::read_enrollment(
-        api.store().as_ref(),
-        &environment_id,
-    )
-    .await?;
-    if enrollment.revoked_at_ms.is_some()
-        || enrollment.daemon_id.as_ref().map(|id| id.as_str()) != Some(auth.daemon_id.as_str())
-    {
-        anyhow::bail!("daemon identity is no longer authorized");
-    }
-    Ok(())
-}
-
-async fn authenticate_direct_daemon(
-    state: &GatewayState,
-    challenge: &GatewayChallenge,
-    auth: &DirectDaemonAuthenticate,
-) -> anyhow::Result<(Arc<GatewayAgentApi>, RouteKey)> {
-    if auth.protocol_version != CURRENT_PROTOCOL_VERSION {
-        anyhow::bail!("incompatible gateway protocol version");
-    }
-    let universe_id = Uuid::parse_str(&auth.universe_id)?;
-    let api = state
-        .api_for_daemon(universe_id)
-        .await
-        .map_err(|error| anyhow::anyhow!(error.message))?;
-    let environment_id = environments::EnvironmentId::try_new(auth.environment_id.clone())?;
-    let incarnation_id =
-        environments::EnvironmentIncarnationId::try_new(auth.incarnation_id.clone())?;
-    let daemon_id = environments::EnvironmentDaemonId::try_new(auth.daemon_id.clone())?;
-    let environment =
-        environments::EnvironmentStore::read_environment(api.store().as_ref(), &environment_id)
-            .await?;
-    if !matches!(
-        environment.source,
-        environments::EnvironmentSource::Enrolled
-    ) {
-        anyhow::bail!("direct daemon routes require an enrolled environment");
-    }
-    if matches!(
-        environment.status,
-        environments::EnvironmentStatus::Closing | environments::EnvironmentStatus::Closed
-    ) {
-        anyhow::bail!("environment is closing or closed");
-    }
-    if environment.incarnation.incarnation_id != incarnation_id {
-        anyhow::bail!("stale environment incarnation");
-    }
-    let public_key: [u8; 32] = URL_SAFE_NO_PAD
-        .decode(&auth.public_key)?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("invalid daemon public key length"))?;
-    let signature = Signature::from_slice(&URL_SAFE_NO_PAD.decode(&auth.signature)?)?;
-    VerifyingKey::from_bytes(&public_key)?.verify(
-        &direct_auth_message(
-            &challenge.nonce,
-            &auth.universe_id,
-            &auth.environment_id,
-            &auth.incarnation_id,
-            &auth.daemon_id,
-        ),
-        &signature,
-    )?;
-    let expected_id = format!("daemon_{}", hex(&Sha256::digest(public_key)[..16]));
-    if expected_id != auth.daemon_id {
-        anyhow::bail!("daemon id does not match public key")
-    }
-    let enrollment = environments::EnvironmentDaemonEnrollmentStore::read_enrollment(
-        api.store().as_ref(),
-        &environment_id,
-    )
-    .await?;
-    if enrollment.revoked_at_ms.is_some() {
-        anyhow::bail!("environment enrollment is revoked")
-    }
-    match (&enrollment.daemon_id, &enrollment.daemon_public_key) {
-        (Some(existing_id), Some(existing_key)) => {
-            if existing_id != &daemon_id || existing_key.as_slice() != public_key {
-                anyhow::bail!("daemon identity does not match enrollment")
-            }
-        }
-        (None, None) => {
-            let token = auth
-                .enrollment_token
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("enrollment token is required"))?;
-            environments::EnvironmentDaemonEnrollmentStore::enroll_daemon(
-                api.store().as_ref(),
-                environments::EnrollEnvironmentDaemon {
-                    environment_id: environment_id.clone(),
-                    incarnation_id: incarnation_id.clone(),
-                    token_hash: Sha256::digest(token.as_bytes()).to_vec(),
-                    daemon_id,
-                    daemon_public_key: public_key.to_vec(),
-                    enrolled_at_ms: unix_ms(),
-                },
-            )
-            .await?;
-        }
-        _ => anyhow::bail!("incomplete daemon enrollment identity"),
-    }
-    Ok((
-        api,
-        RouteKey {
-            universe_id,
-            environment_id: auth.environment_id.clone(),
-            incarnation_id: auth.incarnation_id.clone(),
-        },
-    ))
-}
-
-async fn run_daemon_route(
-    mut socket: WebSocket,
-    mut commands: tokio::sync::mpsc::Receiver<RouteCommand>,
-    mut fence: tokio::sync::watch::Receiver<bool>,
+    key: RouteKey,
+    endpoint: String,
+    mut worker: WebSocket,
+    daemon: tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
 ) {
-    struct PendingCall {
-        original_id: Value,
-        response: tokio::sync::oneshot::Sender<Result<Value, String>>,
-    }
-
-    let mut pending = std::collections::BTreeMap::<String, PendingCall>::new();
-    let mut next_id = 1_u64;
-    let mut last_seen = std::time::Instant::now();
-    let mut lease = tokio::time::interval(Duration::from_millis(DEFAULT_LEASE_MS / 3));
-    lease.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let (mut daemon_writer, mut daemon_reader) = daemon.split();
+    let mut reauthorize = tokio::time::interval(Duration::from_secs(5));
     loop {
         tokio::select! {
-            result = fence.changed() => {
-                if result.is_err() || *fence.borrow() {
-                    let _ = socket.send(close_message("route superseded or revoked")).await;
+            _ = reauthorize.tick() => {
+                if authorize_external_route(&state, &key, &endpoint).await.is_err() {
+                    let _ = worker.send(close_message("external route authorization changed")).await;
                     break;
                 }
             }
-            command = commands.recv() => {
-                let Some(command) = command else { break };
-                match command {
-                    RouteCommand::Call { mut message, response } => {
-                        let Some(original_id) = message.get("id").cloned() else {
-                            let _ = response.send(Err("gateway call has no JSON-RPC id".to_owned()));
-                            continue;
-                        };
-                        let route_id = format!("gateway-{next_id}");
-                        next_id = next_id.wrapping_add(1).max(1);
-                        let Some(object) = message.as_object_mut() else {
-                            let _ = response.send(Err("gateway call is not a JSON object".to_owned()));
-                            continue;
-                        };
-                        object.insert("id".to_owned(), Value::String(route_id.clone()));
-                        pending.insert(route_id.clone(), PendingCall {
-                            original_id,
-                            response,
-                        });
-                        if socket.send(Message::Text(message.to_string())).await.is_err() {
-                            break;
-                        }
-                    }
-                    RouteCommand::Notify { message } => {
-                        if socket.send(Message::Text(message.to_string())).await.is_err() {
-                            break;
-                        }
-                    }
-                }
+            message = worker.recv() => {
+                let Some(Ok(message)) = message else { break };
+                let close = matches!(message, Message::Close(_));
+                let message = match message {
+                    Message::Text(value) => ProviderMessage::Text(value.to_string().into()),
+                    Message::Binary(value) => ProviderMessage::Binary(value.to_vec().into()),
+                    Message::Ping(value) => ProviderMessage::Ping(value.to_vec().into()),
+                    Message::Pong(value) => ProviderMessage::Pong(value.to_vec().into()),
+                    Message::Close(_) => ProviderMessage::Close(None),
+                };
+                if daemon_writer.send(message).await.is_err() || close { break }
             }
-            message = socket.recv() => {
-                match message {
-                    Some(Ok(Message::Text(text))) => {
-                        last_seen = std::time::Instant::now();
-                        let Ok(mut value) = serde_json::from_str::<Value>(&text) else { break };
-                        let Some(route_id) = value.get("id").and_then(Value::as_str).map(ToOwned::to_owned) else { continue };
-                        let Some(call) = pending.remove(&route_id) else { continue };
-                        if let Some(object) = value.as_object_mut() {
-                            object.insert("id".to_owned(), call.original_id);
-                        }
-                        let _ = call.response.send(Ok(value));
-                    }
-                    Some(Ok(Message::Ping(bytes))) => {
-                        last_seen = std::time::Instant::now();
-                        let _ = socket.send(Message::Pong(bytes)).await;
-                    }
-                    Some(Ok(Message::Pong(_))) => last_seen = std::time::Instant::now(),
-                    _ => break,
-                }
-            }
-            _ = lease.tick() => {
-                if last_seen.elapsed() >= Duration::from_millis(DEFAULT_LEASE_MS) {
-                    break;
-                }
-                if socket.send(Message::Ping(Vec::new())).await.is_err() { break; }
+            message = daemon_reader.next() => {
+                let Some(Ok(message)) = message else { break };
+                let close = matches!(message, ProviderMessage::Close(_));
+                let message = match message {
+                    ProviderMessage::Text(value) => Some(Message::Text(value.to_string())),
+                    ProviderMessage::Binary(value) => Some(Message::Binary(value.to_vec())),
+                    ProviderMessage::Ping(value) => Some(Message::Ping(value.to_vec())),
+                    ProviderMessage::Pong(value) => Some(Message::Pong(value.to_vec())),
+                    ProviderMessage::Close(_) => Some(Message::Close(None)),
+                    ProviderMessage::Frame(_) => None,
+                };
+                if let Some(message) = message
+                    && worker.send(message).await.is_err()
+                { break }
+                if close { break }
             }
         }
     }
-    for (_, call) in pending {
-        let _ = call
-            .response
-            .send(Err("daemon connection closed".to_owned()));
-    }
-}
-
-async fn observe_route(api: &GatewayAgentApi, key: &RouteKey, connected: bool) {
-    let Ok(environment_id) = environments::EnvironmentId::try_new(key.environment_id.clone())
-    else {
-        return;
-    };
-    let Ok(incarnation_id) =
-        environments::EnvironmentIncarnationId::try_new(key.incarnation_id.clone())
-    else {
-        return;
-    };
-    if let Err(error) = environments::EnvironmentStore::observe_environment_route(
-        api.store().as_ref(),
-        environments::ObserveEnvironmentRoute {
-            environment_id,
-            incarnation_id,
-            connected,
-            observed_at_ms: unix_ms(),
-        },
-    )
-    .await
-    {
-        tracing::warn!(target: "temporal_server", %error, "failed to observe environment route");
-    }
-}
-
-fn unix_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|value| value.as_millis() as i64)
-        .unwrap_or(0)
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(TABLE[(byte >> 4) as usize] as char);
-        output.push(TABLE[(byte & 0xf) as usize] as char);
-    }
-    output
 }
 
 /// Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document):

@@ -12,11 +12,10 @@ use axum::extract::ws::{Message as AxumMessage, WebSocket};
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async,
-    tungstenite::{Message as TungsteniteMessage, client::IntoClientRequest as _},
+    MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message as TungsteniteMessage,
 };
 
-use crate::{Config, incus::OwnedTarget, policy};
+use crate::{Config, incus::OwnedTarget};
 
 pub type GuestSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -25,22 +24,10 @@ pub async fn dial_guest(config: &Config, target: &OwnedTarget) -> anyhow::Result
         .ipv4_address
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("target has no private IPv4 address"))?;
-    let token = policy::daemon_token(
-        &config.daemon_token_key,
-        &target.universe_id,
-        &target.binding_id,
-        &target.environment_id,
-        &target.incarnation_id,
-        target.target_id.as_str(),
-    );
     let endpoint = format!("ws://{address}:{}/", config.envd_port);
-    let mut request = endpoint.into_client_request()?;
-    request
-        .headers_mut()
-        .insert("authorization", format!("Bearer {token}").parse()?);
     let (socket, _) = tokio::time::timeout(
         Duration::from_secs(config.dial_timeout_seconds),
-        connect_async(request),
+        connect_async(endpoint),
     )
     .await
     .context("envd dial timeout")??;

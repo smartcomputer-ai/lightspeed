@@ -71,10 +71,7 @@ impl HostControllerConnector for WebSocketHostControllerConnector {
                 let client = HostControllerClient::connect(
                     &connection.endpoint,
                     WebSocketConnectOptions {
-                        bearer_token: connection
-                            .bearer_token
-                            .as_ref()
-                            .map(|token| token.expose().to_owned()),
+                        bearer_token: None,
                         user_agent: Some("lightspeed-temporal-server".to_owned()),
                         headers: Vec::new(),
                     },

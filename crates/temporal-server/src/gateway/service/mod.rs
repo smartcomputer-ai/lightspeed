@@ -491,7 +491,6 @@ pub struct GatewayAgentApiBuilder {
     model_discovery_openai: Option<Arc<openai::Client>>,
     model_discovery_anthropic: Option<Arc<anthropic::Client>>,
     host_controller_connector: Arc<dyn HostControllerConnector>,
-    environment_routes: Arc<crate::environment_gateway::EnvironmentRouteRegistry>,
     environment_gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
 }
 
@@ -557,10 +556,8 @@ impl GatewayAgentApiBuilder {
 
     pub fn with_environment_gateway(
         mut self,
-        routes: Arc<crate::environment_gateway::EnvironmentRouteRegistry>,
         gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
     ) -> Self {
-        self.environment_routes = routes;
         self.environment_gateway = gateway;
         self
     }
@@ -645,7 +642,6 @@ impl GatewayAgentApiBuilder {
             github_api,
             model_discovery,
             host_controller_connector: self.host_controller_connector,
-            environment_routes: self.environment_routes,
             environment_gateway: self.environment_gateway,
         }
     }
@@ -666,7 +662,6 @@ pub struct GatewayAgentApi {
     github_api: Arc<dyn GitHubApiClient>,
     model_discovery: ModelDiscoveryService,
     host_controller_connector: Arc<dyn HostControllerConnector>,
-    pub(crate) environment_routes: Arc<crate::environment_gateway::EnvironmentRouteRegistry>,
     pub(crate) environment_gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
 }
 
@@ -692,9 +687,6 @@ impl GatewayAgentApi {
             model_discovery_openai: None,
             model_discovery_anthropic: None,
             host_controller_connector: Arc::new(WebSocketHostControllerConnector::default()),
-            environment_routes: Arc::new(
-                crate::environment_gateway::EnvironmentRouteRegistry::default(),
-            ),
             environment_gateway,
         }
     }
@@ -2776,29 +2768,11 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
-    async fn create_environment_enrollment(
+    async fn create_external_environment(
         &self,
-        params: EnvironmentEnrollmentCreateParams,
-    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentCreateResponse>, AgentApiError> {
-        self.create_environment_enrollment_record(params)
-            .await
-            .map(AgentApiOutcome::new)
-    }
-
-    async fn read_environment_enrollment(
-        &self,
-        params: EnvironmentEnrollmentReadParams,
-    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentReadResponse>, AgentApiError> {
-        self.read_environment_enrollment_record(params)
-            .await
-            .map(AgentApiOutcome::new)
-    }
-
-    async fn revoke_environment_enrollment(
-        &self,
-        params: EnvironmentEnrollmentRevokeParams,
-    ) -> Result<AgentApiOutcome<EnvironmentEnrollmentRevokeResponse>, AgentApiError> {
-        self.revoke_environment_enrollment_record(params)
+        params: EnvironmentExternalCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentExternalCreateResponse>, AgentApiError> {
+        self.create_external_environment_record(params)
             .await
             .map(AgentApiOutcome::new)
     }

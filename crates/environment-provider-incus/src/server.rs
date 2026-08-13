@@ -6,7 +6,7 @@ use axum::{
         Path, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -53,12 +53,8 @@ pub async fn serve<B: IncusBackend>(config: Config, backend: B) -> anyhow::Resul
 
 async fn upgrade<B: IncusBackend>(
     State(app): State<App<B>>,
-    headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    if !authorized(&headers, &app.config) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
     upgrade
         .on_upgrade(move |socket| connection(app, socket))
         .into_response()
@@ -73,12 +69,8 @@ async fn data_upgrade<B: IncusBackend>(
         String,
         String,
     )>,
-    headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    if !authorized(&headers, &app.config) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
     let binding = match app.config.binding(&universe, &binding_id) {
         Ok(binding) => binding,
         Err(_) => return StatusCode::NOT_FOUND.into_response(),
@@ -330,23 +322,7 @@ async fn create_target<B: IncusBackend>(
     }) {
         anyhow::bail!("binding environment quota exceeded")
     }
-    let token = policy::daemon_token(
-        &app.config.daemon_token_key,
-        &params.binding.universe_id,
-        &params.binding.binding_id,
-        &params.environment_id,
-        &params.incarnation_id,
-        &policy::instance_name(
-            &params.binding.universe_id,
-            &params.binding.binding_id,
-            &params.environment_id,
-            &params.incarnation_id,
-        ),
-    );
-    let mut target = app
-        .backend
-        .create_vm(binding, template, &params, &token)
-        .await?;
+    let mut target = app.backend.create_vm(binding, template, &params).await?;
     verify_create(&target, &params, template)?;
     observe_daemon_readiness(&app.config, &mut target).await;
     Ok(CreateTargetResponse {
@@ -449,32 +425,6 @@ fn encode<T: serde::Serialize>(value: T) -> anyhow::Result<Value> {
 fn error(id: Value, code: HostErrorCode, message: String) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":HostError::new(code,message)})
 }
-fn bearer(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(axum::http::header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
-}
-fn authorized(headers: &HeaderMap, config: &Config) -> bool {
-    authorized_bearer(headers, config.controller_token.as_deref())
-}
-fn authorized_bearer(headers: &HeaderMap, expected: Option<&str>) -> bool {
-    expected.is_none_or(|expected| {
-        bearer(headers)
-            .is_some_and(|actual| constant_time_eq(actual.as_bytes(), expected.as_bytes()))
-    })
-}
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut d = 0;
-    for (&a, &b) in a.iter().zip(b) {
-        d |= a ^ b
-    }
-    d == 0
-}
 
 #[cfg(test)]
 mod tests {
@@ -494,19 +444,6 @@ mod tests {
             status: HostTargetStatus::Ready,
             ipv4_address: Some("10.0.0.2".to_owned()),
         }
-    }
-
-    #[test]
-    fn provider_bearer_is_optional_but_enforced_when_configured() {
-        assert!(authorized_bearer(&HeaderMap::new(), None));
-        assert!(!authorized_bearer(&HeaderMap::new(), Some("secret")));
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            "Bearer secret".parse().unwrap(),
-        );
-        assert!(authorized_bearer(&headers, Some("secret")));
-        assert!(!authorized_bearer(&headers, Some("other")));
     }
 
     #[test]

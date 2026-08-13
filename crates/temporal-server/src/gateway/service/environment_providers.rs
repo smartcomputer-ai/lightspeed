@@ -200,7 +200,30 @@ pub(super) fn environment_view(record: &EnvironmentRecord) -> EnvironmentView {
                 provider_id: provider_id.to_string(),
                 binding_id: binding_id.to_string(),
             },
-            EnvironmentSource::Enrolled => EnvironmentSourceView::Enrolled,
+            EnvironmentSource::External { connection } => EnvironmentSourceView::External {
+                connection: EnvironmentConnectionView {
+                    endpoint: connection.endpoint.clone(),
+                    transport: match &connection.transport {
+                        host_protocol::shared::HostTransport::WebSocket => {
+                            EnvironmentConnectionTransportView::WebSocket
+                        }
+                        host_protocol::shared::HostTransport::Http => {
+                            EnvironmentConnectionTransportView::Http
+                        }
+                        host_protocol::shared::HostTransport::Stdio => {
+                            EnvironmentConnectionTransportView::Stdio
+                        }
+                        host_protocol::shared::HostTransport::Ssh => {
+                            EnvironmentConnectionTransportView::Ssh
+                        }
+                        host_protocol::shared::HostTransport::Provider { provider_type } => {
+                            EnvironmentConnectionTransportView::Provider {
+                                provider_type: provider_type.clone(),
+                            }
+                        }
+                    },
+                },
+            },
         },
         display_name: record.display_name.clone(),
         status: lifecycle_status_view(record.status),
@@ -234,7 +257,6 @@ fn lifecycle_status_view(value: EnvironmentStatus) -> EnvironmentLifecycleStatus
     match value {
         EnvironmentStatus::Provisioning => EnvironmentLifecycleStatusView::Provisioning,
         EnvironmentStatus::Booting => EnvironmentLifecycleStatusView::Booting,
-        EnvironmentStatus::WaitingForDaemon => EnvironmentLifecycleStatusView::WaitingForDaemon,
         EnvironmentStatus::Ready => EnvironmentLifecycleStatusView::Ready,
         EnvironmentStatus::Offline => EnvironmentLifecycleStatusView::Offline,
         EnvironmentStatus::Closing => EnvironmentLifecycleStatusView::Closing,
@@ -250,7 +272,6 @@ pub(super) fn registry_lifecycle_status(
     match value {
         EnvironmentLifecycleStatusView::Provisioning => EnvironmentStatus::Provisioning,
         EnvironmentLifecycleStatusView::Booting => EnvironmentStatus::Booting,
-        EnvironmentLifecycleStatusView::WaitingForDaemon => EnvironmentStatus::WaitingForDaemon,
         EnvironmentLifecycleStatusView::Ready => EnvironmentStatus::Ready,
         EnvironmentLifecycleStatusView::Offline => EnvironmentStatus::Offline,
         EnvironmentLifecycleStatusView::Closing => EnvironmentStatus::Closing,

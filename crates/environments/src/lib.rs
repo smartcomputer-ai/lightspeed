@@ -7,7 +7,7 @@
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use async_trait::async_trait;
-use auth::{AuthGrantId, AuthProviderId, SecretId, SecretValue};
+use auth::{AuthGrantId, AuthProviderId, SecretId};
 pub use engine::EnvironmentId;
 use engine::{StringIdError, validate_general_string_id};
 use host_protocol::{
@@ -98,7 +98,6 @@ registry_string_id!(EnvironmentIncarnationId);
 registry_string_id!(EnvironmentProvisionRequestId);
 registry_string_id!(EnvironmentTemplateId);
 registry_string_id!(EnvironmentJobGroupId);
-registry_string_id!(EnvironmentDaemonId);
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum EnvironmentRegistryError {
@@ -126,19 +125,16 @@ pub enum EnvironmentRegistryError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HostControllerConnectionSpec {
+pub struct EnvironmentConnectionSpec {
     pub endpoint: String,
     pub transport: HostTransport,
-    #[serde(skip)]
-    pub bearer_token: Option<SecretValue>,
 }
 
-impl HostControllerConnectionSpec {
+impl EnvironmentConnectionSpec {
     pub fn new(endpoint: impl Into<String>, transport: HostTransport) -> Self {
         Self {
             endpoint: endpoint.into(),
             transport,
-            bearer_token: None,
         }
     }
 
@@ -146,6 +142,8 @@ impl HostControllerConnectionSpec {
         validate_endpoint("host controller endpoint", &self.endpoint)
     }
 }
+
+pub type HostControllerConnectionSpec = EnvironmentConnectionSpec;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentProviderRecord {
@@ -242,21 +240,23 @@ pub enum EnvironmentSource {
         provider_id: EnvironmentProviderId,
         binding_id: EnvironmentProviderBindingId,
     },
-    Enrolled,
+    External {
+        connection: EnvironmentConnectionSpec,
+    },
 }
 
 impl EnvironmentSource {
     pub fn provider_id(&self) -> Option<&EnvironmentProviderId> {
         match self {
             Self::Provisioned { provider_id, .. } => Some(provider_id),
-            Self::Enrolled => None,
+            Self::External { .. } => None,
         }
     }
 
     pub fn binding_id(&self) -> Option<&EnvironmentProviderBindingId> {
         match self {
             Self::Provisioned { binding_id, .. } => Some(binding_id),
-            Self::Enrolled => None,
+            Self::External { .. } => None,
         }
     }
 }
@@ -266,7 +266,6 @@ impl EnvironmentSource {
 pub enum EnvironmentStatus {
     Provisioning,
     Booting,
-    WaitingForDaemon,
     Ready,
     Offline,
     Closing,
@@ -332,12 +331,13 @@ impl EnvironmentRecord {
                     );
                 }
             }
-            EnvironmentSource::Enrolled => {
+            EnvironmentSource::External { connection } => {
+                connection.validate()?;
                 if self.incarnation.provision_request_id.is_some()
                     || self.incarnation.provider_target_id.is_some()
                     || self.incarnation.template_id.is_some()
                 {
-                    return invalid("enrolled incarnation must not have provider linkage");
+                    return invalid("external incarnation must not have provider linkage");
                 }
             }
         }
@@ -358,66 +358,14 @@ pub struct CreateEnvironment {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnvironmentDaemonEnrollmentRecord {
-    pub environment_id: EnvironmentId,
-    pub incarnation_id: EnvironmentIncarnationId,
-    pub token_hash: Vec<u8>,
-    pub token_expires_at_ms: i64,
-    pub token_redeemed_at_ms: Option<i64>,
-    pub revoked_at_ms: Option<i64>,
-    pub daemon_id: Option<EnvironmentDaemonId>,
-    pub daemon_public_key: Option<Vec<u8>>,
-    pub enrolled_at_ms: Option<i64>,
-    pub created_at_ms: i64,
-    pub updated_at_ms: i64,
-}
-
-impl EnvironmentDaemonEnrollmentRecord {
-    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
-        if self.token_hash.len() != 32 {
-            return invalid("enrollment token hash must be 32 bytes");
-        }
-        if self
-            .daemon_public_key
-            .as_ref()
-            .is_some_and(|key| key.len() != 32)
-        {
-            return invalid("daemon public key must be 32 bytes");
-        }
-        if self.daemon_id.is_some() != self.daemon_public_key.is_some() {
-            return invalid("daemon id and public key must be enrolled together");
-        }
-        if self.daemon_id.is_some() != self.enrolled_at_ms.is_some() {
-            return invalid("daemon identity and enrollment time must be present together");
-        }
-        validate_timestamps(self.created_at_ms, self.updated_at_ms)?;
-        if self.token_expires_at_ms < self.created_at_ms {
-            return invalid("enrollment token expiry precedes creation");
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CreateEnvironmentEnrollment {
+pub struct CreateExternalEnvironment {
     pub request_id: EnvironmentProvisionRequestId,
     pub environment_id: EnvironmentId,
     pub incarnation_id: EnvironmentIncarnationId,
+    pub connection: EnvironmentConnectionSpec,
     pub display_name: Option<String>,
     pub metadata: BTreeMap<String, String>,
-    pub token_hash: Vec<u8>,
-    pub token_expires_at_ms: i64,
     pub created_at_ms: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnrollEnvironmentDaemon {
-    pub environment_id: EnvironmentId,
-    pub incarnation_id: EnvironmentIncarnationId,
-    pub token_hash: Vec<u8>,
-    pub daemon_id: EnvironmentDaemonId,
-    pub daemon_public_key: Vec<u8>,
-    pub enrolled_at_ms: i64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,14 +380,6 @@ pub struct ObserveProvisionedEnvironment {
     pub environment_id: EnvironmentId,
     pub provider_target_id: HostTargetId,
     pub status: EnvironmentStatus,
-    pub observed_at_ms: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ObserveEnvironmentRoute {
-    pub environment_id: EnvironmentId,
-    pub incarnation_id: EnvironmentIncarnationId,
-    pub connected: bool,
     pub observed_at_ms: i64,
 }
 
@@ -559,6 +499,10 @@ pub trait EnvironmentStore: Send + Sync {
         &self,
         request: CreateEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+    async fn create_external_environment(
+        &self,
+        request: CreateExternalEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
     async fn read_environment(
         &self,
         environment_id: &EnvironmentId,
@@ -578,10 +522,6 @@ pub trait EnvironmentStore: Send + Sync {
         &self,
         request: ObserveProvisionedEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
-    async fn observe_environment_route(
-        &self,
-        request: ObserveEnvironmentRoute,
-    ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
     async fn fail_environment_lifecycle(
         &self,
         request: FailEnvironmentLifecycle,
@@ -594,30 +534,6 @@ pub trait EnvironmentStore: Send + Sync {
         &self,
         request: FinishCloseEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
-}
-
-#[async_trait]
-pub trait EnvironmentDaemonEnrollmentStore: Send + Sync {
-    async fn create_enrollment(
-        &self,
-        request: CreateEnvironmentEnrollment,
-    ) -> Result<
-        (EnvironmentRecord, EnvironmentDaemonEnrollmentRecord, bool),
-        EnvironmentRegistryError,
-    >;
-    async fn read_enrollment(
-        &self,
-        environment_id: &EnvironmentId,
-    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError>;
-    async fn enroll_daemon(
-        &self,
-        request: EnrollEnvironmentDaemon,
-    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError>;
-    async fn revoke_enrollment(
-        &self,
-        environment_id: &EnvironmentId,
-        revoked_at_ms: i64,
-    ) -> Result<EnvironmentDaemonEnrollmentRecord, EnvironmentRegistryError>;
 }
 
 #[async_trait]

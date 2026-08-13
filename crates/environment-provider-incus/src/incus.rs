@@ -45,7 +45,6 @@ pub trait IncusBackend: Clone + Send + Sync + 'static {
         binding: &BindingPolicy,
         template: &TemplatePolicy,
         params: &CreateTargetParams,
-        daemon_token: &str,
     ) -> anyhow::Result<OwnedTarget>;
     async fn delete_vm(
         &self,
@@ -304,7 +303,6 @@ impl IncusBackend for IncusClient {
         binding: &BindingPolicy,
         template: &TemplatePolicy,
         params: &CreateTargetParams,
-        daemon_token: &str,
     ) -> anyhow::Result<OwnedTarget> {
         let project = policy::project_name(binding);
         let name = policy::instance_name(
@@ -318,8 +316,8 @@ impl IncusBackend for IncusClient {
             .as_millis()
             .to_string();
         let cloud_init = format!(
-            "#cloud-config\nwrite_files:\n  - path: /etc/lightspeed-envd/provider.env\n    permissions: '0600'\n    content: |\n      LIGHTSPEED_ENVD_PROVIDER_LISTEN=0.0.0.0:{}\n      LIGHTSPEED_ENVD_PROVIDER_TOKEN={}\n      LIGHTSPEED_ENVD_CWD=/workspace\n      LIGHTSPEED_ENVD_FS_ROOT=/\nruncmd:\n  - [mkdir, -p, /workspace]\n  - [systemctl, enable, --now, lightspeed-envd]\n",
-            self.config.envd_port, daemon_token
+            "#cloud-config\nwrite_files:\n  - path: /etc/lightspeed-envd/provider.env\n    permissions: '0600'\n    content: |\n      LIGHTSPEED_ENVD_LISTEN=0.0.0.0:{}\n      LIGHTSPEED_ENVD_CWD=/workspace\n      LIGHTSPEED_ENVD_FS_ROOT=/\nruncmd:\n  - [mkdir, -p, /workspace]\n  - [systemctl, enable, --now, lightspeed-envd]\n",
+            self.config.envd_port
         );
         let config = BTreeMap::from([
             ("limits.cpu".to_owned(), template.cpu.to_string()),

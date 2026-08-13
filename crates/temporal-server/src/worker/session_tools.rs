@@ -2615,7 +2615,7 @@ mod tests {
                 binding_id: EnvironmentProviderBindingId::new("test-binding"),
             },
             display_name: None,
-            status: EnvironmentStatus::WaitingForDaemon,
+            status: EnvironmentStatus::Offline,
             incarnation: EnvironmentIncarnationRecord {
                 incarnation_id: EnvironmentIncarnationId::new("incarnation-test"),
                 provision_request_id: Some(EnvironmentProvisionRequestId::new("request-test")),
@@ -2695,7 +2695,7 @@ mod tests {
             .observe_provisioned_environment(ObserveProvisionedEnvironment {
                 environment_id,
                 provider_target_id: target_id,
-                status: EnvironmentStatus::WaitingForDaemon,
+                status: EnvironmentStatus::Offline,
                 observed_at_ms,
             })
             .await

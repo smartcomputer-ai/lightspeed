@@ -1,7 +1,5 @@
 {
   "controllerListen": "127.0.0.1:19090",
-  "controllerToken": "replace-with-a-random-deployment-secret",
-  "daemonTokenKey": "replace-with-an-independent-random-provider-secret",
   "incus": {
     "baseUrl": "https://hz02.example.ts.net:8443",
     "clientCertificatePem": "/run/secrets/incus-client.crt",

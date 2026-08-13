@@ -1,5 +1,12 @@
 # P118: Environment Domain, Bindings, And Durable Lifecycle
 
+> **Update (2026-08-13):** Provider controller connections and external daemon
+> connections use the same non-secret `{endpoint, transport}` document shape,
+> stored respectively as `controller_connection_json` and
+> `daemon_connection_json`. Provider bearer storage and direct daemon
+> enrollment are removed. External daemons must be reachable from Lightspeed
+> and are dialed on demand. Authentication for both downstream hops is deferred.
+
 **Status**
 
 - Proposed 2026-08-11.

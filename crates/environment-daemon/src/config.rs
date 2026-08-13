@@ -1,11 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use host_protocol::gateway::decode_enrollment_token;
-use serde::{Deserialize, Serialize};
-
-pub const STATE_FILE: &str = "identity.json";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -14,21 +13,13 @@ pub const STATE_FILE: &str = "identity.json";
     about = "Lightspeed environment execution daemon"
 )]
 pub struct DaemonArgs {
-    /// Gateway URL used during first enrollment. It is persisted afterwards.
-    #[arg(long, env = "LIGHTSPEED_ENVD_GATEWAY_URL")]
-    pub gateway_url: Option<String>,
-
-    /// Self-locating one-time enrollment token. It is never persisted.
-    #[arg(long, env = "LIGHTSPEED_ENVD_ENROLLMENT_TOKEN")]
-    pub enrollment_token: Option<String>,
-
-    /// Private provider-network listener for managed environments.
-    #[arg(long, env = "LIGHTSPEED_ENVD_PROVIDER_LISTEN")]
-    pub provider_listen: Option<std::net::SocketAddr>,
-
-    /// Target-specific provider credential. Required with --provider-listen.
-    #[arg(long, env = "LIGHTSPEED_ENVD_PROVIDER_TOKEN")]
-    pub provider_token: Option<String>,
+    /// WebSocket listener reachable by Lightspeed or an environment provider.
+    #[arg(
+        long,
+        env = "LIGHTSPEED_ENVD_LISTEN",
+        default_value = "127.0.0.1:19091"
+    )]
+    pub listen: SocketAddr,
 
     #[arg(long, env = "LIGHTSPEED_ENVD_CWD")]
     pub cwd: Option<PathBuf>,
@@ -41,40 +32,15 @@ pub struct DaemonArgs {
 
     #[arg(long, default_value_t = false)]
     pub read_only_fs: bool,
-
-    #[arg(long, env = "LIGHTSPEED_ENVD_RECONNECT_MS", default_value_t = 1_000)]
-    pub reconnect_ms: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DaemonIdentityBinding {
-    pub gateway_url: String,
-    pub universe_id: String,
-    pub environment_id: String,
-    pub incarnation_id: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct DaemonConfig {
-    pub mode: DaemonMode,
+    pub listen: SocketAddr,
     pub cwd: PathBuf,
     pub fs_root: PathBuf,
     pub state_dir: PathBuf,
     pub read_only_fs: bool,
-    pub reconnect_ms: u64,
-}
-
-#[derive(Clone, Debug)]
-pub enum DaemonMode {
-    Direct {
-        identity: DaemonIdentityBinding,
-        enrollment_token: Option<String>,
-    },
-    Provider {
-        listen: std::net::SocketAddr,
-        token: String,
-    },
 }
 
 impl DaemonArgs {
@@ -100,98 +66,14 @@ impl DaemonArgs {
             Some(path) => cwd.join(path),
             None => cwd.join(".lightspeed-envd"),
         };
-        if let Some(listen) = self.provider_listen {
-            let token = self
-                .provider_token
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    anyhow::anyhow!("--provider-token is required with --provider-listen")
-                })?;
-            if self.gateway_url.is_some() || self.enrollment_token.is_some() {
-                bail!("direct enrollment options cannot be combined with --provider-listen");
-            }
-            return Ok(DaemonConfig {
-                mode: DaemonMode::Provider { listen, token },
-                cwd,
-                fs_root,
-                state_dir,
-                read_only_fs: self.read_only_fs,
-                reconnect_ms: self.reconnect_ms.max(100),
-            });
-        }
-        if self.provider_token.is_some() {
-            bail!("--provider-token requires --provider-listen");
-        }
-        let persisted = read_persisted_identity(&state_dir)?;
-        let identity = match self.enrollment_token.as_deref() {
-            Some(token) => {
-                let claims = decode_enrollment_token(token).map_err(anyhow::Error::msg)?;
-                let gateway_url = self
-                    .gateway_url
-                    .as_deref()
-                    .or_else(|| persisted.as_ref().map(|state| state.gateway_url.as_str()))
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("--gateway-url is required for the first enrollment only")
-                    })?;
-                DaemonIdentityBinding {
-                    gateway_url: normalize_gateway_url(gateway_url)?,
-                    universe_id: claims.universe_id,
-                    environment_id: claims.environment_id,
-                    incarnation_id: claims.incarnation_id,
-                }
-            }
-            None => persisted.clone().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "--enrollment-token and --gateway-url are required for first enrollment"
-                )
-            })?,
-        };
-        if let Some(persisted) = persisted
-            && persisted != identity
-        {
-            bail!("envd state directory is bound to a different gateway or environment");
-        }
-        if let Some(gateway_url) = self.gateway_url.as_deref()
-            && normalize_gateway_url(gateway_url)? != identity.gateway_url
-        {
-            bail!("--gateway-url does not match the persisted envd identity");
-        }
         Ok(DaemonConfig {
-            mode: DaemonMode::Direct {
-                identity,
-                enrollment_token: self.enrollment_token,
-            },
+            listen: self.listen,
             cwd,
             fs_root,
             state_dir,
             read_only_fs: self.read_only_fs,
-            reconnect_ms: self.reconnect_ms.max(100),
         })
     }
-}
-
-fn read_persisted_identity(state_dir: &Path) -> Result<Option<DaemonIdentityBinding>> {
-    let path = state_dir.join(STATE_FILE);
-    match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .with_context(|| format!("decode {}", path.display()))
-            .map(Some),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
-    }
-}
-
-fn normalize_gateway_url(value: &str) -> Result<String> {
-    let value = value.trim().trim_end_matches('/');
-    if value.is_empty()
-        || !(value.starts_with("http://")
-            || value.starts_with("https://")
-            || value.starts_with("ws://")
-            || value.starts_with("wss://"))
-    {
-        bail!("gateway URL must use http, https, ws, or wss");
-    }
-    Ok(value.to_owned())
 }
 
 fn native_filesystem_root(path: &Path) -> PathBuf {
@@ -214,73 +96,19 @@ fn canonical_dir(path: PathBuf, label: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::DaemonIdentity;
-
-    fn args(
-        root: &Path,
-        gateway_url: Option<&str>,
-        enrollment_token: Option<String>,
-    ) -> DaemonArgs {
-        DaemonArgs {
-            gateway_url: gateway_url.map(ToOwned::to_owned),
-            enrollment_token,
-            provider_listen: None,
-            provider_token: None,
-            cwd: Some(root.to_path_buf()),
-            fs_root: Some(root.to_path_buf()),
-            state_dir: Some(root.join("state")),
-            read_only_fs: false,
-            reconnect_ms: 100,
-        }
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn first_run_decodes_token_and_restart_uses_only_persisted_state() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let token = host_protocol::gateway::encode_enrollment_token(
-            "universe-a",
-            "environment-a",
-            "incarnation-a",
-            &[7; 32],
-        )
-        .expect("token");
-        let first = args(temp.path(), Some("https://gateway.example/"), Some(token))
-            .into_config()
-            .expect("first-run config");
-        let DaemonMode::Direct { identity, .. } = &first.mode else {
-            panic!("direct")
-        };
-        assert_eq!(identity.gateway_url, "https://gateway.example");
-        assert_eq!(identity.universe_id, "universe-a");
-        DaemonIdentity::load_or_create(&first.state_dir, identity)
-            .await
-            .expect("persist identity");
-
-        let restarted = args(temp.path(), None, None)
-            .into_config()
-            .expect("restart config");
-        let DaemonMode::Direct {
-            identity: restarted,
-            enrollment_token,
-        } = restarted.mode
-        else {
-            panic!("direct")
-        };
-        assert_eq!(restarted, *identity);
-        assert!(enrollment_token.is_none());
-    }
 
     #[test]
-    fn fresh_state_requires_gateway_and_token() {
+    fn listener_config_needs_no_identity_or_secret() {
         let temp = tempfile::tempdir().expect("tempdir");
-        assert!(args(temp.path(), None, None).into_config().is_err());
-        let token = host_protocol::gateway::encode_enrollment_token(
-            "universe-a",
-            "environment-a",
-            "incarnation-a",
-            &[7; 32],
-        )
-        .expect("token");
-        assert!(args(temp.path(), None, Some(token)).into_config().is_err());
+        let config = DaemonArgs {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            cwd: Some(temp.path().to_path_buf()),
+            fs_root: Some(temp.path().to_path_buf()),
+            state_dir: Some(temp.path().join("state")),
+            read_only_fs: false,
+        }
+        .into_config()
+        .expect("config");
+        assert_eq!(config.listen.port(), 0);
     }
 }

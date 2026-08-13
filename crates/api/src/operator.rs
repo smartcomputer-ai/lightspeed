@@ -206,17 +206,6 @@ pub struct OperatorEnvironmentProviderConnection {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct OperatorEnvironmentProviderConnectionInput {
-    pub endpoint: String,
-    pub transport: OperatorEnvironmentProviderTransport,
-    /// Optional write-only bearer used by Lightspeed for both controller and
-    /// data-plane connections. Read and list responses never return it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bearer_token: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct OperatorEnvironmentProviderView {
     pub provider_id: EnvironmentProviderId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -234,7 +223,7 @@ pub struct OperatorEnvironmentProviderPutParams {
     pub provider_id: EnvironmentProviderId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    pub controller_connection: OperatorEnvironmentProviderConnectionInput,
+    pub controller_connection: OperatorEnvironmentProviderConnection,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
 }

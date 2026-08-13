@@ -15,7 +15,6 @@ use thiserror::Error;
 pub(crate) struct EnvironmentResolver {
     environments: Arc<dyn EnvironmentStore>,
     providers: Arc<dyn EnvironmentProviderStore>,
-    routes: Option<Arc<crate::environment_gateway::EnvironmentRouteRegistry>>,
     gateway: Option<crate::environment_gateway::EnvironmentGatewayClientConfig>,
     universe_id: uuid::Uuid,
 }
@@ -31,7 +30,6 @@ impl EnvironmentResolver {
         Self {
             environments,
             providers,
-            routes: None,
             gateway: None,
             universe_id: uuid::Uuid::nil(),
         }
@@ -42,14 +40,6 @@ impl EnvironmentResolver {
         let mut resolver = Self::new(store.clone(), store);
         resolver.universe_id = universe_id;
         resolver
-    }
-
-    pub(crate) fn with_routes(
-        mut self,
-        routes: Arc<crate::environment_gateway::EnvironmentRouteRegistry>,
-    ) -> Self {
-        self.routes = Some(routes);
-        self
     }
 
     pub(crate) fn with_gateway(
@@ -93,7 +83,7 @@ impl EnvironmentResolver {
                 provider_id: environment
                     .provider_id()
                     .map(ToString::to_string)
-                    .unwrap_or_else(|| "enrolled".to_owned()),
+                    .unwrap_or_else(|| "external".to_owned()),
             });
         }
         Ok(environment)
@@ -109,16 +99,6 @@ impl EnvironmentResolver {
         if let Some(provider_id) = environment.provider_id() {
             self.providers.read_provider(provider_id).await?;
         }
-        if let Some(routes) = &self.routes {
-            let key = crate::environment_gateway::RouteKey {
-                universe_id: self.universe_id,
-                environment_id: environment.environment_id.to_string(),
-                incarnation_id: environment.incarnation.incarnation_id.to_string(),
-            };
-            if routes.snapshot(&key).await.is_some() {
-                return Ok(environment);
-            }
-        }
         if let Some(gateway) = &self.gateway {
             let connection = gateway.connection_for(self.universe_id, &environment);
             if host_client::HostDataClient::connect(
@@ -133,7 +113,7 @@ impl EnvironmentResolver {
         }
         Err(EnvironmentResolveError::EnvironmentUnavailable {
             environment_id: environment.environment_id.as_str().to_owned(),
-            status: "no live environment-gateway route".to_owned(),
+            status: "environment endpoint is not reachable".to_owned(),
         })
     }
 }
@@ -215,7 +195,7 @@ mod tests {
             .observe_provisioned_environment(ObserveProvisionedEnvironment {
                 environment_id: environment_id.clone(),
                 provider_target_id: target_id.clone(),
-                status: EnvironmentStatus::WaitingForDaemon,
+                status: EnvironmentStatus::Offline,
                 observed_at_ms: 10,
             })
             .await

@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use host_protocol::shared::{HostTargetId, HostTransport};
-use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
 use super::*;
@@ -114,20 +113,6 @@ async fn provider_delete_requires_all_bindings_to_be_removed() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn provider_put_can_remove_optional_bearer() {
-    let store = InMemoryEnvironmentRegistryStore::for_universe(Uuid::nil());
-    let mut initial = provider();
-    initial.controller_connection.bearer_token = Some(auth::SecretValue::new("secret"));
-    store.put_provider(initial).await.expect("initial provider");
-
-    let updated = store
-        .put_provider(provider())
-        .await
-        .expect("updated provider");
-    assert!(updated.controller_connection.bearer_token.is_none());
-}
-
-#[tokio::test(flavor = "current_thread")]
 async fn stable_request_id_returns_the_original_environment() {
     let (_, store) = store().await;
     let first = store
@@ -191,12 +176,12 @@ async fn provider_observation_populates_only_the_current_incarnation() {
         .observe_provisioned_environment(ObserveProvisionedEnvironment {
             environment_id: environment.environment_id.clone(),
             provider_target_id: target_id.clone(),
-            status: EnvironmentStatus::WaitingForDaemon,
+            status: EnvironmentStatus::Ready,
             observed_at_ms: 3_000,
         })
         .await
         .expect("observe");
-    assert_eq!(observed.status, EnvironmentStatus::WaitingForDaemon);
+    assert_eq!(observed.status, EnvironmentStatus::Ready);
     assert_eq!(observed.incarnation.provider_target_id, Some(target_id));
     assert_eq!(
         observed.incarnation.template_id,
@@ -205,119 +190,27 @@ async fn provider_observation_populates_only_the_current_incarnation() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn provisioned_environment_has_no_direct_daemon_enrollment() {
-    let (_, store) = store().await;
-    let environment = store
-        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
-        .await
-        .expect("create");
-
-    assert!(matches!(
-        store.read_enrollment(&environment.environment_id).await,
-        Err(EnvironmentRegistryError::NotFound {
-            kind: "environment_enrollment",
-            ..
-        })
-    ));
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn direct_enrollment_token_is_one_time_and_revocation_is_final() {
+async fn external_environment_persists_a_typed_connection() {
     let store = InMemoryEnvironmentRegistryStore::new();
-    let token_hash = Sha256::digest(b"one-time-token").to_vec();
-    let (environment, pending, created) = store
-        .create_enrollment(CreateEnvironmentEnrollment {
-            request_id: EnvironmentProvisionRequestId::new("enroll-request-1"),
-            environment_id: EnvironmentId::new("environment-direct"),
-            incarnation_id: EnvironmentIncarnationId::new("incarnation-direct"),
+    let environment = store
+        .create_external_environment(CreateExternalEnvironment {
+            request_id: EnvironmentProvisionRequestId::new("external-request"),
+            environment_id: EnvironmentId::new("external-environment"),
+            incarnation_id: EnvironmentIncarnationId::new("external-incarnation"),
+            connection: EnvironmentConnectionSpec::new(
+                "ws://envd.example:19091",
+                HostTransport::WebSocket,
+            ),
             display_name: None,
             metadata: BTreeMap::new(),
-            token_hash: token_hash.clone(),
-            token_expires_at_ms: 10_000,
             created_at_ms: 1_000,
         })
         .await
-        .expect("create enrollment");
-    assert!(created);
-    assert!(pending.daemon_id.is_none());
-
-    let enrolled = store
-        .enroll_daemon(EnrollEnvironmentDaemon {
-            environment_id: environment.environment_id.clone(),
-            incarnation_id: environment.incarnation.incarnation_id.clone(),
-            token_hash: token_hash.clone(),
-            daemon_id: EnvironmentDaemonId::new("daemon-a"),
-            daemon_public_key: vec![7; 32],
-            enrolled_at_ms: 2_000,
-        })
-        .await
-        .expect("redeem token");
-    assert_eq!(enrolled.token_redeemed_at_ms, Some(2_000));
-    assert!(matches!(
-        store
-            .enroll_daemon(EnrollEnvironmentDaemon {
-                environment_id: environment.environment_id.clone(),
-                incarnation_id: environment.incarnation.incarnation_id.clone(),
-                token_hash,
-                daemon_id: EnvironmentDaemonId::new("daemon-b"),
-                daemon_public_key: vec![8; 32],
-                enrolled_at_ms: 3_000,
-            })
-            .await,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
-
-    let revoked = store
-        .revoke_enrollment(&environment.environment_id, 4_000)
-        .await
-        .expect("revoke");
-    assert_eq!(revoked.revoked_at_ms, Some(4_000));
-    let revoked_again = store
-        .revoke_enrollment(&environment.environment_id, 5_000)
-        .await
-        .expect("idempotent revoke");
-    assert_eq!(revoked_again.revoked_at_ms, Some(4_000));
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn direct_enrollment_rejects_wrong_expired_and_stale_tokens() {
-    for (environment, incarnation, hash, enrolled_at_ms) in [
-        ("wrong-token", "incarnation-wrong", vec![9; 32], 2_000),
-        (
-            "expired-token",
-            "incarnation-expired",
-            Sha256::digest(b"token").to_vec(),
-            20_000,
-        ),
-    ] {
-        let store = InMemoryEnvironmentRegistryStore::new();
-        store
-            .create_enrollment(CreateEnvironmentEnrollment {
-                request_id: EnvironmentProvisionRequestId::new(format!("request-{environment}")),
-                environment_id: EnvironmentId::new(environment),
-                incarnation_id: EnvironmentIncarnationId::new(incarnation),
-                display_name: None,
-                metadata: BTreeMap::new(),
-                token_hash: Sha256::digest(b"token").to_vec(),
-                token_expires_at_ms: 10_000,
-                created_at_ms: 1_000,
-            })
-            .await
-            .expect("create enrollment");
-        assert!(matches!(
-            store
-                .enroll_daemon(EnrollEnvironmentDaemon {
-                    environment_id: EnvironmentId::new(environment),
-                    incarnation_id: EnvironmentIncarnationId::new(incarnation),
-                    token_hash: hash,
-                    daemon_id: EnvironmentDaemonId::new("daemon-a"),
-                    daemon_public_key: vec![7; 32],
-                    enrolled_at_ms,
-                })
-                .await,
-            Err(EnvironmentRegistryError::InvalidInput { .. })
-        ));
-    }
+        .expect("create external environment");
+    let EnvironmentSource::External { connection } = environment.source else {
+        panic!("external source")
+    };
+    assert_eq!(connection.endpoint, "ws://envd.example:19091");
 }
 
 #[tokio::test(flavor = "current_thread")]

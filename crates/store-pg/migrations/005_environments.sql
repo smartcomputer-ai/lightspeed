@@ -5,9 +5,6 @@ CREATE TABLE IF NOT EXISTS environment_providers (
     provider_id text PRIMARY KEY,
     display_name text,
     controller_connection_json jsonb NOT NULL,
-    controller_secret_key_id text,
-    controller_secret_nonce bytea,
-    controller_secret_ciphertext bytea,
     metadata_json jsonb NOT NULL DEFAULT '{}',
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
@@ -16,10 +13,6 @@ CREATE TABLE IF NOT EXISTS environment_providers (
     CONSTRAINT environment_providers_json_objects CHECK (
         jsonb_typeof(controller_connection_json) = 'object'
         AND jsonb_typeof(metadata_json) = 'object'
-    ),
-    CONSTRAINT environment_providers_controller_secret_complete CHECK (
-        (controller_secret_key_id IS NULL AND controller_secret_nonce IS NULL AND controller_secret_ciphertext IS NULL)
-        OR (controller_secret_key_id IS NOT NULL AND octet_length(controller_secret_nonce) = 12 AND octet_length(controller_secret_ciphertext) > 0)
     ),
     CONSTRAINT environment_providers_times_valid CHECK (
         created_at_ms >= 0 AND updated_at_ms >= created_at_ms
@@ -56,6 +49,7 @@ CREATE TABLE IF NOT EXISTS environments (
     source_kind text NOT NULL,
     provider_id text,
     binding_id text,
+    daemon_connection_json jsonb,
     display_name text,
     status text NOT NULL,
     current_incarnation_id text NOT NULL,
@@ -71,13 +65,13 @@ CREATE TABLE IF NOT EXISTS environments (
         AND request_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'
         AND current_incarnation_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'
     ),
-    CONSTRAINT environments_source_known CHECK (source_kind IN ('provisioned', 'enrolled')),
+    CONSTRAINT environments_source_known CHECK (source_kind IN ('provisioned', 'external')),
     CONSTRAINT environments_source_fields CHECK (
-        (source_kind = 'provisioned' AND provider_id IS NOT NULL AND binding_id IS NOT NULL)
-        OR (source_kind = 'enrolled' AND provider_id IS NULL AND binding_id IS NULL)
+        (source_kind = 'provisioned' AND provider_id IS NOT NULL AND binding_id IS NOT NULL AND daemon_connection_json IS NULL)
+        OR (source_kind = 'external' AND provider_id IS NULL AND binding_id IS NULL AND jsonb_typeof(daemon_connection_json) = 'object')
     ),
     CONSTRAINT environments_status_known CHECK (status IN (
-        'provisioning', 'booting', 'waiting_for_daemon', 'ready', 'offline',
+        'provisioning', 'booting', 'ready', 'offline',
         'closing', 'closed', 'failed', 'unknown'
     )),
     CONSTRAINT environments_metadata_object
@@ -127,41 +121,6 @@ CREATE TABLE IF NOT EXISTS environment_incarnations (
     ),
     CONSTRAINT environment_incarnations_times_valid CHECK (
         created_at_ms >= 0 AND updated_at_ms >= created_at_ms
-    )
-);
-
-CREATE TABLE IF NOT EXISTS environment_daemon_enrollments (
-    universe_id uuid NOT NULL,
-    environment_id text NOT NULL,
-    incarnation_id text NOT NULL,
-    token_hash bytea NOT NULL,
-    token_expires_at_ms bigint NOT NULL,
-    token_redeemed_at_ms bigint,
-    revoked_at_ms bigint,
-    daemon_id text,
-    daemon_public_key bytea,
-    enrolled_at_ms bigint,
-    created_at_ms bigint NOT NULL,
-    updated_at_ms bigint NOT NULL,
-    PRIMARY KEY (universe_id, environment_id, incarnation_id),
-    FOREIGN KEY (universe_id, environment_id, incarnation_id)
-        REFERENCES environment_incarnations (universe_id, environment_id, incarnation_id)
-        ON DELETE CASCADE,
-    CONSTRAINT environment_daemon_enrollments_token_hash_size
-        CHECK (octet_length(token_hash) = 32),
-    CONSTRAINT environment_daemon_enrollments_identity_complete CHECK (
-        (daemon_id IS NULL AND daemon_public_key IS NULL AND enrolled_at_ms IS NULL)
-        OR (
-            daemon_id IS NOT NULL
-            AND daemon_public_key IS NOT NULL
-            AND octet_length(daemon_public_key) = 32
-            AND enrolled_at_ms IS NOT NULL
-        )
-    ),
-    CONSTRAINT environment_daemon_enrollments_times_valid CHECK (
-        created_at_ms >= 0
-        AND updated_at_ms >= created_at_ms
-        AND token_expires_at_ms >= created_at_ms
     )
 );
 
@@ -217,16 +176,12 @@ COMMENT ON TABLE environment_providers IS
     'Operator-registered provider identity and controller connection; protocol and presence are observed transiently.';
 COMMENT ON COLUMN environment_providers.metadata_json IS
     'Non-authoritative operator metadata; never provider capability, health, or allocation policy.';
-COMMENT ON COLUMN environment_providers.controller_secret_ciphertext IS
-    'Optional AEAD-encrypted write-only bearer used by Lightspeed for provider controller and on-demand data-plane connections.';
 COMMENT ON TABLE environment_provider_bindings IS
     'Revisioned universe routing and admission binding to one provider; allocation and ingress policy remain provider-owned.';
-COMMENT ON TABLE environment_daemon_enrollments IS
-    'One-time enrollment token hash and daemon public-key identity for a directly enrolled environment incarnation. Provider-mediated environments authenticate locally to their provider and do not have rows here.';
 COMMENT ON COLUMN environment_provider_bindings.metadata_json IS
     'Non-authoritative binding labels; never provider template, quota, capacity, or ingress policy.';
 COMMENT ON TABLE environments IS
-    'Universe-owned logical environment lifecycle intent; not a physical resource reservation ledger.';
+    'Universe-owned logical environments. External environments store a Lightspeed-reachable envd endpoint; provisioned environments retain provider routing linkage.';
 COMMENT ON TABLE environment_incarnations IS
     'Lightspeed-authorized environment generations with stable provider retry and target linkage; not provider inventory or live gateway state.';
 COMMENT ON COLUMN environment_incarnations.provider_target_id IS

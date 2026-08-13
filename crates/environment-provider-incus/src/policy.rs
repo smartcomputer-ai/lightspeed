@@ -1,5 +1,3 @@
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use hmac::{Hmac, Mac as _};
 use sha2::{Digest as _, Sha256};
 
 use crate::config::BindingPolicy;
@@ -48,32 +46,6 @@ pub fn instance_name(
     )
 }
 
-pub fn daemon_token(
-    daemon_token_key: &str,
-    universe_id: &str,
-    binding_id: &str,
-    environment_id: &str,
-    incarnation_id: &str,
-    target_id: &str,
-) -> String {
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(daemon_token_key.as_bytes()).expect("HMAC accepts any key");
-    for part in [
-        universe_id,
-        binding_id,
-        environment_id,
-        incarnation_id,
-        target_id,
-    ] {
-        mac.update(&(part.len() as u64).to_be_bytes());
-        mac.update(part.as_bytes());
-    }
-    format!(
-        "lsp1.{}",
-        URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
-    )
-}
-
 fn hex(bytes: &[u8]) -> String {
     const TABLE: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
@@ -88,17 +60,9 @@ fn hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     #[test]
-    fn names_and_tokens_are_stable_and_scoped() {
+    fn names_are_stable_and_scoped() {
         let a = instance_name("u", "b", "e", "i");
         assert_eq!(a, instance_name("u", "b", "e", "i"));
         assert_ne!(a, instance_name("u2", "b", "e", "i"));
-        assert_ne!(
-            daemon_token("secret", "u", "b", "e", "i", "target-a"),
-            daemon_token("secret", "u", "b", "e", "i2", "target-a")
-        );
-        assert_ne!(
-            daemon_token("secret", "u", "b", "e", "i", "target-a"),
-            daemon_token("secret", "u", "b", "e", "i", "target-clone")
-        );
     }
 }

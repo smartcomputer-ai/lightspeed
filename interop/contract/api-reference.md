@@ -265,32 +265,14 @@ Records an asynchronous idempotent close intent. Provider cleanup is resumed by 
 - Params: `EnvironmentCloseParams`
 - Result: `AgentApiOutcome<EnvironmentCloseResponse>`
 
-### `environments/enrollments/create`
+### `environments/external/create`
 
-**Create an environment enrollment**
+**Register an external environment**
 
-Creates a pending directly enrolled environment and returns its short-lived one-time daemon token exactly once.
+Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.
 
-- Params: `EnvironmentEnrollmentCreateParams`
-- Result: `AgentApiOutcome<EnvironmentEnrollmentCreateResponse>`
-
-### `environments/enrollments/read`
-
-**Read an environment enrollment**
-
-Returns bounded direct-enrollment token, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.
-
-- Params: `EnvironmentEnrollmentReadParams`
-- Result: `AgentApiOutcome<EnvironmentEnrollmentReadResponse>`
-
-### `environments/enrollments/revoke`
-
-**Revoke an environment enrollment**
-
-Idempotently revokes a directly enrolled daemon identity; a connected direct route is fenced immediately by the gateway.
-
-- Params: `EnvironmentEnrollmentRevokeParams`
-- Result: `AgentApiOutcome<EnvironmentEnrollmentRevokeResponse>`
+- Params: `EnvironmentExternalCreateParams`
+- Result: `AgentApiOutcome<EnvironmentExternalCreateResponse>`
 
 ### `environments/provider-bindings/list`
 

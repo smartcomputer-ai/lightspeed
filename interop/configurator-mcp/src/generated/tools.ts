@@ -3854,7 +3854,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "enum": [
             "provisioning",
             "booting",
-            "waitingForDaemon",
             "ready",
             "offline",
             "closing",
@@ -3888,27 +3887,26 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_environments_enrollments_create",
-    "method": "environments/enrollments/create",
-    "summary": "Create an environment enrollment",
-    "description": "Creates a pending directly enrolled environment and returns its short-lived one-time daemon token exactly once.",
-    "paramsType": "EnvironmentEnrollmentCreateParams",
-    "resultType": "AgentApiOutcome<EnvironmentEnrollmentCreateResponse>",
+    "name": "lightspeed_environments_external_create",
+    "method": "environments/external/create",
+    "summary": "Register an external environment",
+    "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.",
+    "paramsType": "EnvironmentExternalCreateParams",
+    "resultType": "AgentApiOutcome<EnvironmentExternalCreateResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
+        "connection": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EnvironmentConnectionView"
+            }
+          ],
+          "description": "Connection to an envd instance reachable from Lightspeed."
+        },
         "displayName": {
           "type": [
             "string",
-            "null"
-          ]
-        },
-        "expiresInSeconds": {
-          "description": "Requested one-time token lifetime. Defaults to ten minutes and is\ncapped at one hour.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
             "null"
           ]
         },
@@ -3923,49 +3921,62 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         }
       },
       "required": [
-        "requestId"
+        "requestId",
+        "connection"
       ],
-      "type": "object"
-    }
-  },
-  {
-    "name": "lightspeed_environments_enrollments_read",
-    "method": "environments/enrollments/read",
-    "summary": "Read an environment enrollment",
-    "description": "Returns bounded direct-enrollment token, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource.",
-    "paramsType": "EnvironmentEnrollmentReadParams",
-    "resultType": "AgentApiOutcome<EnvironmentEnrollmentReadResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "environmentId": {
-          "type": "string"
+      "type": "object",
+      "definitions": {
+        "EnvironmentConnectionTransportView": {
+          "oneOf": [
+            {
+              "enum": [
+                "webSocket",
+                "http",
+                "stdio",
+                "ssh"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": {
+                "not": {}
+              },
+              "properties": {
+                "provider": {
+                  "properties": {
+                    "provider_type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "provider_type"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "provider"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "EnvironmentConnectionView": {
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "transport": {
+              "$ref": "#/definitions/EnvironmentConnectionTransportView"
+            }
+          },
+          "required": [
+            "endpoint",
+            "transport"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "environmentId"
-      ],
-      "type": "object"
-    }
-  },
-  {
-    "name": "lightspeed_environments_enrollments_revoke",
-    "method": "environments/enrollments/revoke",
-    "summary": "Revoke an environment enrollment",
-    "description": "Idempotently revokes a directly enrolled daemon identity; a connected direct route is fenced immediately by the gateway.",
-    "paramsType": "EnvironmentEnrollmentRevokeParams",
-    "resultType": "AgentApiOutcome<EnvironmentEnrollmentRevokeResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "environmentId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "environmentId"
-      ],
-      "type": "object"
+      }
     }
   },
   {

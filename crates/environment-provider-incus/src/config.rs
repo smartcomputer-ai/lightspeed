@@ -15,8 +15,6 @@ pub struct ProviderArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RawConfig {
     controller_listen: SocketAddr,
-    controller_token: Option<String>,
-    daemon_token_key: String,
     incus: IncusConfig,
     bindings: Vec<BindingPolicy>,
     relay_idle_seconds: Option<u64>,
@@ -30,8 +28,6 @@ pub struct Config(Arc<ConfigInner>);
 #[derive(Debug)]
 pub struct ConfigInner {
     pub controller_listen: SocketAddr,
-    pub controller_token: Option<String>,
-    pub daemon_token_key: String,
     pub incus: IncusConfig,
     pub bindings: BTreeMap<(String, String), BindingPolicy>,
     pub relay_idle_seconds: u64,
@@ -87,9 +83,6 @@ impl ProviderArgs {
             .with_context(|| format!("read {}", self.config.display()))?;
         let raw: RawConfig =
             serde_json::from_slice(&bytes).context("decode provider config JSON")?;
-        if raw.daemon_token_key.is_empty() {
-            bail!("daemonTokenKey must not be empty")
-        }
         let mut bindings = BTreeMap::new();
         for binding in raw.bindings {
             if binding.templates.is_empty() {
@@ -102,8 +95,6 @@ impl ProviderArgs {
         }
         Ok(Config(Arc::new(ConfigInner {
             controller_listen: raw.controller_listen,
-            controller_token: raw.controller_token.filter(|value| !value.is_empty()),
-            daemon_token_key: raw.daemon_token_key,
             incus: raw.incus,
             bindings,
             relay_idle_seconds: raw.relay_idle_seconds.unwrap_or(60).max(1),
@@ -146,7 +137,7 @@ mod tests {
             "templates":[{"templateId":"dev-small-v1","displayName":"Small","imageFingerprint":"abc","cpu":2,"memory":"4GiB","disk":"40GiB"}]
         });
         let document = serde_json::json!({
-            "controllerListen":"127.0.0.1:0","daemonTokenKey":"secret",
+            "controllerListen":"127.0.0.1:0",
             "incus":{"baseUrl":"https://incus.test","clientCertificatePem":"cert","clientPrivateKeyPem":"key","serverCaPem":"ca","storagePool":"default"},
             "bindings":[binding]
         });
@@ -166,7 +157,6 @@ mod tests {
                 .max_environments,
             None
         );
-        assert!(config.controller_token.is_none());
         let mut duplicate = document;
         let first_binding = duplicate["bindings"][0].clone();
         duplicate["bindings"]

@@ -347,12 +347,8 @@ api_methods! {
         ["List environments", "Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state."],
     METHOD_ENVIRONMENTS_CLOSE => close_environment(EnvironmentCloseParams) -> EnvironmentCloseResponse =>
         ["Close an environment", "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed."],
-    METHOD_ENVIRONMENTS_ENROLLMENTS_CREATE => create_environment_enrollment(EnvironmentEnrollmentCreateParams) -> EnvironmentEnrollmentCreateResponse =>
-        ["Create an environment enrollment", "Creates a pending directly enrolled environment and returns its short-lived one-time daemon token exactly once."],
-    METHOD_ENVIRONMENTS_ENROLLMENTS_READ => read_environment_enrollment(EnvironmentEnrollmentReadParams) -> EnvironmentEnrollmentReadResponse =>
-        ["Read an environment enrollment", "Returns bounded direct-enrollment token, daemon identity, and revocation diagnostics without secret token or public-key material. Live route availability is reported by the environment resource."],
-    METHOD_ENVIRONMENTS_ENROLLMENTS_REVOKE => revoke_environment_enrollment(EnvironmentEnrollmentRevokeParams) -> EnvironmentEnrollmentRevokeResponse =>
-        ["Revoke an environment enrollment", "Idempotently revokes a directly enrolled daemon identity; a connected direct route is fenced immediately by the gateway."],
+    METHOD_ENVIRONMENTS_EXTERNAL_CREATE => create_external_environment(EnvironmentExternalCreateParams) -> EnvironmentExternalCreateResponse =>
+        ["Register an external environment", "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand."],
     METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST => list_environment_provider_bindings(EnvironmentProviderBindingListParams) -> EnvironmentProviderBindingListResponse =>
         ["List environment provider bindings", "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers."],
     METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ => read_environment_provider_binding(EnvironmentProviderBindingReadParams) -> EnvironmentProviderBindingReadResponse =>
