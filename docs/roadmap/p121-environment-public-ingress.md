@@ -1,108 +1,196 @@
-# P121: Environment Public Ingress
+# P121: Provider-Managed Environment Public Ingress
 
 **Status**
 
 - Proposed 2026-08-11.
+- Rewritten 2026-08-13 to use direct node-edge ingress rather than a
+  per-environment Cloudflare Tunnel.
+- Optional and not required to complete P120.
 - Builds on [P120](p120-incus-environment-provider.md).
-- Implements the optional public-application path from
-  [P117](p117-environment-compute-plan.md).
 
 ## Goal
 
-Let a provisioned environment expose an application through a controlled
-hostname without exposing envd, the environment gateway, SSH, Incus, Docker,
-arbitrary node ports, or raw Lightspeed RPC endpoints.
+Let a provisioned environment expose an HTTP application through a controlled
+HTTPS hostname without publicly exposing envd, the environment gateway, SSH,
+Incus, Docker, arbitrary VM ports, or raw Lightspeed RPC endpoints.
 
-The first implementation uses one Cloudflare Tunnel per environment. Public
-ingress is independent of the environment control connection and can be
-disabled or replaced without changing host protocol or session semantics.
+The first implementation uses a shared ingress proxy at the provider edge:
 
-## Policy and ownership
+```text
+browser
+  -> wildcard DNS and HTTPS
+  -> provider-managed edge proxy
+  -> environment private address:provider-approved port
+```
 
-Ingress is allowed only when the provider authorizes it for the environment's
-binding and template. Lightspeed does not persist a duplicate
-`publicIngressAllowed` binding flag. It records the provider's allocated
-hostname and bounded ingress observation on the environment; the provider owns
-the allocation policy, while Cloudflare remains authoritative for tunnel, DNS,
-and edge TLS state.
+Public ingress is independent of the environment control and data-plane
+connections. Lightspeed still initiates provider and envd traffic on demand;
+public application requests never pass through the Lightspeed gateway or
+Temporal workers.
 
-The initial environment exposes multiple local services behind one hostname.
-Per-service platform APIs, a deployment DSL, and multi-region routing are not
-part of this milestone.
+## Initial scope
 
-Tunnel allocation may begin as a CLI-assisted operator action. Automation is
-added only after the allocation, rotation, and deletion lifecycle is proven.
+Each admitted provisioned environment may have at most one public hostname.
+That hostname forwards HTTP, HTTPS-upgraded WebSocket, and streaming traffic to
+one fixed guest port selected by provider template policy. The application may
+run its own unprivileged reverse proxy on that port when it needs to serve a
+frontend and multiple backend services.
 
-## Credential boundary
+Universe callers do not choose arbitrary destination addresses or ports. Raw
+TCP/UDP exposure, multiple platform routes, path-routing configuration, custom
+domains, and a deployment DSL are outside the first milestone.
 
-The tunnel credential is a service credential for the system-managed
-`cloudflared` connector. It must not use the ordinary environment credential
-binding mechanism, because those credentials are injected into every
-Lightspeed-started process and job.
+External environments are not included because their networking is not owned
+by an environment provider.
 
-Install the credential through a protected root/system-service secret path.
-The public workload does not receive it. Rotation or ingress revocation updates
-the connector without changing envd identity or granting Lightspeed API access.
+## Ownership and durable state
 
-A tunnel credential is scoped to its own environment tunnel/hostname. Baseline
-P120 networking separately blocks sibling binding networks, Incus hosts, and
-the trusted control plane. The tunnel itself is not treated as an egress or
-lateral-isolation mechanism.
+Lightspeed owns the universe's ingress intent and its bounded observation:
 
-## Lightspeed API access
+- whether ingress is requested;
+- the current environment and incarnation;
+- the allocated public hostname;
+- a small lifecycle status such as `provisioning`, `ready`, `disabled`, or
+  `failed`; and
+- a revision and timestamps for idempotent reconciliation.
 
-Control and application credentials remain separate:
+Lightspeed does not store provider network configuration, proxy configuration,
+TLS keys, or a duplicate binding-level `publicIngressAllowed` policy flag.
 
-- envd uses daemon identity plus incarnation fencing;
-- ordinary session processes receive explicitly bound environment credentials;
+The provider owns authorization and realization. It validates that the
+binding and template permit ingress, chooses the hostname and approved guest
+port, resolves the current target's private address, and idempotently creates,
+updates, observes, or removes the edge route. Repeated requests use stable
+request, environment, incarnation, and target identities.
+
+The provider remains stateless. Durable route state lives in the edge proxy's
+configuration, while ownership facts remain attached to the Incus target.
+After restart, the provider reconstructs the requested route from the call and
+backend inventory and reconciles the proxy. It must never adopt or delete a
+route whose ownership facts do not match.
+
+Closing an environment disables its ingress before or alongside target
+deletion. A changed incarnation cannot inherit a previous incarnation's route
+without an explicit successful reconciliation.
+
+## Edge deployment
+
+The initial Incus deployment uses one shared reverse proxy reachable on public
+ports 80 and 443. A wildcard DNS record points the platform ingress domain to
+that proxy, and the proxy terminates TLS using a wildcard certificate or an
+equivalent deployment-managed certificate.
+
+The proxy reaches guest applications only over provider-managed private
+networks. Firewall policy allows it to reach the approved ingress port and
+does not give it general access to envd, SSH, Incus, Docker, the trusted
+control plane, or sibling environment services.
+
+The exact proxy implementation is a deployment choice. Caddy, HAProxy,
+Traefik, or a small dedicated ingress service are all acceptable if they
+provide:
+
+- an idempotent management interface;
+- atomic route replacement;
+- hostname-based routing;
+- WebSocket and streaming support;
+- bounded health observation; and
+- auditable route ownership metadata.
+
+The provider-to-proxy management path is a deployment-internal control path.
+Any management credential or TLS private key remains in provider/edge
+deployment configuration and never enters Lightspeed Postgres or a VM.
+
+## Hostnames and application behavior
+
+Hostnames are allocated under a configured platform domain and must be unique
+across all providers using that domain. They should use an opaque stable
+provider allocation rather than embed a universe ID or other tenant metadata.
+
+The provider template declares the single guest ingress port. The base image
+does not need an ingress agent or platform credential. A workload becomes
+reachable by listening on that port; when multiple services are needed, a
+VM-local application proxy can route paths to them.
+
+The public response should retain the application's ordinary HTTP behavior.
+The edge adds standard forwarded-host/protocol/address headers, applies sane
+request and idle limits, and must not inject Lightspeed credentials.
+
+## Lightspeed API access from applications
+
+Public ingress and Lightspeed API access remain separate:
+
+- envd and provider endpoints currently rely on deployment network/transport
+  protection;
+- ordinary session processes receive explicitly bound environment
+  credentials;
 - a persistent backend that calls Lightspeed receives a dedicated revocable
   universe API key explicitly injected into that backend service; and
 - browser/frontend code never receives a Lightspeed bearer key.
 
-The development template provides the stable non-secret Lightspeed API URL and
-a small CLI/client helper. ls.bot may add a convenience action for creating and
-binding the dedicated backend key, but the underlying create-secret-bind flow
-remains authoritative.
+The ingress proxy does not authenticate an application to Lightspeed. The
+application remains responsible for its own user-facing authentication.
 
 ## Implementation
 
-- [ ] Add provider-controlled ingress allocation plus Lightspeed observation
-      metadata and status.
-- [ ] Include `cloudflared` in the development template.
-- [ ] Allocate one tunnel and platform-domain hostname per environment.
-- [ ] Install the tunnel token through a protected system-service secret path.
-- [ ] Configure the connector to reach approved local application routes.
-- [ ] Implement rotation, disable, close, and cleanup semantics.
-- [ ] Add bounded health/diagnostic views without exposing tokens or local
-      service details.
-- [ ] Update ls.bot to show the public endpoint and ingress state.
-- [ ] Add the optional convenience flow for a dedicated environment backend
-      Lightspeed API key.
+- [ ] Add a minimal universe API to request, read, and disable ingress for a
+      provisioned environment.
+- [ ] Persist revisioned ingress intent and bounded observation in Lightspeed.
+- [ ] Extend the provider protocol with idempotent ensure, observe, and remove
+      ingress operations.
+- [ ] Add provider template policy for ingress eligibility and one approved
+      guest port.
+- [ ] Deploy wildcard DNS, TLS termination, and the shared edge proxy.
+- [ ] Implement provider reconciliation of hostname routes to current owned
+      Incus targets.
+- [ ] Fence routes by universe, binding, environment, incarnation, and target
+      ownership.
+- [ ] Remove ingress during environment close and recover safely from partial
+      enable/disable operations.
+- [ ] Expose the public hostname and bounded status without leaking private
+      addresses or edge configuration.
+- [ ] Update ls.bot to show and manage the optional public endpoint.
+
+The exact proxy product and final API DTO names may be chosen during
+implementation; they must preserve the ownership and exposure boundaries
+above.
 
 ## Verification
 
-- A binding without ingress permission cannot allocate or claim a hostname.
-- Universe A cannot read, mutate, or claim universe B's ingress.
-- The public hostname reaches only the configured environment application.
-- No node inbound port, envd/gateway endpoint, SSH, Incus API, Docker socket,
-  or raw Lightspeed RPC endpoint becomes public.
-- Tunnel credentials are absent from arbitrary process/job environments,
-  diagnostics, logs, and API responses.
-- Credential rotation and environment close revoke the old connector.
-- A deployed backend can call only its own Lightspeed universe through its
-  dedicated key, while its frontend has no bearer credential.
-- External health monitoring observes the public endpoint without gaining
-  environment control authority.
+- A binding or template without ingress permission cannot allocate a route.
+- Universe A cannot read, mutate, route to, or claim universe B's ingress.
+- The allocated hostname reaches only the current environment incarnation's
+  approved application port.
+- Arbitrary ports and private destination addresses cannot be supplied by a
+  universe caller.
+- envd, the environment gateway, SSH, Incus, Docker, provider control, and raw
+  Lightspeed RPC remain unreachable through public ingress.
+- A stale incarnation, cloned VM, mismatched target, or reused request cannot
+  claim the current hostname.
+- Provider, edge-proxy, Lightspeed, and VM restarts converge without duplicate
+  hostnames or routes.
+- Environment close and ingress disable make the old route unreachable even
+  when target cleanup is delayed.
+- The proxy supports WebSocket and streaming applications and applies bounded
+  connection and request limits.
+- No edge management credential, TLS private key, private VM address, or
+  Lightspeed API key appears in universe API responses or workload processes.
 
 ## Done
 
-P121 is complete when a session can deploy a backend/frontend from its P120
-environment, reach it through the controlled hostname, and the tunnel,
-environment-control, and Lightspeed-application credentials remain distinct.
+P121 is complete when a session can deploy an HTTP backend/frontend into a
+P120 environment, request provider-authorized ingress, reach it through the
+allocated HTTPS hostname, and reliably revoke that access without exposing a
+general VM, provider, envd, or Lightspeed control endpoint.
 
 ## Deferred
 
-- Node edge ingress with wildcard DNS and host-terminated TLS.
-- Per-service deployment APIs or a generic deployment DSL.
-- Fine-grained egress policy and hostname policy for untrusted tenants.
-- Multi-region ingress, metering, and billing.
+- Cloudflare Tunnel or another outbound-tunnel implementation for deployments
+  that cannot operate inbound edge infrastructure.
+- External-environment ingress.
+- Multiple platform-managed routes or arbitrary application ports.
+- Custom domains and per-host certificate issuance.
+- Raw TCP/UDP ingress.
+- A generic deployment DSL or application runtime.
+- Fine-grained hostname policy for untrusted tenants.
+- Multi-region ingress, metering, billing, and denial-of-service protection
+  beyond deployment-level limits.

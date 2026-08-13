@@ -112,25 +112,24 @@
 - [x] [P117](p117-environment-compute-plan.md) — agreed target architecture for
   operator-registered reachable compute providers, lightweight universe
   bindings, provider-owned allocation/ingress policy, stable environment
-  identity, direct enrollment, outbound envd connections, managed Incus VMs,
-  public ingress, and a future independent-node pool; delivery is split across
-  P118-P122
+  identity, reachable external environments, on-demand data connections,
+  managed Incus VMs, public ingress, and a future independent-node pool;
+  delivery is split across P118-P122
 - [ ] [P118](p118-environment-domain-and-lifecycle.md) — replace the
   provider-as-singleton model with operator providers, revisioned universe
   routing/admission bindings, transient controller initialization,
   incarnation-scoped physical facts, idempotent asynchronous lifecycle, and a
   Lightspeed-owned reconciler over a provider-owned policy boundary
-- [ ] [P119](p119-environment-daemon-gateway-enrollment.md) — core direct-enrollment and gateway data plane implemented; packaging and product UX remain follow-ups. Replace
-  attach-only host-bridge registration with `lightspeed-envd`, authenticated
-  outbound gateway routing, daemon/incarnation fencing, and direct host
-  enrollment
+- [ ] [P119](p119-environment-daemon-gateway-enrollment.md) — core passive
+  `lightspeed-envd` and on-demand gateway data plane implemented; packaging,
+  deployment authentication, and product UX remain follow-ups
 - [ ] [P120](p120-incus-environment-provider.md) — core standalone stateless
   Incus controller, passive on-demand data endpoint, immutable image recipe, per-binding policy,
   and durable VM provisioning are implemented; hz01/hz02 deployment, image
   publication, ls.bot UX, and live isolation/acceptance proofs remain
 - [ ] [P121](p121-environment-public-ingress.md) — add provider-authorized
-  per-environment Cloudflare Tunnel ingress with a service-secret boundary
-  separate from ordinary environment credentials
+  per-environment HTTPS ingress through a shared node-edge proxy with wildcard
+  DNS/TLS and no agent or platform credential inside the VM
 - [ ] [P122](p122-incus-multi-node-pool.md) — extend the stateless Incus
   provider to independently managed nodes with placement, image distribution,
   cordon/drain, and explicit node-loss behavior

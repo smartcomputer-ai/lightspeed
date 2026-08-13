@@ -10,8 +10,10 @@
 > older enrollment discussion below is retained only as design history.
 
 Status: target design agreed 2026-08-10; scope trimmed 2026-08-11 after review
-(trusted-tenant v1, tunnel-first ingress, cursory backend sketches); split into
-delivery milestones and moved provider policy out of Lightspeed 2026-08-11.
+(trusted-tenant v1 and cursory backend sketches); split into delivery
+milestones and moved provider policy out of Lightspeed 2026-08-11. Public
+ingress changed from tunnel-first to provider-managed node-edge ingress on
+2026-08-13.
 
 This is the umbrella target architecture for dynamic and directly enrolled
 Lightspeed environments across the `lightspeed` and `ls.bot` repositories.
@@ -1050,9 +1052,11 @@ cross-region Incus quorum is not the default pool design.
 ## Lightspeed API access from environments
 
 The environment's control connection and the software it builds have separate
-credentials.
+trust boundaries.
 
-- envd authenticates with daemon identity and incarnation fencing.
+- envd/provider application authentication is currently deferred; deployment
+  network/transport controls protect those endpoints and Lightspeed fences
+  routes with current environment/incarnation ownership.
 - A session process receives environment-bound secrets through the existing
   environment credential mechanism.
 - Software that must call Lightspeed persistently receives a dedicated,
@@ -1069,34 +1073,30 @@ solid; the manual create-secret-bind flow is sufficient for the first proof.
 
 Public ingress is independent of environment control transport.
 
-First implementation: one Cloudflare Tunnel per environment.
+First implementation: a shared provider-managed node-edge reverse proxy.
 
-- The development template image includes `cloudflared`.
-- When the provider authorizes public ingress for the binding and template, a
-  tunnel and a hostname under the platform ingress domain are allocated for the
-  environment. Lightspeed stores the resulting hostname and bounded ingress
-  observation, not a duplicate binding permission flag.
-- The tunnel credential is installed only for the system-managed connector
-  using a protected service-secret path. It is not a generic environment
-  credential and is not injected into arbitrary Lightspeed-started processes
-  or jobs.
-- The connector runs inside the environment and routes to local application
-  ports. Cloudflare terminates DNS and TLS; no inbound port opens on any node
-  and no per-node edge service exists.
-- A tunnel credential authorizes routing for its own hostname only. Baseline
-  provider networking separately prevents access to sibling bindings, the
+- Wildcard DNS and deployment-managed TLS terminate at the edge proxy.
+- When provider binding and template policy authorize ingress, the provider
+  allocates one opaque hostname and routes it to one provider-defined guest
+  port on the current owned target.
+- Lightspeed stores requested ingress plus the resulting hostname and bounded
+  observation, not a duplicate binding permission flag or proxy configuration.
+- Universe callers cannot choose arbitrary VM addresses or ports. A VM-local
+  application proxy may serve multiple application components through the one
+  approved entrypoint.
+- The VM contains no tunnel agent, ingress token, TLS key, or platform ingress
+  credential.
+- Baseline provider networking permits the edge proxy to reach only approved
+  application routes and separately prevents access to sibling bindings, the
   node, and the trusted control plane.
-
-Tunnel and hostname allocation may be a manual, CLI-assisted operator step for
-the first proof; automate through the Cloudflare API once the flow is stable.
 
 Tailscale Funnel is not used for environment ingress: the tailnet is the
 trusted application plane and agent-controlled VMs must not hold tailnet
 identity.
 
-The node edge guest (wildcard DNS, host-terminated TLS, approved-route
-proxying) remains the fallback if tunnel limits, bandwidth costs, or
-third-party dependence become a problem. It is deferred, not abandoned.
+Cloudflare Tunnel or another outbound tunnel remains a deployment alternative
+when running public inbound edge infrastructure is impractical. It is not part
+of the first implementation.
 
 Never expose publicly:
 
@@ -1107,9 +1107,9 @@ Never expose publicly:
 - arbitrary application ports; or
 - raw Lightspeed RPC endpoints.
 
-For the first implementation, an environment routes multiple internal services
-behind its single tunnel hostname. A generic deployment DSL, per-service
-platform API, and multi-region global ingress are deferred.
+For the first implementation, an environment exposes one application
+entrypoint behind its single hostname. A generic deployment DSL, per-service
+platform API, arbitrary ports, and multi-region global ingress are deferred.
 
 ## Firecracker backend compatibility
 
@@ -1410,8 +1410,8 @@ umbrella document and have no scheduled implementation plan.
 - Gateway restart with daemon reconnect.
 - Node loss and recovery.
 - Image update affects new VMs only.
-- Public ingress resolves only through the environment's allocated tunnel
-  hostname.
+- Public ingress resolves only through the environment's allocated edge
+  hostname and current provider-owned target route.
 - Snapshot/clone attempt cannot create two accepted copies of one incarnation.
 
 ## First complete definition of done
@@ -1469,7 +1469,7 @@ umbrella document and have no scheduled implementation plan.
 | Provider persistence | None initially; derive from Lightspeed + backend |
 | User choice | Curated versioned templates, not raw images |
 | Image identity | Immutable fingerprint recorded per target |
-| Public ingress | Per-environment Cloudflare Tunnel first; node edge gateway deferred |
+| Public ingress | Provider-managed node-edge HTTPS proxy with wildcard DNS/TLS and one approved guest port per environment |
 | Interactive data plane | Direct transport; never per-call Temporal workflows |
 | Session relationship | Session selects universe environment; no lifecycle ownership |
 | Foundry relationship | Ordinary consumer of environment compute |
