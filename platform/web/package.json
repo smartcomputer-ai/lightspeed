@@ -1,0 +1,46 @@
+{
+  "name": "@lightspeed/platform-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.6.0",
+    "@fontsource-variable/geist": "^5.2.9",
+    "@fontsource-variable/space-grotesk": "^5.2.10",
+    "@lightspeed/agent-client": "*",
+    "@lightspeed/platform-shared": "*",
+    "@shadcn/react": "^0.2.0",
+    "@tabler/icons-react": "^3.44.0",
+    "@tailwindcss/vite": "^4.3.2",
+    "@tanstack/react-query": "^5.80.0",
+    "better-auth": "^1.2.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.23.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.6.0",
+    "remark-gfm": "^4.0.1",
+    "shadcn": "^4.13.0",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.2",
+    "tw-animate-css": "^1.4.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "vite": "^7.0.0",
+    "vitest": "^3.2.6"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,23 @@
+#!/usr/bin/env node
+// Shim: runs the TS CLI through tsx, resolved relative to this package so
+// the command works from any working directory.
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const require = createRequire(import.meta.url);
+const tsxUrl = pathToFileURL(require.resolve("tsx")).href;
+const main = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "src",
+  "main.ts",
+);
+
+const result = spawnSync(
+  process.execPath,
+  ["--import", tsxUrl, main, ...process.argv.slice(2)],
+  { stdio: "inherit" },
+);
+process.exit(result.status ?? 1);

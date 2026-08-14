@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1785264120219,
+      "tag": "0000_hard_rhino",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785852614973,
+      "tag": "0001_safe_red_skull",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786181368443,
+      "tag": "0002_foundry_control_plane",
+      "breakpoints": true
+    }
+  ]
+}

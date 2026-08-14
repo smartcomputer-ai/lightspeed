@@ -16,7 +16,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "generate": "node scripts/generate-tools.mjs",
@@ -27,7 +27,7 @@
     "check": "npm run check:generated && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
-    "@lightspeed/agent-client": "file:../ts-client",
+    "@lightspeed/agent-client": "*",
     "@modelcontextprotocol/sdk": "1.29.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",

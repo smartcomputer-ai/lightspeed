@@ -1,0 +1,14 @@
+{
+  "name": "@lightspeed/platform-shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.4.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

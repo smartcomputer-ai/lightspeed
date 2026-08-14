@@ -1,0 +1,46 @@
+{
+  "name": "@lightspeed/channels",
+  "private": true,
+  "type": "module",
+  "description": "Temporal-managed Telegram and WhatsApp channels for Lightspeed.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contracts": "./src/contracts/index.ts",
+    "./workflows": "./src/workflows/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx src/runtime/main.ts",
+    "dev:all": "tsx src/runtime/main.ts all",
+    "dev:workflows": "tsx src/runtime/main.ts workflows",
+    "dev:activities": "tsx src/runtime/main.ts activities",
+    "dev:fake-delivery": "tsx src/runtime/fake-delivery-worker.ts",
+    "dev:telegram": "tsx src/runtime/main.ts telegram",
+    "dev:whatsapp": "tsx src/runtime/main.ts whatsapp",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:integration": "CHANNELS_TEMPORAL_INTEGRATION=1 vitest run test/self-receiver.integration.test.ts"
+  },
+  "dependencies": {
+    "@lightspeed/agent-client": "*",
+    "@temporalio/activity": "1.21.1",
+    "@lightspeed/platform-db": "*",
+    "@noble/hashes": "2.2.0",
+    "@temporalio/client": "1.21.1",
+    "@temporalio/common": "1.21.1",
+    "@temporalio/worker": "1.21.1",
+    "@temporalio/workflow": "1.21.1",
+    "baileys": "7.0.0-rc13",
+    "grammy": "^1.43.0",
+    "drizzle-orm": "^0.45.0",
+    "marked": "^18.0.5",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@temporalio/testing": "1.21.1",
+    "@types/qrcode-terminal": "^0.12.2",
+    "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

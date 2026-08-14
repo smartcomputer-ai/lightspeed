@@ -1,7 +1,9 @@
 # P124 — First-party platform monorepo
 
-Status: recommended direction 2026-08-14; implementation pending and sequenced
-after the ls.bot P117-P122 environment cutover.
+Status: repository implementation in progress 2026-08-15. Public-tree import,
+workspace consolidation, and CI may land before the ls.bot P117-P122
+environment cutover; private source removal and deployment cutover remain
+strictly sequenced after that migration and its rollback window.
 
 Builds on [P123](p123-build-and-release.md). P123 remains the release authority;
 P124 extends its coherent build, manifest, provenance, and publication model to
@@ -25,7 +27,7 @@ public Lightspeed repository       private ls.bot repository
 runtime and API                    release-manifest pin
 generated clients                 deployment topology
 platform server and web UI        encrypted secrets
-channel and Foundry workers       DNS/TLS and ingress policy
+channel workers                   DNS/TLS and ingress policy
 database schema and migrations    product-specific runtime config
 images and release manifest       deploy/rollback scripts
 tests, docs, and SBOM              production operations
@@ -33,13 +35,13 @@ tests, docs, and SBOM              production operations
 
 ## Decision
 
-Import the complete ls.bot `app/` npm workspace into this repository as the
-first-party platform layer:
+Import the ls.bot `app/` npm workspace into this repository as the first-party
+platform layer:
 
 - `server`;
 - `web`;
 - `channels`;
-- `foundry`;
+- the existing `foundry` package only as a mechanical compatibility import;
 - `db`;
 - `core`; and
 - `cli`.
@@ -54,10 +56,11 @@ and runtime already share one evolving protocol and release boundary. A second
 public repository would preserve the client publication, revision locking, and
 cross-repository coordination that P124 is intended to remove.
 
-The workspace moves as a unit, but it does not become one mandatory process or
-deployment. The platform server/UI, Channels roles, Foundry roles, Telegram
-connector, and WhatsApp connector remain independently buildable and
-deployable components.
+The workspace moves as a unit because the current server and database still
+reference Foundry. P124 does not redesign, extract, promote, or add release
+work for Foundry while its product future is undecided. The platform server/UI,
+Channels roles, Telegram connector, and WhatsApp connector remain independently
+buildable and deployable components.
 
 ## Why this is one product boundary
 
@@ -66,10 +69,10 @@ The current repository split does not correspond to an independent domain:
 - the platform gateway is a universe-scoped Lightspeed API proxy built around
   the generated TypeScript client;
 - web types and configuration references derive from the Lightspeed contract;
-- Channels and Foundry create Lightspeed sessions and use Lightspeed workflow
-  tools directly;
-- the platform server, Channels, and Foundry share one application database
-  schema and migration history; and
+- Channels creates Lightspeed sessions and uses Lightspeed workflow tools
+  directly;
+- the platform server and Channels share one application database schema and
+  migration history; and
 - server routes import contracts from the worker packages.
 
 Today, one protocol change requires an OCI release bundle, a packaged client
@@ -83,11 +86,36 @@ privately maintained product plane.
 
 ## Repository and package shape
 
-Place the imported workspace under a clearly named top-level platform
-directory, preserving package boundaries inside it. Select and document one
-Node workspace/lockfile strategy for the platform and existing `interop/`
-packages before the import; do not accumulate another tarball-locking layer
-inside the monorepo.
+Use one private root npm workspace and lockfile. Keep the TypeScript client
+separately identifiable as the public client and place the cohesive product
+plane under `platform/` without adding generic root `apps/` or `packages/`
+taxonomies:
+
+```text
+clients/
+  typescript/          generated @lightspeed/agent-client
+
+platform/
+  server/              management API and static web host
+  web/                 React management UI
+  cli/                 platform operator CLI
+  shared/              shared Zod inputs and deterministic helpers
+  db/                  Drizzle schema, migrations, and database adapter
+  channels/            channel workflows and provider workers
+  foundry/             mechanical compatibility import only
+  configurator-mcp/    generated MCP facade
+  scripts/             platform development and generation helpers
+
+crates/
+  api/
+    contract/          committed generated schema, manifest, OpenRPC, reference
+```
+
+The root workspace spans `clients/typescript` and `platform/*`. Every component
+retains its own package boundary, but a directory named `packages/` is not
+required to enforce that boundary. The existing `interop/` directory is
+removed because it mixes a public client, a deployable service, and generated
+Rust API output.
 
 The generated `@lightspeed/agent-client` remains the sole stable TypeScript
 contract boundary. In-tree consumers use the workspace source directly during
@@ -99,9 +127,10 @@ workspace root and application-only packages marked `"private": true` unless a
 package is intentionally supported as a public npm artifact. Open source does
 not imply npm publication.
 
-Replace the duplicated Channels and Foundry `contracts/emissions.ts` shapes
-with generated-client exports. Do not introduce a platform-local copy of Rust
-wire vocabulary.
+Replace the duplicated Channels `contracts/emissions.ts` shapes with
+generated-client exports. Leave Foundry's internal shape untouched until the
+feature is retained or removed; P124 must not create new Foundry architecture.
+Do not introduce any new platform-local copy of Rust wire vocabulary.
 
 The imported code remains outside the deterministic `engine` crate. Platform
 HTTP, authentication, database access, connectors, and Temporal workers are
@@ -172,8 +201,9 @@ deployment:
 - the management server and web UI form the ordinary platform plane;
 - Channels is an optional capability with independently runnable workflow,
   activity, and provider workers;
-- Foundry is an optional first-party workflow integration rather than runtime
-  engine vocabulary;
+- Foundry remains a mechanically imported, unsupported candidate integration;
+  it receives no extraction or new release work until a separate keep/remove
+  decision;
 - Telegram and WhatsApp provider workers are independently selectable; and
 - no optional connector may be required to build or start the core platform.
 
@@ -193,9 +223,12 @@ release manifest identifies as applicable:
 - Rust server, provider, envd, and CLI artifacts;
 - Configurator MCP image;
 - `@lightspeed/agent-client` package and contract revision;
-- platform server/web image;
-- Channels workflow, activity, Telegram, and optional WhatsApp images; and
-- Foundry workflow/activity image.
+- platform server/web image; and
+- Channels workflow, activity, Telegram, and optional WhatsApp images.
+
+Foundry artifacts are deliberately absent from the required P124 release set.
+If Foundry is retained, a later roadmap item may add supported artifacts; if it
+is removed, no P124 release compatibility promise blocks deletion.
 
 Every image is selected by digest. The manifest also carries checksums,
 source/build metadata, migration compatibility, and the P123 SBOM/provenance
@@ -266,10 +299,12 @@ topology and personal or production identifiers may not match secret patterns.
 
 ## Sequencing
 
-P124 starts only after Phase 4 of the private ls.bot environment migration is
-complete and its rollback window has closed. The environment cutover changes
-the same API and deployment surfaces and is intentionally not combined with a
-repository, branding, build, and release migration.
+Repository-only P124 work may land before Phase 4 of the private ls.bot
+environment migration. Until that migration and its rollback window close, do
+not delete the private application source, alter production deployment inputs,
+or retire the existing release locks. The public-tree refactor must therefore
+remain buildable without changing production. Private deployment cutover and
+obsolete-machinery removal stay strictly sequenced afterward.
 
 ### Phase 1 — Inventory and freeze
 
@@ -298,6 +333,10 @@ repository, branding, build, and release migration.
 - update developer commands, READMEs, architecture guidance, and examples; and
 - make every optional worker independently selectable.
 
+Delete the current top-level example `profiles/` tree and its README/Quick
+Start references rather than carrying those development fixtures into the new
+product layout. This does not remove the profile API or profile registry.
+
 ### Phase 4 — CI and release integration
 
 - add dependency-aware cross-language checks;
@@ -312,7 +351,7 @@ repository, branding, build, and release migration.
 - change ls.bot to pin one complete public Lightspeed release manifest;
 - deploy unchanged public images by digest with private runtime configuration;
 - verify auth, universe administration, gateway passthrough, web UI, Channels,
-  Foundry, migrations, metrics, and rollback; and
+  migrations, metrics, and rollback; and
 - retain legacy workers/identities until the compatibility inventory proves
   they can be retired.
 
@@ -355,6 +394,9 @@ operational procedures.
 - Folding the TypeScript product plane into Rust crates or the deterministic
   engine.
 - Making Channels, Foundry, Telegram, or WhatsApp mandatory.
+- Deciding whether Foundry remains a Lightspeed feature or investing in its
+  package boundaries, contracts, tests, images, or documentation beyond the
+  minimum needed to preserve the imported build.
 - Replacing generic workflow-tool protocols with integration-specific runtime
   APIs.
 - Moving production secrets, host topology, DNS/TLS configuration, or private
@@ -372,7 +414,7 @@ P124 is complete when:
 - one P123 release manifest identifies all selected components from one source
   and contract revision, with immutable digests and provenance;
 - a clean installation and a supported production upgrade both pass database,
-  Temporal, auth, gateway, UI, Channels, and Foundry acceptance tests;
+  Temporal, auth, gateway, UI, and Channels acceptance tests;
 - ls.bot deploys unchanged public artifacts by digest with runtime product
   configuration and can roll back through the documented procedure;
 - no active execution or stored state depends on a retired durable identity;

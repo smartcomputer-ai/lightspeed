@@ -1,0 +1,16 @@
+{
+  "name": "@lightspeed/platform-cli",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "lightspeed-platform": "./bin/lightspeed-platform"
+  },
+  "dependencies": {
+    "@lightspeed/platform-shared": "*",
+    "commander": "^14.0.0",
+    "tsx": "^4.20.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

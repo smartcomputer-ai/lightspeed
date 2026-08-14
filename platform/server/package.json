@@ -1,0 +1,30 @@
+{
+  "name": "@lightspeed/platform-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "@lightspeed/agent-client": "*",
+    "@lightspeed/foundry": "*",
+    "@lightspeed/platform-db": "*",
+    "@lightspeed/platform-shared": "*",
+    "@temporalio/client": "1.21.1",
+    "better-auth": "^1.2.0",
+    "drizzle-orm": "^0.45.0",
+    "hono": "^4.7.0",
+    "pg": "^8.16.0",
+    "zod": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.0",
+    "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

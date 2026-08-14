@@ -1,0 +1,35 @@
+{
+  "name": "@lightspeed/foundry",
+  "private": true,
+  "type": "module",
+  "description": "Foundry control plane for persistent event-driven software-system managers.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contracts": "./src/contracts/index.ts",
+    "./workflows": "./src/workflows/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx src/runtime/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:integration": "FOUNDRY_TEMPORAL_INTEGRATION=1 vitest run test/foundry.integration.test.ts"
+  },
+  "dependencies": {
+    "@lightspeed/agent-client": "*",
+    "@lightspeed/platform-db": "*",
+    "@noble/hashes": "2.2.0",
+    "@temporalio/activity": "1.21.1",
+    "@temporalio/client": "1.21.1",
+    "@temporalio/common": "1.21.1",
+    "@temporalio/worker": "1.21.1",
+    "@temporalio/workflow": "1.21.1",
+    "drizzle-orm": "^0.45.0"
+  },
+  "devDependencies": {
+    "@temporalio/testing": "1.21.1",
+    "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
