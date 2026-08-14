@@ -1,6 +1,11 @@
 # Lightspeed Roadmap
 
 ## Work
+- [ ] [P124](p124-first-party-platform-monorepo.md) — import the complete
+  first-party TypeScript platform into Lightspeed, neutralize product branding
+  without breaking durable identities, enforce atomic cross-language contract
+  checks, extend P123 to publish every selected component in one coherent
+  release, and reduce ls.bot to a private deployment repository.
 - [x] [P123](p123-build-and-release.md) — Lightspeed-owned release artifacts,
   embedded ledgered migrations, one-build packaging, automatic coherent
   snapshots after successful `main` CI, and independent exact-commit SemVer
