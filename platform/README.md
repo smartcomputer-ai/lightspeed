@@ -19,11 +19,13 @@ run Node commands from there.
 - `foundry/` — mechanically imported compatibility code. Foundry is not a
   supported P124 release component and receives no new architecture work until
   its product future is decided.
-- `scripts/` — the local development stack, stub gateway, and generated profile
-  configuration reference.
+- `scripts/` — platform process orchestration, the stub gateway, and generated
+  profile configuration reference.
 
 The generated public API client lives separately at `clients/typescript/`.
 Committed wire artifacts are owned by `crates/api/contract/`.
+The repository-level Docker Compose development environment lives under
+`dev/`.
 
 ## Development
 
@@ -76,7 +78,8 @@ LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL=postgres://... npm run test:migrations
 npm run test:integration:channels
 ```
 
-Release construction stages one platform runtime, a standard Channels runtime
-without WhatsApp-only dependencies, and a separate WhatsApp-enabled runtime.
-The P123 manifest records the platform plus workflow, activity, Telegram, and
-optional WhatsApp images by digest. Foundry has no independent release image.
+Release construction stages one platform runtime and one Channels runtime.
+The Channels image includes every role and connector dependency and is started
+as `workflows`, `activities`, `telegram`, `whatsapp`, or `all`. The P123
+manifest records one digest for each image. Foundry has no independent release
+image.

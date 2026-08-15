@@ -24,7 +24,7 @@ Use these files as the index:
   mechanically imported Foundry candidate.
 - `crates/api/contract/` — committed generated API schema, method manifest,
   OpenRPC, and human reference.
-- `local/` — local Docker stack, environment exports, and reset helpers.
+- `dev/` — local Docker stack, environment exports, and reset helpers.
 - `docs/roadmap/` — implementation plans and historical milestones.
 
 ## Build & Test
@@ -72,11 +72,11 @@ Additional per-capability live suites exist for both providers under
 
 Temporal live tests share local Temporal/PostgreSQL state and must not run in
 parallel. Always pass `--test-threads=1` after the Cargo test-harness separator,
-including when running a filtered test. Source `local/env.sh` first so the live
+including when running a filtered test. Source `dev/env.sh` first so the live
 tests use the local stack configuration:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 cargo test -p temporal-server --test temporal_live -- --ignored --test-threads=1
 cargo test -p temporal-server --test environment_provider_live -- --ignored --test-threads=1
 cargo test -p temporal-server --test preprocess_live -- --ignored --test-threads=1

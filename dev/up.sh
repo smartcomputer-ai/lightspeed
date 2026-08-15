@@ -62,5 +62,5 @@ Temporal:
   UI:     http://localhost:${TEMPORAL_UI_PORT}
 
 Suggested env:
-  source local/env.sh
+  source dev/env.sh
 EOF

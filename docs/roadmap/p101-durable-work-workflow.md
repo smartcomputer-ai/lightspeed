@@ -1007,7 +1007,7 @@ it:
 - [ ] Dogfood one real repository objective that requires at least two
       execution cycles.
 
-Live Temporal tests must source `local/env.sh` and run serially with
+Live Temporal tests must source `dev/env.sh` and run serially with
 `--test-threads=1`.
 
 ## Acceptance Criteria

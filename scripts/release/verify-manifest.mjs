@@ -39,13 +39,10 @@ for (const contract of ["api.schema.json", "methods.json", "openrpc.json", "api-
 }
 if (value.contractRevision !== `sha256:${contractHash.digest("hex")}`) fail("contract checksum mismatch");
 const expectedImages = [
-  "server",
+  "runtime",
   "configuratorMcp",
   "platform",
-  "channelsWorkflows",
-  "channelsActivities",
-  "channelsTelegram",
-  "channelsWhatsapp",
+  "channels",
 ];
 if (JSON.stringify(Object.keys(value.images ?? {}).sort()) !== JSON.stringify(expectedImages.sort())) {
   fail("images must contain the complete P124 artifact set");

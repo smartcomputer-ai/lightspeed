@@ -13,7 +13,7 @@ Implemented here:
   ledger, explicit `migrate`, startup verification, and schema diagnostics;
 - deterministic standalone archives, checksums, release manifest schema, SPDX
   SBOM, and artifact smoke tests;
-- server and Configurator runtime images that consume prebuilt `dist/` output;
+- runtime and Configurator images that consume prebuilt `dist/` output;
 - publishable `@lightspeed/agent-client` release metadata;
 - separate coherent workflows: successful `main` CI automatically builds and
   publishes only SHA snapshot references, while SemVer tags independently test

@@ -36,22 +36,16 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "server",
+        "runtime",
         "configuratorMcp",
         "platform",
-        "channelsWorkflows",
-        "channelsActivities",
-        "channelsTelegram",
-        "channelsWhatsapp"
+        "channels"
       ],
       "properties": {
-        "server": { "$ref": "#/$defs/imageReference" },
+        "runtime": { "$ref": "#/$defs/imageReference" },
         "configuratorMcp": { "$ref": "#/$defs/imageReference" },
         "platform": { "$ref": "#/$defs/imageReference" },
-        "channelsWorkflows": { "$ref": "#/$defs/imageReference" },
-        "channelsActivities": { "$ref": "#/$defs/imageReference" },
-        "channelsTelegram": { "$ref": "#/$defs/imageReference" },
-        "channelsWhatsapp": { "$ref": "#/$defs/imageReference" }
+        "channels": { "$ref": "#/$defs/imageReference" }
       }
     },
     "binaries": {

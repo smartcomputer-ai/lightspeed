@@ -12,7 +12,7 @@
   `RegistryTokenBroker` with typed `AuthBrokerError` kinds, in-memory test
   adapters); `store-pg` `auth_secrets`/`auth_grants` tables with AES-256-GCM
   encryption (AAD = universe/secret id/kind, `LIGHTSPEED_SECRETS_MASTER_KEY`
-  config; `local/` exports a well-known dev-only default key);
+  config; `dev/` exports a well-known dev-only default key);
   `auth/grants/import|list|read|revoke` JSON-RPC + `lightspeed auth grant` CLI; `llm-runtime` `SecretResolver` with OpenAI Responses `authorization`
   injection and redacted persisted request blobs; worker
   `BrokerSecretResolver` wiring; and P68 link-time grant validation

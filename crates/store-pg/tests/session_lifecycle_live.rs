@@ -13,7 +13,7 @@ use store_pg::{PgStore, PgStoreConfig};
 use uuid::Uuid;
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires local/up.sh or compatible Postgres env"]
+#[ignore = "requires dev/up.sh or compatible Postgres env"]
 async fn pg_live_lifecycle_projection_rejects_managed_branches() {
     let store = live_store().await;
     let parent = SessionId::new("lifecycle-parent");
@@ -182,7 +182,7 @@ fn managed_bindings_event(
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires local/up.sh or compatible Postgres env"]
+#[ignore = "requires dev/up.sh or compatible Postgres env"]
 async fn pg_live_delete_is_closed_only_and_preserves_fork_history() {
     let store = live_store().await;
     let parent = SessionId::new("delete-parent");
@@ -275,9 +275,8 @@ fn lifecycle_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
 }
 
 async fn live_store() -> PgStore {
-    let database_url = std::env::var("LIGHTSPEED_TEST_POSTGRES_URL").expect(
-        "LIGHTSPEED_TEST_POSTGRES_URL must be set; run local/up.sh and source local/env.sh",
-    );
+    let database_url = std::env::var("LIGHTSPEED_TEST_POSTGRES_URL")
+        .expect("LIGHTSPEED_TEST_POSTGRES_URL must be set; run dev/up.sh and source dev/env.sh");
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&database_url)

@@ -35,8 +35,7 @@ copy_workspace_manifests() {
 stage_runtime() {
   local name="$1"
   local workspace="$2"
-  local optional_mode="$3"
-  shift 3
+  shift 2
   local root="$stage_root/runtime-$name"
   local source
   local -a install_args=(ci --workspace "$workspace" --omit=dev --offline --ignore-scripts)
@@ -48,17 +47,6 @@ stage_runtime() {
     cp -R "$source" "$root/$source"
   done
   (cd "$root" && npm "${install_args[@]}")
-  if [[ "$optional_mode" = omit ]]; then
-    rm -rf "$root/node_modules/baileys" "$root/node_modules/qrcode-terminal"
-    node --input-type=module -e '
-      import fs from "node:fs";
-      const file = process.argv[1];
-      const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
-      delete manifest.dependencies.baileys;
-      delete manifest.dependencies["qrcode-terminal"];
-      fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
-    ' "$root/platform/channels/package.json"
-  fi
   rm -f "$root/package-lock.json"
   if [[ "$name" = platform ]]; then
     rm -rf "$root/platform/channels" "$root/platform/cli" \
@@ -72,7 +60,7 @@ stage_runtime() {
     -C "$root" -czf "$dist_dir/runtime/$name.tar.gz" .
 }
 
-stage_runtime platform @lightspeed/platform-server include \
+stage_runtime platform @lightspeed/platform-server \
   clients/typescript/dist \
   platform/server/src \
   platform/db/src \
@@ -80,7 +68,7 @@ stage_runtime platform @lightspeed/platform-server include \
   platform/shared/src \
   platform/foundry/src \
   platform/web/dist
-stage_runtime channels @lightspeed/channels include \
+stage_runtime channels @lightspeed/channels \
   clients/typescript/dist \
   platform/channels/src \
   platform/db/src \

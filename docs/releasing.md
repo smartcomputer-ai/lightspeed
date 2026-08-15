@@ -1,12 +1,11 @@
 # Build and release
 
-Lightspeed owns and publishes a coherent release containing the hosted server,
+Lightspeed owns and publishes a coherent release containing the hosted runtime,
 the Incus provider, envd, the CLI, Configurator MCP, the platform server/web
-image, independently runnable Channels workflow/activity/Telegram images, an
-optional WhatsApp image, the generated TypeScript client, API contracts,
-checksums, an SPDX SBOM, and a release manifest. Foundry is deliberately not a
-release artifact. A consumer should pin one manifest rather than selecting
-components separately.
+image, one Channels image startable in each supported role, the generated
+TypeScript client, API contracts, checksums, an SPDX SBOM, and a release
+manifest. Foundry is deliberately not a release artifact. A consumer should
+pin one manifest rather than selecting components separately.
 
 ## Database migrations
 
@@ -72,13 +71,18 @@ make release
 `make release-dist` compiles all Rust executables in one Cargo invocation,
 builds the generated client, Configurator, and web UI, and produces `dist/`.
 The same root lockfile deterministically stages platform and Channels runtime
-payloads; the standard Channels payload excludes WhatsApp-only dependencies.
-`make release-images` copies those prebuilt files into the server,
-Configurator, platform, and four role-specific Channels images; it does not
-invoke Cargo or rebuild the web UI. Image smoke tests compare the server binary
-byte-for-byte, start the platform image against PostgreSQL, check its health
-and SPA, validate every Channels role, and prove Baileys exists only in the
-optional WhatsApp image.
+payloads. `make release-images` copies those prebuilt files into the `runtime`,
+Configurator, platform, and Channels images; it does not invoke Cargo or
+rebuild the web UI. The `channels` image includes all connector dependencies
+and selects `workflows`, `activities`, `telegram`, `whatsapp`, or `all` at
+startup; `all` is the default and starts Telegram unless `CHANNELS_CONNECTORS`
+selects another connector set. Image smoke tests compare the runtime's
+`lightspeed-server` executable byte-for-byte, start the platform image against
+PostgreSQL, check its health and SPA, and validate every Channels role.
+
+The Rust container is named `runtime` because it is the hosted product core,
+not merely an HTTP server. Its executable and standalone archive remain named
+`lightspeed-server` and `server-bundle` during the compatibility window.
 
 The runtime tarballs are intermediate image inputs and are removed before the
 release bundle is finalized; the published images carry their own digest,

@@ -137,8 +137,9 @@ The hosted path runs three pieces locally:
 
 1. Docker infra: Postgres/CAS catalog, MinIO object storage, Temporal.
 2. `temporal-server`: registers the Temporal workflow/activities and exposes
-   the public JSON-RPC API on HTTP. Its binary is named `server`, and it
-   can also run only the worker or only the gateway.
+   the public JSON-RPC API on HTTP. Its release image is named `runtime`, its
+   compatibility executable is `lightspeed-server`, and it can run only the
+   worker, only the gateway, or both.
 3. `cli`: starts or resumes sessions and submits chat messages through the
    gateway.
 
@@ -147,7 +148,7 @@ The hosted path runs three pieces locally:
 From the repository root:
 
 ```bash
-local/up.sh
+dev/up.sh
 ```
 
 This starts Postgres on `localhost:15432`, MinIO on `localhost:29000`,
@@ -156,7 +157,7 @@ Temporal on `localhost:7233`, and the Temporal UI on `http://localhost:8233`.
 Each shell that runs Lightspeed commands should load the local environment:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 ```
 
 ### 2. Run The Server
@@ -164,7 +165,7 @@ source local/env.sh
 Open a first shell:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 
 # export OPENAI_API_KEY=...  # omit this if it is already in .env
 
@@ -192,12 +193,12 @@ cargo run -p temporal-server -- gateway
 Open another shell:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 cargo run -p cli -- chat --new
 ```
 
 That starts an interactive TUI session. `LIGHTSPEED_API_URL` is exported by
-`local/env.sh`, so you do not need to pass `--api-url`.
+`dev/env.sh`, so you do not need to pass `--api-url`.
 
 For OpenAI-backed chat, the CLI sends typed session/run configuration through
 the API. Use `--model ...` on a command, or set `LIGHTSPEED_CHAT_MODEL`, if you want
@@ -317,13 +318,13 @@ component roles, configuration, and optional channel workers.
 ### Stop Or Reset Local Infra
 
 ```bash
-local/down.sh
+dev/down.sh
 ```
 
 To reset persisted local state while keeping containers available:
 
 ```bash
-local/reset.sh
+dev/reset.sh
 ```
 
 ## Testing

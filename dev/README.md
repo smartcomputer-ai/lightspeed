@@ -1,7 +1,8 @@
-# Lightspeed Local Environment
+# Lightspeed Development Environment
 
-This directory contains the local Docker environment for Lightspeed: Postgres,
-pgAdmin, MinIO, and Temporal.
+The top-level `dev/` directory owns the complete local development environment
+for Lightspeed: its Docker Compose topology, environment exports, lifecycle
+commands, and reset helpers for Postgres, pgAdmin, MinIO, and Temporal.
 
 ## Services
 
@@ -15,19 +16,19 @@ pgAdmin, MinIO, and Temporal.
 ## Start
 
 ```bash
-local/up.sh
+dev/up.sh
 ```
 
 ## Stop
 
 ```bash
-local/down.sh
+dev/down.sh
 ```
 
 To also remove volumes:
 
 ```bash
-local/down.sh -v
+dev/down.sh -v
 ```
 
 ## Reset
@@ -35,22 +36,22 @@ local/down.sh -v
 Reset the database, apply the `store-pg` schema, and clear the MinIO prefix:
 
 ```bash
-local/reset.sh
+dev/reset.sh
 ```
 
 Individual helpers:
 
 ```bash
-local/pg-reset.sh
-local/pg-migrate.sh
-local/minio-ensure.sh
-local/minio-reset.sh
+dev/pg-reset.sh
+dev/pg-migrate.sh
+dev/minio-ensure.sh
+dev/minio-reset.sh
 ```
 
 Run the `store-pg` live integration tests against this stack:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 cargo test -p store-pg --test store_pg_live -- --ignored
 ```
 
@@ -59,7 +60,7 @@ cargo test -p store-pg --test store_pg_live -- --ignored
 Export local settings into the current shell:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 ```
 
 Equivalent values:
@@ -86,7 +87,7 @@ export AWS_SECRET_ACCESS_KEY=minioadmin
 Run the Temporal-backed hosted runtime against the local stack:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 cargo run -p temporal-server -- migrate
 cargo run -p temporal-server
 ```
@@ -95,12 +96,12 @@ With no subcommand, the `lightspeed-server` binary runs the JSON-RPC gateway and
 worker in one process. For split-role runs, use two shells:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 cargo run -p temporal-server -- worker
 ```
 
 ```bash
-source local/env.sh
+source dev/env.sh
 cargo run -p temporal-server -- gateway
 ```
 
@@ -108,7 +109,7 @@ Then chat through the regular CLI over the gateway transport from another
 shell:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 cargo run -p cli -- chat --session session_1 "hello"
 ```
 
@@ -118,7 +119,7 @@ omit the message to open the interactive TUI.
 Run the fake hosted-agent live integration test against the same stack:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 cargo test -p temporal-server --test temporal_live temporal_live_session_start_then_run_start_completes_fake_runs -- --ignored --nocapture
 ```
 
@@ -127,7 +128,7 @@ Postgres and the real lifecycle reconciler with an in-process provider, so it
 does not require Incus:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 cargo test -p temporal-server --test environment_provider_live \
   -- --ignored --test-threads=1 --nocapture
 ```
@@ -135,7 +136,7 @@ cargo test -p temporal-server --test environment_provider_live \
 Run only the OpenAI-backed hosted-agent live test:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 export OPENAI_API_KEY=...
 cargo test -p temporal-server --test temporal_live temporal_live_session_start_then_run_start_completes_openai_run -- --ignored --nocapture
 ```

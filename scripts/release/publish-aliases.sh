@@ -84,20 +84,14 @@ fi
 
 copy_image_alias "$(jq -er .buildImage "$manifest")" \
   "$root/build-env:$alias_name"
-copy_image_alias "$(jq -er .images.server "$manifest")" \
-  "$root/server:$alias_name"
+copy_image_alias "$(jq -er .images.runtime "$manifest")" \
+  "$root/runtime:$alias_name"
 copy_image_alias "$(jq -er .images.configuratorMcp "$manifest")" \
   "$root/configurator-mcp:$alias_name"
 copy_image_alias "$(jq -er .images.platform "$manifest")" \
   "$root/platform:$alias_name"
-copy_image_alias "$(jq -er .images.channelsWorkflows "$manifest")" \
-  "$root/channels-workflows:$alias_name"
-copy_image_alias "$(jq -er .images.channelsActivities "$manifest")" \
-  "$root/channels-activities:$alias_name"
-copy_image_alias "$(jq -er .images.channelsTelegram "$manifest")" \
-  "$root/channels-telegram:$alias_name"
-copy_image_alias "$(jq -er .images.channelsWhatsapp "$manifest")" \
-  "$root/channels-whatsapp:$alias_name"
+copy_image_alias "$(jq -er .images.channels "$manifest")" \
+  "$root/channels:$alias_name"
 
 while IFS=$'\t' read -r manifest_key target_name; do
   source_url="$(jq -er --arg key "$manifest_key" '.binaries[$key].url' "$manifest")"

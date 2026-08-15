@@ -1093,10 +1093,10 @@ consequence of the design rather than untested behavior.
       sessions, and public environment-job behavior (`temporal_live` 17/17
       and `environment_provider_live` 5/5 green on 2026-07-26).
 
-Live Temporal tests must source `local/env.sh` and run serially:
+Live Temporal tests must source `dev/env.sh` and run serially:
 
 ```bash
-source local/env.sh
+source dev/env.sh
 cargo test -p temporal-server --test workflow_tool_plugins_live -- --ignored --test-threads=1
 cargo test -p temporal-server --test temporal_live -- --ignored --test-threads=1
 cargo test -p temporal-server --test environment_provider_live -- --ignored --test-threads=1

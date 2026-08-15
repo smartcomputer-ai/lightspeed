@@ -9,9 +9,9 @@ else
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
-LOCAL_DIR="${SCRIPT_DIR}"
-REPO_ROOT="$(cd "${LOCAL_DIR}/.." && pwd)"
-COMPOSE_FILE="${LOCAL_DIR}/docker-compose.yaml"
+DEV_DIR="${SCRIPT_DIR}"
+REPO_ROOT="$(cd "${DEV_DIR}/.." && pwd)"
+COMPOSE_FILE="${DEV_DIR}/docker-compose.yaml"
 
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-lightspeed-dev}"
 

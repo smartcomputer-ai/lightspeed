@@ -93,7 +93,7 @@ async function ensurePostgres() {
       "--project-name",
       process.env.COMPOSE_PROJECT_NAME ?? "lightspeed-dev",
       "-f",
-      path.join(repoRoot, "local", "docker-compose.yaml"),
+      path.join(repoRoot, "dev", "docker-compose.yaml"),
       "up",
       "-d",
       "postgres",
@@ -103,7 +103,7 @@ async function ensurePostgres() {
   if (result.status !== 0) {
     console.error(
       "[db] failed to start postgres. Start it yourself:\n" +
-        "  docker compose -f local/docker-compose.yaml up -d postgres",
+        "  docker compose -f dev/docker-compose.yaml up -d postgres",
     );
     process.exit(1);
   }

@@ -87,12 +87,12 @@ for testing.
 
 ```bash
 # 0. once: infra + env, gateway in its own terminal
-local/up.sh && source local/env.sh
+dev/up.sh && source dev/env.sh
 cargo run -p temporal-server        
 
 # separate terminal, env.sh sourced
 # 1. register the authenticated MCP server
-source local/env.sh
+source dev/env.sh
 cargo run -q -p cli -- mcp server put https://mcpplaygroundonline.com/mcp-auth-server \
   --id playground --label playground --auth-policy required-bearer
 
@@ -200,8 +200,8 @@ broker's automatic refresh path.
 
 ```bash
 # 0. infra + schema, env in every terminal; gateway in its own terminal
-local/up.sh && source local/env.sh
-local/pg-migrate.sh
+dev/up.sh && source dev/env.sh
+dev/pg-migrate.sh
 cargo run -p temporal-server        # separate terminal, env.sh sourced
 
 # 1. register the MCP server under id gh

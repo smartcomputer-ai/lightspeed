@@ -1,9 +1,9 @@
 # P124 — First-party platform monorepo
 
-Status: repository implementation in progress 2026-08-15. Public-tree import,
-workspace consolidation, and CI may land before the ls.bot P117-P122
-environment cutover; private source removal and deployment cutover remain
-strictly sequenced after that migration and its rollback window.
+Status: repository implementation complete 2026-08-15. Public-tree import,
+workspace consolidation, CI, and coherent release construction are in place.
+Private source removal and deployment cutover remain strictly sequenced after
+the ls.bot P117-P122 environment migration and its rollback window.
 
 Builds on [P123](p123-build-and-release.md). P123 remains the release authority;
 P124 extends its coherent build, manifest, provenance, and publication model to
@@ -21,17 +21,21 @@ Implemented repository slice 2026-08-15:
   `@lightspeed/*` package names, and Node 24 baseline;
 - updated generators, CI, release staging, SBOM inputs, documentation, and
   development commands for the new paths;
-- extended the P123 manifest and release workflows with digest-pinned platform,
-  Channels workflow, Channels activity, Telegram, and optional WhatsApp images;
+- extended the P123 manifest and release workflows with digest-pinned Rust
+  runtime, platform, Configurator MCP, and a configurable Channels image;
 - added platform empty-install/upgrade migration checks, a non-skipping
   Channels Temporal integration gate, runtime-image smoke tests, and a single
   successful-main-CI prerequisite for snapshot publication;
 - recorded the platform schema revision and supported migration baseline in
   the same release manifest as the artifact digests;
-- isolated Baileys and its QR helper to the optional WhatsApp runtime payload
-  while giving Foundry no independent image or publication entry;
+- consolidated every Channels role and connector into one image selected by
+  its startup command, while giving Foundry no independent image or
+  publication entry;
 - added primary `LIGHTSPEED_PLATFORM_*` configuration with legacy `LSBOT_*`
-  compatibility where the imported runtime consumes deployment settings; and
+  compatibility where the imported runtime consumes deployment settings;
+- renamed the top-level local environment from `local/` to `dev/`, keeping its
+  Compose topology and configuration beside its lifecycle helpers rather than
+  treating the environment as a generic script collection; and
 - deleted the top-level example `profiles/` fixtures and references.
 
 Still pending: the first infrastructure-backed publication and deployment
@@ -142,6 +146,10 @@ platform/
 crates/
   api/
     contract/          committed generated schema, manifest, OpenRPC, reference
+
+dev/                   local Compose environment, configuration, and helpers
+scripts/
+  release/             coherent build and publication automation
 ```
 
 The root workspace spans `clients/typescript` and `platform/*`. Every component
@@ -233,18 +241,18 @@ deployment:
 
 - the management server and web UI form the ordinary platform plane;
 - Channels is an optional capability with independently runnable workflow,
-  activity, and provider workers;
+  activity, and provider roles launched from one image;
 - Foundry remains a mechanically imported, unsupported candidate integration;
   it receives no extraction or new release work until a separate keep/remove
   decision;
 - Telegram and WhatsApp provider workers are independently selectable; and
 - no optional connector may be required to build or start the core platform.
 
-The Baileys-backed WhatsApp connector must be isolated as an optional,
-default-off package/image with its unofficial status and operational risk
-documented. Its dependency, licensing, and distribution can then be reviewed
-or discontinued without removing the supported platform and Telegram
-components.
+The Baileys-backed WhatsApp connector remains an explicit, default-off role
+with its unofficial status and operational risk documented. It shares the
+Channels image to keep the release topology small; enabling it is still a
+deployment choice, and it can be removed later without changing the platform
+image.
 
 ## Coherent public release
 
@@ -253,11 +261,12 @@ artifact built from the same source revision and generated contract. The public
 repository owns builds and publishes immutable artifacts. At minimum, the
 release manifest identifies as applicable:
 
-- Rust server, provider, envd, and CLI artifacts;
+- Rust runtime image plus provider, envd, server-bundle, and CLI artifacts;
 - Configurator MCP image;
 - `@lightspeed/agent-client` package and contract revision;
 - platform server/web image; and
-- Channels workflow, activity, Telegram, and optional WhatsApp images.
+- one Channels image startable as `workflows`, `activities`, `telegram`,
+  `whatsapp`, or `all`.
 
 Foundry artifacts are deliberately absent from the required P124 release set.
 If Foundry is retained, a later roadmap item may add supported artifacts; if it
@@ -413,13 +422,17 @@ operational procedures.
   connector concerns in addition to the runtime. This is the intended
   first-party product boundary, while crate and package boundaries still
   prevent those concerns from entering the deterministic engine.
-- Public releases contain more independently deployed artifacts. One manifest
-  is preferable to coordinating product versions across repositories.
+- Public releases contain independently deployed artifacts. One manifest is
+  preferable to coordinating product versions across repositories; using one
+  Channels image for several roles keeps that artifact set intentionally
+  small.
 - Some legacy `lsbot` durable identifiers may remain visible internally for a
   compatibility period. Operational continuity is more important than a
   cosmetic all-at-once rename.
-- The optional WhatsApp connector carries additional policy and optics risk;
-  isolation keeps that risk outside the default platform deployment.
+- The optional WhatsApp connector carries additional policy and optics risk.
+  Keeping it default-off limits runtime exposure, while the shared Channels
+  image accepts a larger dependency and distribution surface in exchange for
+  simpler builds, promotion, rollback, and deployment configuration.
 
 ## Non-goals
 
