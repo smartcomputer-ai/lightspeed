@@ -58,7 +58,7 @@ and TypeScript processes on the host. It supports four profiles:
 ./dev.sh infra      # Postgres, pgAdmin, MinIO, and Temporal only
 ```
 
-The local UI is available at `http://127.0.0.1:5173/app/`. The supervisor
+The local UI is available at `http://localhost:5173/app/`. The supervisor
 trusts both `http://127.0.0.1:5173` and `http://localhost:5173` for Better Auth;
 additional browser origins must be listed explicitly in
 `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`.

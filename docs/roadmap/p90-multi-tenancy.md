@@ -1,6 +1,9 @@
 # P90: Multi-Tenancy — Multiple Universes Per Deployment
 
 **Status**
+- The current operational contract now lives in
+  [`docs/multi-tenancy.md`](../multi-tenancy.md); this roadmap remains the
+  implementation history and design record.
 - Updated 2026-07-29: Lightspeed's universe and API-key boundaries remain;
   channel-binding credential handling described below moved to the external
   Channels application.

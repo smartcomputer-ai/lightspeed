@@ -25,7 +25,7 @@ run Node commands from there.
 The generated public API client lives separately at `clients/typescript/`.
 Committed wire artifacts are owned by `crates/api/contract/`.
 The repository-level Docker Compose development environment lives under
-`dev/`.
+`scripts/dev/`.
 
 The authoritative configuration reference is
 [`docs/variables.md`](../docs/variables.md), with separate sections for the

@@ -242,7 +242,7 @@ function createPlan(profile, sourceEnv) {
     ports.push({ name: "platform web", port: 5_173 });
     readiness.push(
       { name: "platform API", url: `http://127.0.0.1:${platformPort}/health` },
-      { name: "platform web", url: "http://127.0.0.1:5173/app/" },
+      { name: "platform web", url: "http://localhost:5173/app/" },
     );
     if (profile === "platform" && !externalPlatformGateway) {
       ports.push({ name: "stub gateway", port: stubPort });
@@ -265,7 +265,7 @@ function createPlan(profile, sourceEnv) {
       {
         name: "web",
         command: vite,
-        args: ["--host", "127.0.0.1"],
+        args: ["--host", "localhost"],
         cwd: path.join(repoRoot, "platform", "web"),
         env,
       },
@@ -711,7 +711,7 @@ function printRunning(plan) {
   }
   if (platform) {
     console.log(`  platform API  http://127.0.0.1:${plan.env.PORT ?? "3000"}`);
-    console.log("  web           http://127.0.0.1:5173/app/");
+    console.log("  web           http://localhost:5173/app/");
     console.log(
       `  login         ${plan.env.LIGHTSPEED_PLATFORM_ADMIN_EMAIL} / ${plan.env.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD}`,
     );
