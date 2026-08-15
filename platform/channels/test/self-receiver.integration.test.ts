@@ -17,7 +17,7 @@ import type { ChannelInputItem, PrepareChannelMediaInput } from "../src/contract
 import { channelSessionIdentity, lightspeedSessionWorkflowId } from "../src/identity/ids.js";
 import type { ChannelSessionSnapshot } from "../src/workflows/state.js";
 
-const runIntegration = process.env.CHANNELS_TEMPORAL_INTEGRATION === "1";
+const runIntegration = process.env.LIGHTSPEED_CHANNELS_TEMPORAL_INTEGRATION === "1";
 
 describe.runIf(runIntegration)("Channels self-receiver", () => {
   let env: TestWorkflowEnvironment;

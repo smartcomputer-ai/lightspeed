@@ -6,7 +6,7 @@
   unnecessary — after G1 the typed bootstrap guard catches the real risk, and
   raw-log-size reporting is a loose indicator better served by P74 or ad-hoc
   SQL. Problem B (durable event-log growth) split to P74.
-- Raised from the `ls.bot` Hetzner incident where a Telegram audio message
+- Raised from the legacy Hetzner deployment incident where a Telegram audio message
   surfaced as `Lightspeed could not answer this message: agent workflow not
   found`.
 
@@ -104,7 +104,7 @@ is the urgent fix; P74 is the durability/cost fix.
 
 ## Operational Recovery
 
-For `ls.bot`, the immediate recovery was:
+For the affected private deployment, the immediate recovery was:
 
 1. keep the old session rows and Temporal history intact for audit;
 2. rotate the Telegram binding from `sessionKey: "personal"` to

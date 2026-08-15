@@ -93,13 +93,13 @@ describe("Lightspeed emission contract", () => {
 
   it("matches the Rust source-resolution hash framing", () => {
     const promiseId = `wtp:sha256:${"b".repeat(64)}`;
-    expect(sourceResolutionEmissionId(universeId, "lsbot.channels.v1/test", promiseId)).toBe(
-      "emission:sha256:006c5781bfabeaf17177055c7ee93a7f005e1414c16dcd66aad62c72ff605687",
+    expect(sourceResolutionEmissionId(universeId, "lightspeed.channels.v1/test", promiseId)).toBe(
+      "emission:sha256:97b9cfa7f3a3197a3acbc05e045d84633bd626fe6ccc5b604b2cf6d283d6532c",
     );
 
     const envelope = sourceResolutionEnvelope({
       universeId,
-      producerWorkflowId: "lsbot.channels.v1/test",
+      producerWorkflowId: "lightspeed.channels.v1/test",
       promiseId,
       resolution: { kind: "resolved", payload_ref: null },
     });

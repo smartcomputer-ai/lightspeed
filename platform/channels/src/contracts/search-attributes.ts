@@ -6,23 +6,23 @@ import {
 import type { ChannelSessionStartV1 } from "./channel.js";
 
 export const CHANNEL_UNIVERSE_SEARCH_ATTRIBUTE = defineSearchAttributeKey(
-  "LsbotUniverseId",
+  "LightspeedUniverseId",
   SearchAttributeType.KEYWORD,
 );
 export const CHANNEL_PROVIDER_SEARCH_ATTRIBUTE = defineSearchAttributeKey(
-  "LsbotChannelProvider",
+  "LightspeedChannelProvider",
   SearchAttributeType.KEYWORD,
 );
 export const CHANNEL_ACCOUNT_SEARCH_ATTRIBUTE = defineSearchAttributeKey(
-  "LsbotChannelAccountId",
+  "LightspeedChannelAccountId",
   SearchAttributeType.KEYWORD,
 );
 export const CHANNEL_BINDING_SEARCH_ATTRIBUTE = defineSearchAttributeKey(
-  "LsbotChannelBindingId",
+  "LightspeedChannelBindingId",
   SearchAttributeType.KEYWORD,
 );
 export const CHANNEL_SESSION_SEARCH_ATTRIBUTE = defineSearchAttributeKey(
-  "LsbotManagedSessionId",
+  "LightspeedManagedSessionId",
   SearchAttributeType.KEYWORD,
 );
 

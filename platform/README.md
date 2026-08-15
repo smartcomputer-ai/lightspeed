@@ -27,6 +27,10 @@ Committed wire artifacts are owned by `crates/api/contract/`.
 The repository-level Docker Compose development environment lives under
 `dev/`.
 
+The authoritative configuration reference is
+[`docs/variables.md`](../docs/variables.md), with separate sections for the
+Platform server, Channels, Configurator MCP, and development-only settings.
+
 ## Development
 
 Install all Node workspace dependencies and run the complete check:
@@ -71,8 +75,9 @@ The server accepts the following primary configuration names:
 - `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL`; and
 - `LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS`.
 
-Legacy `LSBOT_*` aliases remain accepted for the production compatibility
-window described by P124. Conflicting new and legacy values are rejected.
+Imported pre-release aliases were removed as part of the greenfield
+product-identity reset. Platform deployments must use the
+`LIGHTSPEED_PLATFORM_*` names above.
 
 Live database or Temporal integration tests require explicit opt-in variables
 and are not part of the ordinary unit-test run. Never use production connector

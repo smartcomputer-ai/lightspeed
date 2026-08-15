@@ -15,11 +15,11 @@ describe("channel workflow search attributes", () => {
     } as ChannelSessionStartV1;
 
     expect(channelSessionSearchAttributes(start).map(({ key, value }) => [key.name, value])).toEqual([
-      ["LsbotUniverseId", "universe-1"],
-      ["LsbotChannelProvider", "telegram"],
-      ["LsbotChannelAccountId", "primary"],
-      ["LsbotChannelBindingId", "binding-1"],
-      ["LsbotManagedSessionId", "channel:v1:telegram:session-1"],
+      ["LightspeedUniverseId", "universe-1"],
+      ["LightspeedChannelProvider", "telegram"],
+      ["LightspeedChannelAccountId", "primary"],
+      ["LightspeedChannelBindingId", "binding-1"],
+      ["LightspeedManagedSessionId", "channel:v1:telegram:session-1"],
     ]);
     expect(CHANNEL_SEARCH_ATTRIBUTE_NAMES).not.toContain("secret-chat");
   });

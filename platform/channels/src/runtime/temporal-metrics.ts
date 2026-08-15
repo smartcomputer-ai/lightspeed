@@ -9,8 +9,8 @@ let installed = false;
  */
 export function installTemporalMetrics(service: string, fallbackPort: number): void {
   if (installed) return;
-  const host = process.env.CHANNELS_METRICS_HOST ?? "0.0.0.0";
-  const port = parseMetricsPort(process.env.CHANNELS_METRICS_PORT, fallbackPort);
+  const host = process.env.LIGHTSPEED_CHANNELS_METRICS_HOST ?? "0.0.0.0";
+  const port = parseMetricsPort(process.env.LIGHTSPEED_CHANNELS_METRICS_PORT, fallbackPort);
   Runtime.install({
     telemetryOptions: {
       metrics: {

@@ -4,6 +4,9 @@ The top-level `dev/` directory owns the complete local development environment
 for Lightspeed: its Docker Compose topology, environment exports, lifecycle
 commands, and reset helpers for Postgres, pgAdmin, MinIO, and Temporal.
 
+See [`docs/variables.md`](../docs/variables.md#local-development) for the full
+development override table and the separate production component variables.
+
 ## Services
 
 - Postgres on `localhost:15432`
@@ -37,8 +40,8 @@ activity workers. Connectors are opt-in and fail before startup when their
 required credentials are missing:
 
 ```bash
-CHANNELS_CONNECTORS=telegram npm run dev
-CHANNELS_CONNECTORS=telegram,whatsapp npm run dev
+LIGHTSPEED_CHANNELS_CONNECTORS=telegram npm run dev
+LIGHTSPEED_CHANNELS_CONNECTORS=telegram,whatsapp npm run dev
 ```
 
 Use `npm run dev -- --plan full` to inspect a profile without starting

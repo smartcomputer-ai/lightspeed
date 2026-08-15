@@ -14,8 +14,8 @@ import { universeForSession } from "./universes.js";
 
 const SETUP_ID = "configurator";
 const SETUP_VERSION = 3;
-const SERVER_ID = "lsbot-configurator";
-const PROFILE_ID = "lsbot-configurator";
+const SERVER_ID = "lightspeed-configurator";
+const PROFILE_ID = "lightspeed-configurator";
 const INSTALL_LEASE_MS = 5 * 60 * 1_000;
 
 type Installation = typeof schema.universeSetupInstallations.$inferSelect;
@@ -260,11 +260,11 @@ async function ensureCredential(
     displayName: "Lightspeed Configurator setup",
     principal: { kind: "user", id: userId },
   });
-  const grantId = `authgrant_lsbot_configurator_${crypto.randomUUID().replaceAll("-", "")}`;
+  const grantId = `authgrant_lightspeed_configurator_${crypto.randomUUID().replaceAll("-", "")}`;
   try {
     await client.call("auth/grants/import", {
       grantId,
-      providerId: "lsbot-configurator",
+      providerId: "lightspeed-configurator",
       token: minted.result.secret,
       displayName: "Lightspeed Configurator setup",
       audience: mcpUrl,

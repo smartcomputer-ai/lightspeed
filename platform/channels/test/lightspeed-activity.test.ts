@@ -52,7 +52,7 @@ describe("ensureManagedSession", () => {
       displayName: "Telegram chat",
       profileId: "channels-default",
       controller: {
-        workflowId: "lsbot.channels.v1/workflow",
+        workflowId: "lightspeed.channels.v1/workflow",
         workflowKind: "channelSessionWorkflowV1",
       },
     });
@@ -75,7 +75,7 @@ describe("ensureManagedSession", () => {
         workflowTools: {
           version: 1,
           lifecycleController: {
-            workflowId: "lsbot.channels.v1/workflow",
+            workflowId: "lightspeed.channels.v1/workflow",
             workflowKind: "channelSessionWorkflowV1",
           },
         },

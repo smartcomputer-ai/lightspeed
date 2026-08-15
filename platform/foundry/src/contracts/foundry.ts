@@ -7,19 +7,19 @@ import type {
 } from "@lightspeed/agent-client";
 
 export const FOUNDRY_PACK_WORKFLOW = "foundryPackWorkflowV1";
-export const FOUNDRY_WORKFLOW_TASK_QUEUE = "lsbot-foundry-workflows-v1";
-export const FOUNDRY_ACTIVITY_TASK_QUEUE = "lsbot-foundry-activities-v1";
+export const FOUNDRY_WORKFLOW_TASK_QUEUE = "lightspeed-foundry-workflows-v1";
+export const FOUNDRY_ACTIVITY_TASK_QUEUE = "lightspeed-foundry-activities-v1";
 export const FOUNDRY_EVENT_SIGNAL = "foundry_event_v1";
 export const FOUNDRY_CONFIG_SIGNAL = "foundry_config_v1";
 export const FOUNDRY_STATE_QUERY = "foundry_state";
 
-export const FOUNDRY_EVENT_RESOLVE_TOOL_ID = "lsbot.foundry.event.resolve.v1";
-export const FOUNDRY_RELEASE_RECORD_TOOL_ID = "lsbot.foundry.release.record.v1";
+export const FOUNDRY_EVENT_RESOLVE_TOOL_ID = "lightspeed.foundry.event.resolve.v1";
+export const FOUNDRY_RELEASE_RECORD_TOOL_ID = "lightspeed.foundry.release.record.v1";
 export const FOUNDRY_DEFAULT_PROFILE_ID = "foundry-manager";
 
-export const ENV_TAG_ROLE = "lsbot.role";
+export const ENV_TAG_ROLE = "lightspeed.role";
 export const ENV_TAG_ROLE_PACK_DEV = "pack-dev";
-export const ENV_TAG_PACK = "lsbot.pack";
+export const ENV_TAG_PACK = "lightspeed.pack";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NAME = /^[a-z0-9][a-z0-9-]*$/;
@@ -72,7 +72,7 @@ export function validateFoundryEvent(event: FoundryEvent): void {
 export function foundryPackWorkflowId(universeId: string, packName: string): string {
   requireUniverse(universeId);
   requireName(packName);
-  return `lsbot.foundry.v1/${universeId.toLowerCase()}/${packName}`;
+  return `lightspeed.foundry.v1/${universeId.toLowerCase()}/${packName}`;
 }
 
 export function foundrySessionId(packName: string): string {

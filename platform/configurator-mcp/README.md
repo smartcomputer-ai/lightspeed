@@ -31,6 +31,10 @@ The default endpoints are:
 
 Configuration:
 
+The central reference is
+[`docs/variables.md`](../../docs/variables.md#configurator-mcp); the table below
+is kept here for service-local convenience.
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `LIGHTSPEED_AUTH_MODE` | `single` | `single`, `trusted-header`, or `api-key`; must match the upstream gateway |

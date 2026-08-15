@@ -188,9 +188,9 @@ CREATE UNIQUE INDEX "universe_setup_installations_universe_setup_idx" ON "univer
 --> statement-breakpoint
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lsbot_channels') THEN
-    GRANT SELECT ON "bindings", "universes", "channel_accounts", "channel_identities", "member" TO lsbot_channels;
-    GRANT SELECT, INSERT, UPDATE ON "pairings" TO lsbot_channels;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lightspeed_channels') THEN
+    GRANT SELECT ON "bindings", "universes", "channel_accounts", "channel_identities", "member" TO lightspeed_channels;
+    GRANT SELECT, INSERT, UPDATE ON "pairings" TO lightspeed_channels;
   END IF;
 END
 $$;

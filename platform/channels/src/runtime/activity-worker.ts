@@ -6,10 +6,10 @@ import { installTemporalMetrics } from "./temporal-metrics.js";
 
 const address = process.env.TEMPORAL_ADDRESS ?? "localhost:7233";
 const namespace = process.env.TEMPORAL_NAMESPACE ?? "default";
-const taskQueue = process.env.CHANNELS_ACTIVITY_TASK_QUEUE ?? CHANNELS_ACTIVITY_TASK_QUEUE;
+const taskQueue =
+  process.env.LIGHTSPEED_CHANNELS_ACTIVITY_TASK_QUEUE ?? CHANNELS_ACTIVITY_TASK_QUEUE;
 const endpoint = process.env.LIGHTSPEED_ENDPOINT;
-const databaseUrl =
-  process.env.LIGHTSPEED_PLATFORM_DATABASE_URL ?? process.env.LSBOT_DATABASE_URL;
+const databaseUrl = process.env.LIGHTSPEED_PLATFORM_DATABASE_URL;
 
 if (endpoint === undefined || endpoint.length === 0) {
   throw new TypeError("LIGHTSPEED_ENDPOINT is required");

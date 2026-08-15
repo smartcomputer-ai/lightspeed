@@ -23,10 +23,10 @@ describe("Channels identities", () => {
 
     expect(retry).toEqual(first);
     expect(first.workflowId).toMatch(
-      /^lsbot\.channels\.v1\/6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f\/whatsapp\/[0-9a-f]{64}$/,
+      /^lightspeed\.channels\.v1\/6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f\/whatsapp\/[0-9a-f]{64}$/,
     );
     expect(first.sessionId).toMatch(/^channel:v1:whatsapp:[0-9a-f]{64}$/);
-    expect(first.deliveryTaskQueue).toMatch(/^lsbot-channels-delivery-v1-whatsapp-[0-9a-f]{24}$/);
+    expect(first.deliveryTaskQueue).toMatch(/^lightspeed-channels-delivery-v1-whatsapp-[0-9a-f]{24}$/);
     expect(JSON.stringify(first)).not.toContain(input.accountId);
   });
 
@@ -71,11 +71,11 @@ describe("Channels identities", () => {
   });
 
   it("derives stable submission and terminal notification ids", () => {
-    const first = channelTurnIdentity("lsbot.channels.v1/workflow", "42");
-    expect(channelTurnIdentity("lsbot.channels.v1/workflow", "42")).toEqual(first);
+    const first = channelTurnIdentity("lightspeed.channels.v1/workflow", "42");
+    expect(channelTurnIdentity("lightspeed.channels.v1/workflow", "42")).toEqual(first);
     expect(first.submissionId).toMatch(/^channels-v1-[0-9a-f]{64}$/);
     expect(first.terminalToken).toMatch(/^channels-terminal-v1-[0-9a-f]{64}$/);
-    expect(channelTurnIdentity("lsbot.channels.v1/workflow", "43")).not.toEqual(first);
+    expect(channelTurnIdentity("lightspeed.channels.v1/workflow", "43")).not.toEqual(first);
   });
 
   it("derives an account-affine delivery queue without tenant context", () => {

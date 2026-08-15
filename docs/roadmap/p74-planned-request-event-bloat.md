@@ -7,7 +7,7 @@
   boundary has shipped.
 - Completed 2026-06-16. Event-size metrics were explicitly deferred out of P74.
 - Split out of `docs/roadmap/p73-session-rehydration-payload-limit.md`. P73 was
-  the `ls.bot` Hetzner incident (`Complete result exceeds size limit` at
+  the legacy Hetzner deployment incident (`Complete result exceeds size limit` at
   bootstrap). P73 fixes the *transport* (compact bootstrap/continue-as-new); P74
   fixes the *durable log growth* that made the log large in the first place.
 
@@ -114,7 +114,7 @@ and constant-ish per turn.
   (`content_ref`, `description_ref`) to keep large payloads out of events. This
   solved payload bloat but left the *list of refs+metadata* inline.
 - For short sessions this is invisible. The cost only shows up in long-lived
-  bridge sessions (`ls.bot`), where turn count is high and the same active set
+  long-lived channel sessions, where turn count is high and the same active set
   is re-snapshotted each turn — exactly the sessions P73's incident came from.
 
 The original instinct (a self-contained, replayable, auditable planned request)

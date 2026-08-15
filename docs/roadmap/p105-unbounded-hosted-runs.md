@@ -95,8 +95,8 @@ This issue was first observed in the `ls-dev` coding environment on
 session:     session_2f272f873d87494cb0610305c12cfd8f
 environment: local
 run:         run_5
-repository:  smartcomputer-ai/ls.bot
-result:      https://github.com/smartcomputer-ai/ls.bot/pull/10
+repository:  former private deployment repository
+result:      pull request 10
 ```
 
 The agent successfully completed the requested external side effect: it pushed
@@ -104,8 +104,7 @@ the branch and created pull request 10. It then requested a final verification
 batch containing:
 
 ```text
-gh pr view 10 --repo smartcomputer-ai/ls.bot \
-  --json number,title,url,state,headRefName,baseRefName,mergeable
+gh pr view 10 --json number,title,url,state,headRefName,baseRefName,mergeable
 git status --short --branch
 ```
 

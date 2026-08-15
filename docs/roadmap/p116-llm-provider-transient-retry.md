@@ -30,8 +30,8 @@
   next run on the same session succeeds). The scripted 50ms suggested delay
   drives the full budget in seconds via `next_retry_delay`, without
   touching production constants.
-- Discovered in production on 2026-08-04 during the first end-to-end foundry
-  job (an ls.bot managed session developing a pack on the `hz02-devbox`
+- Discovered in production on 2026-08-04 during the first end-to-end Foundry
+  job (a Platform-managed session developing a pack on the `hz02-devbox`
   environment).
 - Separate from P114's delivery scope: P114 decomposes and bounds *tool*
   activities. This work applies the same bounded-activity and

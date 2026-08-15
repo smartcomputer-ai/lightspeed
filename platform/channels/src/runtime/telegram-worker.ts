@@ -25,18 +25,15 @@ import { installTemporalMetrics } from "./temporal-metrics.js";
 
 const address = process.env.TEMPORAL_ADDRESS ?? "localhost:7233";
 const namespace = process.env.TEMPORAL_NAMESPACE ?? "default";
-const botToken = requiredEnvironment("CHANNELS_TELEGRAM_BOT_TOKEN");
-const accountId = requiredEnvironment("CHANNELS_TELEGRAM_ACCOUNT_ID");
-const databaseUrl = requiredEnvironment(
-  "LIGHTSPEED_PLATFORM_DATABASE_URL",
-  "LSBOT_DATABASE_URL",
-);
+const botToken = requiredEnvironment("LIGHTSPEED_CHANNELS_TELEGRAM_BOT_TOKEN");
+const accountId = requiredEnvironment("LIGHTSPEED_CHANNELS_TELEGRAM_ACCOUNT_ID");
+const databaseUrl = requiredEnvironment("LIGHTSPEED_PLATFORM_DATABASE_URL");
 const lightspeedEndpoint = requiredEnvironment("LIGHTSPEED_ENDPOINT");
 const taskQueue = channelDeliveryTaskQueue("telegram", accountId);
 const health = new ConnectorHealthTracker("telegram", accountId);
 const metrics = new ConnectorMetrics();
 const ingressRateLimit = new FixedWindowRateLimiter({
-  limit: parsePositiveInteger(process.env.CHANNELS_INGRESS_MAX_PER_MINUTE, 120),
+  limit: parsePositiveInteger(process.env.LIGHTSPEED_CHANNELS_INGRESS_MAX_PER_MINUTE, 120),
   windowMs: 60_000,
   maxKeys: 10_000,
 });
@@ -210,9 +207,10 @@ const worker = await Worker.create({
 });
 health.markActivityWorkerReady();
 const healthServer = await startConnectorHealthServer(health, {
-  host: process.env.CHANNELS_HEALTH_HOST ?? "0.0.0.0",
+  host: process.env.LIGHTSPEED_CHANNELS_HEALTH_HOST ?? "0.0.0.0",
   port: parseHealthPort(
-    process.env.CHANNELS_TELEGRAM_HEALTH_PORT ?? process.env.CHANNELS_HEALTH_PORT,
+    process.env.LIGHTSPEED_CHANNELS_TELEGRAM_HEALTH_PORT ??
+      process.env.LIGHTSPEED_CHANNELS_HEALTH_PORT,
     8_091,
   ),
   metrics,
@@ -258,8 +256,8 @@ try {
   });
 }
 
-function requiredEnvironment(name: string, legacyName?: string): string {
-  const value = process.env[name] ?? (legacyName ? process.env[legacyName] : undefined);
+function requiredEnvironment(name: string): string {
+  const value = process.env[name];
   if (value === undefined || value.length === 0) {
     throw new TypeError(`${name} is required`);
   }

@@ -29,7 +29,7 @@ describe("Channels runtime roles", () => {
   it("rejects unknown commands and connectors", () => {
     expect(() => resolveChannelsRoles("gateway", undefined)).toThrow("unknown Channels command");
     expect(() => resolveChannelsRoles("all", "signal")).toThrow(
-      "invalid CHANNELS_CONNECTORS entry",
+      "invalid LIGHTSPEED_CHANNELS_CONNECTORS entry",
     );
   });
 });

@@ -5,8 +5,8 @@ import {
 } from "./media.js";
 
 export const CHANNEL_SESSION_WORKFLOW = "channelSessionWorkflowV1";
-export const CHANNELS_WORKFLOW_TASK_QUEUE = "lsbot-channels-workflows-v1";
-export const CHANNELS_ACTIVITY_TASK_QUEUE = "lsbot-channels-activities-v1";
+export const CHANNELS_WORKFLOW_TASK_QUEUE = "lightspeed-channels-workflows-v1";
+export const CHANNELS_ACTIVITY_TASK_QUEUE = "lightspeed-channels-activities-v1";
 export const CHANNEL_INBOUND_SIGNAL = "channel_inbound_v1";
 export const CHANNEL_STATE_QUERY = "channel_state_v1";
 

@@ -116,7 +116,8 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
 ```
 
 Unified development profiles run from the root npm workspace. `full` is the
-default; connector processes remain opt-in through `CHANNELS_CONNECTORS`:
+default; connector processes remain opt-in through
+`LIGHTSPEED_CHANNELS_CONNECTORS`:
 
 ```bash
 npm run dev
@@ -210,6 +211,10 @@ Release construction, snapshots, and tagged publication are documented in
   `ModelSelection` or the session log.
 - Keep clients on `api`. CLIs, TUIs, editors, hosted gateways, and future
   Temporal frontends should not consume reducer internals directly.
+- Use Lightspeed-owned names for every supported product configuration key,
+  persisted identifier, Temporal identity, browser storage key, and deployment
+  input. Do not reintroduce imported pre-release aliases;
+  `npm run check:identity` enforces this boundary across the repository.
 - Treat hosted `session/runs/start` as an acceptance/start boundary, not a final-output
   boundary. Clients should follow `session/events/read` or refresh
   `session/read` for progress and completion.
@@ -254,23 +259,9 @@ Local commands load a root `.env` file when present. The `.env` file usually
 exists in development environments; check with the developer before running
 live commands.
 
-| Variable | Purpose |
-|---|---|
-| `OPENAI_API_KEY` | OpenAI provider authentication |
-| `ANTHROPIC_API_KEY` | Anthropic provider authentication |
-| `OPENAI_BASE_URL` | Override OpenAI API endpoint |
-| `ANTHROPIC_BASE_URL` | Override Anthropic API endpoint |
-| `LIGHTSPEED_CHAT_PROVIDER` | Default chat provider ID |
-| `LIGHTSPEED_CHAT_MODEL` | Default chat model |
-| `LIGHTSPEED_SECRETS_MASTER_KEY` | Base64 32-byte AES key for the encrypted secret store |
-| `LIGHTSPEED_PUBLIC_BASE_URL` | Externally reachable gateway base URL for the OAuth callback (defaults to `http://{bind}`) |
-| `LIGHTSPEED_AUTH_MODE` | Gateway tenant resolution: `single` (default), `trusted-header`, `api-key` (P90) |
-| `LIGHTSPEED_API_KEY` | Client-side (CLI/bridge): bearer key sent to an `api-key`-mode gateway |
-| `LIGHTSPEED_UNIVERSE` | Client-side (CLI/bridge): universe header sent to a `trusted-header`-mode gateway |
-| `LIGHTSPEED_BLOB_CACHE_BYTES` | CAS blob cache budget per process (`0` disables; default 256MiB) |
-| `LIGHTSPEED_ALLOW_UNLEDGERED_SCHEMA` | Permit runtime startup against externally managed Lightspeed tables without a migration ledger (`false` by default); does not relax `migrate` |
-| `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` | Stable gateway base URL used by separate Temporal workers for environment routes |
-| `LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN` | Shared deployment bearer token for worker-to-environment-gateway routing; required for split gateway/worker deployments |
+See `docs/variables.md` for the authoritative reference, including the strict
+separation between core runtime, Platform, Channels, Configurator, environment
+services, development, test, and release variables.
 
 ## Test Rules
 

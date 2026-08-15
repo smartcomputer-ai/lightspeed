@@ -121,12 +121,10 @@ function createPlan(profile, sourceEnv) {
   const runtimeRpc = sourceEnv.LIGHTSPEED_API_URL ?? "http://127.0.0.1:18080/rpc";
   const pgUrl =
     sourceEnv.LIGHTSPEED_PLATFORM_DATABASE_URL ??
-    sourceEnv.LSBOT_DATABASE_URL ??
     sourceEnv.LIGHTSPEED_TEST_POSTGRES_URL;
   const externalPlatformGateway =
     profile === "platform" &&
-    (sourceEnv.LIGHTSPEED_PLATFORM_DEV_REAL_GATEWAY ??
-      sourceEnv.LSBOT_DEV_REAL_GATEWAY) === "1";
+    sourceEnv.LIGHTSPEED_PLATFORM_DEV_REAL_GATEWAY === "1";
   const stubPort = positivePort(sourceEnv.STUB_GATEWAY_PORT, 19_999, "STUB_GATEWAY_PORT");
   const platformPort = positivePort(sourceEnv.PORT, 3_000, "PORT");
   const configuratorPort = positivePort(
@@ -142,9 +140,9 @@ function createPlan(profile, sourceEnv) {
     : profile === "platform"
       ? `http://127.0.0.1:${stubPort}/rpc`
       : runtimeRpc;
-  const connectorNames = profile === "full" ? parseConnectors(sourceEnv.CHANNELS_CONNECTORS) : [];
-  if (profile !== "full" && sourceEnv.CHANNELS_CONNECTORS?.trim()) {
-    throw new TypeError("CHANNELS_CONNECTORS is supported only by the full development profile");
+  const connectorNames = profile === "full" ? parseConnectors(sourceEnv.LIGHTSPEED_CHANNELS_CONNECTORS) : [];
+  if (profile !== "full" && sourceEnv.LIGHTSPEED_CHANNELS_CONNECTORS?.trim()) {
+    throw new TypeError("LIGHTSPEED_CHANNELS_CONNECTORS is supported only by the full development profile");
   }
   validateConnectorEnvironment(connectorNames, sourceEnv);
 
@@ -159,19 +157,15 @@ function createPlan(profile, sourceEnv) {
     LIGHTSPEED_PLATFORM_DATABASE_URL: pgUrl,
     LIGHTSPEED_PLATFORM_AUTH_SECRET:
       sourceEnv.LIGHTSPEED_PLATFORM_AUTH_SECRET ??
-      sourceEnv.LSBOT_AUTH_SECRET ??
       "local-platform-auth-secret-0123456789abcdef",
     LIGHTSPEED_PLATFORM_ADMIN_EMAIL:
       sourceEnv.LIGHTSPEED_PLATFORM_ADMIN_EMAIL ??
-      sourceEnv.LSBOT_ADMIN_EMAIL ??
       "admin@lightspeed.dev",
     LIGHTSPEED_PLATFORM_ADMIN_PASSWORD:
       sourceEnv.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD ??
-      sourceEnv.LSBOT_ADMIN_PASSWORD ??
       "lightspeed-dev-password",
     LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL:
       sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL ??
-      sourceEnv.LSBOT_CONFIGURATOR_MCP_URL ??
       `http://127.0.0.1:${configuratorPort}/mcp`,
     LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL:
       sourceEnv.LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL ?? runtimeRpc,
@@ -275,7 +269,7 @@ function channelsProcess(name, role, metricsPort, env, tsx) {
     command: tsx,
     args: ["platform/channels/src/runtime/main.ts", role],
     cwd: repoRoot,
-    env: { ...env, CHANNELS_METRICS_PORT: String(metricsPort) },
+    env: { ...env, LIGHTSPEED_CHANNELS_METRICS_PORT: String(metricsPort) },
   };
 }
 
@@ -286,7 +280,7 @@ function parseConnectors(value) {
     const connector = raw.trim();
     if (connector !== "telegram" && connector !== "whatsapp") {
       throw new TypeError(
-        `invalid CHANNELS_CONNECTORS entry ${JSON.stringify(connector)}; expected telegram or whatsapp`,
+        `invalid LIGHTSPEED_CHANNELS_CONNECTORS entry ${JSON.stringify(connector)}; expected telegram or whatsapp`,
       );
     }
     if (!result.includes(connector)) result.push(connector);
@@ -296,11 +290,11 @@ function parseConnectors(value) {
 
 function validateConnectorEnvironment(connectors, env) {
   const requirements = {
-    telegram: ["CHANNELS_TELEGRAM_BOT_TOKEN", "CHANNELS_TELEGRAM_ACCOUNT_ID"],
+    telegram: ["LIGHTSPEED_CHANNELS_TELEGRAM_BOT_TOKEN", "LIGHTSPEED_CHANNELS_TELEGRAM_ACCOUNT_ID"],
     whatsapp: [
-      "CHANNELS_WHATSAPP_ACCOUNT_ID",
-      "CHANNELS_WHATSAPP_AUTH_DIR",
-      "CHANNELS_WHATSAPP_MEDIA_LOCATOR_KEY",
+      "LIGHTSPEED_CHANNELS_WHATSAPP_ACCOUNT_ID",
+      "LIGHTSPEED_CHANNELS_WHATSAPP_AUTH_DIR",
+      "LIGHTSPEED_CHANNELS_WHATSAPP_MEDIA_LOCATOR_KEY",
     ],
   };
   for (const connector of connectors) {
@@ -314,12 +308,12 @@ function validateConnectorEnvironment(connectors, env) {
 function connectorHealthPort(connector, env) {
   const specific =
     connector === "telegram"
-      ? env.CHANNELS_TELEGRAM_HEALTH_PORT
-      : env.CHANNELS_WHATSAPP_HEALTH_PORT;
+      ? env.LIGHTSPEED_CHANNELS_TELEGRAM_HEALTH_PORT
+      : env.LIGHTSPEED_CHANNELS_WHATSAPP_HEALTH_PORT;
   return positivePort(
-    specific ?? env.CHANNELS_HEALTH_PORT,
+    specific ?? env.LIGHTSPEED_CHANNELS_HEALTH_PORT,
     connector === "telegram" ? 8_091 : 8_092,
-    `CHANNELS_${connector.toUpperCase()}_HEALTH_PORT`,
+    `LIGHTSPEED_CHANNELS_${connector.toUpperCase()}_HEALTH_PORT`,
   );
 }
 
@@ -513,7 +507,7 @@ function printHelp() {
 
 Profiles:
   full      Infrastructure, Rust runtime, Configurator, Platform, web, and
-            Channels workflow/activity workers. CHANNELS_CONNECTORS optionally
+            Channels workflow/activity workers. LIGHTSPEED_CHANNELS_CONNECTORS optionally
             adds telegram and/or whatsapp.
   platform  Infrastructure, stub gateway, Platform API, and web UI. Set
             LIGHTSPEED_PLATFORM_DEV_REAL_GATEWAY=1 to use an external runtime.

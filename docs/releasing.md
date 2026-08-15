@@ -75,7 +75,8 @@ payloads. `make release-images` copies those prebuilt files into the `runtime`,
 Configurator, platform, and Channels images; it does not invoke Cargo or
 rebuild the web UI. The `channels` image includes all connector dependencies
 and selects `workflows`, `activities`, `telegram`, `whatsapp`, or `all` at
-startup; `all` is the default and starts Telegram unless `CHANNELS_CONNECTORS`
+startup; `all` is the default and starts Telegram unless
+`LIGHTSPEED_CHANNELS_CONNECTORS`
 selects another connector set. Image smoke tests compare the runtime's
 `lightspeed-server` executable byte-for-byte, start the platform image against
 PostgreSQL, check its health and SPA, and validate every Channels role.
@@ -125,13 +126,14 @@ version, full source commit, target, and Rust version through `--version`.
   public snapshot identity. Consumers resolve that tag once and follow only the
   digest-pinned component references in its manifest. A superseded or canceled
   run may leave staging objects but cannot expose a complete snapshot.
-- After every completed current-main snapshot, the workflow sends ls.bot a
-  `lightspeed-main` repository dispatch containing the full Git SHA and exact
-  release-bundle digest. Configure `LSBOT_DISPATCH_TOKEN` as a narrowly scoped
-  GitHub App installation token or fine-grained token that may trigger Actions
-  in `smartcomputer-ai/ls.bot`. Until the secret exists, snapshot publication
-  succeeds with an explicit warning and an operator can dispatch the digest
-  manually.
+- After every completed current-main snapshot, the workflow sends the private
+  deployment repository a `lightspeed-main` repository dispatch containing the
+  full Git SHA and exact release-bundle digest. Configure
+  `LIGHTSPEED_DEPLOYMENT_DISPATCH_TOKEN` as a narrowly scoped GitHub App
+  installation token or fine-grained token that may trigger Actions in the
+  repository named by the `LIGHTSPEED_DEPLOYMENT_REPOSITORY` GitHub variable.
+  Until both values exist, snapshot publication succeeds with an explicit
+  warning and an operator can dispatch the digest manually.
 - A `v<product-version>` annotated tag on `main` triggers
   `.github/workflows/release-tag.yml`. It independently tests and builds the
   exact tagged commit, applies SemVer aliases from the manifest's exact
@@ -143,5 +145,6 @@ version, full source commit, target, and Rust version through `--version`.
 The `official-release` GitHub environment protects tagged-release credentials;
 configure `NPM_TOKEN` only there. Snapshot publication uses the scoped GitHub
 token; only the final cross-repository notification uses
-`LSBOT_DISPATCH_TOKEN`. That notification starts ls.bot's own checks and image
-publication, not a production deployment.
+`LIGHTSPEED_DEPLOYMENT_DISPATCH_TOKEN`. That notification starts the private
+deployment repository's own checks and image publication, not a production
+deployment.

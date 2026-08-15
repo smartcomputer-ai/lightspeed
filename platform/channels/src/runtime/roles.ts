@@ -31,7 +31,7 @@ function parseConnectors(value: string | undefined): ChannelsRole[] {
     const connector = entry.trim();
     if (connector !== "telegram" && connector !== "whatsapp") {
       throw new TypeError(
-        `invalid CHANNELS_CONNECTORS entry ${JSON.stringify(connector)}; expected telegram or whatsapp`,
+        `invalid LIGHTSPEED_CHANNELS_CONNECTORS entry ${JSON.stringify(connector)}; expected telegram or whatsapp`,
       );
     }
     if (!connectors.includes(connector)) {
@@ -39,7 +39,7 @@ function parseConnectors(value: string | undefined): ChannelsRole[] {
     }
   }
   if (connectors.length === 0) {
-    throw new TypeError("CHANNELS_CONNECTORS must contain at least one connector");
+    throw new TypeError("LIGHTSPEED_CHANNELS_CONNECTORS must contain at least one connector");
   }
   return connectors;
 }

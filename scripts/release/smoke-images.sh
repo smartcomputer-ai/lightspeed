@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 platform_image="${PLATFORM_IMAGE:?PLATFORM_IMAGE is required}"
-channels_image="${CHANNELS_IMAGE:?CHANNELS_IMAGE is required}"
+channels_image="${LIGHTSPEED_CHANNELS_IMAGE:?LIGHTSPEED_CHANNELS_IMAGE is required}"
 expected_sha="${EXPECTED_SHA:?EXPECTED_SHA is required}"
 
 docker pull "$platform_image"

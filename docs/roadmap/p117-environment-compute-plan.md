@@ -16,7 +16,8 @@ ingress changed from tunnel-first to provider-managed node-edge ingress on
 2026-08-13.
 
 This is the umbrella target architecture for dynamic and directly enrolled
-Lightspeed environments across the `lightspeed` and `ls.bot` repositories.
+Lightspeed environments across the public product and private deployment
+repositories.
 It is not one implementation completion unit. Delivery is split across
 [P118](p118-environment-domain-and-lifecycle.md),
 [P119](p119-environment-daemon-gateway-enrollment.md),
@@ -391,9 +392,9 @@ additionally authenticated by its enrolled daemon identity; a mediated stream
 is authenticated by the provider identity and checked against the enabled
 binding and environment ownership.
 
-### ls.bot Postgres
+### Platform Postgres
 
-ls.bot continues to own humans, universe membership, and platform-level
+Platform continues to own humans, universe membership, and platform-level
 commercial or administrative policy. It calls Lightspeed operator and universe
 APIs. It does not mirror provider inventory, environment status, template
 catalogs, daemon identity, or session selection.
@@ -969,7 +970,7 @@ deferred.
 
 The first provider is a Rust deployable on hz01's trusted application plane. It
 reuses Lightspeed environment-protocol types but does not depend on the engine,
-Temporal worker, session runtime, or ls.bot app.
+Temporal worker, session runtime, or Platform app.
 
 It talks over the tailnet to the Incus remote HTTPS API on hz02 using a
 restricted deployment credential. The hz02 root host continues to run Incus
@@ -1082,7 +1083,7 @@ trust boundaries.
 - The provider and base image never receive a general universe key.
 
 Provide a stable non-secret API URL and a small CLI/client wrapper in the
-development template. Add an ls.bot convenience action that creates, stores,
+development template. Add a Platform convenience action that creates, stores,
 and binds an environment Lightspeed API credential after the underlying API is
 solid; the manual create-secret-bind flow is sufficient for the first proof.
 
@@ -1354,7 +1355,7 @@ Target work:
 Provider and daemon crates may reuse protocol/API crates but must not depend on
 the engine, Temporal server, session runtime, CLI, or store implementation.
 
-### ls.bot
+### Platform
 
 Target work:
 
@@ -1465,7 +1466,7 @@ umbrella document and have no scheduled implementation plan.
 14. Provider and gateway restarts recover from Lightspeed and backend truth
     without a provider database.
 15. The UI shows provider binding, template, source, lifecycle, public endpoint,
-    and bounded diagnostics without mirroring environment state in ls.bot.
+    and bounded diagnostics without mirroring environment state in Platform.
 
 ## Decisions
 

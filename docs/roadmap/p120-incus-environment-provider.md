@@ -198,7 +198,7 @@ environment state.
 - [x] Implement ownership-verified idempotent close.
 - [x] Implement explicit operator-driven adoption of an existing Incus VM,
       including stop/move/re-network/start and partial-move recovery.
-- [ ] Update ls.bot template-aware environment creation and status views.
+- [ ] Update Platform template-aware environment creation and status views.
 
 The provider has no database or durable local operation ledger. Its JSON
 configuration is authoritative for provider-wide templates, physical

@@ -47,7 +47,9 @@ export interface WhatsAppMediaActivityConfig {
 export function parseWhatsAppMediaLocatorKey(value: string): Uint8Array {
   const key = Buffer.from(value, "base64");
   if (key.byteLength !== 32) {
-    throw new TypeError("CHANNELS_WHATSAPP_MEDIA_LOCATOR_KEY must be 32 bytes encoded as base64");
+    throw new TypeError(
+      "LIGHTSPEED_CHANNELS_WHATSAPP_MEDIA_LOCATOR_KEY must be 32 bytes encoded as base64",
+    );
   }
   return key;
 }

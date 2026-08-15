@@ -7,7 +7,7 @@
   per-environment Cloudflare Tunnel.
 - Core Lightspeed, provider-protocol, Incus-provider, and stateless edge-proxy
   implementation completed 2026-08-13. Wildcard DNS/TLS deployment, live
-  infrastructure acceptance, and ls.bot UX remain.
+  infrastructure acceptance, and Platform UX remain.
 - Optional and not required to complete P120.
 - Builds on [P120](p120-incus-environment-provider.md).
 
@@ -152,7 +152,7 @@ application remains responsible for its own user-facing authentication.
       enable/disable operations.
 - [x] Expose the public endpoint without leaking the approved port, private
       address, or edge configuration.
-- [ ] Update ls.bot to show and manage the optional public endpoint.
+- [ ] Update Platform to show and manage the optional public endpoint.
 
 The exact proxy product and final API DTO names may be chosen during
 implementation; they must preserve the ownership and exposure boundaries

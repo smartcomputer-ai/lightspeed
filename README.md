@@ -157,7 +157,7 @@ migrated Rust runtime, Configurator MCP, the Platform API and web UI, and the
 Channels workflow/activity workers. Telegram and WhatsApp remain explicit:
 
 ```bash
-CHANNELS_CONNECTORS=telegram npm run dev
+LIGHTSPEED_CHANNELS_CONNECTORS=telegram npm run dev
 ```
 
 Focused profiles use the same supervisor:
@@ -329,6 +329,10 @@ npm run check
 Run `npm run dev -- platform` for the focused Platform API/UI and stub-gateway
 loop. The default `npm run dev` starts the complete first-party product. See
 [dev/README.md](dev/README.md) for profiles and connector configuration.
+
+See [docs/variables.md](docs/variables.md) for the authoritative environment
+variable reference, separated by core runtime, Platform, Channels,
+Configurator, development, test, and release scope.
 
 ### Stop Or Reset Local Infra
 

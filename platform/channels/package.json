@@ -18,7 +18,7 @@
     "dev:whatsapp": "tsx src/runtime/main.ts whatsapp",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:integration": "CHANNELS_TEMPORAL_INTEGRATION=1 vitest run test/self-receiver.integration.test.ts"
+    "test:integration": "LIGHTSPEED_CHANNELS_TEMPORAL_INTEGRATION=1 vitest run test/self-receiver.integration.test.ts"
   },
   "dependencies": {
     "@lightspeed/agent-client": "*",

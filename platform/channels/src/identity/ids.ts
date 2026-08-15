@@ -32,7 +32,7 @@ export function channelSessionIdentity(input: ChannelIdentityInput): ChannelSess
   requirePart(input.accountId, "accountId");
   requirePart(input.sessionKey, "sessionKey");
 
-  const routeHash = digest("lsbot.channels.session.v1", [
+  const routeHash = digest("lightspeed.channels.session.v1", [
     input.universeId.toLowerCase(),
     input.provider,
     input.accountId,
@@ -40,7 +40,7 @@ export function channelSessionIdentity(input: ChannelIdentityInput): ChannelSess
   ]);
 
   return {
-    workflowId: `lsbot.channels.v1/${input.universeId.toLowerCase()}/${input.provider}/${routeHash}`,
+    workflowId: `lightspeed.channels.v1/${input.universeId.toLowerCase()}/${input.provider}/${routeHash}`,
     sessionId: `channel:v1:${input.provider}:${routeHash}`,
     deliveryTaskQueue: channelDeliveryTaskQueue(input.provider, input.accountId),
   };
@@ -51,8 +51,8 @@ export function channelDeliveryTaskQueue(
   accountId: string,
 ): string {
   requirePart(accountId, "accountId");
-  const accountHash = digest("lsbot.channels.account.v1", [provider, accountId]).slice(0, 24);
-  return `lsbot-channels-delivery-v1-${provider}-${accountHash}`;
+  const accountHash = digest("lightspeed.channels.account.v1", [provider, accountId]).slice(0, 24);
+  return `lightspeed-channels-delivery-v1-${provider}-${accountHash}`;
 }
 
 export function lightspeedSessionWorkflowId(universeId: string, sessionId: string): string {
@@ -69,7 +69,7 @@ export function lightspeedSessionWorkflowId(universeId: string, sessionId: strin
 export function channelTurnIdentity(workflowId: string, providerMessageId: string): ChannelTurnIdentity {
   requirePart(workflowId, "workflowId");
   requirePart(providerMessageId, "providerMessageId");
-  const turnHash = digest("lsbot.channels.turn.v1", [workflowId, providerMessageId]);
+  const turnHash = digest("lightspeed.channels.turn.v1", [workflowId, providerMessageId]);
   return {
     submissionId: `channels-v1-${turnHash}`,
     terminalToken: `channels-terminal-v1-${turnHash}`,
@@ -78,13 +78,13 @@ export function channelTurnIdentity(workflowId: string, providerMessageId: strin
 
 export function channelContextKey(inboundKey: string): string {
   requirePart(inboundKey, "inboundKey");
-  return `channel.room.v1.${digest("lsbot.channels.context.v1", [inboundKey])}`;
+  return `channel.room.v1.${digest("lightspeed.channels.context.v1", [inboundKey])}`;
 }
 
 export function channelPairingKey(route: ChannelRoute): string {
   requirePart(route.accountId, "accountId");
   requirePart(route.chatId, "chatId");
-  return `channels-pairing-v1-${digest("lsbot.channels.pairing.v1", [
+  return `channels-pairing-v1-${digest("lightspeed.channels.pairing.v1", [
     route.provider,
     route.accountId,
     route.chatId,

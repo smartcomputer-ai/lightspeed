@@ -3,14 +3,14 @@
 ## Work
 - [ ] [P124](p124-first-party-platform-monorepo.md) — import the complete
   first-party TypeScript platform into Lightspeed, neutralize product branding
-  without breaking durable identities, enforce atomic cross-language contract
+  with a greenfield durable-identity reset, enforce atomic cross-language contract
   checks, extend P123 to publish every selected component in one coherent
-  release, and reduce ls.bot to a private deployment repository.
+  release, and reduce the private repository to deployment operations.
 - [x] [P123](p123-build-and-release.md) — Lightspeed-owned release artifacts,
   embedded ledgered migrations, one-build packaging, automatic coherent
   snapshots after successful `main` CI, and independent exact-commit SemVer
   releases. Lightspeed side complete 2026-08-14 except for the intentionally
-  deferred ls.bot dispatch; isolated-runner provisioning and consumer cutover
+  deferred deployment-repository dispatch; isolated-runner provisioning and consumer cutover
   remain external.
 - [x] [P100](p100-workflow-tool-ports.md) — the workflow emission substrate:
   one envelope and one fixed `deliver_emission` signal for all cross-workflow
@@ -137,7 +137,7 @@
 - [ ] [P120](p120-incus-environment-provider.md) — core standalone stateless
   Incus controller, passive on-demand data endpoint, immutable image recipe, provider-wide policy,
   and durable VM provisioning are implemented; hz01/hz02 deployment, image
-  publication, ls.bot UX, and live isolation/acceptance proofs remain
+  publication, platform UX, and live isolation/acceptance proofs remain
 - [ ] [P121](p121-environment-public-ingress.md) — add provider-authorized
   per-environment HTTPS ingress through a shared node-edge proxy with wildcard
   DNS/TLS and no agent or platform credential inside the VM; core API,

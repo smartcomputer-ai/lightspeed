@@ -35,7 +35,7 @@ const start: ChannelSessionStartV1 = {
     accountId: "primary",
     chatId: "123",
   },
-  deliveryTaskQueue: "lsbot-channels-delivery-v1-telegram-test",
+  deliveryTaskQueue: "lightspeed-channels-delivery-v1-telegram-test",
 };
 
 const inbound: NormalizedInboundV1 = {

@@ -9,7 +9,6 @@ export interface CliConfig {
 
 const configDir =
   process.env.LIGHTSPEED_PLATFORM_CONFIG_DIR ??
-  process.env.LSBOT_CONFIG_DIR ??
   path.join(os.homedir(), ".config", "lightspeed-platform");
 const configPath = path.join(configDir, "config.json");
 

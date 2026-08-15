@@ -2,8 +2,9 @@
 
 Status: repository implementation complete 2026-08-15. Public-tree import,
 workspace consolidation, CI, and coherent release construction are in place.
-Private source removal and deployment cutover remain strictly sequenced after
-the ls.bot P117-P122 environment migration and its rollback window.
+The imported product is greenfield, so active product identity was reset to
+Lightspeed without a legacy compatibility window. Private source removal and
+the first deployment cutover remain external follow-up work.
 
 Builds on [P123](p123-build-and-release.md). P123 remains the release authority;
 P124 extends its coherent build, manifest, provenance, and publication model to
@@ -31,8 +32,16 @@ Implemented repository slice 2026-08-15:
 - consolidated every Channels role and connector into one image selected by
   its startup command, while giving Foundry no independent image or
   publication entry;
-- added primary `LIGHTSPEED_PLATFORM_*` configuration with legacy `LSBOT_*`
-  compatibility where the imported runtime consumes deployment settings;
+- standardized imported deployment settings on `LIGHTSPEED_PLATFORM_*` and
+  removed the pre-release legacy environment-variable aliases;
+- reset active Channels workflow IDs, task queues, search attributes, hash
+  domains, Platform setup resource IDs, browser storage keys, and the Channels
+  database role to Lightspeed-owned names;
+- mechanically normalized Foundry's imported identifiers without otherwise
+  changing its unsupported product or release status;
+- made snapshot dispatch target a configurable private deployment repository
+  using `LIGHTSPEED_DEPLOYMENT_REPOSITORY` and
+  `LIGHTSPEED_DEPLOYMENT_DISPATCH_TOKEN`;
 - renamed the top-level local environment from `local/` to `dev/`, keeping its
   Compose topology and configuration beside its lifecycle helpers rather than
   treating the environment as a generic script collection;
@@ -42,10 +51,10 @@ Implemented repository slice 2026-08-15:
 - deleted the top-level example `profiles/` fixtures and references.
 
 Still pending: the first infrastructure-backed publication and deployment
-acceptance of the extended P123 artifact set, full product-identity runtime
-configuration, replacement of the Channels emission mirror after that wire
-type is generated publicly, import/license review closure, and the
-post-environment-cutover private deployment/source retirement.
+acceptance of the extended P123 artifact set, remaining runtime-configurable
+branding, replacement of the Channels emission mirror after that wire type is
+generated publicly, import/license review closure, and private
+deployment/source retirement.
 
 ## Goal
 
@@ -53,14 +62,15 @@ Make the public `smartcomputer-ai/lightspeed` repository the source of the
 complete Lightspeed product: deterministic Rust runtime, generated API clients,
 management plane, web UI, channel ingress, and optional workflow integrations.
 
-Keep the private ls.bot repository as a deployment repository containing only
-infrastructure, encrypted secrets, compose and deployment configuration,
-DNS/TLS policy, release pins, and product-specific runtime configuration.
+Keep a private Lightspeed deployment repository containing only infrastructure,
+encrypted secrets, compose and deployment configuration, DNS/TLS policy,
+release pins, and product-specific runtime configuration. The recommended
+repository name is `lightspeed-deployment`.
 
 The intended boundary is:
 
 ```text
-public Lightspeed repository       private ls.bot repository
+public Lightspeed repository       private deployment repository
 
 runtime and API                    release-manifest pin
 generated clients                 deployment topology
@@ -73,8 +83,8 @@ tests, docs, and SBOM              production operations
 
 ## Decision
 
-Import the ls.bot `app/` npm workspace into this repository as the first-party
-platform layer:
+Import the former private `app/` npm workspace into this repository as the
+first-party platform layer:
 
 - `server`;
 - `web`;
@@ -166,7 +176,7 @@ contract boundary. In-tree consumers use the workspace source directly during
 development and CI. Tagged releases may continue publishing the client to npm
 for external consumers through P123.
 
-Rename internal `@lsbot/*` packages to the `@lightspeed/*` scope. Keep the
+Rename imported internal packages to the `@lightspeed/*` scope. Keep the
 workspace root and application-only packages marked `"private": true` unless a
 package is intentionally supported as a public npm artifact. Open source does
 not imply npm publication.
@@ -181,12 +191,11 @@ HTTP, authentication, database access, connectors, and Temporal workers are
 side-effecting product-plane components and must continue to communicate
 through the public `api` and generic workflow-tool protocols.
 
-## Product neutralization and compatibility
+## Product neutralization and greenfield identity
 
-The current workspace is structurally coupled to Lightspeed but still embeds
-ls.bot branding and operational names. Package-scope renaming alone is not a
-complete public-product conversion. Inventory every occurrence and classify it
-before changing it.
+The imported workspace was never a public production compatibility boundary.
+Use a clean Lightspeed identity for every active product and operational name;
+do not carry pre-release aliases or dual-poll legacy queues into the product.
 
 ### Runtime-configured product identity
 
@@ -200,19 +209,20 @@ protocol:
 - cookie/storage namespaces where migration is safe; and
 - deployment-specific endpoints and feature availability.
 
-Provide neutral Lightspeed defaults. The private deployment supplies ls.bot
-branding and URLs through runtime configuration, not a private source build or
-post-build source patch.
+Provide neutral Lightspeed defaults. A private deployment supplies any
+deployment-specific branding and URLs through runtime configuration, not a
+private source build or post-build source patch.
 
-Transition `LSBOT_*` environment variables to documented `LIGHTSPEED_PLATFORM_*`
-names. Where production rollout requires it, accept the legacy name for one
-compatibility window, reject conflicting old/new values, and emit a clear
-deprecation diagnostic.
+Platform configuration uses documented `LIGHTSPEED_PLATFORM_*` names. Core
+runtime configuration remains under `LIGHTSPEED_*`, Channels-specific settings
+use `LIGHTSPEED_CHANNELS_*` where a product prefix is needed, and Configurator
+settings use `LIGHTSPEED_CONFIGURATOR_MCP_*`. Do not accept legacy product-name
+aliases in application or development code.
 
 ### Durable operational identity
 
-Do not mechanically rename values that may already be persisted or referenced
-by running systems, including:
+Because the imported product is greenfield, reset active durable names before
+the first deployment, including:
 
 - Temporal workflow IDs, task queues, signals, queries, and workflow type
   names;
@@ -224,18 +234,15 @@ by running systems, including:
 - browser storage or auth cookie names whose replacement would log users out or
   orphan state.
 
-For each durable `lsbot` identifier, choose and document one of:
+Use `lightspeed.*`, `lightspeed-*`, `Lightspeed*`, and
+`LIGHTSPEED[_COMPONENT]_*` forms as appropriate. Existing development
+databases, Temporal workflows, browser storage, and connector state may be
+reset; they are not upgrade inputs. The initial migration may therefore be
+corrected before its first supported release.
 
-1. retain it as a compatibility identifier with no user-facing meaning;
-2. introduce a versioned Lightspeed identifier for new work while workers poll
-   or serve the legacy identity until it drains;
-3. migrate stored state with an explicit, reversible maintenance procedure; or
-4. prove it is unused and safe to replace.
-
-Never rewrite an already applied database migration merely to make its text
-look product-neutral. Add a ledgered forward migration when an object must be
-renamed. Before retiring a legacy Temporal queue or workflow implementation,
-prove that no open execution still depends on it.
+Foundry's imported identifiers use the same Lightspeed naming rules, but this
+mechanical neutralization does not give the package a supported image or
+deployment path.
 
 ## Component and feature boundaries
 
@@ -279,7 +286,7 @@ Every image is selected by digest. The manifest also carries checksums,
 source/build metadata, migration compatibility, and the P123 SBOM/provenance
 outputs.
 
-The private ls.bot pipeline consumes a pinned, completed public release
+The private deployment pipeline consumes a pinned, completed public release
 manifest. It must not rebuild public Lightspeed source from a Git revision.
 Deployment-specific behavior comes from runtime configuration. This preserves
 the P123 supply-chain boundary and prevents the private repository from
@@ -344,20 +351,18 @@ topology and personal or production identifiers may not match secret patterns.
 
 ## Sequencing
 
-Repository-only P124 work may land before Phase 4 of the private ls.bot
-environment migration. Until that migration and its rollback window close, do
-not delete the private application source, alter production deployment inputs,
-or retire the existing release locks. The public-tree refactor must therefore
-remain buildable without changing production. Private deployment cutover and
-obsolete-machinery removal stay strictly sequenced afterward.
+The imported application is greenfield. Repository work therefore uses a clean
+Lightspeed identity and may invalidate pre-release development state. Private
+deployment cutover and obsolete-machinery removal still remain sequenced so
+the source-of-truth transition is explicit and reviewable.
 
 ### Phase 1 — Inventory and freeze
 
 - record the exact imported source revision;
 - inventory package dependencies, generated contracts, database migrations,
   durable IDs, runtime images, and deployment inputs;
-- classify every ls.bot-specific value as branding/configuration, durable
-  compatibility state, or private deployment material; and
+- classify every imported product-specific value as branding/configuration,
+  durable operational identity, or private deployment material; and
 - define the supported upgrade and rollback boundary.
 
 ### Phase 2 — Safe import and workspace integration
@@ -366,14 +371,15 @@ obsolete-machinery removal stay strictly sequenced afterward.
 - import the complete workspace as new commits under the chosen platform
   directory;
 - establish Apache-2.0 and package metadata;
-- rename package scopes without renaming durable runtime identities; and
+- rename package scopes and greenfield durable runtime identities; and
 - replace packaged-client and sibling-checkout dependencies with in-tree
   workspace dependencies.
 
 ### Phase 3 — Neutralization and contract consolidation
 
 - add runtime product configuration with neutral Lightspeed defaults;
-- implement environment-variable aliases and durable-identity compatibility;
+- remove pre-release environment aliases and reset durable identities to
+  Lightspeed names;
 - replace mirrored wire types with generated-client exports;
 - update developer commands, READMEs, architecture guidance, and examples; and
 - make every optional worker independently selectable.
@@ -393,12 +399,12 @@ product layout. This does not remove the profile API or profile registry.
 
 ### Phase 5 — Private deployment cutover
 
-- change ls.bot to pin one complete public Lightspeed release manifest;
+- change the private deployment repository to pin one complete public
+  Lightspeed release manifest;
 - deploy unchanged public images by digest with private runtime configuration;
 - verify auth, universe administration, gateway passthrough, web UI, Channels,
   migrations, metrics, and rollback; and
-- retain legacy workers/identities until the compatibility inventory proves
-  they can be retired.
+- verify that no pre-release worker or state is reused across the cutover.
 
 ### Phase 6 — Remove obsolete machinery
 
@@ -412,9 +418,9 @@ After production acceptance and rollback-window closure, remove:
 - private builds of public source; and
 - application source from the private repository.
 
-Rewrite the ls.bot README around deployment and operations. Retain only the
-public release pin, deployment configuration, secrets, infrastructure, and
-operational procedures.
+Rewrite the private repository README around deployment and operations. Retain
+only the public release pin, deployment configuration, secrets, infrastructure,
+and operational procedures.
 
 ## Accepted tradeoffs
 
@@ -429,9 +435,9 @@ operational procedures.
   preferable to coordinating product versions across repositories; using one
   Channels image for several roles keeps that artifact set intentionally
   small.
-- Some legacy `lsbot` durable identifiers may remain visible internally for a
-  compatibility period. Operational continuity is more important than a
-  cosmetic all-at-once rename.
+- The greenfield identity reset intentionally invalidates imported development
+  state. Avoiding permanent compatibility code is more valuable than preserving
+  that pre-release state.
 - The optional WhatsApp connector carries additional policy and optics risk.
   Keeping it default-off limits runtime exposure, while the shared Channels
   image accepts a larger dependency and distribution surface in exchange for
@@ -450,7 +456,7 @@ operational procedures.
   APIs.
 - Moving production secrets, host topology, DNS/TLS configuration, or private
   operational history into the public repository.
-- Combining P124 with the destructive environment cutover.
+- Redesigning deployment infrastructure while moving the product source.
 
 ## Completion criteria
 
@@ -464,8 +470,9 @@ P124 is complete when:
   and contract revision, with immutable digests and provenance;
 - a clean installation and a supported production upgrade both pass database,
   Temporal, auth, gateway, UI, and Channels acceptance tests;
-- ls.bot deploys unchanged public artifacts by digest with runtime product
-  configuration and can roll back through the documented procedure;
+- the private deployment repository deploys unchanged public artifacts by
+  digest with runtime product configuration and can roll back through the
+  documented procedure;
 - no active execution or stored state depends on a retired durable identity;
 - obsolete tarball, lockstep, dispatch, sibling-checkout, and mirrored-contract
   machinery is deleted; and

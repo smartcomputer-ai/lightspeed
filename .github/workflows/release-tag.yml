@@ -219,7 +219,7 @@ jobs:
           RUNTIME_IMAGE: ghcr.io/${{ github.repository }}/runtime@${{ steps.runtime.outputs.digest }}
           CONFIGURATOR_IMAGE: ghcr.io/${{ github.repository }}/configurator-mcp@${{ steps.configurator.outputs.digest }}
           PLATFORM_IMAGE: ghcr.io/${{ github.repository }}/platform@${{ steps.platform.outputs.digest }}
-          CHANNELS_IMAGE: ghcr.io/${{ github.repository }}/channels@${{ steps.channels.outputs.digest }}
+          LIGHTSPEED_CHANNELS_IMAGE: ghcr.io/${{ github.repository }}/channels@${{ steps.channels.outputs.digest }}
           PLATFORM_DATABASE_URL: postgres://lightspeed:lightspeed@127.0.0.1:55432/lightspeed
           EXPECTED_SHA: ${{ steps.identity.outputs.sha }}
         run: |
