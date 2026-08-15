@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/common.sh"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 for DATABASE in "${POSTGRES_DB}" "${LIGHTSPEED_PLATFORM_POSTGRES_DB}"; do
   compose exec -T postgres dropdb \

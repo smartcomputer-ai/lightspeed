@@ -5,20 +5,33 @@
 // Stateful dependencies run in Docker Compose. Rust and TypeScript processes
 // run from the checkout so cargo, tsx, and Vite retain their normal edit loops.
 import { spawn, spawnSync } from "node:child_process";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const devDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(devDir, "..");
+const infraDir = path.join(devDir, "infra");
+const supervisorStatePath = path.join(repoRoot, ".lightspeed", "dev-supervisor.json");
 try {
   process.loadEnvFile(path.join(repoRoot, ".env"));
 } catch (error) {
   if (error?.code !== "ENOENT") throw error;
 }
 const profiles = new Set(["full", "platform", "runtime", "infra"]);
-const actions = new Set(["start", "down", "reset", "status"]);
+const actions = new Set(["start", "stop", "down", "reset", "status"]);
 const cli = parseCli(process.argv.slice(2));
+const children = [];
+let stopping = false;
+let requestedExitCode = 0;
 
 if (cli.help) {
   printHelp();
@@ -28,7 +41,7 @@ if (cli.help) {
 const baseEnv = loadDevEnvironment();
 
 if (cli.action !== "start") {
-  runInfrastructureAction(cli, baseEnv);
+  await runDevelopmentAction(cli, baseEnv);
   process.exit(0);
 }
 
@@ -39,7 +52,13 @@ if (cli.planOnly) {
 }
 
 ensureLocalTooling(plan);
-runChecked("infra", path.join(devDir, "up.sh"), [], baseEnv);
+if (plan.profile !== "infra") {
+  assertSupervisorStopped();
+  claimSupervisor(plan.profile);
+  process.once("SIGINT", () => shutdown(0));
+  process.once("SIGTERM", () => shutdown(0));
+}
+runChecked("infra", path.join(infraDir, "up.sh"), [], baseEnv);
 if (plan.profile === "infra") {
   process.exit(0);
 }
@@ -56,18 +75,11 @@ for (const preparation of plan.preparations) {
   runChecked(preparation.name, preparation.command, preparation.args, preparation.env);
 }
 
-const children = [];
-let stopping = false;
-let requestedExitCode = 0;
-
 for (const processPlan of plan.processes) {
   startProcess(processPlan);
 }
 
 printRunning(plan);
-
-process.once("SIGINT", () => shutdown(0));
-process.once("SIGTERM", () => shutdown(0));
 
 function parseCli(argv) {
   const args = [...argv];
@@ -371,15 +383,37 @@ function ensureLocalTooling(plan) {
   }
 }
 
-function runInfrastructureAction(options, env) {
+async function runDevelopmentAction(options, env) {
+  if (options.action === "stop") {
+    await stopSupervisor();
+    return;
+  }
   if (options.action === "down") {
-    runChecked("infra", path.join(devDir, "down.sh"), options.volumes ? ["-v"] : [], env);
+    await stopSupervisor();
+    runChecked(
+      "infra",
+      path.join(infraDir, "down.sh"),
+      options.volumes ? ["--volumes"] : [],
+      env,
+    );
     return;
   }
   if (options.action === "reset") {
-    runChecked("infra", path.join(devDir, "reset.sh"), [], env);
+    const supervisor = readSupervisorState();
+    if (supervisor) {
+      throw new Error(
+        `development supervisor is running (profile ${supervisor.profile}, pid ${supervisor.pid}); run npm run dev -- stop before resetting state`,
+      );
+    }
+    runChecked("infra", path.join(infraDir, "reset.sh"), [], env);
     return;
   }
+  const supervisor = readSupervisorState();
+  console.log(
+    supervisor
+      ? `Host supervisor: running (profile ${supervisor.profile}, pid ${supervisor.pid}, started ${supervisor.startedAt})`
+      : "Host supervisor: stopped",
+  );
   runChecked(
     "infra",
     "docker",
@@ -393,6 +427,109 @@ function runInfrastructureAction(options, env) {
     ],
     env,
   );
+}
+
+function assertSupervisorStopped() {
+  const supervisor = readSupervisorState();
+  if (!supervisor) return;
+  throw new Error(
+    `development supervisor is already running (profile ${supervisor.profile}, pid ${supervisor.pid}); run npm run dev -- stop first`,
+  );
+}
+
+function claimSupervisor(profile) {
+  mkdirSync(path.dirname(supervisorStatePath), { recursive: true });
+  const state = {
+    version: 1,
+    pid: process.pid,
+    profile,
+    startedAt: new Date().toISOString(),
+  };
+  let descriptor;
+  try {
+    descriptor = openSync(supervisorStatePath, "wx", 0o600);
+    writeFileSync(descriptor, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      throw new Error(
+        "development supervisor state appeared during startup; run npm run dev -- status and retry",
+      );
+    }
+    throw error;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+  process.once("exit", () => clearSupervisorState(process.pid));
+}
+
+function readSupervisorState() {
+  let state;
+  try {
+    state = JSON.parse(readFileSync(supervisorStatePath, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    rmSync(supervisorStatePath, { force: true });
+    return null;
+  }
+  if (
+    state?.version !== 1 ||
+    !Number.isSafeInteger(state.pid) ||
+    typeof state.profile !== "string" ||
+    typeof state.startedAt !== "string" ||
+    !isSupervisorProcess(state.pid)
+  ) {
+    rmSync(supervisorStatePath, { force: true });
+    return null;
+  }
+  return state;
+}
+
+function isSupervisorProcess(pid) {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
+    encoding: "utf8",
+  });
+  return result.status === 0 && result.stdout.includes("dev/stack.mjs");
+}
+
+async function stopSupervisor() {
+  const supervisor = readSupervisorState();
+  if (!supervisor) {
+    console.log("Host supervisor is not running.");
+    return;
+  }
+  console.log(
+    `[supervisor] stopping ${supervisor.profile} development stack (pid ${supervisor.pid})`,
+  );
+  process.kill(supervisor.pid, "SIGTERM");
+  const deadline = Date.now() + 30_000;
+  while (isSupervisorProcess(supervisor.pid) && Date.now() < deadline) {
+    await delay(100);
+  }
+  if (isSupervisorProcess(supervisor.pid)) {
+    throw new Error(
+      `development supervisor pid ${supervisor.pid} did not stop; infrastructure was left running`,
+    );
+  }
+  clearSupervisorState(supervisor.pid);
+  console.log("Host supervisor stopped.");
+}
+
+function clearSupervisorState(expectedPid) {
+  try {
+    const state = JSON.parse(readFileSync(supervisorStatePath, "utf8"));
+    if (state?.pid === expectedPid) rmSync(supervisorStatePath, { force: true });
+  } catch (error) {
+    if (error?.code !== "ENOENT") rmSync(supervisorStatePath, { force: true });
+  }
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function runChecked(name, command, args, env) {
@@ -516,8 +653,9 @@ function printHelp() {
   npm run dev                              Start the full editable product
   npm run dev -- [start] <profile>         Start full, platform, runtime, or infra
   npm run dev -- --plan <profile>          Print a profile without starting it
-  npm run dev -- status                    Show development containers
-  npm run dev -- down [--volumes]          Stop infrastructure
+  npm run dev -- status                    Show host supervisor and infrastructure
+  npm run dev -- stop                      Stop host processes; keep infrastructure
+  npm run dev -- down [--volumes]          Stop host processes and infrastructure
   npm run dev -- reset                     Reset Postgres and MinIO development state
 
 Profiles:

@@ -45,7 +45,7 @@ use vfs::{
 static MIGRATED: OnceCell<()> = OnceCell::const_new();
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_sessions_are_isolated_by_universe() {
     let left = live_store("sessions-left", 64).await;
     let right = live_store("sessions-right", 64).await;
@@ -100,7 +100,7 @@ async fn pg_live_sessions_are_isolated_by_universe() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_session_list_pages_newest_first_and_rename_persists() {
     use engine::storage::{ListSessions, SessionListCursor};
 
@@ -197,7 +197,7 @@ async fn pg_live_session_list_pages_newest_first_and_rename_persists() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_clone_copies_resources_and_links_sessions() {
     let store = live_store("session-graph-clone", 1024).await;
     let source_id = SessionId::new("source-session");
@@ -309,7 +309,7 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
     let store = live_store("session-graph-fork", 1024).await;
     let root = SessionId::new("root-session");
@@ -422,7 +422,7 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_operator_universe_lifecycle_stats_and_purge() {
     // inline_threshold 8: the second blob lands in the object store, so the
     // purge has real external bytes to sweep.
@@ -543,7 +543,7 @@ async fn pg_live_operator_universe_lifecycle_stats_and_purge() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_blobs_use_inline_and_object_storage() {
     let store = live_store("blobs", 8).await;
 
@@ -600,7 +600,7 @@ async fn pg_live_blobs_use_inline_and_object_storage() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_records_session_roots_and_blob_edges() {
     let store = live_store("graph", 1024).await;
     let session_id = SessionId::new("session-graph");
@@ -694,7 +694,7 @@ async fn pg_live_records_session_roots_and_blob_edges() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_vfs_catalog_tracks_workspace_heads() {
     let store = live_store("vfs-catalog", 1024).await;
     let snapshot_ref = store
@@ -817,7 +817,7 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_profile_put_creates_and_replaces() {
     use api::{AgentProfileInput, ProfileDocument, ProfileId, ProfileInstructions};
 
@@ -883,7 +883,7 @@ async fn pg_live_profile_put_creates_and_replaces() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_mcp_crud_and_universe_isolation() {
     let left = live_store("mcp-left", 1024).await;
     let right = live_store("mcp-right", 1024).await;
@@ -1030,7 +1030,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_universe_environments_are_independent_of_sessions() {
     let store = live_store("environments", 1024).await;
     for table in ["environment_jobs", "environment_job_groups"] {
@@ -1133,7 +1133,7 @@ async fn pg_live_universe_environments_are_independent_of_sessions() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     let left = live_store("auth-left", 1024).await;
     let right = live_store("auth-right", 1024).await;
@@ -1205,7 +1205,7 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_auth_grants_crud_and_status_updates() {
     let store = live_store("auth-grants", 1024).await;
     let grant_id = AuthGrantId::new("authgrant_crm");
@@ -1297,7 +1297,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_oauth_clients_crud() {
     let store = live_store("oauth-clients", 1024).await;
     let client_id = OAuthClientId::new("crm");
@@ -1346,7 +1346,7 @@ async fn pg_live_oauth_clients_crud() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_auth_flows_are_one_time_use() {
     let store = live_store("auth-flows", 1024).await;
     let flow_id = AuthFlowId::new("authflow_live");
@@ -1447,7 +1447,7 @@ async fn pg_live_auth_flows_are_one_time_use() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
     let store = Arc::new(live_store("grant-refresh", 1024).await);
     let grant_id = AuthGrantId::new("authgrant_refresh_live");
@@ -1532,7 +1532,7 @@ async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_auth_providers_crud_and_credential_fk() {
     use auth::{
         AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore,
@@ -1623,7 +1623,7 @@ async fn pg_live_auth_providers_crud_and_credential_fk() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres + MinIO env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres + MinIO env"]
 async fn pg_live_grant_metadata_round_trips() {
     let store = live_store("grant-metadata", 1024).await;
     let grant_id = AuthGrantId::new("authgrant_install_live");
@@ -1677,7 +1677,7 @@ fn create_oauth_client_record(client_id: &OAuthClientId) -> CreateOAuthClientRec
 
 async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {
     let database_url = env_or_dotenv_var("LIGHTSPEED_TEST_POSTGRES_URL").expect(
-        "LIGHTSPEED_TEST_POSTGRES_URL must be set in env or root .env to run store-pg live tests; run dev/up.sh and source dev/env.sh",
+        "LIGHTSPEED_TEST_POSTGRES_URL must be set in env or root .env to run store-pg live tests; run npm run dev -- infra and source dev/env.sh",
     );
     let pool = PgPoolOptions::new()
         .max_connections(2)

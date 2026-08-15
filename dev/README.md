@@ -57,53 +57,52 @@ LIGHTSPEED_CHANNELS_CONNECTORS=telegram,whatsapp npm run dev
 ```
 
 Use `npm run dev -- --plan full` to inspect a profile without starting
-anything. Pressing Ctrl-C stops host processes but leaves the Docker
-infrastructure available. Manage that infrastructure through the same entry
-point:
+anything. Pressing Ctrl-C or running `stop` from another terminal stops the
+tracked host supervisor and its children while leaving Docker infrastructure
+available. `down` performs a complete teardown in the safe order: host
+processes first, then infrastructure.
 
 ```bash
 npm run dev -- status
+npm run dev -- stop
 npm run dev -- down
 npm run dev -- down --volumes
 npm run dev -- reset
 ```
 
+`status` reports both the host supervisor and Compose services. The supervisor
+stores its local process metadata under the ignored `.lightspeed/` directory.
+`reset` refuses to recreate databases while the supervisor is running; stop it
+first.
+
 ## Infrastructure primitives
 
-The shell helpers remain available for live Rust tests and low-level recovery.
-Start only the shared Docker infrastructure with:
+The supported developer entry point is always `npm run dev`. Small shell
+primitives remain under `dev/infra/` so live Rust tests and low-level recovery
+do not depend on the product supervisor. They are internal implementation
+details rather than a second command surface.
+
+Start only the shared Docker infrastructure through the public command:
 
 ```bash
-dev/up.sh
+npm run dev -- infra
 ```
 
-Stop it with:
+The corresponding low-level primitives are:
 
 ```bash
-dev/down.sh
+dev/infra/up.sh
+dev/infra/down.sh [--volumes]
+dev/infra/reset.sh
+dev/infra/pg-reset.sh
+dev/infra/pg-migrate.sh
+dev/infra/minio-ensure.sh
+dev/infra/minio-reset.sh
 ```
 
-To also remove volumes:
-
-```bash
-dev/down.sh -v
-```
-
-Reset both databases, apply the ledgered runtime schema, and clear the MinIO
-prefix:
-
-```bash
-dev/reset.sh
-```
-
-Individual helpers:
-
-```bash
-dev/pg-reset.sh
-dev/pg-migrate.sh
-dev/minio-ensure.sh
-dev/minio-reset.sh
-```
+`reset.sh` recreates both databases, applies the runtime's ledgered schema, and
+clears the Lightspeed MinIO prefix. Platform applies its independently owned
+database migrations when the Platform server starts.
 
 Run the `store-pg` live integration tests against this stack:
 
@@ -139,6 +138,10 @@ export LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE=true
 export AWS_ACCESS_KEY_ID=minioadmin
 export AWS_SECRET_ACCESS_KEY=minioadmin
 ```
+
+The fixed local secret-store key is intentionally public development material.
+Its Lightspeed-owned value replaced an imported pre-release key; development
+state encrypted with the old key must be reset with `npm run dev -- reset`.
 
 ## Manual runtime roles
 

@@ -125,7 +125,16 @@ npm run dev -- platform
 npm run dev -- runtime
 npm run dev -- infra
 npm run dev -- --plan full
+npm run dev -- status
+npm run dev -- stop
+npm run dev -- down
+npm run dev -- reset
 ```
+
+`stop` terminates the tracked host supervisor but keeps infrastructure;
+`down` stops the host supervisor before tearing down Compose. Internal
+infrastructure primitives live under `dev/infra/` and are not the primary
+developer command surface.
 
 The server never migrates PostgreSQL implicitly. Before starting it against a
 new or upgraded database, run `cargo run -p temporal-server -- migrate`; use

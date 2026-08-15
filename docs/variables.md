@@ -303,6 +303,8 @@ these values. The two databases are intentionally separate because their
 independent migration systems contain overlapping table names. The script also
 supplies a fixed local `LIGHTSPEED_SECRETS_MASTER_KEY`; that key is public
 development material and is unsafe for any shared or production deployment.
+The key encodes `lightspeed-local-dev-master-key!`; changing it requires
+resetting local encrypted state.
 
 ## Tests and evaluations
 

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 
 if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
-  SCRIPT_PATH="${BASH_SOURCE[0]}"
+  LIGHTSPEED_DEV_COMMON_PATH="${BASH_SOURCE[0]}"
 elif [[ -n "${ZSH_VERSION:-}" ]]; then
-  SCRIPT_PATH="${(%):-%x}"
+  LIGHTSPEED_DEV_COMMON_PATH="${(%):-%x}"
 else
-  SCRIPT_PATH="$0"
+  LIGHTSPEED_DEV_COMMON_PATH="$0"
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
-DEV_DIR="${SCRIPT_DIR}"
+LIGHTSPEED_DEV_COMMON_DIR="$(cd "$(dirname "${LIGHTSPEED_DEV_COMMON_PATH}")" && pwd)"
+DEV_DIR="$(cd "${LIGHTSPEED_DEV_COMMON_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${DEV_DIR}/.." && pwd)"
 COMPOSE_FILE="${DEV_DIR}/docker-compose.yaml"
 
@@ -51,7 +51,7 @@ LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE="${LIGHTSPEED_OBJECT_STORE_FORCE_PATH_S
 # so secrets survive shell restarts; never use it outside local dev. The key is
 # fixed rather than random because changing it makes previously stored secrets
 # undecryptable.
-LIGHTSPEED_DEV_SECRETS_MASTER_KEY_DEFAULT="Zm9yZ2UtbG9jYWwtZGV2LW1hc3Rlci1rZXktMDAwMSE="
+LIGHTSPEED_DEV_SECRETS_MASTER_KEY_DEFAULT="bGlnaHRzcGVlZC1sb2NhbC1kZXYtbWFzdGVyLWtleSE="
 LIGHTSPEED_SECRETS_MASTER_KEY="${LIGHTSPEED_SECRETS_MASTER_KEY:-${LIGHTSPEED_DEV_SECRETS_MASTER_KEY_DEFAULT}}"
 
 export COMPOSE_PROJECT_NAME

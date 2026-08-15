@@ -9,7 +9,7 @@ else
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
-source "${SCRIPT_DIR}/common.sh"
+source "${SCRIPT_DIR}/lib/common.sh"
 
 export LIGHTSPEED_TEST_POSTGRES_URL
 export LIGHTSPEED_PG_UNIVERSE_ID

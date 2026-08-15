@@ -73,7 +73,7 @@ async fn tool_result_text(
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_session_start_then_run_start_completes_fake_runs() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -84,7 +84,7 @@ async fn temporal_live_session_start_then_run_start_completes_fake_runs() -> any
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_session_lifecycle_list_and_closed_only_delete() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -95,7 +95,7 @@ async fn temporal_live_session_lifecycle_list_and_closed_only_delete() -> anyhow
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_continue_as_new_completes_later_fake_run() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -106,7 +106,7 @@ async fn temporal_live_continue_as_new_completes_later_fake_run() -> anyhow::Res
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_hosted_run_exceeds_128_drive_transitions() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -119,7 +119,7 @@ async fn temporal_live_hosted_run_exceeds_128_drive_transitions() -> anyhow::Res
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_run_start_missing_session_returns_not_found() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -130,7 +130,7 @@ async fn temporal_live_run_start_missing_session_returns_not_found() -> anyhow::
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_admission_failures_do_not_poison_workflow() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -141,7 +141,7 @@ async fn temporal_live_admission_failures_do_not_poison_workflow() -> anyhow::Re
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_context_append_is_idempotent_and_projected() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -152,7 +152,7 @@ async fn temporal_live_context_append_is_idempotent_and_projected() -> anyhow::R
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_mcp_and_session_links_materialize() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -163,7 +163,7 @@ async fn temporal_live_mcp_and_session_links_materialize() -> anyhow::Result<()>
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_profiles_create_start_and_apply_idempotently() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -174,7 +174,7 @@ async fn temporal_live_profiles_create_start_and_apply_idempotently() -> anyhow:
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_fleet_executor_spawns_child_workflow_and_run() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -185,7 +185,7 @@ async fn temporal_live_fleet_executor_spawns_child_workflow_and_run() -> anyhow:
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_fleet_executor_spawns_profile_child() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -196,7 +196,7 @@ async fn temporal_live_fleet_executor_spawns_profile_child() -> anyhow::Result<(
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_fleet_executor_lists_and_reads_profiles() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -207,7 +207,7 @@ async fn temporal_live_fleet_executor_lists_and_reads_profiles() -> anyhow::Resu
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_parallel_tool_batch_completes_per_call() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -225,7 +225,7 @@ async fn temporal_live_parallel_tool_batch_completes_per_call() -> anyhow::Resul
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_transient_llm_failures_retry_within_the_turn() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -241,7 +241,7 @@ async fn temporal_live_transient_llm_failures_retry_within_the_turn() -> anyhow:
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_exhausted_llm_retries_fail_the_run_not_the_session() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -258,7 +258,7 @@ async fn temporal_live_exhausted_llm_retries_fail_the_run_not_the_session() -> a
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_await_parks_until_child_run_completes() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -268,7 +268,7 @@ async fn temporal_live_await_parks_until_child_run_completes() -> anyhow::Result
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn temporal_live_agent_send_to_parent_wakes_idle_parent() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -278,7 +278,7 @@ async fn temporal_live_agent_send_to_parent_wakes_idle_parent() -> anyhow::Resul
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh, Postgres, Temporal, and OPENAI_API_KEY (costs real money)"]
+#[ignore = "requires npm run dev -- infra, Postgres, Temporal, and OPENAI_API_KEY (costs real money)"]
 async fn temporal_live_session_start_then_run_start_completes_openai_run() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -3353,7 +3353,7 @@ async fn run_openai_live_client(
 /// never cross universes, and closing one universe's session leaves the
 /// other's untouched.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh, Postgres, and Temporal"]
+#[ignore = "requires npm run dev -- infra, Postgres, and Temporal"]
 async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -3510,7 +3510,7 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
 /// credentials fail closed, tenant headers are rejected in api-key mode, and
 /// revocation takes effect immediately.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh, Postgres, and Temporal"]
+#[ignore = "requires npm run dev -- infra, Postgres, and Temporal"]
 async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
     use auth::ApiKeyStore as _;
 

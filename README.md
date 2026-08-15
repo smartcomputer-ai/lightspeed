@@ -342,7 +342,15 @@ See [docs/variables.md](docs/variables.md) for the authoritative environment
 variable reference, separated by core runtime, Platform, Channels,
 Configurator, development, test, and release scope.
 
-### Stop Or Reset Local Infra
+### Stop Or Reset Local Development
+
+Stop only the tracked host processes while retaining stateful infrastructure:
+
+```bash
+npm run dev -- stop
+```
+
+Stop the host supervisor and then tear down the infrastructure:
 
 ```bash
 npm run dev -- down
@@ -353,6 +361,9 @@ To reset persisted local state while keeping containers available:
 ```bash
 npm run dev -- reset
 ```
+
+Use `npm run dev -- status` to inspect both host-supervisor and Compose state.
+Reset refuses to recreate databases while the supervisor is running.
 
 ## Testing
 Default deterministic tests:

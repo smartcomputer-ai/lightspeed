@@ -320,7 +320,7 @@ runtime auth is selected by session handles.
 No session table is added or changed. There is intentionally no
 `session_mcp_links` table and no universe/session join table for MCP auth.
 
-After editing the historical migrations, run `dev/reset.sh` before
+After editing the historical migrations, run `npm run dev -- reset` before
 PostgreSQL or Temporal live suites so SQLx migration checksums and the physical
 schema match the committed greenfield definition.
 

@@ -8,10 +8,10 @@ use store_pg::{PgStore, PgStoreError, REQUIRED_SCHEMA_REVISION};
 use uuid::Uuid;
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Postgres env"]
 async fn embedded_migrations_are_locked_idempotent_and_checksum_guarded() {
     let database_url = std::env::var("LIGHTSPEED_TEST_POSTGRES_URL")
-        .expect("LIGHTSPEED_TEST_POSTGRES_URL must be set; run dev/up.sh and source dev/env.sh");
+        .expect("LIGHTSPEED_TEST_POSTGRES_URL must be set; run npm run dev -- infra and source dev/env.sh");
     let admin = PgPoolOptions::new()
         .max_connections(1)
         .connect(&database_url)

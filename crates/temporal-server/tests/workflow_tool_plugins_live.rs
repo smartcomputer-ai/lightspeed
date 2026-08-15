@@ -923,7 +923,7 @@ async fn wait_for_terminal_run_slow(
 /// resolved by the plugin, duplicate reply a no-op — with zero
 /// plugin-specific code in the session worker.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_bound_request_reply_resolves_via_plugin_worker() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -1044,7 +1044,7 @@ async fn workflow_tool_bound_request_reply_resolves_via_plugin_worker() -> anyho
 /// new, and then consumes that run's terminal notification. The model sees
 /// one ordinary result on the original call and never calls `await`.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -> anyhow::Result<()>
 {
     let _lock = LIVE_TEST_LOCK.lock().await;
@@ -1235,7 +1235,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
 /// acceptance, the run reaches terminal, and a receiver that starts afterward
 /// still consumes the already-admitted invocation.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_pushed_accepted_delivers_after_run_terminal() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -1318,7 +1318,7 @@ async fn workflow_tool_pushed_accepted_delivers_after_run_terminal() -> anyhow::
 /// a controller that accepts the invocation but never resolves it cannot
 /// park its own managed run forever.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() -> anyhow::Result<()>
 {
     let _lock = LIVE_TEST_LOCK.lock().await;
@@ -1446,7 +1446,7 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
 /// Producer authorization: a forged resolution from the wrong workflow id is
 /// dropped; the exact stored producer resolves the promise.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -1721,7 +1721,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
 /// reply completes the original call while the deterministic execution is
 /// still running, without an explicit model `await`.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -1810,7 +1810,7 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
 /// signalling its result; the holder's slow recovery poll recovers the keyed
 /// resolution through the fixed recovery query.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_start_recovery_query_resolves_silent_execution() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -1865,7 +1865,7 @@ async fn workflow_tool_start_recovery_query_resolves_silent_execution() -> anyho
 /// `DeliveryFailed` fails the keyed promise, and the awaiting run completes
 /// with the failure instead of wedging.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_dead_receiver_fails_promise_terminally() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -1986,7 +1986,7 @@ async fn emitted_promises(
 /// promise with a stable CAS-backed error instead of resolving it; a valid
 /// payload resolves. The receiver cannot bypass validation.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -2130,7 +2130,7 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
 /// Receiver closed: the bound receiver completed before the invocation, so
 /// push delivery exhausts and fails the keyed promise terminally.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_closed_receiver_fails_delivery_terminally() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -2208,7 +2208,7 @@ async fn workflow_tool_closed_receiver_fails_delivery_terminally() -> anyhow::Re
 /// the original-call mapping are rebuilt from durable state, the deterministic
 /// start is re-issued, and the hard-deadline reply still completes that call.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -2326,7 +2326,7 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
 /// Run-terminal auto-cancel of a run-scoped keyed promise sends the
 /// best-effort per-key cancellation fact to the bound receiver.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_run_terminal_auto_cancel_notifies_bound_receiver() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -2428,7 +2428,7 @@ async fn workflow_tool_run_terminal_auto_cancel_notifies_bound_receiver() -> any
 /// session-owned started execution terminal, the exact execution is
 /// cancelled.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -2542,7 +2542,7 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
 /// leaves the execution unscheduled; the binding's trusted relative
 /// deadline fails the keyed promise instead of parking the run forever.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_start_deadline_fails_unserved_queue() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();

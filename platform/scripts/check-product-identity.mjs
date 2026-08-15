@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const retiredIdentity = new RegExp(
@@ -13,6 +13,9 @@ const files = execFileSync("git", ["ls-files", "-co", "--exclude-standard", "-z"
 const violations = [];
 
 for (const file of files) {
+  // `git ls-files --cached` also reports tracked paths deleted by an
+  // uncommitted move. Scan their replacement paths, not nonexistent entries.
+  if (!existsSync(file)) continue;
   const body = readFileSync(file);
   if (body.includes(0)) {
     continue;

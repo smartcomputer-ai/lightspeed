@@ -87,7 +87,7 @@ for testing.
 
 ```bash
 # 0. once: infra + env, gateway in its own terminal
-dev/up.sh && source dev/env.sh
+npm run dev -- infra && source dev/env.sh
 cargo run -p temporal-server        
 
 # separate terminal, env.sh sourced
@@ -200,8 +200,8 @@ broker's automatic refresh path.
 
 ```bash
 # 0. infra + schema, env in every terminal; gateway in its own terminal
-dev/up.sh && source dev/env.sh
-dev/pg-migrate.sh
+npm run dev -- infra && source dev/env.sh
+cargo run -p temporal-server -- migrate
 cargo run -p temporal-server        # separate terminal, env.sh sourced
 
 # 1. register the MCP server under id gh

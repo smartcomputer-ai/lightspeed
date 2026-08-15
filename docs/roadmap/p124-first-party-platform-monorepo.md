@@ -48,6 +48,10 @@ Implemented repository slice 2026-08-15:
 - replaced the Platform-only development launcher with one profile-aware
   `dev/stack.mjs` supervisor for infrastructure, runtime, Platform,
   Configurator, and Channels development;
+- made the supervisor lifecycle authoritative and externally controllable:
+  tracked `stop`, complete host-plus-infrastructure `down`, combined `status`,
+  reset interlocking, and internal infrastructure primitives under
+  `dev/infra/`;
 - separated the runtime and Platform migration domains into `lightspeed` and
   `lightspeed_platform` databases on the shared local Postgres server, and made
   the reset helper use the runtime's ledgered migrator;
@@ -58,7 +62,9 @@ Implemented repository slice 2026-08-15:
 - aligned the `full` development profile with Platform's multi-universe proxy
   boundary by defaulting the runtime to `trusted-header`, while retaining
   `single` for focused runtime development; and
-- deleted the top-level example `profiles/` fixtures and references.
+- deleted the top-level example `profiles/` fixtures and references; and
+- replaced the encoded imported development secret-store key with a
+  Lightspeed-owned greenfield key.
 
 Still pending: the first infrastructure-backed publication and deployment
 acceptance of the extended P123 artifact set, remaining runtime-configurable
