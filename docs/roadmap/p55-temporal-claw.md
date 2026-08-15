@@ -307,7 +307,7 @@ LIGHTSPEED_CHAT_MODEL=<existing default>
 Document:
 
 ```bash
-npm run dev -- infra
+./dev.sh infra
 cargo run -p claw --bin claw-worker
 cargo run -p claw --bin claw-submit --session session_1 "hello"
 ```

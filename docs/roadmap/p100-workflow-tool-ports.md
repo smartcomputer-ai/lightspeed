@@ -1356,7 +1356,7 @@ unimplemented push slice of its own.
 - [x] Confirm Fleet, Promises, messaging bridges, MCP, and standalone
       sessions are unchanged.
 
-Live Temporal tests must source `dev/env.sh` and run serially with
+Live Temporal tests must source `scripts/dev/env.sh` and run serially with
 `--test-threads=1`.
 
 ## Acceptance Criteria

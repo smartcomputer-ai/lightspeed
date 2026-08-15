@@ -42,16 +42,20 @@ Implemented repository slice 2026-08-15:
 - made snapshot dispatch target a configurable private deployment repository
   using `LIGHTSPEED_DEPLOYMENT_REPOSITORY` and
   `LIGHTSPEED_DEPLOYMENT_DISPATCH_TOKEN`;
-- renamed the top-level local environment from `local/` to `dev/`, keeping its
-  Compose topology and configuration beside its lifecycle helpers rather than
-  treating the environment as a generic script collection;
+- moved the imported local environment into `scripts/dev/`, colocating its
+  Compose topology, supervisor, environment exports, and internal lifecycle
+  helpers beside the release automation under `scripts/`;
+- added the root `dev.sh` bootstrap as the authoritative one-command developer
+  entry point, with npm delegation, prerequisite checks, lockfile-aware npm
+  installation, provider credential guidance, and application readiness
+  checks;
 - replaced the Platform-only development launcher with one profile-aware
-  `dev/stack.mjs` supervisor for infrastructure, runtime, Platform,
+  `scripts/dev/stack.mjs` supervisor for infrastructure, runtime, Platform,
   Configurator, and Channels development;
 - made the supervisor lifecycle authoritative and externally controllable:
   tracked `stop`, complete host-plus-infrastructure `down`, combined `status`,
   reset interlocking, and internal infrastructure primitives under
-  `dev/infra/`;
+  `scripts/dev/infra/`;
 - separated the runtime and Platform migration domains into `lightspeed` and
   `lightspeed_platform` databases on the shared local Postgres server, and made
   the reset helper use the runtime's ledgered migrator;

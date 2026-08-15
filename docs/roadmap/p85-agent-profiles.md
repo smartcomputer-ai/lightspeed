@@ -81,9 +81,9 @@ npm --prefix clients/typescript run typecheck
 npm --prefix interop/messaging run test:bridge
 npm --prefix interop/messaging run typecheck:bridge
 npm --prefix interop/messaging run build:bridge
-source dev/env.sh && cargo test -p temporal-server --test temporal_live temporal_live_profiles_create_start_and_apply_idempotently -- --ignored --exact --nocapture
-source dev/env.sh && cargo test -p temporal-server --test temporal_live temporal_live_fleet_executor_spawns_profile_child -- --ignored --exact --nocapture
-source dev/env.sh && cargo test -p temporal-server --test environment_provider_live temporal_live_profile_attaches_host_environment -- --ignored --exact --nocapture
+source scripts/dev/env.sh && cargo test -p temporal-server --test temporal_live temporal_live_profiles_create_start_and_apply_idempotently -- --ignored --exact --nocapture
+source scripts/dev/env.sh && cargo test -p temporal-server --test temporal_live temporal_live_fleet_executor_spawns_profile_child -- --ignored --exact --nocapture
+source scripts/dev/env.sh && cargo test -p temporal-server --test environment_provider_live temporal_live_profile_attaches_host_environment -- --ignored --exact --nocapture
 ```
 
 ## Goal

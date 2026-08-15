@@ -4,10 +4,10 @@ use store_pg::{PgApiKeyStore, PgStore};
 use uuid::Uuid;
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires npm run dev -- infra or compatible Postgres"]
+#[ignore = "requires ./dev.sh infra or compatible Postgres"]
 async fn api_key_management_is_scoped_by_universe() {
     let database_url = std::env::var("LIGHTSPEED_TEST_POSTGRES_URL")
-        .expect("LIGHTSPEED_TEST_POSTGRES_URL must be set; run npm run dev -- infra and source dev/env.sh");
+        .expect("LIGHTSPEED_TEST_POSTGRES_URL must be set; run ./dev.sh infra and source scripts/dev/env.sh");
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .acquire_timeout(std::time::Duration::from_secs(5))

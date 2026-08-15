@@ -113,11 +113,12 @@ The full design walk-through is in [docs/design.md](docs/design.md).
 
 Prerequisites:
 - Rust toolchain with edition 2024 support (e.g. [rustup](https://rustup.rs/))
+- Node.js 24 or newer with npm
 - Docker with Compose for the local Postgres, MinIO, and Temporal stack
-- `OPENAI_API_KEY` for live OpenAI-backed chat, tests, and eval runs
-- `ANTHROPIC_API_KEY` for live Anthropic tests and eval runs
+- `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` for provider-backed runs and live
+  tests; the development infrastructure and UI start without either
 
-Easiest is to copy `.env_example` to `.env` and set provider keys there. The
+Easiest is to copy `.env.example` to `.env` and set provider keys there. The
 hosted server worker mode registers real provider adapters and session-mounted
 VFS tools; for OpenAI-backed local chat, set `OPENAI_API_KEY`.
 
@@ -148,9 +149,13 @@ The hosted path runs three pieces locally:
 From the repository root:
 
 ```bash
-npm install
-npm run dev
+./dev.sh
 ```
+
+The launcher checks prerequisites and installs the npm workspace on first use
+or after `package-lock.json` changes. It waits for application health checks
+before reporting that the stack is ready. `npm run dev` is an alias for the
+same launcher.
 
 The default `full` profile starts Postgres, pgAdmin, MinIO, Temporal, the
 migrated Rust runtime, Configurator MCP, the Platform API and web UI, and the
@@ -165,21 +170,21 @@ owns user authentication and supplies the universe identity on proxied engine
 requests. The focused `runtime` profile remains single-universe by default.
 
 ```bash
-LIGHTSPEED_CHANNELS_CONNECTORS=telegram npm run dev
+LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh
 ```
 
 Focused profiles use the same supervisor:
 
 ```bash
-npm run dev -- platform
-npm run dev -- runtime
-npm run dev -- infra
+./dev.sh platform
+./dev.sh runtime
+./dev.sh infra
 ```
 
 Each shell that runs Lightspeed commands should load the local environment:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 ```
 
 ### 2. Run the runtime manually when needed
@@ -188,7 +193,7 @@ The `runtime` and `full` profiles apply migrations and start the hosted runtime
 automatically. For low-level debugging, open a separate shell:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 
 # export OPENAI_API_KEY=...  # omit this if it is already in .env
 
@@ -216,12 +221,12 @@ cargo run -p temporal-server -- gateway
 Open another shell:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 cargo run -p cli -- chat --new
 ```
 
 That starts an interactive TUI session. `LIGHTSPEED_API_URL` is exported by
-`dev/env.sh`, so you do not need to pass `--api-url`.
+`scripts/dev/env.sh`, so you do not need to pass `--api-url`.
 
 For OpenAI-backed chat, the CLI sends typed session/run configuration through
 the API. Use `--model ...` on a command, or set `LIGHTSPEED_CHAT_MODEL`, if you want
@@ -334,9 +339,9 @@ npm install
 npm run check
 ```
 
-Run `npm run dev -- platform` for the focused Platform API/UI and stub-gateway
-loop. The default `npm run dev` starts the complete first-party product. See
-[dev/README.md](dev/README.md) for profiles and connector configuration.
+Run `./dev.sh platform` for the focused Platform API/UI and stub-gateway
+loop. The default `./dev.sh` starts the complete first-party product. See
+[scripts/dev/README.md](scripts/dev/README.md) for profiles and connector configuration.
 
 See [docs/variables.md](docs/variables.md) for the authoritative environment
 variable reference, separated by core runtime, Platform, Channels,
@@ -347,22 +352,22 @@ Configurator, development, test, and release scope.
 Stop only the tracked host processes while retaining stateful infrastructure:
 
 ```bash
-npm run dev -- stop
+./dev.sh stop
 ```
 
 Stop the host supervisor and then tear down the infrastructure:
 
 ```bash
-npm run dev -- down
+./dev.sh down
 ```
 
 To reset persisted local state while keeping containers available:
 
 ```bash
-npm run dev -- reset
+./dev.sh reset
 ```
 
-Use `npm run dev -- status` to inspect both host-supervisor and Compose state.
+Use `./dev.sh status` to inspect both host-supervisor and Compose state.
 Reset refuses to recreate databases while the supervisor is running.
 
 ## Testing

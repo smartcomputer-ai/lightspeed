@@ -66,7 +66,7 @@ Relevant live verification was subsequently completed against the running
 local Temporal/PostgreSQL/host-bridge stack:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 cargo test -p temporal-server --test environment_provider_live -- --ignored --test-threads=1 --nocapture
 cargo test -p temporal-server --test temporal_live temporal_live_session_start_then_run_start_completes_fake_runs -- --ignored --test-threads=1 --nocapture
 ```

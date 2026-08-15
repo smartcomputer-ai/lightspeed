@@ -308,7 +308,7 @@ Rails, regardless of mode:
 Greenfield stance, consistent with project practice: workflow id composition
 is unconditional (also in `single` mode, for uniformity), and no compatibility
 shim addresses workflows started before this change. Running local/dev
-sessions are reset (`npm run dev -- reset`). Existing single-universe deployments
+sessions are reset (`./dev.sh reset`). Existing single-universe deployments
 upgrade by resetting or draining sessions.
 
 ## Implementation Phases

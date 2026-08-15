@@ -18,7 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const devDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.join(devDir, "..");
+const repoRoot = path.join(devDir, "..", "..");
 const infraDir = path.join(devDir, "infra");
 const supervisorStatePath = path.join(repoRoot, ".lightspeed", "dev-supervisor.json");
 try {
@@ -51,6 +51,7 @@ if (cli.planOnly) {
   process.exit(0);
 }
 
+validateProviderCredentials(plan, cli.allowMissingApiKeys);
 ensureLocalTooling(plan);
 if (plan.profile !== "infra") {
   assertSupervisorStopped();
@@ -79,12 +80,19 @@ for (const processPlan of plan.processes) {
   startProcess(processPlan);
 }
 
-printRunning(plan);
+try {
+  await waitForReadiness(plan);
+} catch (error) {
+  console.error(`[readiness] ${error.message}`);
+  shutdown(1);
+}
+if (!stopping) printRunning(plan);
 
 function parseCli(argv) {
   const args = [...argv];
   const help = removeFlag(args, "--help") || removeFlag(args, "-h");
   const planOnly = removeFlag(args, "--plan");
+  const allowMissingApiKeys = removeFlag(args, "--allow-missing-api-keys");
   let action = "start";
   let profile = "full";
 
@@ -101,8 +109,11 @@ function parseCli(argv) {
   if (planOnly && action !== "start") {
     throw new TypeError("--plan is supported only for start profiles");
   }
+  if (allowMissingApiKeys && action !== "start") {
+    throw new TypeError("--allow-missing-api-keys is supported only when starting a profile");
+  }
 
-  return { action, profile, planOnly, help, volumes };
+  return { action, profile, planOnly, help, volumes, allowMissingApiKeys };
 }
 
 function removeFlag(args, flag) {
@@ -115,12 +126,12 @@ function removeFlag(args, flag) {
 function loadDevEnvironment() {
   const result = spawnSync(
     "bash",
-    ["-c", "source dev/env.sh >/dev/null && env -0"],
+    ["-c", 'source "$1" >/dev/null && env -0', "bash", path.join(devDir, "env.sh")],
     { cwd: repoRoot, env: process.env, encoding: "buffer" },
   );
   if (result.status !== 0) {
     process.stderr.write(result.stderr ?? Buffer.from(""));
-    throw new Error("could not load dev/env.sh");
+    throw new Error("could not load scripts/dev/env.sh");
   }
   return Object.fromEntries(
     result.stdout
@@ -206,9 +217,11 @@ function createPlan(profile, sourceEnv) {
   const processes = [];
   const preparations = [];
   const ports = [];
+  const readiness = [];
 
   if (profile === "runtime" || profile === "full") {
     ports.push({ name: "runtime gateway", port: runtimePort });
+    readiness.push({ name: "runtime gateway", url: `http://127.0.0.1:${runtimePort}/health` });
     preparations.push({
       name: "runtime migration",
       command: "cargo",
@@ -227,6 +240,10 @@ function createPlan(profile, sourceEnv) {
   if (profile === "platform" || profile === "full") {
     ports.push({ name: "platform API", port: platformPort });
     ports.push({ name: "platform web", port: 5_173 });
+    readiness.push(
+      { name: "platform API", url: `http://127.0.0.1:${platformPort}/health` },
+      { name: "platform web", url: "http://127.0.0.1:5173/app/" },
+    );
     if (profile === "platform" && !externalPlatformGateway) {
       ports.push({ name: "stub gateway", port: stubPort });
       processes.push({
@@ -248,7 +265,7 @@ function createPlan(profile, sourceEnv) {
       {
         name: "web",
         command: vite,
-        args: [],
+        args: ["--host", "127.0.0.1"],
         cwd: path.join(repoRoot, "platform", "web"),
         env,
       },
@@ -259,6 +276,11 @@ function createPlan(profile, sourceEnv) {
     ports.push({ name: "Configurator MCP", port: configuratorPort });
     ports.push({ name: "Channels workflow metrics", port: 9_090 });
     ports.push({ name: "Channels activity metrics", port: 9_093 });
+    readiness.push(
+      { name: "Configurator MCP", url: `http://127.0.0.1:${configuratorPort}/health` },
+      { name: "Channels workflow worker", port: 9_090 },
+      { name: "Channels activity worker", port: 9_093 },
+    );
     processes.splice(1, 0, {
       name: "configurator",
       command: tsx,
@@ -272,8 +294,13 @@ function createPlan(profile, sourceEnv) {
     );
     for (const connector of connectorNames) {
       const metricsPort = connector === "telegram" ? 9_091 : 9_092;
+      const healthPort = connectorHealthPort(connector, env);
       ports.push({ name: `${connector} metrics`, port: metricsPort });
-      ports.push({ name: `${connector} health`, port: connectorHealthPort(connector, env) });
+      ports.push({ name: `${connector} health`, port: healthPort });
+      readiness.push({
+        name: `${connector} connector`,
+        url: `http://127.0.0.1:${healthPort}/healthz`,
+      });
       processes.push(channelsProcess(`channels-${connector}`, connector, metricsPort, env, tsx));
     }
   }
@@ -284,6 +311,7 @@ function createPlan(profile, sourceEnv) {
     preparations,
     processes,
     ports: uniquePorts(ports),
+    readiness,
     connectors: connectorNames,
     tools: profile === "platform" || profile === "full" ? [tsx, vite] : [],
   };
@@ -383,6 +411,31 @@ function ensureLocalTooling(plan) {
   }
 }
 
+function validateProviderCredentials(plan, allowMissingApiKeys) {
+  const usesRuntime = plan.profile === "full" || plan.profile === "runtime";
+  if (!usesRuntime) {
+    if (allowMissingApiKeys) {
+      throw new TypeError(
+        "--allow-missing-api-keys applies only to the full and runtime profiles",
+      );
+    }
+    return;
+  }
+  const configured = [plan.env.OPENAI_API_KEY, plan.env.ANTHROPIC_API_KEY].some(
+    (value) => value?.trim() && !value.startsWith("set_your_"),
+  );
+  if (configured) return;
+  if (!allowMissingApiKeys) {
+    throw new Error(
+      "no OPENAI_API_KEY or ANTHROPIC_API_KEY is configured; copy .env.example to .env and set a provider key, or pass --allow-missing-api-keys",
+    );
+  }
+  console.warn(`
+[credentials] No OPENAI_API_KEY or ANTHROPIC_API_KEY is configured.
+[credentials] Continuing because --allow-missing-api-keys was provided.
+[credentials] Provider-backed runs will fail until credentials are configured.`);
+}
+
 async function runDevelopmentAction(options, env) {
   if (options.action === "stop") {
     await stopSupervisor();
@@ -402,7 +455,7 @@ async function runDevelopmentAction(options, env) {
     const supervisor = readSupervisorState();
     if (supervisor) {
       throw new Error(
-        `development supervisor is running (profile ${supervisor.profile}, pid ${supervisor.pid}); run npm run dev -- stop before resetting state`,
+        `development supervisor is running (profile ${supervisor.profile}, pid ${supervisor.pid}); run ./dev.sh stop before resetting state`,
       );
     }
     runChecked("infra", path.join(infraDir, "reset.sh"), [], env);
@@ -433,7 +486,7 @@ function assertSupervisorStopped() {
   const supervisor = readSupervisorState();
   if (!supervisor) return;
   throw new Error(
-    `development supervisor is already running (profile ${supervisor.profile}, pid ${supervisor.pid}); run npm run dev -- stop first`,
+    `development supervisor is already running (profile ${supervisor.profile}, pid ${supervisor.pid}); run ./dev.sh stop first`,
   );
 }
 
@@ -452,7 +505,7 @@ function claimSupervisor(profile) {
   } catch (error) {
     if (error?.code === "EEXIST") {
       throw new Error(
-        "development supervisor state appeared during startup; run npm run dev -- status and retry",
+        "development supervisor state appeared during startup; run ./dev.sh status and retry",
       );
     }
     throw error;
@@ -493,7 +546,7 @@ function isSupervisorProcess(pid) {
   const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
     encoding: "utf8",
   });
-  return result.status === 0 && result.stdout.includes("dev/stack.mjs");
+  return result.status === 0 && result.stdout.includes("scripts/dev/stack.mjs");
 }
 
 async function stopSupervisor() {
@@ -530,6 +583,32 @@ function clearSupervisorState(expectedPid) {
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForReadiness(plan) {
+  if (plan.readiness.length === 0) return;
+  console.log("\nWaiting for application services...");
+  await Promise.all(plan.readiness.map(waitForService));
+  for (const service of plan.readiness) console.log(`  ready  ${service.name}`);
+}
+
+async function waitForService(service) {
+  const deadline = Date.now() + 60_000;
+  while (!stopping && Date.now() < deadline) {
+    const ready = service.url ? await httpUp(service.url) : await tcpUp(service.port);
+    if (ready) return;
+    await delay(250);
+  }
+  throw new Error(`${service.name} did not become ready within 60 seconds`);
+}
+
+async function httpUp(url) {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 function runChecked(name, command, args, env) {
@@ -650,13 +729,17 @@ function displayCommand(command, args) {
 
 function printHelp() {
   console.log(`Usage:
-  npm run dev                              Start the full editable product
-  npm run dev -- [start] <profile>         Start full, platform, runtime, or infra
-  npm run dev -- --plan <profile>          Print a profile without starting it
-  npm run dev -- status                    Show host supervisor and infrastructure
-  npm run dev -- stop                      Stop host processes; keep infrastructure
-  npm run dev -- down [--volumes]          Stop host processes and infrastructure
-  npm run dev -- reset                     Reset Postgres and MinIO development state
+  ./dev.sh                                 Bootstrap and start the full editable product
+  ./dev.sh [start] <profile>               Start full, platform, runtime, or infra
+  ./dev.sh [profile] --allow-missing-api-keys
+                                           Permit full/runtime startup without provider keys
+  ./dev.sh --plan <profile>                Print a profile without starting it
+  ./dev.sh status                          Show host supervisor and infrastructure
+  ./dev.sh stop                            Stop host processes; keep infrastructure
+  ./dev.sh down [--volumes]                Stop host processes and infrastructure
+  ./dev.sh reset                           Reset Postgres and MinIO development state
+
+The npm run dev commands are aliases for the same launcher.
 
 Profiles:
   full      Infrastructure, Rust runtime, Configurator, Platform, web, and

@@ -20,7 +20,7 @@ use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, con
 use uuid::Uuid;
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires npm run dev -- infra or compatible Temporal + Postgres env"]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
 async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
     require_live_env()?;
@@ -248,7 +248,7 @@ fn require_live_env() -> anyhow::Result<()> {
         && std::env::var("LIGHTSPEED_POSTGRES_URL").is_err()
     {
         anyhow::bail!(
-            "LIGHTSPEED_TEST_POSTGRES_URL or LIGHTSPEED_POSTGRES_URL must be set; run npm run dev -- infra and source dev/env.sh"
+            "LIGHTSPEED_TEST_POSTGRES_URL or LIGHTSPEED_POSTGRES_URL must be set; run ./dev.sh infra and source scripts/dev/env.sh"
         );
     }
     Ok(())

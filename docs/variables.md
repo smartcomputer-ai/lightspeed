@@ -13,7 +13,7 @@ committed to `.env` files.
 
 The Rust server, CLI, evaluator, and Incus provider load a root `.env` file when
 present. The unified development supervisor inherits the caller's environment
-and then applies the defaults from `dev/env.sh`.
+and then applies the defaults from `scripts/dev/env.sh`.
 
 | Namespace | Owner |
 | --- | --- |
@@ -252,7 +252,7 @@ These variables exist only for its current development workers.
 
 ## Local development
 
-`npm run dev` and the helpers under `dev/` provide development-only defaults.
+`./dev.sh` and the helpers under `scripts/dev/` provide development-only defaults.
 Never reuse their credentials in a deployed environment.
 
 ### Supervisor overrides
@@ -298,7 +298,7 @@ variables documented above.
 | `TEMPORAL_PORT` | `7233` | Host Temporal frontend port. |
 | `TEMPORAL_UI_PORT` | `8233` | Host Temporal UI port. |
 
-`dev/env.sh` derives and exports the runtime and Platform connection URLs from
+`scripts/dev/env.sh` derives and exports the runtime and Platform connection URLs from
 these values. The two databases are intentionally separate because their
 independent migration systems contain overlapping table names. The script also
 supplies a fixed local `LIGHTSPEED_SECRETS_MASTER_KEY`; that key is public

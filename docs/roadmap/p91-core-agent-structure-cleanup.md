@@ -20,7 +20,7 @@
   (column, format check, and index edited out of `001_core.sql` in place);
   `ListAgentSessions` and the `AgentHandle` id type deleted;
   `fleet::default_agent_handle()` gone. Existing Postgres stacks must be
-  reset (`dev/` helpers) — the schema changed without a migration.
+  reset (`scripts/dev/` helpers) — the schema changed without a migration.
 - Slice 4 completed 2026-07-03: `DynamicEvent` → `StoredEvent`,
   `DynamicSessionEntry` → `StoredSessionEntry`,
   `DynamicUncommittedSessionEvent` → `UncommittedStoredEvent`, `DynamicJoins`
@@ -157,7 +157,7 @@ slices 2 and 3 each change exactly one persisted shape.
 2. `store-pg`: edit `migrations/001_core.sql` in place — drop the column, the
    `sessions_agent_handle_format` check, and the
    `sessions_agent_handle_session_id_idx` index; fix inserts/selects. Reset
-   local stacks via `dev/` helpers.
+   local stacks via `scripts/dev/` helpers.
 3. `store-fs`: drop the field from the session record JSON.
 4. Delete the `AgentHandle` string id from `session/ids.rs`.
 5. Fix constructors across `temporal-server` (activities, fleet),

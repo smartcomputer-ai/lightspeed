@@ -24,8 +24,9 @@ Use these files as the index:
   mechanically imported Foundry candidate.
 - `crates/api/contract/` — committed generated API schema, method manifest,
   OpenRPC, and human reference.
-- `dev/` — unified profile-aware development supervisor, local Docker stack,
-  environment exports, and reset helpers.
+- `dev.sh` and `scripts/dev/` — first-run bootstrap, unified profile-aware
+  development supervisor, local Docker stack, environment exports, and reset
+  helpers.
 - `docs/roadmap/` — implementation plans and historical milestones.
 
 ## Build & Test
@@ -73,11 +74,11 @@ Additional per-capability live suites exist for both providers under
 
 Temporal live tests share local Temporal/PostgreSQL state and must not run in
 parallel. Always pass `--test-threads=1` after the Cargo test-harness separator,
-including when running a filtered test. Source `dev/env.sh` first so the live
+including when running a filtered test. Source `scripts/dev/env.sh` first so the live
 tests use the local stack configuration:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 cargo test -p temporal-server --test temporal_live -- --ignored --test-threads=1
 cargo test -p temporal-server --test environment_provider_live -- --ignored --test-threads=1
 cargo test -p temporal-server --test preprocess_live -- --ignored --test-threads=1
@@ -115,25 +116,26 @@ cargo run -p temporal-server
 cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_1 "hello"
 ```
 
-Unified development profiles run from the root npm workspace. `full` is the
-default; connector processes remain opt-in through
+Unified development profiles run through the root `dev.sh` launcher. `full`
+is the default; `npm run dev` delegates to the same launcher, and connector
+processes remain opt-in through
 `LIGHTSPEED_CHANNELS_CONNECTORS`:
 
 ```bash
-npm run dev
-npm run dev -- platform
-npm run dev -- runtime
-npm run dev -- infra
-npm run dev -- --plan full
-npm run dev -- status
-npm run dev -- stop
-npm run dev -- down
-npm run dev -- reset
+./dev.sh
+./dev.sh platform
+./dev.sh runtime
+./dev.sh infra
+./dev.sh --plan full
+./dev.sh status
+./dev.sh stop
+./dev.sh down
+./dev.sh reset
 ```
 
 `stop` terminates the tracked host supervisor but keeps infrastructure;
 `down` stops the host supervisor before tearing down Compose. Internal
-infrastructure primitives live under `dev/infra/` and are not the primary
+infrastructure primitives live under `scripts/dev/infra/` and are not the primary
 developer command surface.
 
 The server never migrates PostgreSQL implicitly. Before starting it against a

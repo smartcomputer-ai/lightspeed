@@ -1,10 +1,11 @@
 # Lightspeed Development Environment
 
-The top-level `dev/` directory owns the complete local development environment
-for Lightspeed: its Docker Compose topology, environment exports, lifecycle
+The root `dev.sh` launcher and its implementation under `scripts/dev/` own the
+complete local development environment for Lightspeed: first-run checks,
+dependency bootstrap, Docker Compose topology, environment exports, lifecycle
 commands, and reset helpers for Postgres, pgAdmin, MinIO, and Temporal.
 
-See [`docs/variables.md`](../docs/variables.md#local-development) for the full
+See [`docs/variables.md`](../../docs/variables.md#local-development) for the full
 development override table and the separate production component variables.
 
 ## Services
@@ -19,21 +20,33 @@ development override table and the separate production component variables.
 
 ## Unified supervisor
 
-Install the root npm workspace once, then start the complete editable product:
+From a fresh checkout, start the complete editable product with one command:
 
 ```bash
-npm install
-npm run dev
+./dev.sh
+```
+
+The launcher checks Node, Cargo, Docker, and Docker Compose. For profiles that
+run TypeScript, it installs the root npm workspace when dependencies are
+missing or `package-lock.json` changed. A root `.env` is loaded automatically;
+when no common model-provider credential is present, startup continues with an
+actionable warning. Copy `.env.example` to `.env` to configure provider keys.
+
+`npm run dev` delegates to the same root launcher, so these are equivalent:
+
+```bash
+./dev.sh platform
+npm run dev -- platform
 ```
 
 The supervisor keeps stateful dependencies in Docker and runs editable Rust
 and TypeScript processes on the host. It supports four profiles:
 
 ```bash
-npm run dev -- full       # default: complete product, without credentialed connectors
-npm run dev -- platform   # Platform API/UI with the stub Lightspeed gateway
-npm run dev -- runtime    # migrated Rust runtime only
-npm run dev -- infra      # Postgres, pgAdmin, MinIO, and Temporal only
+./dev.sh full       # default: complete product, without credentialed connectors
+./dev.sh platform   # Platform API/UI with the stub Lightspeed gateway
+./dev.sh runtime    # migrated Rust runtime only
+./dev.sh infra      # Postgres, pgAdmin, MinIO, and Temporal only
 ```
 
 The local UI is available at `http://127.0.0.1:5173/app/`. The supervisor
@@ -52,22 +65,22 @@ activity workers. Connectors are opt-in and fail before startup when their
 required credentials are missing:
 
 ```bash
-LIGHTSPEED_CHANNELS_CONNECTORS=telegram npm run dev
-LIGHTSPEED_CHANNELS_CONNECTORS=telegram,whatsapp npm run dev
+LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh
+LIGHTSPEED_CHANNELS_CONNECTORS=telegram,whatsapp ./dev.sh
 ```
 
-Use `npm run dev -- --plan full` to inspect a profile without starting
+Use `./dev.sh --plan full` to inspect a profile without starting
 anything. Pressing Ctrl-C or running `stop` from another terminal stops the
 tracked host supervisor and its children while leaving Docker infrastructure
 available. `down` performs a complete teardown in the safe order: host
 processes first, then infrastructure.
 
 ```bash
-npm run dev -- status
-npm run dev -- stop
-npm run dev -- down
-npm run dev -- down --volumes
-npm run dev -- reset
+./dev.sh status
+./dev.sh stop
+./dev.sh down
+./dev.sh down --volumes
+./dev.sh reset
 ```
 
 `status` reports both the host supervisor and Compose services. The supervisor
@@ -77,27 +90,27 @@ first.
 
 ## Infrastructure primitives
 
-The supported developer entry point is always `npm run dev`. Small shell
-primitives remain under `dev/infra/` so live Rust tests and low-level recovery
-do not depend on the product supervisor. They are internal implementation
-details rather than a second command surface.
+The supported developer entry point is always `./dev.sh`. Small shell
+primitives remain under `scripts/dev/infra/` so live Rust tests and low-level
+recovery do not depend on the product supervisor. They are internal
+implementation details rather than a second command surface.
 
 Start only the shared Docker infrastructure through the public command:
 
 ```bash
-npm run dev -- infra
+./dev.sh infra
 ```
 
 The corresponding low-level primitives are:
 
 ```bash
-dev/infra/up.sh
-dev/infra/down.sh [--volumes]
-dev/infra/reset.sh
-dev/infra/pg-reset.sh
-dev/infra/pg-migrate.sh
-dev/infra/minio-ensure.sh
-dev/infra/minio-reset.sh
+scripts/dev/infra/up.sh
+scripts/dev/infra/down.sh [--volumes]
+scripts/dev/infra/reset.sh
+scripts/dev/infra/pg-reset.sh
+scripts/dev/infra/pg-migrate.sh
+scripts/dev/infra/minio-ensure.sh
+scripts/dev/infra/minio-reset.sh
 ```
 
 `reset.sh` recreates both databases, applies the runtime's ledgered schema, and
@@ -107,7 +120,7 @@ database migrations when the Platform server starts.
 Run the `store-pg` live integration tests against this stack:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 cargo test -p store-pg --test store_pg_live -- --ignored
 ```
 
@@ -116,7 +129,7 @@ cargo test -p store-pg --test store_pg_live -- --ignored
 Export local settings into the current shell:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 ```
 
 Equivalent values:
@@ -141,7 +154,7 @@ export AWS_SECRET_ACCESS_KEY=minioadmin
 
 The fixed local secret-store key is intentionally public development material.
 Its Lightspeed-owned value replaced an imported pre-release key; development
-state encrypted with the old key must be reset with `npm run dev -- reset`.
+state encrypted with the old key must be reset with `./dev.sh reset`.
 
 ## Manual runtime roles
 
@@ -149,13 +162,13 @@ The `runtime` profile is the normal way to run the Temporal-backed hosted
 runtime against the development stack:
 
 ```bash
-npm run dev -- runtime
+./dev.sh runtime
 ```
 
 For debugging a specific executable role manually:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 cargo run -p temporal-server -- migrate
 cargo run -p temporal-server
 ```
@@ -164,12 +177,12 @@ With no subcommand, the `lightspeed-server` binary runs the JSON-RPC gateway and
 worker in one process. For split-role runs, use two shells:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 cargo run -p temporal-server -- worker
 ```
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 cargo run -p temporal-server -- gateway
 ```
 
@@ -177,7 +190,7 @@ Then chat through the regular CLI over the gateway transport from another
 shell:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 cargo run -p cli -- chat --session session_1 "hello"
 ```
 
@@ -187,7 +200,7 @@ omit the message to open the interactive TUI.
 Run the fake hosted-agent live integration test against the same stack:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 cargo test -p temporal-server --test temporal_live temporal_live_session_start_then_run_start_completes_fake_runs -- --ignored --nocapture
 ```
 
@@ -196,7 +209,7 @@ Postgres and the real lifecycle reconciler with an in-process provider, so it
 does not require Incus:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 cargo test -p temporal-server --test environment_provider_live \
   -- --ignored --test-threads=1 --nocapture
 ```
@@ -204,7 +217,7 @@ cargo test -p temporal-server --test environment_provider_live \
 Run only the OpenAI-backed hosted-agent live test:
 
 ```bash
-source dev/env.sh
+source scripts/dev/env.sh
 export OPENAI_API_KEY=...
 cargo test -p temporal-server --test temporal_live temporal_live_session_start_then_run_start_completes_openai_run -- --ignored --nocapture
 ```

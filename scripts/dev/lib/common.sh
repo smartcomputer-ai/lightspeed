@@ -10,7 +10,7 @@ fi
 
 LIGHTSPEED_DEV_COMMON_DIR="$(cd "$(dirname "${LIGHTSPEED_DEV_COMMON_PATH}")" && pwd)"
 DEV_DIR="$(cd "${LIGHTSPEED_DEV_COMMON_DIR}/.." && pwd)"
-REPO_ROOT="$(cd "${DEV_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${DEV_DIR}/../.." && pwd)"
 COMPOSE_FILE="${DEV_DIR}/docker-compose.yaml"
 
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-lightspeed-dev}"
@@ -47,7 +47,7 @@ LIGHTSPEED_OBJECT_STORE_PREFIX="${LIGHTSPEED_OBJECT_STORE_PREFIX:-lightspeed}"
 LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE="${LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE:-true}"
 
 # AES-256-GCM master key for the store-pg secret store (base64, 32 bytes).
-# This is a well-known LOCAL DEVELOPMENT key ("lightspeed-local-dev-master-key-0001!")
+# This is a well-known LOCAL DEVELOPMENT key ("lightspeed-local-dev-master-key!")
 # so secrets survive shell restarts; never use it outside local dev. The key is
 # fixed rather than random because changing it makes previously stored secrets
 # undecryptable.

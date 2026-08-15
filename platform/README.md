@@ -43,14 +43,14 @@ npm run check
 For the complete interactive Lightspeed development stack:
 
 ```bash
-npm run dev
+./dev.sh
 ```
 
-That command uses the unified supervisor under `dev/` and starts the complete
+That command uses the unified supervisor under `scripts/dev/` and starts the complete
 product. For the focused Platform loop with a stub gateway, use:
 
 ```bash
-npm run dev -- platform
+./dev.sh platform
 ```
 
 The focused profile starts shared infrastructure, the stub gateway, the
