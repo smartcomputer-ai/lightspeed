@@ -55,9 +55,16 @@ const manifest = {
   protocolVersion: metadata.LIGHTSPEED_API_PROTOCOL_VERSION,
   contractRevision: `sha256:${contractHash.digest("hex")}`,
   schemaRevision: Number(metadata.LIGHTSPEED_SCHEMA_REVISION),
+  platformSchemaRevision: Number(metadata.LIGHTSPEED_PLATFORM_SCHEMA_REVISION),
+  platformUpgradeFrom: metadata.LIGHTSPEED_PLATFORM_UPGRADE_FROM,
   images: {
     server: process.env.LIGHTSPEED_SERVER_IMAGE ?? null,
     configuratorMcp: process.env.LIGHTSPEED_CONFIGURATOR_MCP_IMAGE ?? null,
+    platform: process.env.LIGHTSPEED_PLATFORM_IMAGE ?? null,
+    channelsWorkflows: process.env.LIGHTSPEED_CHANNELS_WORKFLOWS_IMAGE ?? null,
+    channelsActivities: process.env.LIGHTSPEED_CHANNELS_ACTIVITIES_IMAGE ?? null,
+    channelsTelegram: process.env.LIGHTSPEED_CHANNELS_TELEGRAM_IMAGE ?? null,
+    channelsWhatsapp: process.env.LIGHTSPEED_CHANNELS_WHATSAPP_IMAGE ?? null,
   },
   binaries: {
     server: archive("SERVER", "-server-"),

@@ -122,7 +122,7 @@
 - **Greenfield: breaking changes are fine.** No migrations, no compat shims, no
   deprecated aliases. Wire shapes, engine config types, and stored
   `ConfigChanged` payloads change in place; local stacks are reset and
-  `interop/contract/` + the TS client are regenerated.
+  `crates/api/contract/` + the TS client are regenerated.
 - Replaces the patch-based config update model (`FieldPatch`,
   `SessionConfigPatchInput`, engine `SessionConfigPatch`) with full-document
   puts guarded by expected revisions, and restructures the session config

@@ -173,7 +173,7 @@ the Anthropic request-lowering/admission vocabulary agree. It must not relabel
 6. Add client tests for native JSON, pagination, auth override, and error
    redaction; gateway tests for partial success, route expansion, unknown
    capabilities, and no credentials in the serialized response. Regenerate
-   `interop/contract/` with `cargo run -p api --bin export-schema`, then run
+   `crates/api/contract/` with `cargo run -p api --bin export-schema`, then run
    `cargo test -p api`, `cargo test -p llm-clients`, and
    `cargo test -p temporal-server`.
 

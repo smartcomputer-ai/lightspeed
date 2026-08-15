@@ -2,7 +2,7 @@ FROM debian:12-slim@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fb
 
 ARG LIGHTSPEED_RELEASE_VERSION=0.0.0
 ARG LIGHTSPEED_GIT_SHA=unknown
-LABEL org.opencontainers.image.title="Lightspeed server" \
+LABEL org.opencontainers.image.title="Lightspeed runtime" \
       org.opencontainers.image.version=$LIGHTSPEED_RELEASE_VERSION \
       org.opencontainers.image.revision=$LIGHTSPEED_GIT_SHA \
       org.opencontainers.image.source="https://github.com/smartcomputer-ai/lightspeed"

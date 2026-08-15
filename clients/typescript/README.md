@@ -1,18 +1,18 @@
 # Lightspeed TypeScript Client
 
-Private TypeScript client for the Lightspeed JSON-RPC gateway.
+Generated TypeScript client for the Lightspeed JSON-RPC gateway.
 
 The public API types and typed method map are generated from the committed
-contract artifacts in `../contract/`. The hand-written code is limited to the
+contract artifacts in `crates/api/contract/`. The hand-written code is limited to the
 JSON-RPC transport and small workflow helpers.
 
 ## Install
 
-For private consumers, install from this repository path or a git subdirectory.
-This package is not published to npm.
+Tagged Lightspeed releases publish `@lightspeed/agent-client` to npm. In-tree
+consumers use the repository workspace directly.
 
 ```bash
-npm install /path/to/lightspeed/interop/ts-client
+npm install @lightspeed/agent-client
 ```
 
 ## Use
@@ -51,8 +51,7 @@ from the generated schema types.
 
 ```bash
 npm install
-npm run generate
-npm run check
+npm run check --workspace @lightspeed/agent-client
 ```
 
 `npm run check:generated` regenerates `src/generated/*` and fails if the

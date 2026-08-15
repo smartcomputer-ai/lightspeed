@@ -84,7 +84,7 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
   multi-tenant Streamable HTTP
 - [x] **CLI** to connect to running agent sessions
 
-The generated [JSON-RPC API reference](interop/contract/api-reference.md) is
+The generated [JSON-RPC API reference](crates/api/contract/api-reference.md) is
 derived from the same Rust manifest and schemas that drive OpenRPC, the
 TypeScript client, and Configurator MCP tool descriptions.
 
@@ -203,41 +203,17 @@ For OpenAI-backed chat, the CLI sends typed session/run configuration through
 the API. Use `--model ...` on a command, or set `LIGHTSPEED_CHAT_MODEL`, if you want
 a specific model.
 
-The repository includes runnable example profiles under `profiles/`. Import one
-through the gateway, then start a chat with its profile id:
-
-```bash
-cargo run -p cli -- profiles import profiles/workspace-prompts-skills.json
-cargo run -p cli -- chat --new --profile example.workspace-prompts-skills \
-  "summarize the mounted profile workspace"
-```
-
-The workspace-backed profile provisions `profiles/workspace-prompts-skills/` as
-a VFS workspace and links it at `/workspace` through
-`features.vfs.workspaceLinks`. The local `provision` block is consumed by the
-CLI during import and is not stored in the profile record.
-
-There is also a multi-profile Fleet demo:
-
-```bash
-cargo run -p cli -- profiles import profiles/fleet-demo.json
-cargo run -p cli -- chat --new --profile example.fleet.supervisor
-```
-
-Profiles can be managed through the same gateway:
+Profiles can be managed through the same gateway. `profiles import` and
+`profiles check` accept either one profile object or a non-empty JSON array of
+profile objects:
 
 ```bash
 cargo run -p cli -- profiles list
-cargo run -p cli -- profiles check profiles/fleet-demo.json
-cargo run -p cli -- profiles read example.workspace-prompts-skills
-cargo run -p cli -- profiles export example.workspace-prompts-skills \
-  --out /tmp/example.workspace-prompts-skills.json
+cargo run -p cli -- profiles check path/to/profile.json
+cargo run -p cli -- profiles import path/to/profile.json
+cargo run -p cli -- profiles read <profile-id>
+cargo run -p cli -- profiles export <profile-id> --out /tmp/profile.json
 ```
-
-`profiles import` and `profiles check` accept either one profile object or a
-non-empty JSON array of profile objects. See `profiles/README.md` for the full
-set of examples, including the MCP echo profile, which requires registering the
-test MCP server before import.
 
 To chat with a local directory linked as a writable CAS-backed VFS workspace:
 
@@ -303,7 +279,7 @@ for the design.
 
 ### Configurator MCP
 
-`interop/configurator-mcp` exposes a generated, configurable subset of the
+`platform/configurator-mcp` exposes a generated, configurable subset of the
 universe-scoped JSON-RPC methods as MCP tools over stateless Streamable HTTP.
 Its committed `tool-filter.json` tunes the advertised surface; deployment-level
 `operator/*` methods are categorically ineligible. Each MCP POST authenticates
@@ -314,15 +290,29 @@ universes.
 With the server running locally in the default single-universe mode:
 
 ```bash
-cd interop/configurator-mcp
 npm install
-npm run build
-LIGHTSPEED_AUTH_MODE=single node dist/bin.js
+npm run build --workspace @lightspeed/configurator-mcp
+LIGHTSPEED_AUTH_MODE=single node platform/configurator-mcp/dist/bin.js
 ```
 
 The MCP endpoint defaults to `http://127.0.0.1:18081/mcp`; see
-`interop/configurator-mcp/README.md` for multi-tenant proxy and API-key
+`platform/configurator-mcp/README.md` for multi-tenant proxy and API-key
 configuration.
+
+### Platform UI and channels
+
+The first-party TypeScript management plane lives under `platform/`; the public
+generated client lives at `clients/typescript/`. Install and check the complete
+Node workspace from the repository root:
+
+```bash
+npm install
+npm run check
+```
+
+Run `npm run dev` for the platform server, web UI, local Postgres, and stub
+gateway development loop. See [platform/README.md](platform/README.md) for
+component roles, configuration, and optional channel workers.
 
 ### Stop Or Reset Local Infra
 

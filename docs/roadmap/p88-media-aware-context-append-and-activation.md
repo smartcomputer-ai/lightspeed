@@ -523,7 +523,7 @@ activity idempotency.
   - video media remains unsupported/caption-only.
 
 - Contract tests:
-  - regenerate `interop/contract/` after API shape changes;
+  - regenerate `crates/api/contract/` after API shape changes;
   - update the TypeScript client types used by `interop/messaging`.
 
 ## Implementation Slices

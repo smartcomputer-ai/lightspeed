@@ -769,7 +769,7 @@ lightspeed work run --profile <id> [--id <work-id>] --wait <objective>
 `work run --wait` is client-side convenience and does not change the
 asynchronous server boundary.
 
-After wire changes, regenerate `interop/contract/` and verify the TypeScript
+After wire changes, regenerate `crates/api/contract/` and verify the TypeScript
 client and Configurator MCP. Decide explicitly which Work mutations, if any,
 the Configurator facade advertises.
 
@@ -929,7 +929,7 @@ crates/temporal-server/
 crates/cli/
   work start/read/input/cancel/run commands
 
-interop/contract/ and interop/ts-client/
+crates/api/contract/ and clients/typescript/
   regenerated contract and client
 ```
 

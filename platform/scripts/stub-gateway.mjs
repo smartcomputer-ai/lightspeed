@@ -1,6 +1,6 @@
 // Stateful stub of the Lightspeed gateway JSON-RPC surface (profiles, VFS
 // workspaces, operator/universes) for the universe editing passthrough.
-// Lets app/frontend development iterate without the real Rust stack.
+// Lets platform frontend development iterate without the real Rust stack.
 //
 // Mirrors the current greenfield contract: full-document puts for profiles
 // and MCP servers, sparse feature config, universe environment resources.
@@ -1303,13 +1303,13 @@ function ensureDemoSessions(universe) {
       toolName: "exec_command",
       argumentsRef: "blob:trace-search-args",
       arguments: JSON.stringify({
-        argv: ["rg", "-n", "MessageScroller|TranscriptEntry", "app/web/src"],
+        argv: ["rg", "-n", "MessageScroller|TranscriptEntry", "platform/web/src"],
         timeout_ms: 10_000,
       }),
       display: {
         group: "explore",
         verb: "Search",
-        target: "MessageScroller|TranscriptEntry in app/web/src",
+        target: "MessageScroller|TranscriptEntry in platform/web/src",
         detail: "42 matches",
       },
     },
@@ -1317,11 +1317,11 @@ function ensureDemoSessions(universe) {
       callId: "trace-call-read",
       toolName: "read_file",
       argumentsRef: "blob:trace-read-args",
-      arguments: JSON.stringify({ path: "app/web/src/lib/sessions/transcript.ts" }),
+      arguments: JSON.stringify({ path: "platform/web/src/lib/sessions/transcript.ts" }),
       display: {
         group: "explore",
         verb: "Read",
-        target: "app/web/src/lib/sessions/transcript.ts",
+        target: "platform/web/src/lib/sessions/transcript.ts",
       },
     },
     {
@@ -1404,9 +1404,9 @@ function ensureDemoSessions(universe) {
         baseRevision: 2,
         revision: 3,
         entries: [
-          contextToolResult("trace-result-search", "trace-call-search", "app/web/src/pages/SessionsPage.tsx:987: entries.map(...)\napp/web/src/lib/sessions/transcript.ts:72: applyEvents(...)"),
+          contextToolResult("trace-result-search", "trace-call-search", "platform/web/src/pages/SessionsPage.tsx:987: entries.map(...)\nplatform/web/src/lib/sessions/transcript.ts:72: applyEvents(...)"),
           contextToolResult("trace-result-read", "trace-call-read", "The reducer currently keeps messages and minimal tool rows, but drops reasoningState entries and tool batch display metadata."),
-          contextToolResult("trace-result-status", "trace-call-status", " M app/web/src/lib/sessions/transcript.ts\n?? app/web/src/components/session/tool-trace.tsx"),
+          contextToolResult("trace-result-status", "trace-call-status", " M platform/web/src/lib/sessions/transcript.ts\n?? platform/web/src/components/session/tool-trace.tsx"),
         ],
       }, 917_000),
       mk(traces, 19, { type: "toolBatchCompleted", runId: "trace-run", turnId: "trace-turn-1", batchId: "trace-batch-1" }, 918_000),

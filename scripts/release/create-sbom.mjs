@@ -13,7 +13,7 @@ for (const item of cargo.packages) {
   const key = `cargo:${item.name}@${item.version}`;
   dependencies.set(key, { name: item.name, version: item.version, manager: "cargo" });
 }
-for (const lockFile of ["interop/ts-client/package-lock.json", "interop/configurator-mcp/package-lock.json"]) {
+for (const lockFile of ["package-lock.json"]) {
   const lock = JSON.parse(fs.readFileSync(lockFile, "utf8"));
   for (const [location, item] of Object.entries(lock.packages ?? {})) {
     if (!location || !item.version) continue;

@@ -76,8 +76,8 @@ cargo test -p tools
 cargo test -p cli --tests
 cargo test -p store-pg --lib
 cargo test -p temporal-server
-npm --prefix interop/ts-client run test
-npm --prefix interop/ts-client run typecheck
+npm --prefix clients/typescript run test
+npm --prefix clients/typescript run typecheck
 npm --prefix interop/messaging run test:bridge
 npm --prefix interop/messaging run typecheck:bridge
 npm --prefix interop/messaging run build:bridge

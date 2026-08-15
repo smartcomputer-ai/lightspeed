@@ -1,8 +1,9 @@
 # Lightspeed Configurator MCP
 
-Private Streamable HTTP MCP facade over a configurable generated subset of the
+Streamable HTTP MCP facade over a configurable generated subset of the
 universe-scoped Lightspeed JSON-RPC contract. Tools are generated from
-`../contract`; deployment-level `operator/*` methods can never be exposed.
+`crates/api/contract`; deployment-level `operator/*` methods can never be
+exposed.
 
 `tool-filter.json` contains the exact universe methods omitted from generation.
 The default surface excludes provider presence writes, environment jobs,
@@ -17,14 +18,9 @@ idempotency, and secret handling.
 Build the TypeScript client and Configurator, then start the server:
 
 ```bash
-cd interop/ts-client
 npm install
-npm run build
-
-cd ../configurator-mcp
-npm install
-npm run build
-LIGHTSPEED_AUTH_MODE=single node dist/bin.js
+npm run build --workspace @lightspeed/configurator-mcp
+LIGHTSPEED_AUTH_MODE=single node platform/configurator-mcp/dist/bin.js
 ```
 
 The default endpoints are:
@@ -60,6 +56,5 @@ approval overlay.
 ## Regenerate and verify
 
 ```bash
-npm run generate
-npm run check
+npm run check --workspace @lightspeed/configurator-mcp
 ```

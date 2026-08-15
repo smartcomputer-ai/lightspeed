@@ -1,12 +1,10 @@
 name: snapshot main
 
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'LICENSE*'
 
 concurrency:
   group: snapshot-main
@@ -17,21 +15,39 @@ permissions:
 
 jobs:
   build:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: [self-hosted, linux, x64, hz01, protected]
     permissions:
       contents: read
       packages: write
       id-token: write
       attestations: write
+    services:
+      postgres:
+        image: postgres:17-bookworm@sha256:84560e3b9c6874893fc4e2854f5dc3e7c1a37bc9d1dfd7a8c641310ae22ba5ad
+        env:
+          POSTGRES_USER: lightspeed
+          POSTGRES_PASSWORD: lightspeed
+          POSTGRES_DB: lightspeed
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U lightspeed"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
       - name: Validate the main commit
         id: identity
         env:
-          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -95,6 +111,84 @@ jobs:
           tags: ghcr.io/${{ github.repository }}/configurator-mcp:${{ steps.identity.outputs.staging_tag }}
           provenance: mode=max
           sbom: true
+      - name: Build and publish platform image to staging
+        id: platform
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: release/platform.Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            LIGHTSPEED_RELEASE_VERSION=${{ steps.identity.outputs.version }}
+            LIGHTSPEED_GIT_SHA=${{ steps.identity.outputs.sha }}
+          tags: ghcr.io/${{ github.repository }}/platform:${{ steps.identity.outputs.staging_tag }}
+          provenance: mode=max
+          sbom: true
+      - name: Build and publish Channels workflow image to staging
+        id: channels_workflows
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: release/channels.Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            LIGHTSPEED_RELEASE_VERSION=${{ steps.identity.outputs.version }}
+            LIGHTSPEED_GIT_SHA=${{ steps.identity.outputs.sha }}
+            LIGHTSPEED_CHANNELS_ROLE=workflows
+            LIGHTSPEED_CHANNELS_RUNTIME=channels
+          tags: ghcr.io/${{ github.repository }}/channels-workflows:${{ steps.identity.outputs.staging_tag }}
+          provenance: mode=max
+          sbom: true
+      - name: Build and publish Channels activity image to staging
+        id: channels_activities
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: release/channels.Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            LIGHTSPEED_RELEASE_VERSION=${{ steps.identity.outputs.version }}
+            LIGHTSPEED_GIT_SHA=${{ steps.identity.outputs.sha }}
+            LIGHTSPEED_CHANNELS_ROLE=activities
+            LIGHTSPEED_CHANNELS_RUNTIME=channels
+          tags: ghcr.io/${{ github.repository }}/channels-activities:${{ steps.identity.outputs.staging_tag }}
+          provenance: mode=max
+          sbom: true
+      - name: Build and publish Channels Telegram image to staging
+        id: channels_telegram
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: release/channels.Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            LIGHTSPEED_RELEASE_VERSION=${{ steps.identity.outputs.version }}
+            LIGHTSPEED_GIT_SHA=${{ steps.identity.outputs.sha }}
+            LIGHTSPEED_CHANNELS_ROLE=telegram
+            LIGHTSPEED_CHANNELS_RUNTIME=channels
+          tags: ghcr.io/${{ github.repository }}/channels-telegram:${{ steps.identity.outputs.staging_tag }}
+          provenance: mode=max
+          sbom: true
+      - name: Build and publish optional Channels WhatsApp image to staging
+        id: channels_whatsapp
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: release/channels.Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            LIGHTSPEED_RELEASE_VERSION=${{ steps.identity.outputs.version }}
+            LIGHTSPEED_GIT_SHA=${{ steps.identity.outputs.sha }}
+            LIGHTSPEED_CHANNELS_ROLE=whatsapp
+            LIGHTSPEED_CHANNELS_RUNTIME=channels-whatsapp
+          tags: ghcr.io/${{ github.repository }}/channels-whatsapp:${{ steps.identity.outputs.staging_tag }}
+          provenance: mode=max
+          sbom: true
       - name: Publish standalone archives to staging
         id: archives
         env:
@@ -123,6 +217,11 @@ jobs:
         env:
           LIGHTSPEED_SERVER_IMAGE: ghcr.io/${{ github.repository }}/server@${{ steps.server.outputs.digest }}
           LIGHTSPEED_CONFIGURATOR_MCP_IMAGE: ghcr.io/${{ github.repository }}/configurator-mcp@${{ steps.configurator.outputs.digest }}
+          LIGHTSPEED_PLATFORM_IMAGE: ghcr.io/${{ github.repository }}/platform@${{ steps.platform.outputs.digest }}
+          LIGHTSPEED_CHANNELS_WORKFLOWS_IMAGE: ghcr.io/${{ github.repository }}/channels-workflows@${{ steps.channels_workflows.outputs.digest }}
+          LIGHTSPEED_CHANNELS_ACTIVITIES_IMAGE: ghcr.io/${{ github.repository }}/channels-activities@${{ steps.channels_activities.outputs.digest }}
+          LIGHTSPEED_CHANNELS_TELEGRAM_IMAGE: ghcr.io/${{ github.repository }}/channels-telegram@${{ steps.channels_telegram.outputs.digest }}
+          LIGHTSPEED_CHANNELS_WHATSAPP_IMAGE: ghcr.io/${{ github.repository }}/channels-whatsapp@${{ steps.channels_whatsapp.outputs.digest }}
           LIGHTSPEED_RELEASE_BUILD_IMAGE: ghcr.io/${{ github.repository }}/build-env@${{ steps.build_environment.outputs.digest }}
           LIGHTSPEED_BINARY_URL_SERVER: ${{ steps.archives.outputs.SERVER_URL }}
           LIGHTSPEED_BINARY_URL_PROVIDER_INCUS: ${{ steps.archives.outputs.PROVIDER_INCUS_URL }}
@@ -131,6 +230,7 @@ jobs:
           STAGING_TAG: ${{ steps.identity.outputs.staging_tag }}
         run: |
           set -euo pipefail
+          find dist/runtime -depth -delete
           scripts/release/create-manifest.mjs \
             "${{ steps.identity.outputs.version }}" "${{ steps.identity.outputs.sha }}"
           scripts/release/checksums.sh
@@ -147,6 +247,12 @@ jobs:
         env:
           SERVER_IMAGE: ghcr.io/${{ github.repository }}/server@${{ steps.server.outputs.digest }}
           CONFIGURATOR_IMAGE: ghcr.io/${{ github.repository }}/configurator-mcp@${{ steps.configurator.outputs.digest }}
+          PLATFORM_IMAGE: ghcr.io/${{ github.repository }}/platform@${{ steps.platform.outputs.digest }}
+          CHANNELS_WORKFLOWS_IMAGE: ghcr.io/${{ github.repository }}/channels-workflows@${{ steps.channels_workflows.outputs.digest }}
+          CHANNELS_ACTIVITIES_IMAGE: ghcr.io/${{ github.repository }}/channels-activities@${{ steps.channels_activities.outputs.digest }}
+          CHANNELS_TELEGRAM_IMAGE: ghcr.io/${{ github.repository }}/channels-telegram@${{ steps.channels_telegram.outputs.digest }}
+          CHANNELS_WHATSAPP_IMAGE: ghcr.io/${{ github.repository }}/channels-whatsapp@${{ steps.channels_whatsapp.outputs.digest }}
+          PLATFORM_DATABASE_URL: postgres://lightspeed:lightspeed@127.0.0.1:55432/lightspeed
           EXPECTED_SHA: ${{ steps.identity.outputs.sha }}
         run: |
           set -euo pipefail
@@ -160,6 +266,7 @@ jobs:
           docker pull "$CONFIGURATOR_IMAGE"
           docker run --rm --entrypoint node "$CONFIGURATOR_IMAGE" -e \
             'const fs = require("node:fs"); for (const f of ["/app/dist/bin.js", "/app/agent-client.tgz"]) fs.accessSync(f);'
+          scripts/release/smoke-images.sh
       - name: Confirm this is still the current main commit
         id: current
         env:

@@ -385,7 +385,7 @@ Design notes:
   parts (Anthropic/OpenAI both accept images natively); documents start as
   provider-native file parts where supported;
 - size/type limits enforced at admission (gateway), not in the engine;
-- contract artifacts under `interop/contract/` regenerate
+- contract artifacts under `crates/api/contract/` regenerate
   (`cargo run -p api --bin export-schema`) and the TS client picks up the
   new item types.
 

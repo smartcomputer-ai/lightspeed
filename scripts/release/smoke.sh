@@ -21,5 +21,17 @@ done
 test -f dist/configurator-mcp/dist/bin.js
 test -f dist/configurator-mcp/node_modules/@lightspeed/agent-client/dist/index.js
 
+for runtime in platform channels; do
+  test -f "dist/runtime/$runtime.tar.gz"
+  tar -tzf "dist/runtime/$runtime.tar.gz" ./package.json >/dev/null
+done
+tar -tzf dist/runtime/platform.tar.gz ./platform/server/src/main.ts >/dev/null
+tar -tzf dist/runtime/platform.tar.gz ./platform/web/dist/index.html >/dev/null
+tar -tzf dist/runtime/channels.tar.gz ./platform/channels/src/runtime/main.ts >/dev/null
+channels_files="$(mktemp)"
+trap 'rm -f "$channels_files"' EXIT
+tar -tzf dist/runtime/channels.tar.gz > "$channels_files"
+grep -Eq '^\./node_modules/baileys/' "$channels_files"
+
 (cd dist && sha256sum --check checksums.txt)
 scripts/release/verify-manifest.mjs

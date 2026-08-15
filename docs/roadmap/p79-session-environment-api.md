@@ -21,7 +21,7 @@
   "env" }`.
 - Projection refresh now uses the gateway-owned `SessionEnvironmentManager`, so
   API activation and model-visible context share the same registry.
-- Regenerated committed API contract artifacts under `interop/contract/`.
+- Regenerated committed API contract artifacts under `crates/api/contract/`.
 - Verified with:
   `cargo test -p api -p temporal-server --tests`
 - Also checked adjacent environment/runtime crates with:

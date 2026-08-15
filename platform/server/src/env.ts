@@ -18,8 +18,8 @@ export interface ServerEnv {
 }
 
 function compatible(name: string, legacyName: string): string | undefined {
-  const value = process.env[name];
-  const legacyValue = process.env[legacyName];
+  const value = process.env[name] || undefined;
+  const legacyValue = process.env[legacyName] || undefined;
   if (value && legacyValue && value !== legacyValue) {
     throw new Error(`Conflicting environment variables ${name} and ${legacyName}`);
   }

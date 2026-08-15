@@ -1,93 +1,82 @@
-# ls.bot app
+# Lightspeed platform
 
-The ls.bot control plane (see [docs/platform-plan.md](../docs/platform-plan.md)):
-DB-backed platform config on the `lsbot` database, user auth and universe
-membership via better-auth, and a small UI. Universes start blank and the app
-creates them explicitly through `operator/universes/create`; profiles and
-workspaces are edited directly through the in-app gateway passthrough.
+The first-party Lightspeed management plane, web UI, channel workers, and
+supporting TypeScript packages. The repository root is the npm workspace root;
+run Node commands from there.
 
-npm-workspaces monorepo, TypeScript end to end, run with tsx (no build step):
+## Components
 
-- `db/` — Drizzle schema + SQL migrations for the `lsbot` database.
-  better-auth tables are generated from `db/scripts/auth-codegen.ts`; after
-  regenerating, run `node db/scripts/patch-auth-schema.mjs` (the generator
-  emits `timestamp` without timezone; we store instants, so every column is
-  patched to `timestamptz`), then `npm run generate -w db` for the SQL
-  migration. Platform tables live in `src/schema/platform.ts`.
-- `core/` — shared input schemas (zod) and small domain helpers.
-- `server/` — Hono API + better-auth (organization, admin, bearer plugins),
-  applies migrations on startup, serves `/health`, `/api/auth/*`, `/api/v1/*`
-  and the `/app` SPA. Includes the universe-scoped gateway passthrough
-  (`src/routes/gateway.ts`): profiles list/read/put/delete and workspaces
-  list/create against `LIGHTSPEED_API_URL` (trusted-header mode), owner/admin
-  gated — pure passthrough, no platform-side mirror of engine state.
-  Universe lifecycle is explicit: create calls `operator/universes/create`
-  (engine auto-create is retired), permanent delete purges via
-  `operator/universes/delete` (archived universes only, platform admin).
-- `web/` — the frontend: Vite + React SPA served by the server under `/app`
-  (react-router, react-query, better-auth React client; Tailwind v4 +
-  shadcn/Base UI, components vendored in `src/components/ui/`). App shell
-  with universe switcher; per-universe routes: Profiles (as-JSON editor)
-  and Workspaces at the top level, configuration under
-  `/app/u/:slug/settings/{general,setups,environments,mcp-servers,channels,api-keys,members}`. Platform admin
-  area (`/app/admin/{users,universes,channels}`), account page with password
-  change, dark mode. See `docs/ui-plan.md`. `npm run build:web`
-  produces `web/dist`; for UI development run `npm run dev -w web` (vite on
-  :5173, proxying `/api` to the server on :3000).
-- `cli/` — the `lsbot` operator CLI (`cli/bin/lsbot`), which talks to the API
-  with a bearer token from `lsbot login`.
-- `channels/` — Temporal workflows and account-affine Telegram/WhatsApp
-  connectors. Each channel route owns a managed Lightspeed session; pushed
-  workflow tools schedule provider activities directly and resolve on
-  provider acknowledgement. There is no delivery outbox or message ledger.
-  Postgres contains only channel accounts, bindings, pairings, identities,
-  and access data. The package's `@lightspeed/agent-client` dependency remains
-  a `file:` link into the sibling `../lightspeed` checkout until published.
-  Connector health ports also serve Prometheus admission/availability metrics
-  at `/metrics`; Temporal SDK metrics are exposed by workflow, activity, and
-  provider roles on their configured `CHANNELS_METRICS_PORT`.
+- `server/` — Hono API, better-auth integration, universe-scoped gateway
+  passthrough, database migration startup, and static SPA hosting.
+- `web/` — Vite/React management UI served under `/app`.
+- `cli/` — `lightspeed-platform`, the platform administration CLI.
+- `shared/` — Zod input schemas and deterministic helpers shared by the server,
+  web UI, and CLI.
+- `db/` — Drizzle schemas, migrations, and the platform database adapter.
+- `channels/` — Temporal-managed Telegram and optional WhatsApp channel roles.
+- `configurator-mcp/` — generated Streamable HTTP MCP facade over the
+  universe-scoped Lightspeed API.
+- `foundry/` — mechanically imported compatibility code. Foundry is not a
+  supported P124 release component and receives no new architecture work until
+  its product future is decided.
+- `scripts/` — the local development stack, stub gateway, and generated profile
+  configuration reference.
+
+The generated public API client lives separately at `clients/typescript/`.
+Committed wire artifacts are owned by `crates/api/contract/`.
 
 ## Development
 
-Principle: **containers for state, host processes for code you edit.**
+Install all Node workspace dependencies and run the complete check:
 
 ```bash
 npm install
-npm run dev     # db (compose postgres) + stub gateway + api (tsx watch) + web (vite HMR)
+npm run check
 ```
 
-`scripts/dev-stack.mjs` brings up everything for the inner loop:
+For the interactive platform development stack:
 
-- **api** on :3000 — tsx watch, restarts on save; applies migrations and
-  seeds the admin (`lukas@smartcomputer.company` / `dev-password`, override
-  via `LSBOT_ADMIN_*`).
-- **web** on :5173/app/ — vite dev server with HMR, proxying `/api` to the
-  api. Use this URL for UI work; :3000/app serves the last `build:web`.
-- **stub gateway** on :19999 — in-memory Lightspeed (profiles incl.
-  list/update-patch/delete + VFS workspaces + sessions with a canned chat
-  reply ~1s after `session/runs/start`) for developing the gateway
-  passthrough without the Rust stack. `GET /calls` shows traffic. It is a
-  plain node process: after editing it, restart the stack. Deliberately
-  minimal — anything deeper gets tested against the real engine
-  (`LSBOT_DEV_REAL_GATEWAY=1` below).
-- **db** — the compose postgres (real roles + init scripts, prod parity).
-  Password resolves from `infra/.env`; the development stack uses `:15433`
-  by default so it can run beside Lightspeed on `:15432`. Override it with
-  `POSTGRES_PORT=<port> npm run dev` when needed.
+```bash
+npm run dev
+```
 
-Integration against the real engine: `LSBOT_DEV_REAL_GATEWAY=1 npm run dev`
-points the gateway URL at :18080 — run lightspeed via `infra/scripts/up`
-(full compose) or `cargo run` from the sibling checkout. Run Channels roles
-with `npm run dev:workflows -w @lightspeed/channels`, `dev:activities`,
-`dev:telegram`, or `dev:whatsapp`. Never run a second connector with production
-credentials: Telegram polling and WhatsApp linking are single-consumer, so use
-a dedicated development bot or number.
+That command starts the repository's local Postgres service when needed, a
+stub Lightspeed gateway, the platform server on port 3000, and the Vite web UI
+on port 5173. Set `LIGHTSPEED_PLATFORM_DEV_REAL_GATEWAY=1` to use a real
+Lightspeed gateway at `LIGHTSPEED_API_URL` instead of the stub.
 
-DB-gated integration tests: point `LSBOT_TEST_DATABASE_URL` at any scratch
-postgres and `npm test`.
+Development defaults use `admin@lightspeed.dev` and
+`lightspeed-dev-password`. Override them with
+`LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`.
+These defaults are local-only and must never be used in a deployed environment.
 
-Signup is disabled; accounts beyond the seeded admin are created via
-`lsbot user create` or the Users page.
+The server accepts the following primary configuration names:
 
-Deployment: `infra/docker/lsbot-app.Dockerfile`, compose service `app`,
-routed by Caddy under `ls.bot/api` and `ls.bot/app`.
+- `LIGHTSPEED_PLATFORM_DATABASE_URL`;
+- `LIGHTSPEED_PLATFORM_AUTH_SECRET`;
+- `LIGHTSPEED_PLATFORM_BASE_URL`;
+- `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
+  `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`;
+- `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` and
+  `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_SECRET`;
+- `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL`; and
+- `LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS`.
+
+Legacy `LSBOT_*` aliases remain accepted for the production compatibility
+window described by P124. Conflicting new and legacy values are rejected.
+
+Live database or Temporal integration tests require explicit opt-in variables
+and are not part of the ordinary unit-test run. Never use production connector
+credentials for local Telegram or WhatsApp workers.
+
+CI runs those integration boundaries explicitly. To reproduce them:
+
+```bash
+LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL=postgres://... npm run test:migrations
+npm run test:integration:channels
+```
+
+Release construction stages one platform runtime, a standard Channels runtime
+without WhatsApp-only dependencies, and a separate WhatsApp-enabled runtime.
+The P123 manifest records the platform plus workflow, activity, Telegram, and
+optional WhatsApp images by digest. Foundry has no independent release image.

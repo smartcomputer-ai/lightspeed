@@ -15,6 +15,16 @@ grep -F "pub const REQUIRED_SCHEMA_REVISION: i64 = $LIGHTSPEED_SCHEMA_REVISION;"
 grep -F "pub const PROTOCOL_VERSION: &str = \"$LIGHTSPEED_API_PROTOCOL_VERSION\";" \
   crates/api/src/constants.rs >/dev/null
 grep -F "$LIGHTSPEED_RELEASE_BUILD_BASE_IMAGE" release/build-env.Dockerfile >/dev/null
+node -e '
+  const fs = require("node:fs");
+  const journal = JSON.parse(fs.readFileSync("platform/db/migrations/meta/_journal.json", "utf8"));
+  const revision = Number(process.argv[1]);
+  const baseline = process.argv[2];
+  if (journal.entries.length !== revision) throw new Error("platform schema revision is stale");
+  if (!journal.entries.some((entry) => entry.tag === baseline)) {
+    throw new Error("platform upgrade baseline is not in the migration journal");
+  }
+' "$LIGHTSPEED_PLATFORM_SCHEMA_REVISION" "$LIGHTSPEED_PLATFORM_UPGRADE_FROM"
 
 for manifest in \
   crates/release-info/Cargo.toml \

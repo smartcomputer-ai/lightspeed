@@ -9,6 +9,37 @@ Builds on [P123](p123-build-and-release.md). P123 remains the release authority;
 P124 extends its coherent build, manifest, provenance, and publication model to
 the first-party TypeScript platform.
 
+Implemented repository slice 2026-08-15:
+
+- moved the public TypeScript client to `clients/typescript` and Configurator
+  MCP to `platform/configurator-mcp`;
+- moved committed generated API artifacts to their owner at
+  `crates/api/contract`;
+- imported the platform server, web UI, operator CLI, shared inputs, database,
+  Channels, and mechanically preserved Foundry package under `platform/`;
+- established the private root npm workspace, in-tree client dependencies,
+  `@lightspeed/*` package names, and Node 24 baseline;
+- updated generators, CI, release staging, SBOM inputs, documentation, and
+  development commands for the new paths;
+- extended the P123 manifest and release workflows with digest-pinned platform,
+  Channels workflow, Channels activity, Telegram, and optional WhatsApp images;
+- added platform empty-install/upgrade migration checks, a non-skipping
+  Channels Temporal integration gate, runtime-image smoke tests, and a single
+  successful-main-CI prerequisite for snapshot publication;
+- recorded the platform schema revision and supported migration baseline in
+  the same release manifest as the artifact digests;
+- isolated Baileys and its QR helper to the optional WhatsApp runtime payload
+  while giving Foundry no independent image or publication entry;
+- added primary `LIGHTSPEED_PLATFORM_*` configuration with legacy `LSBOT_*`
+  compatibility where the imported runtime consumes deployment settings; and
+- deleted the top-level example `profiles/` fixtures and references.
+
+Still pending: the first infrastructure-backed publication and deployment
+acceptance of the extended P123 artifact set, full product-identity runtime
+configuration, replacement of the Channels emission mirror after that wire
+type is generated publicly, import/license review closure, and the
+post-environment-cutover private deployment/source retirement.
+
 ## Goal
 
 Make the public `smartcomputer-ai/lightspeed` repository the source of the
@@ -86,10 +117,12 @@ privately maintained product plane.
 
 ## Repository and package shape
 
-Use one private root npm workspace and lockfile. Keep the TypeScript client
-separately identifiable as the public client and place the cohesive product
-plane under `platform/` without adding generic root `apps/` or `packages/`
-taxonomies:
+Use one private root npm workspace, with its lockfile authoritative for
+development and CI. Keep package-local client and Configurator lockfiles only
+as deterministic P123 release-staging inputs; they are not independent
+development-resolution authorities. Keep the TypeScript client separately
+identifiable as the public client and place the cohesive product plane under
+`platform/` without adding generic root `apps/` or `packages/` taxonomies:
 
 ```text
 clients/

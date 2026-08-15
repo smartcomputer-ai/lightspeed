@@ -1,4 +1,4 @@
-//! Asserts the committed `interop/contract/` artifacts match the current wire types.
+//! Asserts the committed `crates/api/contract/` artifacts match the current wire types.
 //!
 //! When these fail, regenerate with `cargo run -p api --bin export-schema`
 //! and commit the result alongside the type change.
@@ -12,7 +12,7 @@ use api::{
 use serde_json::{Value, json};
 
 fn schemas_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../interop/contract")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("contract")
 }
 
 fn committed(name: &str) -> Value {
@@ -114,12 +114,12 @@ fn committed_schema_artifacts_are_current() {
         assert_eq!(
             &committed(name),
             current,
-            "interop/contract/{name} is stale; run `cargo run -p api --bin export-schema` and commit the result"
+            "crates/api/contract/{name} is stale; run `cargo run -p api --bin export-schema` and commit the result"
         );
     }
     assert_eq!(
         committed_text("api-reference.md"),
         exported.api_reference,
-        "interop/contract/api-reference.md is stale; run `cargo run -p api --bin export-schema` and commit the result"
+        "crates/api/contract/api-reference.md is stale; run `cargo run -p api --bin export-schema` and commit the result"
     );
 }

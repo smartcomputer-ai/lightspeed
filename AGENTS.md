@@ -18,8 +18,12 @@ Use these files as the index:
   management, CAS offloading, Temporal hosting), moved out of the README.
 - `docs/spec/01-agent-idea.md` — working design notes for the new agent direction.
 - `Cargo.toml` — workspace membership.
-- `interop/` — API contract artifacts, the private TypeScript client, and the
-  generated multi-universe Configurator MCP Streamable HTTP facade.
+- `clients/typescript/` — generated public TypeScript API client.
+- `platform/` — first-party TypeScript management server, web UI, operator CLI,
+  shared inputs, database schema, Channels workers, Configurator MCP, and the
+  mechanically imported Foundry candidate.
+- `crates/api/contract/` — committed generated API schema, method manifest,
+  OpenRPC, and human reference.
 - `local/` — local Docker stack, environment exports, and reset helpers.
 - `docs/roadmap/` — implementation plans and historical milestones.
 
@@ -46,6 +50,10 @@ cargo test -p eval
 cargo test -p cli --tests
 cargo test -p llm-clients test_name
 cargo test -p llm-clients -- --nocapture
+npm install
+npm run check
+npm run test:integration:channels
+LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL=postgres://... npm run test:migrations
 ```
 
 Live provider tests are ignored by default and require API keys:
@@ -76,23 +84,23 @@ cargo test -p temporal-server --test environment_provider_live temporal_live_env
 ```
 
 After changing `api` wire types, regenerate the committed contract artifacts
-under `interop/contract/` (`cargo test -p api` fails while they are stale):
+under `crates/api/contract/` (`cargo test -p api` fails while they are stale):
 
 ```bash
 cargo run -p api --bin export-schema
 ```
 
 The export includes JSON Schema, the method manifest, OpenRPC, and the generated
-human reference at `interop/contract/api-reference.md`. Method-level summaries
+human reference at `crates/api/contract/api-reference.md`. Method-level summaries
 and descriptions belong in the Rust method manifest; parameter/field docs
 belong on the Rust wire DTOs so every generated consumer stays aligned.
 
-After changing the API contract, regenerate and verify both TypeScript
-consumers:
+After changing the API contract, regenerate and verify every TypeScript
+consumer from the repository root:
 
 ```bash
-cd interop/ts-client && npm install && npm run check
-cd ../configurator-mcp && npm install && npm run check
+npm install
+npm run check
 ```
 
 CLI usage:

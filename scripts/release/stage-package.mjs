@@ -41,7 +41,11 @@ lock.packages[""].version = version;
 
 if (kind === "configurator") {
   lock.packages[""].dependencies = manifest.dependencies;
-  delete lock.packages["../ts-client"];
+  for (const [location, item] of Object.entries(lock.packages)) {
+    if (location && item?.name === "@lightspeed/agent-client") {
+      delete lock.packages[location];
+    }
+  }
   const clientTarball = path.join(directory, "agent-client.tgz");
   if (!fs.existsSync(clientTarball)) {
     throw new Error(`${clientTarball}: staged client tarball is missing`);
@@ -54,7 +58,7 @@ if (kind === "configurator") {
     version,
     resolved: "file:agent-client.tgz",
     integrity: `sha512-${integrity}`,
-    engines: { node: ">=18" },
+    engines: { node: ">=24" },
   };
 }
 

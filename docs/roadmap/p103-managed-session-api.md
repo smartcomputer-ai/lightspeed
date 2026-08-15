@@ -242,8 +242,8 @@ tools. No managed-session-specific waiting method is added.
 - Validate the same schema refs, start refs, names, collisions, completion
   keys, Promise caps, target/completion combinations, universe, and
   managed-creation fingerprint already enforced by the internal boundary.
-- Regenerate `interop/contract`, `interop/ts-client`, and
-  `interop/configurator-mcp` after the wire change.
+- Regenerate `crates/api/contract`, `clients/typescript`, and
+  `platform/configurator-mcp` after the wire change.
 
 ## Acceptance Criteria
 

@@ -1026,7 +1026,7 @@ Job handle records must still avoid accidental leakage:
     provider/target to cancel.
   - API DTOs mirror the model-visible tool shape where practical while keeping
     `api` independent from `environment-protocol`.
-  - Contract artifacts under `interop/contract/` are regenerated.
+  - Contract artifacts under `crates/api/contract/` are regenerated.
   - Active environment capability projection already carries job support flags
     through session environment views and prompt/tool projection.
 

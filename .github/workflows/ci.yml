@@ -2,6 +2,12 @@ name: ci
 
 on:
   pull_request: {}
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE*'
   workflow_dispatch: {}
 
 permissions:
@@ -25,12 +31,18 @@ jobs:
         id: classify
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
 
           if test "$EVENT_NAME" = workflow_dispatch; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "consumers=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$BASE_SHA" =~ ^0{40}$ ]]; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
             echo "consumers=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -52,7 +64,7 @@ jobs:
               crates/*|Cargo.toml|Cargo.lock|rust-toolchain.toml)
                 rust=true
                 ;;
-              interop/*)
+              clients/*|platform/*|package.json|package-lock.json|tsconfig.json)
                 consumers=true
                 ;;
               .github/workflows/*|release/*|scripts/*)
@@ -121,19 +133,32 @@ jobs:
     needs: changes
     if: needs.changes.outputs.consumers == 'true'
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm@sha256:84560e3b9c6874893fc4e2854f5dc3e7c1a37bc9d1dfd7a8c641310ae22ba5ad
+        env:
+          POSTGRES_USER: lightspeed
+          POSTGRES_PASSWORD: lightspeed
+          POSTGRES_DB: lightspeed
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U lightspeed"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.13.0
           cache: npm
-          cache-dependency-path: |
-            interop/ts-client/package-lock.json
-            interop/configurator-mcp/package-lock.json
-      - run: npm ci && npm run check
-        working-directory: interop/ts-client
-      - run: npm ci && npm run check
-        working-directory: interop/configurator-mcp
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Check every Node consumer and integration boundary
+        env:
+          LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL: postgres://lightspeed:lightspeed@127.0.0.1:55432/lightspeed
+        run: npm run check:ci
 
   required:
     if: always()

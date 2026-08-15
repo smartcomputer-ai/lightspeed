@@ -1,7 +1,7 @@
 import { resolveChannelsRoles, type ChannelsRole } from "./roles.js";
 import { installTemporalMetrics } from "./temporal-metrics.js";
 
-const command = process.argv[2];
+const command = process.env.LIGHTSPEED_CHANNELS_ROLE ?? process.argv[2];
 const roles = resolveChannelsRoles(command, process.env.CHANNELS_CONNECTORS);
 const combined = roles.length > 1;
 

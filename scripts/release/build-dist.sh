@@ -17,7 +17,7 @@ fi
 
 rm -rf "$dist_dir"
 mkdir -p "$dist_dir/bin" "$dist_dir/npm" "$dist_dir/contracts" \
-  "$dist_dir/archives" "$dist_dir/configurator-mcp"
+  "$dist_dir/archives" "$dist_dir/configurator-mcp" "$dist_dir/runtime"
 
 export LIGHTSPEED_RELEASE_VERSION="$version"
 export LIGHTSPEED_GIT_SHA="$git_sha"
@@ -29,30 +29,30 @@ for binary in lightspeed-server lightspeed-provider-incus lightspeed-envd lights
   strip "$dist_dir/bin/$binary"
 done
 
-cp interop/contract/api.schema.json interop/contract/methods.json \
-  interop/contract/openrpc.json interop/contract/api-reference.md "$dist_dir/contracts/"
+cp crates/api/contract/api.schema.json crates/api/contract/methods.json \
+  crates/api/contract/openrpc.json crates/api/contract/api-reference.md "$dist_dir/contracts/"
 
-npm --prefix interop/ts-client ci
-npm --prefix interop/ts-client run build
-npm --prefix interop/configurator-mcp ci
-npm --prefix interop/configurator-mcp run build
+npm ci
+npm run build
 
 stage_root="$(mktemp -d)"
 trap 'rm -rf "$stage_root"' EXIT
-cp -R interop/ts-client "$stage_root/ts-client"
+cp -R clients/typescript "$stage_root/ts-client"
 rm -rf "$stage_root/ts-client/node_modules" "$stage_root/ts-client/dist"
 node scripts/release/stage-package.mjs client "$stage_root/ts-client" "$version" "$git_sha"
 (cd "$stage_root/ts-client" && npm ci --offline --ignore-scripts)
 (cd "$stage_root/ts-client" && npm pack --pack-destination "$dist_dir/npm")
 
 client_tgz="$(find "$dist_dir/npm" -maxdepth 1 -name '*.tgz' -print -quit)"
-cp -R interop/configurator-mcp/dist "$dist_dir/configurator-mcp/dist"
-cp interop/configurator-mcp/package.json interop/configurator-mcp/package-lock.json \
+cp -R platform/configurator-mcp/dist "$dist_dir/configurator-mcp/dist"
+cp platform/configurator-mcp/package.json platform/configurator-mcp/package-lock.json \
   "$dist_dir/configurator-mcp/"
 cp "$client_tgz" "$dist_dir/configurator-mcp/agent-client.tgz"
 node scripts/release/stage-package.mjs configurator "$dist_dir/configurator-mcp" "$version" "$git_sha"
 (cd "$dist_dir/configurator-mcp" && \
   npm ci --omit=dev --offline --ignore-scripts)
+
+scripts/release/stage-runtimes.sh "$dist_dir"
 
 for spec in \
   "lightspeed-server:server" \

@@ -257,7 +257,7 @@ async function ensureCredential(
 
   const minted = await operator.call("operator/api-keys/create", {
     universeId: universe.lightspeedUniverseId,
-    displayName: "ls.bot Configurator setup",
+    displayName: "Lightspeed Configurator setup",
     principal: { kind: "user", id: userId },
   });
   const grantId = `authgrant_lsbot_configurator_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -266,7 +266,7 @@ async function ensureCredential(
       grantId,
       providerId: "lsbot-configurator",
       token: minted.result.secret,
-      displayName: "ls.bot Configurator setup",
+      displayName: "Lightspeed Configurator setup",
       audience: mcpUrl,
     });
   } catch (error) {

@@ -28,7 +28,7 @@
 - Verified with:
   `cargo test -p engine -p api -p api-projection -p tools -p llm-runtime -p temporal-workflow -p temporal-server -p test-support --tests`
 - Verified TypeScript client with:
-  `npm run typecheck && npm run test && npm run build` in `interop/ts-client`.
+  `npm run typecheck && npm run test && npm run build` in `clients/typescript`.
 
 ## Goal
 

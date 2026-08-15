@@ -58,7 +58,7 @@ Relevant code:
   `wait_for_run_accepted`.
 - `crates/temporal-server/src/gateway/service/workflow.rs`:
   `wait_for_run_accepted` only returns matching active or completed runs.
-- `interop/configurator-mcp/src/config.ts`: Configurator upstream calls time
+- `platform/configurator-mcp/src/config.ts`: Configurator upstream calls time
   out after 60 seconds by default.
 - `crates/temporal-server/src/gateway/service/mod.rs`: gateway operations time
   out after 90 seconds by default.

@@ -1,9 +1,12 @@
 # Build and release
 
 Lightspeed owns and publishes a coherent release containing the hosted server,
-the Incus provider, envd, the CLI, Configurator MCP, the generated TypeScript
-client, API contracts, checksums, an SPDX SBOM, and a release manifest. A
-consumer should pin one manifest rather than selecting components separately.
+the Incus provider, envd, the CLI, Configurator MCP, the platform server/web
+image, independently runnable Channels workflow/activity/Telegram images, an
+optional WhatsApp image, the generated TypeScript client, API contracts,
+checksums, an SPDX SBOM, and a release manifest. Foundry is deliberately not a
+release artifact. A consumer should pin one manifest rather than selecting
+components separately.
 
 ## Database migrations
 
@@ -47,6 +50,17 @@ file under `crates/store-pg/migrations/`, register it in
 `crates/store-pg/src/migrations.rs`, and bump `LIGHTSPEED_SCHEMA_REVISION` in
 `release/metadata.env`.
 
+The TypeScript platform owns a separate Drizzle migration history under
+`platform/db/migrations/` and applies it when the platform server starts. CI
+tests both an empty installation and an upgrade from the supported baseline in
+`LIGHTSPEED_PLATFORM_UPGRADE_FROM` against real PostgreSQL. The manifest
+records that baseline and `LIGHTSPEED_PLATFORM_SCHEMA_REVISION`. Run the same
+gate with a non-production database whose user may create temporary databases:
+
+```bash
+LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL=postgres://... npm run test:migrations
+```
+
 ## Local release build
 
 The authoritative build runs inside the digest-pinned Debian 12/Rust image:
@@ -55,38 +69,51 @@ The authoritative build runs inside the digest-pinned Debian 12/Rust image:
 make release
 ```
 
-`make release-dist` compiles all Rust executables in one Cargo invocation and
-produces `dist/`. `make release-images` copies those prebuilt files into the
-two runtime images; it does not invoke Cargo. The image smoke test extracts the
-server executable and compares it byte-for-byte with `dist/bin`.
+`make release-dist` compiles all Rust executables in one Cargo invocation,
+builds the generated client, Configurator, and web UI, and produces `dist/`.
+The same root lockfile deterministically stages platform and Channels runtime
+payloads; the standard Channels payload excludes WhatsApp-only dependencies.
+`make release-images` copies those prebuilt files into the server,
+Configurator, platform, and four role-specific Channels images; it does not
+invoke Cargo or rebuild the web UI. Image smoke tests compare the server binary
+byte-for-byte, start the platform image against PostgreSQL, check its health
+and SPA, validate every Channels role, and prove Baileys exists only in the
+optional WhatsApp image.
+
+The runtime tarballs are intermediate image inputs and are removed before the
+release bundle is finalized; the published images carry their own digest,
+SBOM, and provenance records.
 
 Release and snapshot builds first publish the composite `build-env` image under
 a run-specific staging tag, then run that exact image by digest. The release
 manifest records this composite image digest, not merely the Rust base-image
 digest.
 
-Release constants are centralized in `release/metadata.env`; run
+Release constants—including both Rust and platform database compatibility—are
+centralized in `release/metadata.env`; run
 `scripts/release/verify-metadata.sh` after changing a product, protocol, schema,
 toolchain, or build-image version. Every executable reports the product
 version, full source commit, target, and Rust version through `--version`.
 
 ## Publication
 
-- Pull requests run path-classified checks on GitHub-hosted runners. Rust
+- Pull requests and pushes to `main` run path-classified checks on
+  GitHub-hosted runners. Rust
   inputs run formatting, lint, cached workspace tests, contract checks, and
   the live migration-ledger acceptance test. TypeScript/contract inputs run
-  both generated-consumer checks. Build, release, and workflow changes run
-  both suites; documentation-only changes run only the lightweight required
-  gate. CI publishes nothing.
+  every generated consumer, all platform unit tests, the Channels Temporal
+  integration suite, and the platform empty-install/upgrade migration gate.
+  Build, release, and workflow changes run both suites; documentation-only
+  changes run only the lightweight required gate. CI publishes nothing.
 - `.github/workflows/macos.yml` provides a manual native Apple Silicon
   compile/`--version` smoke test. Published standalone archives remain
   Linux-only in the first cut; macOS development uses `cargo run`.
 - The `main` ruleset requires a pull request and the successful, up-to-date
-  `required` CI gate. The resulting push to `main` directly triggers
-  `.github/workflows/snapshot-main.yml`, which checks out that exact SHA,
+  `required` CI gate. The successful `main` CI workflow triggers
+  `.github/workflows/snapshot-main.yml`, which checks out that exact tested SHA,
   confirms that it is still the head of `origin/main`, and builds one coherent
   Linux artifact set on hz01 without repeating the CI test suite.
-  Documentation-only pushes do not create a snapshot.
+  Documentation-only pushes do not start the `main` CI/snapshot chain.
 - Snapshot components are first published under a run-specific staging tag and
   recorded by digest in the manifest. After package, archive, manifest, image,
   checksum, and binary/image identity checks pass, the workflow rechecks the

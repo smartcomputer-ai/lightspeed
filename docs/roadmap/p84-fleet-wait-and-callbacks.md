@@ -757,7 +757,7 @@ address-an-existing-agent surface. P84 standardizes the whole Fleet surface on
 | `from_agent_id` / `to_agent_id` | `from_session_id` / `to_session_id` | `AgentLinkView` (`:211`, `:212`) |
 
 This is a **wire-contract change**: it touches the strict JSON schemas, the
-committed contract artifacts under `interop/contract/`, the hosted Fleet executor
+committed contract artifacts under `crates/api/contract/`, the hosted Fleet executor
 in `crates/temporal-server/src/fleet.rs`, and the deterministic Fleet tests that
 assert field names. Regenerate artifacts via `cargo run -p api --bin
 export-schema` and update P83's tool-contract prose. Bundled into P84's S1 so the

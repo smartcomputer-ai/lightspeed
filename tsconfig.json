@@ -17,6 +17,7 @@
   },
   "include": [
     "platform/db/src/**/*.ts",
+    "platform/db/scripts/**/*.ts",
     "platform/db/drizzle.config.ts",
     "platform/shared/src/**/*.ts",
     "platform/server/src/**/*.ts",

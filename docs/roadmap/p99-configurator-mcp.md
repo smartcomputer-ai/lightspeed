@@ -2,7 +2,7 @@
 
 **Status:** Implemented 2026-07-11.
 
-Implemented as `interop/configurator-mcp`: a private Node/TypeScript package
+Implemented as `platform/configurator-mcp`: a private Node/TypeScript package
 using the stable MCP SDK v1 Streamable HTTP transport, a generated universe-only
 descriptor map with self-contained input schemas, a committed exact-method
 filter (71 of the current 80 universe methods advertised), request-scoped
@@ -77,7 +77,7 @@ read Lightspeed stores directly.
 
 ## Current contract boundary
 
-The committed manifest in `interop/contract/methods.json` is the source of
+The committed manifest in `crates/api/contract/methods.json` is the source of
 truth. It currently contains 87 methods:
 
 - 80 with `scope: "universe"`;
@@ -86,7 +86,7 @@ truth. It currently contains 87 methods:
 The generated TypeScript client currently includes both scope classes because
 it represents the complete HTTP JSON-RPC contract. P99 first selects manifest
 entries whose scope is `universe`, then removes the exact method names in
-`interop/configurator-mcp/tool-filter.json`. The implemented default excludes
+`platform/configurator-mcp/tool-filter.json`. The implemented default excludes
 9 methods and advertises 71 tools.
 
 The exclusion is semantic, not only a `tools/list` filter:
@@ -146,7 +146,7 @@ interop/
 ```
 
 Do not put MCP SDK dependencies, HTTP server policy, environment parsing, or
-request authentication into `interop/ts-client`. That package remains a small,
+request authentication into `clients/typescript`. That package remains a small,
 transport-level JSON-RPC client. The Configurator depends on it and owns the
 adapter concerns.
 
@@ -326,7 +326,7 @@ MCP request was authenticated but the requested Lightspeed operation failed.
 
 ## Generated MCP tool surface
 
-`interop/contract/methods.json` and `interop/contract/api.schema.json` remain
+`crates/api/contract/methods.json` and `crates/api/contract/api.schema.json` remain
 the only sources of wire truth. Extend generation rather than hand-maintaining
 the advertised adapters.
 
@@ -365,7 +365,7 @@ change therefore requires:
 
 ```bash
 cargo run -p api --bin export-schema
-cd interop/ts-client && npm run generate
+cd clients/typescript && npm run generate
 cd ../configurator-mcp && npm run generate
 ```
 
@@ -463,7 +463,7 @@ the multi-universe modes.
 
 ### Slice 1: Package, transport, and contract generator
 
-1. Add `interop/configurator-mcp` with the stable MCP TypeScript SDK, HTTP
+1. Add `platform/configurator-mcp` with the stable MCP TypeScript SDK, HTTP
    adapter, build/test scripts, and private package metadata.
 2. Serve stateless JSON-response Streamable HTTP at `/mcp`, plus `/health`,
    with host/origin validation and abort-aware request handling.

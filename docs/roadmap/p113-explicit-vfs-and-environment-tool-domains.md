@@ -57,7 +57,7 @@ cargo check --workspace
 cargo test -p engine -p tools -p llm-runtime -p temporal-workflow -p temporal-server -p api --no-fail-fast
 cargo test -p eval
 cargo run -p api --bin export-schema
-cd interop/ts-client && npm run typecheck && npm run test && npm run build
+cd clients/typescript && npm run typecheck && npm run test && npm run build
 cd ../configurator-mcp && npm run check
 git diff --check
 ```
@@ -785,7 +785,7 @@ After API wire changes:
 
 ```bash
 cargo run -p api --bin export-schema
-cd interop/ts-client && npm install && npm run check
+cd clients/typescript && npm install && npm run check
 cd ../configurator-mcp && npm install && npm run check
 ```
 

@@ -26,12 +26,30 @@ if (!/@sha256:[0-9a-f]{64}$/.test(value.buildImage)) fail("buildImage is not dig
 if (published && !value.buildImage.startsWith("ghcr.io/")) fail("published build image is not in GHCR");
 if (value.protocolVersion !== metadata.LIGHTSPEED_API_PROTOCOL_VERSION) fail("unexpected protocol version");
 if (value.schemaRevision !== Number(metadata.LIGHTSPEED_SCHEMA_REVISION)) fail("unexpected schema revision");
+if (value.platformSchemaRevision !== Number(metadata.LIGHTSPEED_PLATFORM_SCHEMA_REVISION)) {
+  fail("unexpected platform schema revision");
+}
+if (value.platformUpgradeFrom !== metadata.LIGHTSPEED_PLATFORM_UPGRADE_FROM) {
+  fail("unexpected platform upgrade baseline");
+}
 if (!value.rustVersion.includes(metadata.LIGHTSPEED_RELEASE_RUST_VERSION)) fail("unexpected Rust version");
 const contractHash = crypto.createHash("sha256");
 for (const contract of ["api.schema.json", "methods.json", "openrpc.json", "api-reference.md"]) {
   contractHash.update(fs.readFileSync(path.join("dist/contracts", contract)));
 }
 if (value.contractRevision !== `sha256:${contractHash.digest("hex")}`) fail("contract checksum mismatch");
+const expectedImages = [
+  "server",
+  "configuratorMcp",
+  "platform",
+  "channelsWorkflows",
+  "channelsActivities",
+  "channelsTelegram",
+  "channelsWhatsapp",
+];
+if (JSON.stringify(Object.keys(value.images ?? {}).sort()) !== JSON.stringify(expectedImages.sort())) {
+  fail("images must contain the complete P124 artifact set");
+}
 for (const [name, image] of Object.entries(value.images)) {
   if (image !== null && !/@sha256:[0-9a-f]{64}$/.test(image)) fail(`image ${name} is not digest-pinned`);
   if (published && image === null) fail(`published image ${name} is missing`);

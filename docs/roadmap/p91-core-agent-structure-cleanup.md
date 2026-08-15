@@ -177,6 +177,6 @@ slices 2 and 3 each change exactly one persisted shape.
 
 - `cargo build` + full `cargo test` workspace-wide after every slice.
 - `api` wire types are untouched (the cleanup is engine/storage-internal), so
-  no `interop/contract` regeneration is expected; `cargo test -p api` confirms.
+  no `crates/api/contract` regeneration is expected; `cargo test -p api` confirms.
 - Slice 2: fixture round-trip tests in `engine` prove the new payload shape.
 - Slice 3: `store-pg` live tests against a reset local stack.
