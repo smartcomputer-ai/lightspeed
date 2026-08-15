@@ -11,6 +11,17 @@ until compose exec -T postgres pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_D
   sleep 1
 done
 
+echo "Ensuring Platform database..."
+if ! compose exec -T postgres psql \
+  -U "${POSTGRES_USER}" \
+  -d "${POSTGRES_DB}" \
+  -Atc "SELECT datname FROM pg_database WHERE datname = '${LIGHTSPEED_PLATFORM_POSTGRES_DB}'" \
+  | grep -Fxq "${LIGHTSPEED_PLATFORM_POSTGRES_DB}"; then
+  compose exec -T postgres createdb \
+    -U "${POSTGRES_USER}" \
+    "${LIGHTSPEED_PLATFORM_POSTGRES_DB}"
+fi
+
 echo "Waiting for MinIO..."
 until "${SCRIPT_DIR}/minio-ensure.sh" >/dev/null 2>&1; do
   sleep 1
@@ -49,8 +60,9 @@ cat <<EOF
 Lightspeed local infra is up.
 
 Postgres:
-  url:     ${LIGHTSPEED_TEST_POSTGRES_URL}
-  pgAdmin: http://localhost:${PGADMIN_PORT}
+  runtime:  ${LIGHTSPEED_TEST_POSTGRES_URL}
+  platform: ${LIGHTSPEED_PLATFORM_DATABASE_URL}
+  pgAdmin:  http://localhost:${PGADMIN_PORT}
 
 Blobstore:
   bucket:        ${LIGHTSPEED_OBJECT_STORE_BUCKET}

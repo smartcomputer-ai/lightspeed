@@ -11,6 +11,11 @@ import { fileURLToPath } from "node:url";
 
 const devDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(devDir, "..");
+try {
+  process.loadEnvFile(path.join(repoRoot, ".env"));
+} catch (error) {
+  if (error?.code !== "ENOENT") throw error;
+}
 const profiles = new Set(["full", "platform", "runtime", "infra"]);
 const actions = new Set(["start", "down", "reset", "status"]);
 const cli = parseCli(process.argv.slice(2));
@@ -119,7 +124,7 @@ function loadDevEnvironment() {
 
 function createPlan(profile, sourceEnv) {
   const runtimeRpc = sourceEnv.LIGHTSPEED_API_URL ?? "http://127.0.0.1:18080/rpc";
-  const pgUrl =
+  const platformDatabaseUrl =
     sourceEnv.LIGHTSPEED_PLATFORM_DATABASE_URL ??
     sourceEnv.LIGHTSPEED_TEST_POSTGRES_URL;
   const externalPlatformGateway =
@@ -140,6 +145,8 @@ function createPlan(profile, sourceEnv) {
     : profile === "platform"
       ? `http://127.0.0.1:${stubPort}/rpc`
       : runtimeRpc;
+  const runtimeAuthMode =
+    sourceEnv.LIGHTSPEED_AUTH_MODE ?? (profile === "full" ? "trusted-header" : "single");
   const connectorNames = profile === "full" ? parseConnectors(sourceEnv.LIGHTSPEED_CHANNELS_CONNECTORS) : [];
   if (profile !== "full" && sourceEnv.LIGHTSPEED_CHANNELS_CONNECTORS?.trim()) {
     throw new TypeError("LIGHTSPEED_CHANNELS_CONNECTORS is supported only by the full development profile");
@@ -154,10 +161,17 @@ function createPlan(profile, sourceEnv) {
     ...sourceEnv,
     LIGHTSPEED_API_URL: platformApiUrl,
     LIGHTSPEED_ENDPOINT: runtimeRpc,
-    LIGHTSPEED_PLATFORM_DATABASE_URL: pgUrl,
+    LIGHTSPEED_AUTH_MODE: runtimeAuthMode,
+    LIGHTSPEED_PLATFORM_DATABASE_URL: platformDatabaseUrl,
     LIGHTSPEED_PLATFORM_AUTH_SECRET:
       sourceEnv.LIGHTSPEED_PLATFORM_AUTH_SECRET ??
       "local-platform-auth-secret-0123456789abcdef",
+    LIGHTSPEED_PLATFORM_BASE_URL:
+      sourceEnv.LIGHTSPEED_PLATFORM_BASE_URL ??
+      `http://127.0.0.1:${platformPort}`,
+    LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS:
+      sourceEnv.LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS ??
+      "http://127.0.0.1:5173,http://localhost:5173",
     LIGHTSPEED_PLATFORM_ADMIN_EMAIL:
       sourceEnv.LIGHTSPEED_PLATFORM_ADMIN_EMAIL ??
       "admin@lightspeed.dev",
@@ -469,6 +483,7 @@ function printPlan(plan) {
     );
   }
   console.log(`connectors: ${plan.connectors.length > 0 ? plan.connectors.join(", ") : "none"}`);
+  console.log(`runtime auth: ${plan.env.LIGHTSPEED_AUTH_MODE}`);
 }
 
 function printRunning(plan) {

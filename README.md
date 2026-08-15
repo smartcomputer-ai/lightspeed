@@ -156,6 +156,14 @@ The default `full` profile starts Postgres, pgAdmin, MinIO, Temporal, the
 migrated Rust runtime, Configurator MCP, the Platform API and web UI, and the
 Channels workflow/activity workers. Telegram and WhatsApp remain explicit:
 
+The local Postgres server hosts separate `lightspeed` runtime and
+`lightspeed_platform` Platform/Channels databases so their independently owned
+migration systems cannot collide.
+
+The `full` profile runs the runtime in `trusted-header` mode because Platform
+owns user authentication and supplies the universe identity on proxied engine
+requests. The focused `runtime` profile remains single-universe by default.
+
 ```bash
 LIGHTSPEED_CHANNELS_CONNECTORS=telegram npm run dev
 ```

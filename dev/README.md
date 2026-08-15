@@ -9,7 +9,8 @@ development override table and the separate production component variables.
 
 ## Services
 
-- Postgres on `localhost:15432`
+- Postgres on `localhost:15432`, hosting separate `lightspeed` runtime and
+  `lightspeed_platform` product-plane databases
 - pgAdmin on `http://localhost:15080`
 - MinIO S3-compatible API on `http://localhost:29000`
 - MinIO Console on `http://localhost:29001`
@@ -34,6 +35,17 @@ npm run dev -- platform   # Platform API/UI with the stub Lightspeed gateway
 npm run dev -- runtime    # migrated Rust runtime only
 npm run dev -- infra      # Postgres, pgAdmin, MinIO, and Temporal only
 ```
+
+The local UI is available at `http://127.0.0.1:5173/app/`. The supervisor
+trusts both `http://127.0.0.1:5173` and `http://localhost:5173` for Better Auth;
+additional browser origins must be listed explicitly in
+`LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`.
+
+The `full` profile defaults the runtime to `trusted-header` authentication
+because Platform authenticates users and routes every engine request to an
+explicit universe. The focused `runtime` profile defaults to `single` for
+direct CLI development. An explicit `LIGHTSPEED_AUTH_MODE` overrides either
+profile default.
 
 The full profile also runs Configurator MCP plus the Channels workflow and
 activity workers. Connectors are opt-in and fail before startup when their
@@ -77,7 +89,8 @@ To also remove volumes:
 dev/down.sh -v
 ```
 
-Reset the database, apply the `store-pg` schema, and clear the MinIO prefix:
+Reset both databases, apply the ledgered runtime schema, and clear the MinIO
+prefix:
 
 ```bash
 dev/reset.sh
@@ -113,6 +126,7 @@ Equivalent values:
 export LIGHTSPEED_TEST_POSTGRES_URL=postgres://lightspeed:lightspeed@localhost:15432/lightspeed
 export LIGHTSPEED_PG_UNIVERSE_ID=00000000-0000-0000-0000-000000000001
 export LIGHTSPEED_POSTGRES_URL=${LIGHTSPEED_TEST_POSTGRES_URL}
+export LIGHTSPEED_PLATFORM_DATABASE_URL=postgres://lightspeed:lightspeed@localhost:15432/lightspeed_platform
 export LIGHTSPEED_TASK_QUEUE=lightspeed-agent
 export LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc
 
@@ -201,13 +215,16 @@ a login.
 To register the local database in pgAdmin:
 
 ```text
-Name:                 Lightspeed Local
+Name:                 Lightspeed Runtime
 Host name/address:    postgres
 Port:                 5432
 Maintenance database: lightspeed
 Username:             lightspeed
 Password:             lightspeed
 ```
+
+Register the Platform database with the same settings and use
+`lightspeed_platform` as its maintenance database.
 
 Use `postgres` as the host inside pgAdmin because pgAdmin runs in the Docker
 network. From the host machine, use `localhost:15432` instead:

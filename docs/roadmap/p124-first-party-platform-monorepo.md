@@ -47,7 +47,17 @@ Implemented repository slice 2026-08-15:
   treating the environment as a generic script collection;
 - replaced the Platform-only development launcher with one profile-aware
   `dev/stack.mjs` supervisor for infrastructure, runtime, Platform,
-  Configurator, and Channels development; and
+  Configurator, and Channels development;
+- separated the runtime and Platform migration domains into `lightspeed` and
+  `lightspeed_platform` databases on the shared local Postgres server, and made
+  the reset helper use the runtime's ledgered migrator;
+- normalized the Rust Temporal client boundary so the shared
+  `TEMPORAL_ADDRESS=host:port` convention works across Rust and TypeScript; and
+- made Platform authentication origins explicit and configured both loopback
+  Vite origins in the unified development supervisor; and
+- aligned the `full` development profile with Platform's multi-universe proxy
+  boundary by defaulting the runtime to `trusted-header`, while retaining
+  `single` for focused runtime development; and
 - deleted the top-level example `profiles/` fixtures and references.
 
 Still pending: the first infrastructure-backed publication and deployment

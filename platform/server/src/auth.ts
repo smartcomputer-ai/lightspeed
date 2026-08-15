@@ -11,11 +11,7 @@ export function createAuth(db: Db, env: ServerEnv) {
     baseURL: env.baseUrl,
     secret: env.authSecret,
     basePath: "/api/auth",
-    trustedOrigins: [
-      env.baseUrl,
-      // Vite dev server (proxying /api) during local frontend development.
-      ...(env.baseUrl.startsWith("http://localhost") ? ["http://localhost:5173"] : []),
-    ],
+    trustedOrigins: [...new Set([env.baseUrl, ...env.trustedOrigins])],
     database: drizzleAdapter(db, { provider: "pg", schema }),
     emailAndPassword: {
       enabled: true,

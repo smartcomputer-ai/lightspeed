@@ -3,6 +3,8 @@ export interface ServerEnv {
   authSecret: string;
   /// Public origin the platform is served from.
   baseUrl: string;
+  /// Additional browser origins accepted by Better Auth.
+  trustedOrigins: string[];
   port: number;
   /// Bootstrap admin, applied only when the users table is empty.
   adminEmail: string | null;
@@ -38,6 +40,7 @@ export function loadEnv(): ServerEnv {
     databaseUrl: required("LIGHTSPEED_PLATFORM_DATABASE_URL"),
     authSecret: required("LIGHTSPEED_PLATFORM_AUTH_SECRET"),
     baseUrl: process.env.LIGHTSPEED_PLATFORM_BASE_URL ?? "http://localhost:3000",
+    trustedOrigins: csv(process.env.LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS),
     port: Number(process.env.PORT ?? 3000),
     adminEmail: process.env.LIGHTSPEED_PLATFORM_ADMIN_EMAIL ?? null,
     adminPassword: process.env.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD ?? null,

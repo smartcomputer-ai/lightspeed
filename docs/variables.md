@@ -157,6 +157,7 @@ the Rust runtime database and gateway authentication.
 | `LIGHTSPEED_PLATFORM_DATABASE_URL` | **Required** | Platform/Channels PostgreSQL connection URL. |
 | `LIGHTSPEED_PLATFORM_AUTH_SECRET` | **Required** | Better Auth signing/encryption secret. Use a strong, stable deployment secret. |
 | `LIGHTSPEED_PLATFORM_BASE_URL` | `http://localhost:3000` | Public Platform origin used by authentication and trusted-origin checks. |
+| `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS` | Empty list | Comma-separated additional browser origins accepted by Better Auth. The development supervisor supplies both `http://127.0.0.1:5173` and `http://localhost:5173`. |
 | `PORT` | `3000` | Platform HTTP listen port. |
 | `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` | Unset | Bootstrap administrator email. Applied only with the password and only while the users table is empty. |
 | `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` | Unset | Bootstrap administrator password. Applied only with the email and only while the users table is empty. |
@@ -260,6 +261,7 @@ Never reuse their credentials in a deployed environment.
 | --- | --- | --- |
 | `LIGHTSPEED_PLATFORM_DEV_REAL_GATEWAY` | `0` | In the focused `platform` profile, use `LIGHTSPEED_API_URL` instead of the stub gateway. |
 | `STUB_GATEWAY_PORT` | `19999` | Focused Platform stub-gateway port. |
+| `LIGHTSPEED_AUTH_MODE` | `trusted-header` for `full`; `single` otherwise | Runtime tenant resolution selected by the supervisor. Platform requires `trusted-header` for universe-scoped proxy calls. An explicit value overrides the profile default. |
 | `LIGHTSPEED_CHANNELS_CONNECTORS` | Empty | Connectors started by the `full` development profile. Values: `telegram`, `whatsapp`, or both. |
 | `PORT` | `3000` | Platform server port. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | Configurator port used by the supervisor. |
@@ -276,7 +278,8 @@ variables documented above.
 | `POSTGRES_CONTAINER_NAME` | `lightspeed-postgres` | PostgreSQL container name. |
 | `POSTGRES_USER` | `lightspeed` | Local database user. |
 | `POSTGRES_PASSWORD` | `lightspeed` | Local database password. |
-| `POSTGRES_DB` | `lightspeed` | Local database name. |
+| `POSTGRES_DB` | `lightspeed` | Rust runtime database name. |
+| `LIGHTSPEED_PLATFORM_POSTGRES_DB` | `lightspeed_platform` | Platform and Channels database name on the same local PostgreSQL server. |
 | `POSTGRES_PORT` | `15432` | Host PostgreSQL port. |
 | `PGADMIN_IMAGE` | `dpage/pgadmin4:8` | pgAdmin image. |
 | `PGADMIN_CONTAINER_NAME` | `lightspeed-pgadmin` | pgAdmin container name. |
@@ -295,8 +298,10 @@ variables documented above.
 | `TEMPORAL_PORT` | `7233` | Host Temporal frontend port. |
 | `TEMPORAL_UI_PORT` | `8233` | Host Temporal UI port. |
 
-`dev/env.sh` derives and exports the runtime variables from these values. It
-also supplies a fixed local `LIGHTSPEED_SECRETS_MASTER_KEY`; that key is public
+`dev/env.sh` derives and exports the runtime and Platform connection URLs from
+these values. The two databases are intentionally separate because their
+independent migration systems contain overlapping table names. The script also
+supplies a fixed local `LIGHTSPEED_SECRETS_MASTER_KEY`; that key is public
 development material and is unsafe for any shared or production deployment.
 
 ## Tests and evaluations
