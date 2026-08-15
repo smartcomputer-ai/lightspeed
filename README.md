@@ -157,6 +157,13 @@ or after `package-lock.json` changes. It waits for application health checks
 before reporting that the stack is ready. `npm run dev` is an alias for the
 same launcher.
 
+`full` and `runtime` require an OpenAI or Anthropic key by default. For
+development that intentionally does not call a model provider:
+
+```bash
+./dev.sh --allow-missing-api-keys
+```
+
 The default `full` profile starts Postgres, pgAdmin, MinIO, Temporal, the
 migrated Rust runtime, Configurator MCP, the Platform API and web UI, and the
 Channels workflow/activity workers. Telegram and WhatsApp remain explicit:

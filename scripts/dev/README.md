@@ -28,9 +28,18 @@ From a fresh checkout, start the complete editable product with one command:
 
 The launcher checks Node, Cargo, Docker, and Docker Compose. For profiles that
 run TypeScript, it installs the root npm workspace when dependencies are
-missing or `package-lock.json` changed. A root `.env` is loaded automatically;
-when no common model-provider credential is present, startup continues with an
-actionable warning. Copy `.env.example` to `.env` to configure provider keys.
+missing or `package-lock.json` changed. A root `.env` is loaded automatically.
+The `full` and `runtime` profiles require `OPENAI_API_KEY` or
+`ANTHROPIC_API_KEY`; copy `.env.example` to `.env` to configure one. To work on
+infrastructure or non-provider behavior deliberately without either key:
+
+```bash
+./dev.sh --allow-missing-api-keys
+./dev.sh runtime --allow-missing-api-keys
+```
+
+The flag permits missing credentials; it does not unset credentials that are
+already configured. Provider-backed runs still require a valid key.
 
 `npm run dev` delegates to the same root launcher, so these are equivalent:
 

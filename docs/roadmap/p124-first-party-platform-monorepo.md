@@ -47,7 +47,8 @@ Implemented repository slice 2026-08-15:
   helpers beside the release automation under `scripts/`;
 - added the root `dev.sh` bootstrap as the authoritative one-command developer
   entry point, with npm delegation, prerequisite checks, lockfile-aware npm
-  installation, provider credential guidance, and application readiness
+  installation, provider credential admission with an explicit
+  `--allow-missing-api-keys` development override, and application readiness
   checks;
 - replaced the Platform-only development launcher with one profile-aware
   `scripts/dev/stack.mjs` supervisor for infrastructure, runtime, Platform,

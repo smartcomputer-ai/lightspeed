@@ -269,6 +269,11 @@ Never reuse their credentials in a deployed environment.
 The supervisor also honors all runtime, Platform, Channels, and Configurator
 variables documented above.
 
+The `full` and `runtime` development profiles require a non-empty
+`OPENAI_API_KEY` or `ANTHROPIC_API_KEY` by default. Pass
+`./dev.sh --allow-missing-api-keys` to start those profiles intentionally
+without provider credentials; the flag does not alter deployed configuration.
+
 ### Docker infrastructure
 
 | Variable | Default | Purpose |
