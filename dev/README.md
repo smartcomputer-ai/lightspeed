@@ -13,13 +13,56 @@ commands, and reset helpers for Postgres, pgAdmin, MinIO, and Temporal.
 - Temporal on `http://localhost:7233`
 - Temporal UI on `http://localhost:8233`
 
-## Start
+## Unified supervisor
+
+Install the root npm workspace once, then start the complete editable product:
+
+```bash
+npm install
+npm run dev
+```
+
+The supervisor keeps stateful dependencies in Docker and runs editable Rust
+and TypeScript processes on the host. It supports four profiles:
+
+```bash
+npm run dev -- full       # default: complete product, without credentialed connectors
+npm run dev -- platform   # Platform API/UI with the stub Lightspeed gateway
+npm run dev -- runtime    # migrated Rust runtime only
+npm run dev -- infra      # Postgres, pgAdmin, MinIO, and Temporal only
+```
+
+The full profile also runs Configurator MCP plus the Channels workflow and
+activity workers. Connectors are opt-in and fail before startup when their
+required credentials are missing:
+
+```bash
+CHANNELS_CONNECTORS=telegram npm run dev
+CHANNELS_CONNECTORS=telegram,whatsapp npm run dev
+```
+
+Use `npm run dev -- --plan full` to inspect a profile without starting
+anything. Pressing Ctrl-C stops host processes but leaves the Docker
+infrastructure available. Manage that infrastructure through the same entry
+point:
+
+```bash
+npm run dev -- status
+npm run dev -- down
+npm run dev -- down --volumes
+npm run dev -- reset
+```
+
+## Infrastructure primitives
+
+The shell helpers remain available for live Rust tests and low-level recovery.
+Start only the shared Docker infrastructure with:
 
 ```bash
 dev/up.sh
 ```
 
-## Stop
+Stop it with:
 
 ```bash
 dev/down.sh
@@ -30,8 +73,6 @@ To also remove volumes:
 ```bash
 dev/down.sh -v
 ```
-
-## Reset
 
 Reset the database, apply the `store-pg` schema, and clear the MinIO prefix:
 
@@ -82,9 +123,16 @@ export AWS_ACCESS_KEY_ID=minioadmin
 export AWS_SECRET_ACCESS_KEY=minioadmin
 ```
 
-## Hosted Server
+## Manual runtime roles
 
-Run the Temporal-backed hosted runtime against the local stack:
+The `runtime` profile is the normal way to run the Temporal-backed hosted
+runtime against the development stack:
+
+```bash
+npm run dev -- runtime
+```
+
+For debugging a specific executable role manually:
 
 ```bash
 source dev/env.sh

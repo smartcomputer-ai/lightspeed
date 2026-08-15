@@ -24,7 +24,8 @@ Use these files as the index:
   mechanically imported Foundry candidate.
 - `crates/api/contract/` — committed generated API schema, method manifest,
   OpenRPC, and human reference.
-- `dev/` — local Docker stack, environment exports, and reset helpers.
+- `dev/` — unified profile-aware development supervisor, local Docker stack,
+  environment exports, and reset helpers.
 - `docs/roadmap/` — implementation plans and historical milestones.
 
 ## Build & Test
@@ -112,6 +113,17 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --new --json "summ
 # Run the server before using --api-url.
 cargo run -p temporal-server
 cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_1 "hello"
+```
+
+Unified development profiles run from the root npm workspace. `full` is the
+default; connector processes remain opt-in through `CHANNELS_CONNECTORS`:
+
+```bash
+npm run dev
+npm run dev -- platform
+npm run dev -- runtime
+npm run dev -- infra
+npm run dev -- --plan full
 ```
 
 The server never migrates PostgreSQL implicitly. Before starting it against a

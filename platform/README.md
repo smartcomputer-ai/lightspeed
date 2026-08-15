@@ -36,16 +36,23 @@ npm install
 npm run check
 ```
 
-For the interactive platform development stack:
+For the complete interactive Lightspeed development stack:
 
 ```bash
 npm run dev
 ```
 
-That command starts the repository's local Postgres service when needed, a
-stub Lightspeed gateway, the platform server on port 3000, and the Vite web UI
-on port 5173. Set `LIGHTSPEED_PLATFORM_DEV_REAL_GATEWAY=1` to use a real
-Lightspeed gateway at `LIGHTSPEED_API_URL` instead of the stub.
+That command uses the unified supervisor under `dev/` and starts the complete
+product. For the focused Platform loop with a stub gateway, use:
+
+```bash
+npm run dev -- platform
+```
+
+The focused profile starts shared infrastructure, the stub gateway, the
+Platform server on port 3000, and Vite on port 5173. Set
+`LIGHTSPEED_PLATFORM_DEV_REAL_GATEWAY=1` to use an external Lightspeed gateway
+at `LIGHTSPEED_API_URL` instead of the stub.
 
 Development defaults use `admin@lightspeed.dev` and
 `lightspeed-dev-password`. Override them with

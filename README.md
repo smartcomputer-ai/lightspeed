@@ -143,16 +143,30 @@ The hosted path runs three pieces locally:
 3. `cli`: starts or resumes sessions and submits chat messages through the
    gateway.
 
-### 1. Start Local Infra
+### 1. Start the development product
 
 From the repository root:
 
 ```bash
-dev/up.sh
+npm install
+npm run dev
 ```
 
-This starts Postgres on `localhost:15432`, MinIO on `localhost:29000`,
-Temporal on `localhost:7233`, and the Temporal UI on `http://localhost:8233`.
+The default `full` profile starts Postgres, pgAdmin, MinIO, Temporal, the
+migrated Rust runtime, Configurator MCP, the Platform API and web UI, and the
+Channels workflow/activity workers. Telegram and WhatsApp remain explicit:
+
+```bash
+CHANNELS_CONNECTORS=telegram npm run dev
+```
+
+Focused profiles use the same supervisor:
+
+```bash
+npm run dev -- platform
+npm run dev -- runtime
+npm run dev -- infra
+```
 
 Each shell that runs Lightspeed commands should load the local environment:
 
@@ -160,9 +174,10 @@ Each shell that runs Lightspeed commands should load the local environment:
 source dev/env.sh
 ```
 
-### 2. Run The Server
+### 2. Run the runtime manually when needed
 
-Open a first shell:
+The `runtime` and `full` profiles apply migrations and start the hosted runtime
+automatically. For low-level debugging, open a separate shell:
 
 ```bash
 source dev/env.sh
@@ -188,7 +203,7 @@ cargo run -p temporal-server -- worker
 cargo run -p temporal-server -- gateway
 ```
 
-### 3. Start Chatting With The CLI
+### 3. Start chatting with the CLI
 
 Open another shell:
 
@@ -311,20 +326,20 @@ npm install
 npm run check
 ```
 
-Run `npm run dev` for the platform server, web UI, local Postgres, and stub
-gateway development loop. See [platform/README.md](platform/README.md) for
-component roles, configuration, and optional channel workers.
+Run `npm run dev -- platform` for the focused Platform API/UI and stub-gateway
+loop. The default `npm run dev` starts the complete first-party product. See
+[dev/README.md](dev/README.md) for profiles and connector configuration.
 
 ### Stop Or Reset Local Infra
 
 ```bash
-dev/down.sh
+npm run dev -- down
 ```
 
 To reset persisted local state while keeping containers available:
 
 ```bash
-dev/reset.sh
+npm run dev -- reset
 ```
 
 ## Testing

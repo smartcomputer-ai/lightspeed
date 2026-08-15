@@ -35,7 +35,10 @@ Implemented repository slice 2026-08-15:
   compatibility where the imported runtime consumes deployment settings;
 - renamed the top-level local environment from `local/` to `dev/`, keeping its
   Compose topology and configuration beside its lifecycle helpers rather than
-  treating the environment as a generic script collection; and
+  treating the environment as a generic script collection;
+- replaced the Platform-only development launcher with one profile-aware
+  `dev/stack.mjs` supervisor for infrastructure, runtime, Platform,
+  Configurator, and Channels development; and
 - deleted the top-level example `profiles/` fixtures and references.
 
 Still pending: the first infrastructure-backed publication and deployment
