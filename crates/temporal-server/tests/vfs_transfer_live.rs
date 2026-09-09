@@ -286,7 +286,7 @@ async fn run_case(
             "edit"
         });
     } else {
-        features["vfs"]["skills"] = json!({});
+        features["vfs"]["skills"] = json!({"roots": ["/workspace"]});
         features["vfs"]["prompts"] = json!({});
     }
     if mode != "noenv" {

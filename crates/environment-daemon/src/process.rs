@@ -1013,10 +1013,11 @@ fn interrupt_child(child: &mut ProcessChild) {
         ProcessChild::Pty(child) => child.process_id(),
     };
     #[cfg(unix)]
-    if let Some(pid) = pid.and_then(|pid| i32::try_from(pid).ok()) {
-        unsafe {
-            libc::kill(pid, libc::SIGINT);
-        }
+    if let Some(pid) = pid
+        .and_then(|pid| i32::try_from(pid).ok())
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process(pid, rustix::process::Signal::INT);
     }
     #[cfg(not(unix))]
     let _ = pid;
@@ -1733,7 +1734,8 @@ mod tests {
 
     #[cfg(unix)]
     fn process_alive(pid: i32) -> bool {
-        unsafe { libc::kill(pid, 0) == 0 }
+        rustix::process::Pid::from_raw(pid)
+            .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
     }
 
     #[cfg(unix)]
@@ -1880,9 +1882,10 @@ mod tests {
             .await;
         assert!(stale.is_err(), "the entry was pruned");
 
-        unsafe {
-            libc::kill(pid, libc::SIGKILL);
-        }
+        let _ = rustix::process::kill_process(
+            rustix::process::Pid::from_raw(pid).expect("valid child pid"),
+            rustix::process::Signal::KILL,
+        );
         wait_for_process_gone(pid).await;
         assert_eq!(manager.leftover_group_count(), 0);
     }
@@ -1926,9 +1929,10 @@ mod tests {
         );
         assert!(process_alive(pid), "the writer was not killed by EPIPE");
 
-        unsafe {
-            libc::kill(pid, libc::SIGKILL);
-        }
+        let _ = rustix::process::kill_process(
+            rustix::process::Pid::from_raw(pid).expect("valid child pid"),
+            rustix::process::Signal::KILL,
+        );
         wait_for_process_gone(pid).await;
     }
 

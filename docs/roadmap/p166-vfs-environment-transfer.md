@@ -776,6 +776,20 @@ admission, and rejection of corrupt streams.
 Mixed small/large file regressions verify that every scan and staging read
 fits the remaining step allowance, including a partially consumed read buffer.
 
+Atomic publication uses Rustix's flagged rename API across glibc Linux, musl
+Linux, and macOS, avoiding a direct dependency on libc's `renameat2` symbol,
+which musl does not expose. Regression coverage checks file and directory
+publication, overwrite refusal, and retention of the exchanged target in
+staging for cleanup.
+
+Descriptor-relative opens, metadata checks, creation, removal, and streaming
+directory enumeration also use Rustix, with owned descriptors and no manual
+`DIR` lifetime or errno handling. Enumeration retains independent offsets and
+bounded cleanup, including non-UTF-8 names and symlinks in retired trees. Process
+and process-group signaling use typed Rustix APIs; group IDs with special OS
+semantics are rejected. Direct libc usage is limited to macOS metadata-only
+open flags and native process inspection.
+
 Progress:
 
 - [x] Generic filesystem scan and bounded transfer session contracts.
