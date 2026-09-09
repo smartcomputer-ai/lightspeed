@@ -11,6 +11,9 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
+#[cfg(unix)]
+use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
+
 /// How long a terminated group gets between SIGTERM and SIGKILL.
 #[cfg(not(test))]
 pub(crate) const GROUP_TERM_GRACE: Duration = Duration::from_secs(1);
@@ -33,15 +36,24 @@ pub(crate) fn spawn_in_own_group(command: &mut Command) {
 
 /// True when at least one process is left in the group.
 pub(crate) fn group_alive(pgid: u32) -> bool {
-    signal_group(pgid, 0)
+    #[cfg(unix)]
+    return group_pid(pgid).is_some_and(|pid| test_kill_process_group(pid).is_ok());
+    #[cfg(not(unix))]
+    {
+        let _ = pgid;
+        false
+    }
 }
 
 /// Immediately kills every process left in the group.
 pub(crate) fn kill_group(pgid: u32) -> bool {
     #[cfg(unix)]
-    return signal_group(pgid, libc::SIGKILL);
+    return signal_group(pgid, Signal::KILL);
     #[cfg(not(unix))]
-    return signal_group(pgid, 0);
+    {
+        let _ = pgid;
+        false
+    }
 }
 
 /// Terminates every process left in the group: SIGTERM, a bounded grace
@@ -49,11 +61,11 @@ pub(crate) fn kill_group(pgid: u32) -> bool {
 pub(crate) async fn sweep_group(pgid: u32) -> bool {
     #[cfg(unix)]
     {
-        if !signal_group(pgid, libc::SIGTERM) {
+        if !signal_group(pgid, Signal::TERM) {
             return false;
         }
         tokio::time::sleep(GROUP_TERM_GRACE).await;
-        signal_group(pgid, libc::SIGKILL);
+        signal_group(pgid, Signal::KILL);
         true
     }
     #[cfg(not(unix))]
@@ -64,23 +76,38 @@ pub(crate) async fn sweep_group(pgid: u32) -> bool {
 }
 
 #[cfg(unix)]
-fn signal_group(pgid: u32, signal: i32) -> bool {
-    let Ok(pgid) = i32::try_from(pgid) else {
-        return false;
-    };
-    unsafe { libc::kill(-pgid, signal) == 0 }
+fn group_pid(pgid: u32) -> Option<Pid> {
+    // Group IDs 0 and 1 have special kill semantics rather than naming a child group.
+    let pgid = i32::try_from(pgid).ok().filter(|pid| *pid > 1)?;
+    Pid::from_raw(pgid)
 }
 
-#[cfg(not(unix))]
-fn signal_group(_pgid: u32, _signal: i32) -> bool {
-    false
+#[cfg(unix)]
+fn signal_group(pgid: u32, signal: Signal) -> bool {
+    group_pid(pgid).is_some_and(|pid| kill_process_group(pid, signal).is_ok())
 }
 
 /// Sends `SIGINT` to every process left in the group. Returns true when the
 /// group had at least one member to signal.
 pub(crate) fn interrupt_group(pgid: u32) -> bool {
     #[cfg(unix)]
-    return signal_group(pgid, libc::SIGINT);
+    return signal_group(pgid, Signal::INT);
     #[cfg(not(unix))]
-    return signal_group(pgid, 0);
+    {
+        let _ = pgid;
+        false
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_groups_reject_special_and_out_of_range_ids() {
+        for pgid in [0, 1, i32::MAX as u32 + 1, u32::MAX] {
+            assert!(group_pid(pgid).is_none());
+        }
+        assert_eq!(group_pid(42), Pid::from_raw(42));
+    }
 }

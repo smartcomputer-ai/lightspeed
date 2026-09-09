@@ -1736,7 +1736,11 @@ mod tests {
     async fn wait_for_process_gone(pid: i32) {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
-            if unsafe { libc::kill(pid, 0) } != 0 {
+            if rustix::process::test_kill_process(
+                rustix::process::Pid::from_raw(pid).expect("valid child pid"),
+            )
+            .is_err()
+            {
                 return;
             }
             assert!(
@@ -1822,9 +1826,10 @@ mod tests {
         // The escapee is outside the job's process group; clean it up so it
         // does not outlive the test.
         let pid = read_pid_file(&root.join("escapee.pid"));
-        unsafe {
-            libc::kill(pid, libc::SIGKILL);
-        }
+        let _ = rustix::process::kill_process(
+            rustix::process::Pid::from_raw(pid).expect("valid child pid"),
+            rustix::process::Signal::KILL,
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

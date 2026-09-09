@@ -33,6 +33,9 @@ rustls-pki-types = { version = "1", features = ["std"] }
 webpki-roots = "1.0"
 
 [target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]

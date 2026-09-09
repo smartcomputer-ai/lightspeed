@@ -1260,6 +1260,7 @@ dependencies = [
  "rand 0.8.6",
  "release-info",
  "reqwest 0.13.4",
+ "rustix 1.1.3",
  "rustls",
  "rustls-pki-types",
  "serde",
