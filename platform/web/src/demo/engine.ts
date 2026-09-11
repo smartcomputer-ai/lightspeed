@@ -58,6 +58,17 @@ export function pushEvent(
   return event;
 }
 
+/// The origin the bot controller stamps on a delivered event's message, so
+/// the transcript shows it as an event band rather than a typed message.
+export const EVENT_ORIGIN = "event";
+
+/// Scripted histories hand in the delivered text of an event as the run's
+/// input; the hosted controller would have stamped its origin, so the demo
+/// derives it from the delivered header line.
+export function inputOrigin(text: string): string | undefined {
+  return text.startsWith("── event #") ? EVENT_ORIGIN : undefined;
+}
+
 export function contextMessage(
   id: string,
   role: ContextMessageRoleView,
@@ -705,7 +716,8 @@ export function appendExchange(
   session.runs.set(run.id, run);
   const joins = { runId: run.id };
   let at = exchange.at;
-  pushEvent(session, { type: "runAccepted", runId: run.id, source: inputSource(store, exchange.user) }, joins, at);
+  const origin = inputOrigin(exchange.user);
+  pushEvent(session, { type: "runAccepted", runId: run.id, source: inputSource(store, exchange.user, origin) }, joins, at);
   pushEvent(session, { type: "runStarted", runId: run.id }, joins, at);
   session.turns += 1;
   applyEntries(
@@ -715,7 +727,7 @@ export function appendExchange(
         type: "runInput",
         inputIndex: 0,
         runId: run.id,
-      }),
+      }, origin),
     ],
     joins,
     at,
@@ -775,7 +787,8 @@ export function appendScriptedRun(store: DemoStore, session: SessionRecord, scri
   session.runs.set(run.id, run);
   const runJoins: EventJoinsView = { runId: run.id };
   let clock = script.at;
-  pushEvent(session, { type: "runAccepted", runId: run.id, source: inputSource(store, script.user) }, runJoins, clock);
+  const origin = inputOrigin(script.user);
+  pushEvent(session, { type: "runAccepted", runId: run.id, source: inputSource(store, script.user, origin) }, runJoins, clock);
   pushEvent(session, { type: "runStarted", runId: run.id }, runJoins, clock);
   session.turns += 1;
   applyEntries(
@@ -785,7 +798,7 @@ export function appendScriptedRun(store: DemoStore, session: SessionRecord, scri
         type: "runInput",
         inputIndex: 0,
         runId: run.id,
-      }),
+      }, origin),
     ],
     runJoins,
     clock,
@@ -889,6 +902,7 @@ export function appendScriptedRun(store: DemoStore, session: SessionRecord, scri
     if (script.steer && script.steer.afterStep === index + 1) {
       const steeringId = store.nextId("steer");
       const text = script.steer.text;
+      const steerOrigin = inputOrigin(text);
       clock += 700;
       pushEvent(
         session,
@@ -896,7 +910,7 @@ export function appendScriptedRun(store: DemoStore, session: SessionRecord, scri
           type: "runSteeringAccepted",
           runId: run.id,
           steeringId,
-          input: [{ content: { contentRef: store.putText(text), mediaType: "text/plain", providerKind: null }, kind: { type: "message", role: "user" }, preview: text }],
+          input: [{ origin: steerOrigin, content: { contentRef: store.putText(text), mediaType: "text/plain", providerKind: null }, kind: { type: "message", role: "user" }, preview: text }],
         },
         runJoins,
         clock,
@@ -906,7 +920,7 @@ export function appendScriptedRun(store: DemoStore, session: SessionRecord, scri
         session,
         [
           {
-            ...contextMessage(store.nextId("entry"), "user", text),
+            ...contextMessage(store.nextId("entry"), "user", text, undefined, steerOrigin),
             source: { type: "steering", runId: run.id, steeringId, inputIndex: 0 },
           },
         ],

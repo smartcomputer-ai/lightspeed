@@ -74,6 +74,8 @@ Hiding statistics removes completed-run rows while retaining failure and
 cancellation messages. The matching settings buttons remain unchanged.
 
 Statistics remain beneath each run, with no context indicator in the composer.
+(Later revised: finished runs now fold behind a run strip that carries the
+statistics button; see `platform/README.md` for the current transcript model.)
 Context describes measured input to the last call, not a live tokenizer or a
 context-capacity gauge. No backend or API changes are needed.
 

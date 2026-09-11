@@ -16136,13 +16136,50 @@
       "type": "object"
     },
     "ToolCallDisplayGroup": {
-      "enum": [
-        "explore",
-        "edit",
-        "execute",
-        "other"
-      ],
-      "type": "string"
+      "description": "Coarse activity family of a tool call, chosen by the projection from the\ntool name. Clients key icons and colours on it; the verb and target carry\nthe specifics. Unknown tools land in `Other`.",
+      "oneOf": [
+        {
+          "enum": [
+            "other"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "explore",
+          "description": "Reads the environment or the web without changing it.",
+          "type": "string"
+        },
+        {
+          "const": "edit",
+          "description": "Writes or patches files.",
+          "type": "string"
+        },
+        {
+          "const": "execute",
+          "description": "Runs or controls a process.",
+          "type": "string"
+        },
+        {
+          "const": "mcp",
+          "description": "Calls a tool on an MCP server, through the builtin bridge or a\nprovider-native MCP block.",
+          "type": "string"
+        },
+        {
+          "const": "agent",
+          "description": "Delegates to a sub-agent or waits on one.",
+          "type": "string"
+        },
+        {
+          "const": "bot",
+          "description": "Bot-to-bot traffic and a bot's own configuration tools.",
+          "type": "string"
+        },
+        {
+          "const": "message",
+          "description": "Sends into a chat conversation on a channel.",
+          "type": "string"
+        }
+      ]
     },
     "ToolCallDisplayView": {
       "properties": {

@@ -125,10 +125,15 @@ export type AgentNotification =
 export type ToolItemStatus =
   "requested" | "running" | "succeeded" | "failed" | "cancelled" | "unavailable";
 /**
+ * Coarse activity family of a tool call, chosen by the projection from the
+ * tool name. Clients key icons and colours on it; the verb and target carry
+ * the specifics. Unknown tools land in `Other`.
+ *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolCallDisplayGroup".
  */
-export type ToolCallDisplayGroup = "explore" | "edit" | "execute" | "other";
+export type ToolCallDisplayGroup =
+  "other" | "explore" | "edit" | "execute" | "mcp" | "agent" | "bot" | "message";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextEntryKindView".

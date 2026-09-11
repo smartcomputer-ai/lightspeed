@@ -1,51 +1,71 @@
 import { ChevronDown, TriangleAlert } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Marker, MarkerContent } from "@/components/ui/marker";
 import {
   formatDuration,
   formatTokens,
   type TranscriptRunSummary,
 } from "@/lib/sessions/transcript";
+import { cn } from "@/lib/utils";
 
-const triggerClass = "inline-flex max-w-full flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 rounded-md px-1.5 py-1 text-center text-xs text-muted-foreground tabular-nums transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
+const triggerClass = "inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground tabular-nums transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
 
 function tokens(value: number | undefined) {
   return value === undefined ? "Unavailable" : `${formatTokens(value)} tokens`;
 }
 
-export function RunStats({ summary, showStatistics = true }: { summary: TranscriptRunSummary; showStatistics?: boolean }) {
-  const { contextTokens, usage, durationMs, status, error } = summary;
-  const total = usage?.inputTokens !== undefined && usage.outputTokens !== undefined
+function usageTotal(summary: TranscriptRunSummary): number | undefined {
+  const usage = summary.usage;
+  return usage?.inputTokens !== undefined && usage.outputTokens !== undefined
     ? usage.inputTokens + usage.outputTokens : undefined;
-  if (!showStatistics && status === "completed") return null;
+}
 
+/// "Context 42k · Usage 61k" with the breakdown behind a popover. Sits on a
+/// finished run's strip; returns nothing when neither figure is known.
+export function RunStatsTrigger({ summary, className }: { summary: TranscriptRunSummary; className?: string }) {
+  const { contextTokens } = summary;
+  const total = usageTotal(summary);
+  if (contextTokens === undefined && total === undefined) return null;
   return (
-    <div className="min-w-0 px-2 py-1">
-      {status !== "completed" && (
-        <p className={`mb-1 flex items-start gap-1.5 text-xs ${status === "failed" ? "text-destructive" : "text-muted-foreground"}`}>
-          {status === "failed" && <TriangleAlert className="mt-px size-3.5 shrink-0" />}
-          <span className="[overflow-wrap:anywhere]">Run {status}{error ? `: ${error}` : ""}</span>
-        </p>
-      )}
-      {showStatistics && (
-        <Marker variant="separator">
-          <MarkerContent>
-            <Popover>
-              <PopoverTrigger className={triggerClass} aria-label="Run statistics">
-                {contextTokens !== undefined && <span>Context {formatTokens(contextTokens)}</span>}
-                {contextTokens !== undefined && total !== undefined && <span aria-hidden="true">·</span>}
-                {total !== undefined && <span>Usage {formatTokens(total)}</span>}
-                {(contextTokens !== undefined || total !== undefined) && <span aria-hidden="true">·</span>}
-                <span>{durationMs === undefined ? "Duration unavailable" : formatDuration(durationMs)}</span>
-                <ChevronDown className="size-3! shrink-0" />
-              </PopoverTrigger>
-              <PopoverContent className="w-[min(21rem,calc(100vw-2rem))] p-4" aria-label="Run statistics" side="top">
-                <RunStatsDetails summary={summary} />
-              </PopoverContent>
-            </Popover>
-          </MarkerContent>
-        </Marker>
-      )}
+    <Popover>
+      <PopoverTrigger className={cn(triggerClass, className)} aria-label="Run statistics">
+        {contextTokens !== undefined && <span>Context {formatTokens(contextTokens)}</span>}
+        {contextTokens !== undefined && total !== undefined && <span aria-hidden="true">·</span>}
+        {total !== undefined && <span>Usage {formatTokens(total)}</span>}
+        <ChevronDown className="size-3! shrink-0" />
+      </PopoverTrigger>
+      <PopoverContent className="w-[min(21rem,calc(100vw-2rem))] p-4" aria-label="Run statistics" side="top">
+        <RunStatsDetails summary={summary} />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/// A finished run that did no tool work: its outcome on one quiet line.
+/// Completed runs show only their statistics, and only when asked for.
+export function RunOutcomeLine({
+  summary,
+  showStatistics = true,
+}: {
+  summary: TranscriptRunSummary;
+  showStatistics?: boolean;
+}) {
+  const { status, error, durationMs } = summary;
+  if (status === "completed" && !showStatistics) return null;
+  const duration = durationMs === undefined ? null : formatDuration(durationMs);
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-2 text-xs text-muted-foreground">
+      {status === "failed" ? (
+        <span className="flex min-w-0 items-start gap-1.5 text-destructive">
+          <TriangleAlert className="mt-px size-3.5 shrink-0" />
+          <span className="[overflow-wrap:anywhere]">Run failed{error ? `: ${error}` : ""}</span>
+        </span>
+      ) : status === "cancelled" ? (
+        <span>Run cancelled</span>
+      ) : null}
+      <span className="ml-auto flex items-center gap-2">
+        {duration && <span className="tabular-nums">{duration}</span>}
+        {showStatistics && <RunStatsTrigger summary={summary} />}
+      </span>
     </div>
   );
 }

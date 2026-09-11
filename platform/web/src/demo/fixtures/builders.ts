@@ -131,6 +131,12 @@ export const GPT: ModelConfig = { providerId: "openai", apiKind: "openai:respons
 // Tool calls as the transcript shows them
 // ---------------------------------------------------------------------------
 
+/// The first line of a brief or message, cut like the projection does.
+export function firstLine(text: string, max = 80): string {
+  const line = text.split("\n").map((line) => line.trim()).find((line) => line.length > 0) ?? "";
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
 export function tool(
   toolId: string,
   name: string,
@@ -197,20 +203,32 @@ export function webFetch(url: string, detail: string, output: string, isError = 
   return tool("web.fetch", "web_fetch", { url }, { group: "explore", verb: "Fetch", target: url, detail }, output, isError);
 }
 
-/// A remote MCP tool; object outputs are shown pretty-printed.
-export function mcpCall(name: string, args: Record<string, unknown>, output: unknown): DemoToolCall {
+/// A remote MCP tool named `server.tool`; the server is the verb, the tool
+/// the target, as the projection renders both MCP paths. Object outputs are
+/// shown pretty-printed.
+export function mcpCall(name: string, args: Record<string, unknown>, output: unknown, isError = false): DemoToolCall {
   return tool(
     name,
     name,
     args,
-    { group: "other", verb: "MCP", target: name },
+    mcpDisplay(name, args),
     typeof output === "string" ? output : JSON.stringify(output, null, 2),
+    isError,
   );
 }
 
-/// A GitHub MCP tool, shown under the GitHub verb.
+export function mcpDisplay(name: string, args: Record<string, unknown>, detail?: string): ToolCallDisplayView {
+  const dot = name.indexOf(".");
+  const server = dot === -1 ? "MCP" : name.slice(0, dot);
+  const toolName = dot === -1 ? name : name.slice(dot + 1);
+  const hint = detail ?? Object.values(args).find((value): value is string | number =>
+    (typeof value === "string" && value.trim().length > 0) || typeof value === "number");
+  return { group: "mcp", verb: server, target: toolName, ...(hint === undefined ? {} : { detail: String(hint) }) };
+}
+
+/// A GitHub MCP tool.
 export function github(name: string, args: Record<string, unknown>, detail: string, output: string): DemoToolCall {
-  return tool(`github.${name}`, `github.${name}`, args, { group: "other", verb: "GitHub", target: name, detail }, output);
+  return tool(`github.${name}`, `github.${name}`, args, mcpDisplay(`github.${name}`, args, detail), output);
 }
 
 /// `agent_run`: a joined sub-agent delegation.
@@ -218,8 +236,8 @@ export function agentRun(profileId: string, task: string, output: string): DemoT
   return tool(
     "subagent.run",
     "agent_run",
-    { profileId, input: task },
-    { group: "other", verb: "Delegate", target: profileId, detail: task },
+    { agent: profileId, input: task },
+    { group: "agent", verb: "Delegate", target: profileId, detail: firstLine(task) },
     output,
   );
 }
@@ -229,8 +247,8 @@ export function agentSpawn(profileId: string, task: string, promiseId: string): 
   return tool(
     "subagent.spawn",
     "agent_spawn",
-    { profileId, input: task },
-    { group: "other", verb: "Spawn", target: profileId, detail: task },
+    { agent: profileId, input: task },
+    { group: "agent", verb: "Spawn", target: profileId, detail: firstLine(task) },
     JSON.stringify({ promise: promiseId, agent: profileId }),
   );
 }
@@ -244,7 +262,7 @@ export function awaitPromises(
     "concurrency.await",
     "await",
     { promises, mode: "all" },
-    { group: "other", verb: "Await", target: promises.join(", ") },
+    { group: "agent", verb: "Await", target: promises.join(", "), ...(promises.length > 1 ? { detail: `${promises.length} promises` } : {}) },
     JSON.stringify(Object.fromEntries(promises.map((id, i) => [id, { status: "completed", ...results[i] }])), null, 2),
   );
 }
@@ -263,7 +281,7 @@ export function botEmit(args: BotEmitArgs, seq: number | null): DemoToolCall {
     "bot_emit",
     "bot_emit",
     { ...args },
-    { group: "execute", verb: "Emit", target: args.to, detail: args.kind },
+    { group: "bot", verb: "Emit", target: `to ${args.to}`, detail: args.reply ? `${args.kind} · reply requested` : args.kind },
     JSON.stringify({ to: args.to, seq }),
   );
 }
@@ -273,7 +291,7 @@ export function briefPut(brief: string): DemoToolCall {
     "bot_brief_put",
     "bot_brief_put",
     { brief },
-    { group: "edit", verb: "Update", target: "brief" },
+    { group: "bot", verb: "Update brief", detail: firstLine(brief) },
     JSON.stringify({ brief, appliesAt: "next idle boundary" }),
   );
 }
@@ -290,7 +308,7 @@ export function messageSend(
     "message_send",
     "message_send",
     { text, ...(replyTo === null ? {} : { replyTo }) },
-    { group: "execute", verb: "Send", target: conversation.label, detail: replyTo === null ? "push" : `reply to #${replyTo}` },
+    { group: "message", verb: "Send", target: firstLine(text), detail: replyTo === null ? conversation.label : `${conversation.label} · reply to #${replyTo}` },
     JSON.stringify({ sent }),
   );
 }
@@ -300,7 +318,7 @@ export function messageNoop(conversation: { label: string }, reason: string): De
     "message_noop",
     "message_noop",
     { reason },
-    { group: "other", verb: "Skip", target: conversation.label, detail: reason },
+    { group: "message", verb: "Skip", target: conversation.label, detail: reason },
     JSON.stringify({ accepted: true }),
   );
 }

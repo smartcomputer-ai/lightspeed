@@ -69,6 +69,7 @@ import {
   type Conversation,
   type ProfileInit,
   type ScriptedEvent,
+  mcpDisplay,
 } from "./builders";
 import { INCUS_PROVIDER_ID, TELEGRAM_ADA_ACCOUNT_ID, WHATSAPP_ADA_ACCOUNT_ID } from "./platform";
 
@@ -223,7 +224,7 @@ function mac(argv: string[], output: string, isError = false): DemoToolCall {
 
 /// An MCP call the server refused.
 function mcpFailure(name: string, args: Record<string, unknown>, output: string): DemoToolCall {
-  return tool(name, name, args, { group: "other", verb: "MCP", target: name }, output, true);
+  return tool(name, name, args, mcpDisplay(name, args), output, true);
 }
 
 function closeAt(session: SessionRecord, atMs: number): void {

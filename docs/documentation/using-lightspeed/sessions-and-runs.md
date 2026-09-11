@@ -77,10 +77,21 @@ that policy.
 
 ## Inspect what happened
 
-The transcript shows messages and tool activity. Expand a tool call to inspect
-its **Arguments**, **Result**, **Error**, and any reported **Effects**. A final
-answer saying that a file was saved is useful, but the tool result and the file
-itself let you verify the operation.
+The transcript shows messages and tool activity. Every step a run takes is
+one row: an icon for the kind of activity, a verb such as **Read**, **Run**,
+**Delegate**, or **Emit**, its target, and how long it took. A finished step
+carries no badge; only running, waiting, failed, and cancelled steps are
+marked. Click a row to inspect its **Arguments**, **Result**, **Error**, and
+any reported **Effects**, with the raw tool name, call id, timing, and output
+size on a small line beneath. A final answer saying that a file was saved is
+useful, but the tool result and the file itself let you verify the operation.
+
+When a run finishes, its thinking, tool calls, and interim notes fold behind
+one strip that names the outcome ("Worked for 2m 14s", "Failed after 38s")
+and the number of tool calls; the final reply stays visible below it. Click
+the strip to open that run. **Collapse completed runs** in the session title
+menu controls whether runs load folded; turning it off keeps every run open.
+Events delivered to a bot appear as bands headed by their sender and kind.
 
 ![Expanded tool activity showing a completed search command, Arguments and Result tabs, and the matching file and line in its result.](../images/session-tool-result.png)
 
@@ -88,8 +99,8 @@ itself let you verify the operation.
 shows what the command found; **Arguments** shows the submitted request.*
 
 Open the session title menu and choose **Show run statistics** to display
-usage and timing beneath completed runs. The context figure describes the
-last model request; cumulative token figures cover the run. These answer
+context and usage on each finished run's strip. The context figure describes
+the last model request; cumulative token figures cover the run. These answer
 different questions: how much context the last call used, and how much model
 work the whole task consumed. A missing measurement means it was unavailable.
 

@@ -31,7 +31,7 @@ export type TranscriptEntry =
       /// the rendered prefix stays cacheable, shown dimmed.
       superseded?: boolean;
     }
-  | { kind: "reasoning"; key: string; text: string }
+  | { kind: "reasoning"; key: string; text: string; runId?: string }
   | TranscriptToolGroup
   | TranscriptRunSummary
   | { kind: "marker"; key: string; text: string; tone: "muted" | "error" };
@@ -39,6 +39,7 @@ export type TranscriptEntry =
 export interface TranscriptRunSummary {
   kind: "run-summary";
   key: string;
+  runId: string;
   status: "completed" | "failed" | "cancelled";
   error?: string;
   contextTokens?: number;
@@ -64,12 +65,21 @@ export interface TranscriptToolCall {
   continuation?: boolean;
   display?: ToolCallDisplay | null;
   effects?: Array<{ kind?: string; data?: Record<string, string> }>;
+  /// Observed times of the call's dispatch and terminal result; the window
+  /// includes runtime scheduling overhead, which is what a reader waited.
+  startedAtMs?: number;
+  completedAtMs?: number;
+  durationMs?: number;
+  /// Model-visible output size before the projection budget, when reported.
+  outputBytes?: number;
 }
 
 export interface TranscriptToolGroup {
   kind: "tool-group";
   key: string;
   batchId?: string;
+  /// The run that issued the batch, when any event or item recorded it.
+  runId?: string;
   status: TranscriptToolGroupStatus;
   calls: TranscriptToolCall[];
 }
@@ -96,6 +106,8 @@ export interface ActiveRun {
   label: string;
   /// A cancel was admitted; the run is draining to `cancelled`.
   cancelling: boolean;
+  /// Committed wall-clock start, when the loaded history contains it.
+  startedAtMs?: number;
 }
 
 export interface QueuedRun {
@@ -295,19 +307,25 @@ export function applyEvents(
         break;
       case "toolCallStarted":
         recordToolCall(next, String(kind.runId), kind.callId);
-        ensureToolCall(next, kind.callId, kind.batchId);
+        ensureToolCall(next, kind.callId, kind.batchId, String(kind.runId));
         updateToolCall(next, String(kind.callId), (call) => ({
           ...call,
           status: "running",
+          startedAtMs: call.startedAtMs ?? event.observedAtMs,
         }));
         setRunLabel(next, "running tools");
         break;
       case "toolCallCompleted": {
         recordToolCall(next, String(kind.runId), kind.callId);
-        ensureToolCall(next, kind.callId, kind.batchId);
+        ensureToolCall(next, kind.callId, kind.batchId, String(kind.runId));
         updateToolCall(next, String(kind.callId), (call) => ({
           ...call,
           status: kind.status,
+          completedAtMs: event.observedAtMs,
+          ...(call.startedAtMs !== undefined
+            ? { durationMs: Math.max(0, event.observedAtMs - call.startedAtMs) }
+            : {}),
+          ...(kind.outputBytes != null ? { outputBytes: kind.outputBytes } : {}),
           ...(kind.effects?.length ? { effects: kind.effects } : {}),
         }));
         syncToolGroupStatusForCall(next, String(kind.callId));
@@ -389,6 +407,7 @@ function runSummary(
   return {
     kind: "run-summary",
     key: `evt-${event.cursor.seq}`,
+    runId,
     status,
     contextTokens: state.runContextTokens.get(runId),
     usage: usageComplete ? state.runUsage.get(runId) : undefined,
@@ -429,7 +448,13 @@ function startRun(state: TranscriptState, runId: string, observedAtMs?: number) 
     state.runStartedAtMs.set(runId, observedAtMs);
   }
   state.queuedRuns = state.queuedRuns.filter((run) => run.runId !== runId);
-  state.activeRun = { runId, label: "running", cancelling: false };
+  const startedAtMs = state.runStartedAtMs.get(runId);
+  state.activeRun = {
+    runId,
+    label: "running",
+    cancelling: false,
+    ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+  };
   state.runRevision += 1;
 }
 
@@ -530,6 +555,7 @@ function applyItems(state: TranscriptState, items: SessionItem[]) {
     state.seenItems.add(item.id);
     const kind = item.kind;
     const source = item.source;
+    const runId = source && "runId" in source ? String(source.runId) : undefined;
     if (source && "runId" in source) {
       if (kind.type === "toolCall" || kind.type === "toolResult") {
         recordToolCall(state, String(source.runId), kind.callId);
@@ -552,7 +578,7 @@ function applyItems(state: TranscriptState, items: SessionItem[]) {
         continue;
       }
       if (generatedToolGroup === null) {
-        generatedToolGroup = createToolGroup(state, item.id, "requested");
+        generatedToolGroup = createToolGroup(state, item.id, "requested", runId);
       }
       appendToolCall(state, generatedToolGroup, {
         callId: kind.callId,
@@ -597,7 +623,9 @@ function applyNonToolCallItem(
     case "reasoningState": {
       const text = (item.text ?? item.preview ?? "").trim();
       if (displayableReasoningText(text)) {
-        state.entries.push({ kind: "reasoning", key: item.id, text });
+        const source = item.source;
+        const runId = source && "runId" in source ? String(source.runId) : undefined;
+        state.entries.push({ kind: "reasoning", key: item.id, text, ...(runId ? { runId } : {}) });
       }
       break;
     }
@@ -653,7 +681,13 @@ function applyNonToolCallItem(
       break;
     case "toolResult": {
       const isError = kind.isError;
-      ensureToolCall(state, kind.callId, item.source?.type === "tool" ? item.source.batchId : undefined);
+      const source = item.source;
+      ensureToolCall(
+        state,
+        kind.callId,
+        source?.type === "tool" ? source.batchId : undefined,
+        source && "runId" in source ? String(source.runId) : undefined,
+      );
       updateToolCall(state, kind.callId, (call) => ({
         ...call,
         toolName: item.display?.toolName ?? call.toolName,
@@ -672,11 +706,16 @@ function applyNonToolCallItem(
   }
 }
 
-function ensureToolCall(state: TranscriptState, callId: string, batchId?: string | null) {
+function ensureToolCall(
+  state: TranscriptState,
+  callId: string,
+  batchId?: string | null,
+  runId?: string,
+) {
   if (state.toolCallByCallId.has(callId)) return;
   let group = batchId ? state.toolGroupByBatchId.get(batchId) : undefined;
   if (group === undefined) {
-    group = createToolGroup(state, batchId ? `tool-${batchId}` : `tool-call-${callId}`, "running");
+    group = createToolGroup(state, batchId ? `tool-${batchId}` : `tool-call-${callId}`, "running", runId);
     if (batchId) {
       state.toolGroupByBatchId.set(batchId, group);
       const entry = state.entries[group] as TranscriptToolGroup;
@@ -693,9 +732,10 @@ function createToolGroup(
   state: TranscriptState,
   key: string,
   status: TranscriptToolGroupStatus,
+  runId?: string,
 ): number {
   const index = state.entries.length;
-  state.entries.push({ kind: "tool-group", key, status, calls: [] });
+  state.entries.push({ kind: "tool-group", key, status, calls: [], ...(runId ? { runId } : {}) });
   return index;
 }
 
@@ -741,10 +781,11 @@ function applyToolBatchStarted(
   const existingGroup = calls
     .map((call) => state.toolCallByCallId.get(call.callId)?.entryIndex)
     .find((index) => index !== undefined);
-  const entryIndex = existingGroup ?? createToolGroup(state, `tool-${batchId}`, "running");
+  const runId = String(kind.runId);
+  const entryIndex = existingGroup ?? createToolGroup(state, `tool-${batchId}`, "running", runId);
   const entry = state.entries[entryIndex];
   if (entry?.kind === "tool-group") {
-    state.entries[entryIndex] = { ...entry, batchId, status: "running" };
+    state.entries[entryIndex] = { ...entry, batchId, runId, status: "running" };
     state.toolGroupByBatchId.set(batchId, entryIndex);
   }
 
