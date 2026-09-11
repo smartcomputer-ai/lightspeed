@@ -101,6 +101,11 @@ pub fn environment_skill_scan_query(
     if !cwd.starts_with(&boundary) {
         return Err("working directory is outside project root".into());
     }
+    let home = home.ok_or("endpoint does not advertise execution user home directory")?;
+    if !Path::new(home).is_absolute() {
+        return Err("endpoint home directory must be absolute".into());
+    }
+    let home = absolute(Path::new("/"), home)?;
     let mut roots = BTreeSet::new();
     let mut project = cwd.as_path();
     loop {
@@ -110,6 +115,11 @@ pub fn environment_skill_scan_query(
             ".claude/skills",
             ".codex/skills",
         ] {
+            // Home remains limited to shared roots even when it is the working
+            // directory or part of the configured project ancestry.
+            if project == home && matches!(suffix, ".claude/skills" | ".codex/skills") {
+                continue;
+            }
             roots.insert(project.join(suffix));
         }
         if project == boundary {
@@ -117,17 +127,8 @@ pub fn environment_skill_scan_query(
         }
         project = project.parent().ok_or("invalid project ancestry")?;
     }
-    let home = home.ok_or("endpoint does not advertise execution user home directory")?;
-    if !Path::new(home).is_absolute() {
-        return Err("endpoint home directory must be absolute".into());
-    }
-    for suffix in [
-        ".agents/skills",
-        ".lightspeed/skills",
-        ".claude/skills",
-        ".codex/skills",
-    ] {
-        roots.insert(absolute(Path::new(home), suffix)?);
+    for suffix in [".agents/skills", ".lightspeed/skills"] {
+        roots.insert(home.join(suffix));
     }
     for root in &config.additional_roots {
         roots.insert(absolute(&cwd, root)?);
@@ -271,7 +272,12 @@ mod tests {
         assert!(roots.contains(&"/repo/.agents/skills"));
         assert!(roots.contains(&"/repo/src/sub/.agents/skills"));
         assert!(roots.contains(&"/repo/src/installed"));
-        assert!(roots.contains(&"/user/.codex/skills"));
+        assert!(roots.contains(&"/user/.agents/skills"));
+        assert!(roots.contains(&"/user/.lightspeed/skills"));
+        assert!(!roots.contains(&"/user/.claude/skills"));
+        assert!(!roots.contains(&"/user/.codex/skills"));
+        assert!(roots.contains(&"/repo/.claude/skills"));
+        assert!(roots.contains(&"/repo/.codex/skills"));
         assert!(!roots.contains(&"/.agents/skills"));
         assert!(environment_skill_scan_query(&config, None, None).is_err());
         let config = EnvironmentSkillsFeature {
@@ -279,6 +285,29 @@ mod tests {
             ..config
         };
         assert!(environment_skill_scan_query(&config, None, Some("/user")).is_err());
+    }
+
+    #[test]
+    fn home_compatibility_roots_require_explicit_configuration() {
+        for cwd in ["/user", "/user/project"] {
+            let mut config = EnvironmentSkillsFeature {
+                working_directory: Some(cwd.into()),
+                project_root: Some("/user".into()),
+                ..Default::default()
+            };
+            let query = environment_skill_scan_query(&config, None, Some("/user")).unwrap();
+            for excluded in ["/user/.claude/skills", "/user/.codex/skills"] {
+                assert!(!query.roots.iter().any(|root| root.as_str() == excluded));
+            }
+            config.additional_roots = vec!["/user/.codex/skills".into()];
+            let query = environment_skill_scan_query(&config, None, Some("/user")).unwrap();
+            assert!(
+                query
+                    .roots
+                    .iter()
+                    .any(|root| root.as_str() == "/user/.codex/skills")
+            );
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

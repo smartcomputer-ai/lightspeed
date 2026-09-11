@@ -2,6 +2,15 @@
 
 Status: implemented, 2026-09-09. Separate VFS and environment catalogs use idle-boundary discovery. Within-run refresh, catalog merging, and automatic workspace materialization remain deferred.
 
+UI follow-up, 2026-09-11: the shared profile/session configuration editor exposes
+independent skill discovery switches for environments and VFS, with environment
+scope fields and required linked VFS roots. Empty VFS drafts remain editable and
+are validated before saving.
+
+Discovery follow-up, 2026-09-11: automatic home discovery now searches only
+`.agents/skills` and `.lightspeed/skills`. Settings describe this scope without
+adding a separate home switch; project compatibility roots remain supported.
+
 ## Scope
 
 Keep the existing workspace model and VFS skill discovery. Add environment
@@ -127,7 +136,7 @@ inside a command does not change the session's discovery scope.
 
 Support project and user `.agents/skills/`, a Lightspeed-specific skill root,
 and explicit additional roots. Provide documented compatibility roots for
-common client installations, such as `.claude/skills/` and `.codex/skills/`,
+project-local client installations, such as `.claude/skills/` and `.codex/skills/`,
 without recursively scanning every dot-directory or package cache. Resolve
 project ancestry within an explicit repository/work root boundary.
 
@@ -421,7 +430,10 @@ Progress:
 - `features.environments.skills` independently configures the session discovery
   working directory, project ancestry boundary, and additional roots. The
   endpoint handshake supplies its execution-user home directory; conventional
-  `.agents`, `.lightspeed`, `.claude`, and `.codex` roots are resolved there.
+  `.agents/skills` and `.lightspeed/skills` roots are resolved there. Project
+  directories additionally include `.claude/skills` and `.codex/skills`. Home
+  compatibility roots require explicit additional roots, including when home
+  is itself the working directory or project boundary.
 - Gateway and workflow idle refreshes share one environment discovery adapter
   and the existing immutable catalog publisher. Conditional observations use a
   bounded process-local cache scoped by universe, session, environment, query,

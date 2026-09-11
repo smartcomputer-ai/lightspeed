@@ -108,7 +108,7 @@ Ask before editing either file.
 *The walkthrough's skill file, entered in demo mode. The file tree shows its
 workspace-relative path; the instructions use session paths under `/workspace`.*
 
-Set **VFS skill roots** in the profile to `/workspace/.lightspeed/skills`, keeping
+Enable **Skill discovery** under **Virtual File System** and set **VFS skill roots** in the profile to `/workspace/.lightspeed/skills`, keeping
 readable file tools and the workspace link enabled. Save the profile and
 start a session from it. The resulting workspace layout is:
 
@@ -202,8 +202,10 @@ catalog. Empty blocks, null roots, empty root lists, and paths outside links
 are invalid. Workspace links, filesystem tools, prompt sourcing, and CLI chat
 defaults do not enable skill discovery. There are no inferred VFS roots: even
 `/skills/system` or `.agents/skills` must be listed explicitly. The profile
-editor's **VFS skill roots** field configures this block; clearing it disables
-VFS discovery. CLI profile documents use the same configuration.
+editor, new-session form, and session settings expose a **Skill discovery** switch
+under **Virtual File System**. Enable it and fill **VFS skill roots**; an empty
+list must be completed before saving. Turn the switch off to disable discovery.
+CLI profile documents use the same configuration.
 
 Changes are discovered at eligible idle boundaries, including preparation for
 new work when no run is active or queued. There are no within-run refresh
@@ -213,7 +215,12 @@ separate identities with no cross-domain merging, deduplication, or fallback.
 
 ## Discover skills installed on a machine
 
-Enable environment discovery independently from VFS in the session or profile:
+In the profile editor, new-session form, or session settings, enable
+**Skill discovery** under **Environments**. Leave the fields empty to use
+environment defaults, or set **Working directory**, **Project root**, and
+**Additional skill roots**. The switch is independent of VFS discovery.
+
+The equivalent session or profile configuration is:
 
 ```json
 {
@@ -237,8 +244,11 @@ that boundary is included. A shell command's temporary `cd` does not change
 this scope. Additional roots may be absolute or relative to `workingDirectory`.
 
 Discovery checks `.agents/skills/`, `.lightspeed/skills/`, `.claude/skills/`, and
-`.codex/skills/` beneath the project directories and the execution user's home
-reported by the endpoint. This supports ordinary installer output and manually
+`.codex/skills/` beneath the project directories. In the execution user’s home
+reported by the endpoint, only `.agents/skills/` and `.lightspeed/skills/` are
+searched automatically, even when home is the working directory or project
+boundary. Home `.claude/skills/` and `.codex/skills/` require explicit additional
+roots. This supports ordinary installer output and manually
 copied directories. Directory symlinks may point to canonical installations
 inside the endpoint's filesystem access scope. Aliases to one canonical skill
 directory collapse within that environment; independent copies and equal names

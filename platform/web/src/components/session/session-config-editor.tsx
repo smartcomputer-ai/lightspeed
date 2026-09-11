@@ -297,7 +297,9 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
       }
       for (const key of ["prompts", "skills"] as const) {
         const roots = stringList(record(feature[key]).roots).filter(Boolean);
-        if (roots.length) next[key] = { roots };
+        // Preserve an enabled, incomplete skill draft; validation blocks saving
+        // until roots are supplied or discovery is explicitly switched off.
+        if (roots.length || (key === "skills" && feature.skills != null)) next[key] = { roots };
       }
     }
     if (name === "web") {
@@ -383,6 +385,22 @@ function configError(config: SessionConfig | undefined, pinnedApiKind?: string):
   }
   const linkError = workspaceLinksError(workspaceLinksFromConfig(config));
   if (linkError) return linkError;
+  const features = record(config.features);
+  const vfs = record(features.vfs);
+  if (vfs.skills != null) {
+    const roots = stringList(record(vfs.skills).roots);
+    if (!roots.length) return "VFS skill discovery requires at least one skill root.";
+    const links = workspaceLinksFromConfig(config);
+    if (roots.some((root) => !isCanonicalAbsolutePath(root)
+      || !links.some((link) => link.path === "/" || root === link.path || root.startsWith(`${link.path}/`)))) {
+      return "VFS skill roots must be absolute paths inside workspace links.";
+    }
+  }
+  const environmentSkills = record(record(features.environments).skills);
+  for (const key of ["workingDirectory", "projectRoot"] as const) {
+    const path = string(environmentSkills[key]);
+    if (path && !path.startsWith("/")) return "Environment skill working directory and project root must be absolute paths.";
+  }
   return null;
 }
 
@@ -1173,7 +1191,6 @@ function VfsFields({
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
   const prompts = record(feature.prompts);
-  const skills = record(feature.skills);
   const links = Array.isArray(feature.workspaceLinks)
     ? feature.workspaceLinks.map(record)
     : [];
@@ -1246,21 +1263,9 @@ function VfsFields({
           />
           <FieldDescription className="text-xs">Comma-separated paths.</FieldDescription>
         </Field>
-        <Field>
-          <FieldLabel>VFS skill roots</FieldLabel>
-          <Input
-            className="font-mono"
-            value={commaList(skills.roots)}
-            onChange={(e) => patch((next) => {
-              const roots = listFromInput(e.target.value);
-              if (roots.length) next.skills = { roots };
-              else delete next.skills;
-            })}
-            placeholder="/skills, /team/skills"
-          />
-          <FieldDescription className="text-xs">Comma-separated absolute paths inside workspace links. Empty disables VFS skill discovery; environment skills are configured separately.</FieldDescription>
-        </Field>
       </div>
+
+      <SkillDiscoveryFields source="vfs" feature={feature} patch={patch} />
 
       <div className="grid gap-3 border-t pt-4">
         <div className="flex min-w-0 items-center justify-between gap-3">
@@ -1609,6 +1614,77 @@ function profileLabel(profile: ProfileOption | undefined, profileId: string): st
   return profile?.displayName || profileId;
 }
 
+function SkillDiscoveryFields({ source, feature, patch }: {
+  source: "vfs" | "environment";
+  feature: RecordValue;
+  patch: (fn: (feature: RecordValue) => void) => void;
+}) {
+  const id = useId();
+  const enabled = feature.skills != null;
+  const skills = record(feature.skills);
+  const environment = source === "environment";
+  const update = (key: string, value: unknown) => patch((next) => {
+    const settings = { ...record(next.skills) };
+    if (value === undefined) delete settings[key]; else settings[key] = value;
+    next.skills = settings;
+  });
+  return (
+    <div className="grid gap-4 rounded-lg border p-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="grid gap-1">
+          <Label htmlFor={id}>Skill discovery</Label>
+          <p className="text-xs text-muted-foreground">
+            {environment ? "Discover project skills and skills in .agents/skills and .lightspeed/skills under the environment user’s home directory." : "Discover skills in linked VFS workspaces."}
+          </p>
+        </div>
+        <Switch id={id} aria-label={`${environment ? "Environment" : "VFS"} skill discovery`}
+          checked={enabled}
+          onCheckedChange={(checked) => patch((next) => {
+            if (checked) next.skills = environment ? {} : { roots: [] };
+            else delete next.skills;
+          })}
+        />
+      </div>
+      {enabled && (environment ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor={`${id}-working`}>Working directory</FieldLabel>
+            <Input id={`${id}-working`} className="font-mono" value={string(skills.workingDirectory)}
+              placeholder="Environment default"
+              onChange={(e) => update("workingDirectory", e.target.value || undefined)} />
+            <FieldDescription>Optional absolute path. Empty uses the environment’s default working directory.</FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`${id}-project`}>Project root</FieldLabel>
+            <Input id={`${id}-project`} className="font-mono" value={string(skills.projectRoot)}
+              placeholder="/workspace/project"
+              onChange={(e) => update("projectRoot", e.target.value || undefined)} />
+            <FieldDescription>Optional absolute ancestor of the working directory. Searches .agents/skills, .lightspeed/skills, .claude/skills, and .codex/skills in project directories up to this boundary.</FieldDescription>
+          </Field>
+          <Field className="sm:col-span-2">
+            <FieldLabel htmlFor={`${id}-additional`}>Additional skill roots</FieldLabel>
+            <Input id={`${id}-additional`} className="font-mono" value={commaList(skills.additionalRoots)}
+              placeholder="/opt/team-skills, ./skills"
+              onChange={(e) => {
+                const roots = listFromInput(e.target.value);
+                update("additionalRoots", roots.length ? roots : undefined);
+              }} />
+            <FieldDescription>Comma-separated paths, absolute or relative to the working directory. These add to the standard project and home skill directories; they do not replace them.</FieldDescription>
+          </Field>
+        </div>
+      ) : (
+        <Field>
+          <FieldLabel htmlFor={`${id}-roots`}>VFS skill roots</FieldLabel>
+          <Input id={`${id}-roots`} className="font-mono" value={commaList(skills.roots)}
+            placeholder="/workspace/.lightspeed/skills"
+            onChange={(e) => update("roots", listFromInput(e.target.value))} />
+          <FieldDescription>Required: one or more comma-separated absolute paths inside workspace links.</FieldDescription>
+        </Field>
+      ))}
+    </div>
+  );
+}
+
 function EnvironmentFields({
   feature,
   providers,
@@ -1718,6 +1794,7 @@ function EnvironmentFields({
           })}
         />
       </div>
+      <SkillDiscoveryFields source="environment" feature={feature} patch={patch} />
     </div>
   );
 }
