@@ -226,7 +226,7 @@ async fn openai_responses_live_uses_vfs_prompt_instructions() {
             )
             .unwrap(),
             InlineFile::new(
-                ".lightspeed/prompts/instructions.d/010-marker.md",
+                ".lightspeed/prompts/010-marker.md",
                 format!(
                     "The active prompt marker is {LIVE_PROMPT_MARKER}. If the user asks for the active prompt marker, reply with exactly PROMPT_MARKER={LIVE_PROMPT_MARKER} and no other text.\n"
                 )

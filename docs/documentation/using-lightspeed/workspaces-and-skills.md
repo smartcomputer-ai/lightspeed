@@ -62,12 +62,14 @@ Open the release-editor profile and enable **Prompt loading** under
 directories beneath each workspace link. Save, then create a new session from the
 profile or apply the updated setup to an existing idle session.
 
-Lightspeed looks inside each configured root for `instructions.md`, followed
-by Markdown files directly inside `instructions.d/` in alphabetical order.
+Lightspeed loads all `.md` and `.txt` files directly inside each configured
+prompt root in alphabetical (case-sensitive filename) order, without recursion.
+Numeric prefixes such as `010-` and `020-` are optional ordering aids.
+`instructions.md` is an ordinary filename with no special priority.
 For example, this optional file adds a second instruction source:
 
 ```text
-.lightspeed/prompts/instructions.d/010-style.md
+.lightspeed/prompts/010-style.md
 ```
 
 Use it for a short convention such as “Use sentence case for headings.” The
@@ -122,9 +124,8 @@ release-notes/
 ├── release-notes.md
 └── .lightspeed/
     ├── prompts/
-    │   ├── instructions.md
-    │   └── instructions.d/
-    │       └── 010-style.md       # Optional additional instructions
+    │   ├── 010-style.md          # Optional ordering prefix
+    │   └── instructions.txt
     └── skills/
         └── release-review/
             └── SKILL.md
@@ -254,7 +255,7 @@ be absolute or relative to the working directory. Users may explicitly include
 Claude/Codex directories as overrides. Empty override lists are invalid;
 clearing the editor field restores defaults. Omitting a source block disables it.
 
-Environment prompt files use the same `instructions.md` and `instructions.d/*.md`
+Environment prompt files use the same direct `.md` and `.txt` file
 convention as VFS prompts. They load as instructions under the separate
 `instructions.110.environment` source. Its provenance report identifies the
 environment, file paths, and availability. Failed scans replace that source with
@@ -325,7 +326,7 @@ Transfer files explicitly when a process needs them; see
 | --- | --- |
 | A file exists in the browser but the agent cannot find it | Combine its workspace-relative path with the link's session path, and check the current session setup. |
 | A write fails despite edit tools | Check link access and whether the target is a snapshot. Read-only links remain read-only. |
-| Prompt files have no effect | Enable Prompt loading, check the default or overridden roots inside links, use the conventional filenames, and start the next run after the update. |
+| Prompt files have no effect | Enable Prompt loading, check the default or overridden roots inside links, use direct .md or .txt files, and start the next run after the update. |
 | A skill is absent from the catalog | Enable Skill discovery and check the default or overridden root, direct child directory, exact `SKILL.md` name, and required frontmatter. |
 | A discovered skill has not affected the answer | Inspect whether the agent read it, or select it with `/skill` or `skills use`. Discovery alone loads only its catalog entry. |
 | Saving reports a revision conflict | Reload and reconcile with the intervening edit; do not assume the save was merged. |

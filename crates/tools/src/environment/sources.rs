@@ -70,7 +70,7 @@ pub fn scan_query(
             .map(|p| EnvironmentPath::new(p.to_string_lossy()).map_err(|e| e.to_string()))
             .collect::<Result<_, _>>()?,
         include_patterns: if source == "prompts" {
-            vec!["instructions.md".into(), "instructions.d/*.md".into()]
+            vec!["*.md".into(), "*.txt".into()]
         } else {
             vec!["SKILL.md".into(), "**/SKILL.md".into()]
         },
@@ -80,7 +80,7 @@ pub fn scan_query(
         if_none_match: None,
         limits: InventoryLimits {
             max_entries: 4096,
-            max_depth: if source == "prompts" { 2 } else { 8 },
+            max_depth: if source == "prompts" { 1 } else { 8 },
             max_file_bytes: 64 * 1024,
             max_total_bytes: 2 * 1024 * 1024,
             max_manifest_bytes: 4 * 1024 * 1024,

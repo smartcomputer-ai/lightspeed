@@ -252,6 +252,17 @@ impl ActivityState {
         self
     }
 
+    /// Use one gateway for idle source discovery and durable environment jobs.
+    pub fn with_environment_gateway(mut self, gateway: EnvironmentGatewayClientConfig) -> Self {
+        if let Some(projection) = self.runtime_projection.as_mut() {
+            projection.environment_gateway = Some(gateway.clone());
+        }
+        if let Some(environment_jobs) = self.environment_jobs.as_mut() {
+            environment_jobs.gateway = Some(gateway);
+        }
+        self
+    }
+
     pub fn with_native_mcp(mut self, native_mcp: Arc<NativeMcpRuntime>) -> Self {
         self.tools.native_mcp = Some(native_mcp);
         self
@@ -400,12 +411,7 @@ impl ActivityState {
         if let Some(subagent_runtime) = subagent_runtime {
             state = state.with_subagent_runtime(subagent_runtime);
         }
-        if let Some(projection) = state.runtime_projection.as_mut() {
-            projection.environment_gateway = Some(gateway.clone());
-        }
-        if let Some(environment_jobs) = state.environment_jobs.as_mut() {
-            environment_jobs.gateway = Some(gateway);
-        }
+        state = state.with_environment_gateway(gateway);
         if let Some(transcoder) = clients.audio_transcoder.clone() {
             state = state.with_audio_transcoder(transcoder);
         }

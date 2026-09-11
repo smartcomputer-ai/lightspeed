@@ -1719,7 +1719,7 @@ mod tests {
                 )
                 .unwrap(),
                 InlineFile::new(
-                    ".lightspeed/prompts/instructions.d/010-style.md",
+                    ".lightspeed/prompts/010-style.md",
                     b"Prefer concrete file references.\n".to_vec(),
                 )
                 .unwrap(),
@@ -1790,7 +1790,7 @@ mod tests {
         assert_eq!(
             first_report_paths,
             vec![
-                "/workspace/.lightspeed/prompts/instructions.d/010-style.md",
+                "/workspace/.lightspeed/prompts/010-style.md",
                 "/workspace/.lightspeed/prompts/instructions.md",
             ]
         );
@@ -1823,7 +1823,7 @@ mod tests {
             None,
             CreateInlineSnapshotRequest::new(vec![
                 InlineFile::new(
-                    ".lightspeed/prompts/instructions.d/020-focus.md",
+                    ".lightspeed/prompts/020-focus.md",
                     b"Mention tradeoffs explicitly.\n".to_vec(),
                 )
                 .unwrap(),

@@ -79,6 +79,8 @@ pub enum ScanContent {
 #[serde(rename_all = "camelCase")]
 pub struct ScanParams {
     pub roots: Vec<EnvironmentPath>,
+    /// Filename-only patterns without `/` or `**` select direct children only.
+    /// Other patterns permit recursive traversal within the operation quotas.
     #[serde(default)]
     pub include_patterns: Vec<String>,
     #[serde(default)]

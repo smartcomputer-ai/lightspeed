@@ -221,7 +221,7 @@ async fn anthropic_messages_live_uses_vfs_prompt_instructions() {
             )
             .unwrap(),
             InlineFile::new(
-                ".lightspeed/prompts/instructions.d/010-capacity.md",
+                ".lightspeed/prompts/010-capacity.md",
                 b"The allocation rule is three deployment slots per region.\n".to_vec(),
             )
             .unwrap(),

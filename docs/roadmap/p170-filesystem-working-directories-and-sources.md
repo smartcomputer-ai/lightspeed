@@ -77,8 +77,9 @@ The domain working directory and optional source `roots` replace them.
 ## Loading and lifecycle
 
 Prompts load automatically as instructions, using the existing VFS convention:
-`instructions.md` and direct Markdown children of `instructions.d/` in
-deterministic order. Skills publish a catalog; the agent reads selected skill
+all direct `.md` and `.txt` files in each prompt root, sorted by case-sensitive
+filename. Numeric prefixes are optional; `instructions.md` has no special
+priority. Nested directories are not loaded. Skills publish a catalog; the agent reads selected skill
 instructions through the corresponding domain's file tools.
 
 Refresh both sources at eligible idle boundaries, including preparation before
@@ -135,5 +136,18 @@ After local-environment authorization, 14 live tests passed, serialized against
 PostgreSQL, Temporal, and MinIO: environment provider lifecycle/power (2),
 registration/reconnection (1), profiles (2), hosted VFS transfers (1), and
 scripted-model session lifecycle/context/checkpoint tests (8). The four
-provider-specific model tests were excluded. Prompt/skill source semantics
-remain covered by the focused filesystem, schema, editor, and replay tests above.
+provider-specific model tests were excluded. Prompt/skill source semantics are also covered by the focused filesystem,
+schema, editor, and replay tests above.
+
+Prompt discovery now loads direct `.md` and `.txt` files in a single filename
+order in both domains. The nested `instructions.d` convention is removed;
+existing nested files must move into the prompt root. Environment filename-only
+scan patterns prune subdirectories, so ignored trees do not exhaust scan budgets.
+The local environment test instruction was moved to the prompt root.
+
+Follow-up validation passed: 8 prompt tests, the environment prompt filesystem
+test, 12 test-support tests, 78 daemon tests, 25 focused editor tests, and workspace
+compilation. The expanded hosted transfer live test also passed: both VFS and
+environment `.md`/`.txt` prompts reached the scripted model in filename order,
+with nested and unsupported files excluded. The fixture now configures its
+shared gateway for idle discovery as well as tools.

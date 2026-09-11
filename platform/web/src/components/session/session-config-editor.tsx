@@ -1661,7 +1661,7 @@ function SourceDiscoveryFields({ source, feature, patch }: {
         <div className="grid gap-1">
           <Label htmlFor={id}>{prompts ? "Prompt loading" : "Skill discovery"}</Label>
           <p className="text-xs text-muted-foreground">
-            {prompts ? `Automatically load ${domain} prompt files as instructions.` : `Advertise ${domain} skills for the agent to read when relevant.`}
+            {prompts ? `Load direct .md and .txt files from ${domain} prompt roots in alphabetical order. Number prefixes are optional; subfolders are ignored.` : `Advertise ${domain} skills for the agent to read when relevant.`}
           </p>
         </div>
         <Switch id={id} aria-label={switchLabel}

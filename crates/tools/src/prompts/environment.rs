@@ -22,21 +22,12 @@ pub fn assemble(scan: &ScanResponse) -> Result<(String, Vec<String>), String> {
     }
     let mut seen = BTreeSet::new();
     let mut entries: Vec<_> = scan.entries.iter().collect();
-    entries.sort_by(|a, b| {
-        (a.root.as_str(), a.path != "instructions.md", &a.path).cmp(&(
-            b.root.as_str(),
-            b.path != "instructions.md",
-            &b.path,
-        ))
-    });
+    entries.sort_by(|a, b| (a.root.as_str(), &a.path).cmp(&(b.root.as_str(), &b.path)));
     let mut text = String::new();
     let mut paths = Vec::new();
     for entry in entries {
-        let valid = entry.path == "instructions.md"
-            || entry
-                .path
-                .strip_prefix("instructions.d/")
-                .is_some_and(|name| !name.contains('/') && name.ends_with(".md"));
+        let valid = !entry.path.contains('/')
+            && (entry.path.ends_with(".md") || entry.path.ends_with(".txt"));
         if !valid || !seen.insert(entry.canonical_path.as_str()) {
             continue;
         }

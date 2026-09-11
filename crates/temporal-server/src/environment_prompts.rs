@@ -62,7 +62,7 @@ mod tests {
         let root = directory.path().canonicalize().unwrap();
         let cwd = root.join("project");
         let home = root.join("home");
-        std::fs::create_dir_all(cwd.join(".agents/prompts/instructions.d")).unwrap();
+        std::fs::create_dir_all(cwd.join(".agents/prompts")).unwrap();
         std::fs::create_dir_all(home.join(".lightspeed/prompts")).unwrap();
         std::fs::create_dir_all(home.join(".codex/prompts")).unwrap();
         std::fs::write(
@@ -71,16 +71,23 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            cwd.join(".agents/prompts/instructions.d/020-last.md"),
+            cwd.join(".agents/prompts/020-last.txt"),
             "Last instructions",
         )
         .unwrap();
         std::fs::write(
-            cwd.join(".agents/prompts/instructions.d/010-first.md"),
+            cwd.join(".agents/prompts/010-first.md"),
             "First instructions",
         )
         .unwrap();
         std::fs::write(home.join(".codex/prompts/instructions.md"), "Must not load").unwrap();
+        std::fs::create_dir_all(cwd.join(".agents/prompts/nested/deep")).unwrap();
+        std::fs::write(
+            cwd.join(".agents/prompts/nested/deep/hidden.md"),
+            "Must not load",
+        )
+        .unwrap();
+        std::fs::write(cwd.join(".agents/prompts/notes.json"), "Must not load").unwrap();
         let fs =
             environment_daemon::filesystem::LocalFileSystem::new(root.clone(), cwd.clone(), true);
         let query = tools::environment::sources::scan_query(
@@ -94,7 +101,7 @@ mod tests {
         let (text, paths) = assemble(&scan).unwrap();
         assert_eq!(
             text,
-            "Base instructions\n\nFirst instructions\n\nLast instructions"
+            "First instructions\n\nLast instructions\n\nBase instructions"
         );
         assert_eq!(paths.len(), 3);
         let blobs = InMemoryBlobStore::new();
