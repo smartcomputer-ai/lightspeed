@@ -187,8 +187,10 @@ export function formatTokens(count: number): string {
   return count >= 1000 ? `${Number((count / 1000).toFixed(1))}k` : String(count);
 }
 
+/// Compact durations: whole milliseconds under 100 ms, tenths of a second up
+/// to 10 s, then seconds, minutes and hours.
 export function formatDuration(durationMs: number): string {
-  if (durationMs < 1_000) return `${durationMs}ms`;
+  if (durationMs < 100) return `${durationMs}ms`;
   if (durationMs < 10_000) return `${(durationMs / 1_000).toFixed(1)}s`;
   const totalSeconds = Math.round(durationMs / 1_000);
   if (totalSeconds < 60) return `${totalSeconds}s`;

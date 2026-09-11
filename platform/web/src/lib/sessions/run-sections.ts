@@ -23,8 +23,12 @@ export interface RunSection {
   live: boolean;
 }
 
+export type TranscriptSystemEntry = Extract<TranscriptEntry, { kind: "system" }>;
+
 export type TranscriptSection =
   | RunSection
+  /// Consecutive instruction and catalog entries between runs, one chips row.
+  | { kind: "system"; key: string; entries: TranscriptSystemEntry[] }
   | { kind: "entry"; key: string; entry: TranscriptEntry };
 
 /// Group entries into run sections. Session-level markers outside any run
@@ -73,7 +77,16 @@ export function sectionsByRun(
       open = null;
       continue;
     }
-    if ((entry.kind === "marker" || entry.kind === "system") && !open) {
+    if (entry.kind === "system" && !open) {
+      const last = sections.at(-1);
+      if (last?.kind === "system") {
+        last.entries.push(entry);
+      } else {
+        sections.push({ kind: "system", key: entry.key, entries: [entry] });
+      }
+      continue;
+    }
+    if (entry.kind === "marker" && !open) {
       sections.push({ kind: "entry", key: entry.key, entry });
       continue;
     }

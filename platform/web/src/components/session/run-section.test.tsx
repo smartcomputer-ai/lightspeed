@@ -71,10 +71,13 @@ it("folds a finished run behind one strip that names the outcome, keeps the repl
   expect(strip().textContent).toContain("2 tool calls");
   expect(strip().textContent).toContain("1 failed");
   expect(container.textContent).toContain("Run failed: retries exhausted");
-  expect(container.textContent).toContain("Context 44k");
   expect(container.textContent).not.toContain("Interim progress note.");
   expect(container.textContent).not.toContain("cargo clippy");
-  expect(container.querySelector('[aria-label="Run statistics"]')).not.toBeNull();
+  // Folded: the statistics sit on the strip, shown from medium widths up.
+  const triggers = container.querySelectorAll('[aria-label="Run statistics"]');
+  expect(triggers).toHaveLength(1);
+  expect(triggers[0]!.className).toContain("md:inline-flex");
+  expect(strip().parentElement).toBe(triggers[0]!.parentElement);
 });
 
 it("opens on click, then reveals a row's details with the meta line, and follows the preference when it changes", async () => {
@@ -83,6 +86,11 @@ it("opens on click, then reveals a row's details with the meta line, and follows
   await act(async () => strip().click());
   expect(container.textContent).toContain("Interim progress note.");
   expect(container.textContent).toContain("Thinking");
+  // Opened: a second copy leads the work for narrow screens only.
+  const opened = container.querySelector('.border-t')!;
+  expect(opened.firstElementChild?.textContent).toBe("Context 44k·Usage 12k");
+  expect(opened.firstElementChild?.className).toContain("md:hidden");
+  expect(container.querySelectorAll('[aria-label="Run statistics"]')).toHaveLength(2);
   expect(container.textContent).toContain("cargo clippy");
   expect(container.textContent).toContain("exit 101");
   expect(container.textContent).not.toContain("contents");
@@ -93,7 +101,7 @@ it("opens on click, then reveals a row's details with the meta line, and follows
   const meta = container.querySelector('[aria-label="Call details"]')!.textContent;
   expect(meta).toContain("read_file");
   expect(meta).toContain("c1");
-  expect(meta).toContain("340ms");
+  expect(meta).toContain("0.3s");
   expect(meta).toContain("412 B");
   expect(meta).toMatch(/started \d\d:\d\d:\d\d\.\d\d\d/);
 
@@ -105,10 +113,13 @@ it("opens on click, then reveals a row's details with the meta line, and follows
   expect(container.textContent).not.toContain("cargo clippy");
 });
 
-it("hides statistics on the strip when the preference is off", async () => {
+it("drops the statistics from the strip and the opened run when the preference is off", async () => {
   await render(finished("completed"), { stats: false });
   expect(container.querySelector('[aria-label="Run statistics"]')).toBeNull();
   expect(strip().textContent).toContain("Worked for 38s");
+  await act(async () => strip().click());
+  expect(container.querySelector('[aria-label="Run statistics"]')).toBeNull();
+  expect(container.textContent).toContain("cargo clippy");
 });
 
 it("streams a live run open with a status row instead of a strip", async () => {
@@ -127,17 +138,17 @@ it("streams a live run open with a status row instead of a strip", async () => {
   expect(status.textContent).toMatch(/4\ds$/);
 });
 
-it("shows a run that did no tool work as one quiet line, only when statistics are wanted", async () => {
+it("shows a run that did no tool work as one quiet line with its statistics and no strip", async () => {
   const entries: TranscriptEntry[] = [
     { kind: "message", key: "ask", role: "user", text: "Hi", runId: "r3" },
     { kind: "message", key: "reply", role: "assistant", text: "Hello!", runId: "r3" },
     { kind: "run-summary", key: "done", runId: "r3", status: "completed", usageComplete: true, durationMs: 2_000, contextTokens: 900 },
   ];
   const section = sectionsByRun(entries, null)[0] as RunSection;
-  await render(section, { stats: false });
-  expect(container.textContent).toBe("HiHello!");
-  expect(container.querySelector(STRIP)).toBeNull();
-  await render(section, { stats: true });
+  await render(section);
+  expect(container.textContent).toContain("Hi");
+  expect(container.textContent).toContain("Hello!");
+  expect(container.textContent).toContain("2.0s");
   expect(container.textContent).toContain("Context 900");
   expect(container.querySelector(STRIP)).toBeNull();
 });

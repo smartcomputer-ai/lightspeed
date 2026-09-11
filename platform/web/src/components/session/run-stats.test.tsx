@@ -30,12 +30,18 @@ it("offers context and usage as one popover trigger", () => {
   expect(html).toContain('aria-label="Run statistics"');
 });
 
-it("renders nothing for a completed run without statistics and keeps failures and cancellations", () => {
-  expect(outcome(summary, false)).toBe("");
-  expect(text(outcome({ ...summary, status: "failed", error: "Provider unavailable" }, false))).toBe("Run failed: Provider unavailable1m 24s");
-  expect(text(outcome({ ...summary, status: "cancelled" }, false))).toBe("Run cancelled1m 24s");
+it("puts the outcome on one line and keeps failures and cancellations visible", () => {
+  expect(text(outcome({ ...summary, status: "failed", error: "Provider unavailable" }))).toBe("Run failed: Provider unavailable1m 24sContext 78.5k·Usage 737.2k");
+  expect(text(outcome({ ...summary, status: "cancelled" }))).toBe("Run cancelled1m 24sContext 78.5k·Usage 737.2k");
   expect(text(outcome())).toBe("1m 24sContext 78.5k·Usage 737.2k");
   expect(text(renderToStaticMarkup(createElement(TranscriptEntryView, { entry: summary })))).toBe("1m 24sContext 78.5k·Usage 737.2k");
+  expect(outcome({ ...summary, contextTokens: undefined, usage: undefined, durationMs: undefined })).toBe("");
+});
+
+it("keeps the duration and non-success status when statistics are switched off", () => {
+  expect(text(outcome(summary, false))).toBe("1m 24s");
+  expect(text(outcome({ ...summary, status: "failed", error: "Provider unavailable" }, false))).toBe("Run failed: Provider unavailable1m 24s");
+  expect(outcome({ ...summary, durationMs: undefined }, false)).toBe("");
 });
 
 it("separates the last context measurement from cumulative usage in the breakdown", () => {
@@ -46,7 +52,7 @@ it("separates the last context measurement from cumulative usage in the breakdow
   expect(content).toContain("Model calls10");
   expect(content).toContain("Tool calls24");
   expect(content).toContain("Input served from cache98%");
-  expect(content).toContain("Run duration1m 24s");
+  expect(content).not.toContain("Run duration");
 });
 
 it("shows known context but explains why a partial run has no usage total", () => {
@@ -70,5 +76,4 @@ it("renders no trigger when neither figure is known and preserves explicit zero 
 
 it("does not invent a duration when the loaded history contains no start time", () => {
   expect(text(outcome({ ...summary, durationMs: undefined }))).toBe("Context 78.5k·Usage 737.2k");
-  expect(text(details({ ...summary, durationMs: undefined }))).toContain("Run durationUnavailable");
 });

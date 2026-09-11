@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Brain, ChevronRight, LoaderCircle, TriangleAlert } from "lucide-react";
 import type { FullTextLoader } from "@/components/session/expandable-content";
-import { RunOutcomeLine, RunStatsTrigger } from "@/components/session/run-stats";
+import { RunOutcomeLine, RunStatsRow, RunStatsTrigger } from "@/components/session/run-stats";
 import { ActivityIcon, GROUP_ORDER, groupStyle, useElapsed } from "@/components/session/tool-trace";
 import { SystemChips, TranscriptEntryView } from "@/components/session/transcript-view";
 import { sectionActivity, type RunSection } from "@/lib/sessions/run-sections";
@@ -49,6 +49,7 @@ export function RunSectionView({
           />
           {open && (
             <div className="flex min-w-0 flex-col gap-0.5 border-t px-1 py-1">
+              {showRunStatistics && section.summary && <RunStatsRow summary={section.summary} className="md:hidden" />}
               <WorkList entries={section.work} loadFullText={loadFullText} />
             </div>
           )}
@@ -62,7 +63,8 @@ export function RunSectionView({
 }
 
 /// The folded run: chevron, the activity families it touched, what
-/// happened and how long it took, then the statistics on the right.
+/// happened and how long it took, and from medium widths up the statistics
+/// on the right. Narrow screens get them as the first row of the opened run.
 function RunStrip({
   section,
   open,
@@ -119,7 +121,7 @@ function RunStrip({
             </span>
           )}
         </button>
-        {showRunStatistics && summary && <RunStatsTrigger summary={summary} className="shrink-0" />}
+        {showRunStatistics && summary && <RunStatsTrigger summary={summary} className="hidden shrink-0 md:inline-flex" />}
       </div>
       {summary?.status === "failed" && (
         <p className="flex items-start gap-1.5 px-2 pb-1.5 text-xs text-destructive">

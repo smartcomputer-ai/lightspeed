@@ -96,6 +96,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   ApprovalCards,
   QueuedRunsBar,
+  SystemChips,
   TranscriptEntryView,
   UserBand,
   type QueuedRunItem,
@@ -2060,6 +2061,8 @@ export function SessionDetail({
                       showRunStatistics={showRunStatistics}
                       collapseCompletedRuns={collapseCompletedRuns}
                     />
+                  ) : section.kind === "system" ? (
+                    <SystemChips entries={section.entries} />
                   ) : (
                     <TranscriptEntryView entry={section.entry} loadFullText={loadFullText} />
                   )}

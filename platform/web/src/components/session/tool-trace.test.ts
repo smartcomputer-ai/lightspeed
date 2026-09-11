@@ -37,7 +37,7 @@ describe("step rows", () => {
     const html = render(group([call({
       display: { group: "explore", verb: "Read", target: "/workspace/notes.md" }, durationMs: 340,
     })]));
-    expect(text(html)).toBe("Read /workspace/notes.md 340ms");
+    expect(text(html)).toBe("Read /workspace/notes.md 0.3s");
     expect(html).not.toMatch(/Done|Completed|Succeeded/);
   });
 
@@ -62,7 +62,7 @@ describe("step rows", () => {
       callId: `c${index}`, display: { group: "explore", verb: "Read", target: `/w/${index}.ts` }, startedAtMs: 100, completedAtMs: 100 + index * 100,
     }));
     const html = render(group(reads));
-    expect(text(html)).toContain("Read 3 files 300ms");
+    expect(text(html)).toContain("Read 3 files 0.3s");
     expect(html).not.toMatch(/Done/);
     expect(batchTitle([call({ display: { group: "explore", verb: "Read" } }), call({ display: { group: "execute", verb: "Run" } })])).toBe("2 tool calls");
     expect(batchTitle([call({ display: { group: "mcp", verb: "stripe" } }), call({ display: { group: "mcp", verb: "stripe" } })])).toBe("stripe × 2");

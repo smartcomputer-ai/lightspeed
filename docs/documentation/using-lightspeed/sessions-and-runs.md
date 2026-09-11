@@ -98,11 +98,13 @@ Events delivered to a bot appear as bands headed by their sender and kind.
 *Demo mode: an expanded tool call in “Fix flaky scheduler test.” The result
 shows what the command found; **Arguments** shows the submitted request.*
 
-Open the session title menu and choose **Show run statistics** to display
-context and usage on each finished run's strip. The context figure describes
-the last model request; cumulative token figures cover the run. These answer
-different questions: how much context the last call used, and how much model
-work the whole task consumed. A missing measurement means it was unavailable.
+Each finished run's strip ends with its context and usage figures (on a
+phone they sit at the top of the opened run instead); click them for the
+breakdown, or turn them off with **Show run statistics** in the session title
+menu. The context figure describes the last model request; cumulative token
+figures cover the run. These answer different questions: how much context the
+last call used, and how much model work the whole task consumed. A missing
+measurement means it was unavailable.
 
 Long conversations load a recent window first. Scroll upward to load older
 history. Context compaction can reduce what the model carries into future

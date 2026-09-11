@@ -3,6 +3,7 @@ import type { SessionEvent, SessionItem } from "@/api";
 import {
   applyEvents,
   emptyTranscript,
+  formatDuration,
   formatTokens,
   isFailedToolCall,
   reconcileRuns,
@@ -901,6 +902,10 @@ describe("run statistics", () => {
 
   it.each([[0, "0"], [750, "750"], [999, "999"], [1000, "1k"], [4200, "4.2k"], [78512, "78.5k"], [733000, "733k"]])(
     "formats %s tokens as %s", (count, expected) => expect(formatTokens(count as number)).toBe(expected),
+  );
+
+  it.each([[0, "0ms"], [42, "42ms"], [99, "99ms"], [100, "0.1s"], [340, "0.3s"], [1_250, "1.3s"], [9_999, "10.0s"], [10_000, "10s"], [84_000, "1m 24s"], [3_600_000, "1h"]])(
+    "formats %s ms as %s", (ms, expected) => expect(formatDuration(ms as number)).toBe(expected),
   );
 });
 

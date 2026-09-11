@@ -39,6 +39,19 @@ describe("run sections", () => {
     expect((sections[1] as RunSection).work).toEqual([entries[2], entries[3]]);
   });
 
+  it("coalesces the instruction and catalog entries a session opens with into one chips row", () => {
+    const entries = [
+      system("Instructions"), system("Sub-agent catalog"), system("Bot directory"),
+      marker("context compacted"), system("Bot directory (updated)"), user("ask", "r1"), summary("done", "r1"),
+    ];
+    expect(sectionsByRun(entries, null)).toMatchObject([
+      { kind: "system", key: "Instructions", entries: [entries[0], entries[1], entries[2]] },
+      { kind: "entry", key: "context compacted" },
+      { kind: "system", key: "Bot directory (updated)", entries: [entries[4]] },
+      { kind: "run", key: "ask" },
+    ]);
+  });
+
   it("marks the open section live only for the engine's active run", () => {
     const entries = [user("ask", "r1"), tools("batch", "r1", [call("c1", "edit")]), assistant("progress", "r1")];
     const live = sectionsByRun(entries, { runId: "r1", label: "running tools", cancelling: false });

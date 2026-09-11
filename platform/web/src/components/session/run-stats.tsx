@@ -7,7 +7,9 @@ import {
 } from "@/lib/sessions/transcript";
 import { cn } from "@/lib/utils";
 
-const triggerClass = "inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground tabular-nums transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
+// No pill anywhere it appears: transparent at rest, on hover, and while the
+// popover is open; the text brightening is the whole affordance.
+const triggerClass = "inline-flex max-w-full items-center gap-1 bg-transparent px-1 py-0.5 text-xs text-muted-foreground tabular-nums transition-colors hover:bg-transparent hover:text-foreground data-[popup-open]:bg-transparent data-[popup-open]:text-foreground focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
 
 function tokens(value: number | undefined) {
   return value === undefined ? "Unavailable" : `${formatTokens(value)} tokens`;
@@ -19,8 +21,12 @@ function usageTotal(summary: TranscriptRunSummary): number | undefined {
     ? usage.inputTokens + usage.outputTokens : undefined;
 }
 
-/// "Context 42k · Usage 61k" with the breakdown behind a popover. Sits on a
-/// finished run's strip; returns nothing when neither figure is known.
+export function hasRunStats(summary: TranscriptRunSummary): boolean {
+  return summary.contextTokens !== undefined || usageTotal(summary) !== undefined;
+}
+
+/// "Context 42k · Usage 61k" with the breakdown behind a popover. Renders
+/// nothing when neither figure is known.
 export function RunStatsTrigger({ summary, className }: { summary: TranscriptRunSummary; className?: string }) {
   const { contextTokens } = summary;
   const total = usageTotal(summary);
@@ -40,8 +46,20 @@ export function RunStatsTrigger({ summary, className }: { summary: TranscriptRun
   );
 }
 
-/// A finished run that did no tool work: its outcome on one quiet line.
-/// Completed runs show only their statistics, and only when asked for.
+/// The statistics as the first row of an opened run, for narrow screens
+/// where the strip has no room for them.
+export function RunStatsRow({ summary, className }: { summary: TranscriptRunSummary; className?: string }) {
+  if (!hasRunStats(summary)) return null;
+  return (
+    <div className={cn("min-w-0 px-0.5", className)}>
+      <RunStatsTrigger summary={summary} />
+    </div>
+  );
+}
+
+/// A finished run that did no tool work: its outcome on one quiet line —
+/// status when it is not success, duration, and the statistics button when
+/// statistics are wanted.
 export function RunOutcomeLine({
   summary,
   showStatistics = true,
@@ -50,8 +68,9 @@ export function RunOutcomeLine({
   showStatistics?: boolean;
 }) {
   const { status, error, durationMs } = summary;
-  if (status === "completed" && !showStatistics) return null;
   const duration = durationMs === undefined ? null : formatDuration(durationMs);
+  const stats = showStatistics && hasRunStats(summary);
+  if (status === "completed" && !duration && !stats) return null;
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-2 text-xs text-muted-foreground">
       {status === "failed" ? (
@@ -71,7 +90,7 @@ export function RunOutcomeLine({
 }
 
 export function RunStatsDetails({ summary }: { summary: TranscriptRunSummary }) {
-  const { contextTokens, usage, durationMs } = summary;
+  const { contextTokens, usage } = summary;
   const cachePercent = usage?.inputTokens !== undefined && usage.inputTokens > 0 && usage.cachedInputTokens !== undefined
     ? `${Math.round(100 * usage.cachedInputTokens / usage.inputTokens)}%` : "Unavailable";
   return (
@@ -93,10 +112,6 @@ export function RunStatsDetails({ summary }: { summary: TranscriptRunSummary }) 
         )}
         <p className="mt-2 text-xs text-muted-foreground">Cumulative across model calls in this run.</p>
       </div>
-      <dl className="mt-3 flex justify-between gap-4 border-t pt-3 text-xs">
-        <dt className="text-muted-foreground">Run duration</dt>
-        <dd className="tabular-nums">{durationMs === undefined ? "Unavailable" : formatDuration(durationMs)}</dd>
-      </dl>
     </>
   );
 }
