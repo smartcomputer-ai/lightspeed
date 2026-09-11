@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { TranscriptLinksContext } from "./tool-trace";
 import { TranscriptEntryView, UserBand } from "./transcript-view";
 
 let root: Root;
@@ -79,4 +80,30 @@ it("rechecks overflow on resize and text changes, and disconnects on unmount", a
 it("uses the standard muted palette for an optimistic message", async () => {
   await act(async () => root.render(<UserBand text="Sending" pending />));
   expect(container.querySelector('[data-slot="bubble"]')?.getAttribute("data-variant")).toBe("muted");
+});
+
+it("shows a delivered bot event with its sender, kind and number as a header above the body", async () => {
+  const text = "── event #418 · bug.confirmed · bot:support-triage · 14:02\nCursor pagination returns duplicates.\nSecond line.";
+  await act(async () => root.render(
+    <TranscriptLinksContext.Provider value={{ botName: (id) => ({ "support-triage": "Support Triage" })[id] }}>
+      <TranscriptEntryView entry={{ kind: "message", key: "event", role: "user", text, origin: "event" }} />
+    </TranscriptLinksContext.Provider>,
+  ));
+  const content = container.textContent!;
+  expect(content).toContain("Support Triage");
+  expect(content).toContain("bug.confirmed");
+  expect(content).toContain("#418");
+  expect(content).toContain("14:02");
+  expect(content).toContain("Cursor pagination returns duplicates.\nSecond line.");
+  expect(content).not.toContain("── event");
+  expect(container.querySelector('[data-slot="bubble"]')?.className).toContain("border-l-2");
+});
+
+it("names non-bot event sources by their family and leaves unknown headers alone", async () => {
+  const text = "── event #7 · pull_request.opened · webhook:github · Sep 3 09:15\nPR #12 opened.";
+  await act(async () => root.render(<TranscriptEntryView entry={{ kind: "message", key: "event", role: "user", text, origin: "event" }} />));
+  expect(container.textContent).toContain("github webhook");
+  expect(container.textContent).toContain("PR #12 opened.");
+  await act(async () => root.render(<TranscriptEntryView entry={{ kind: "message", key: "plain", role: "user", text: "just text", origin: "event" }} />));
+  expect(container.textContent).toBe("just text");
 });

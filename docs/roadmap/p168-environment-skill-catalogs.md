@@ -2,6 +2,15 @@
 
 Status: implemented, 2026-09-09. Separate VFS and environment catalogs use idle-boundary discovery. Within-run refresh, catalog merging, and automatic workspace materialization remain deferred.
 
+UI follow-up, 2026-09-11: the shared profile/session configuration editor exposes
+independent skill discovery switches for environments and VFS, with environment
+scope fields and optional linked VFS root overrides. Empty blocks enable
+conventional roots; explicit overrides are validated before saving.
+
+Discovery follow-up, 2026-09-11: automatic home discovery now searches only
+`.agents/skills` and `.lightspeed/skills`. Settings describe this scope without
+adding a separate home switch; project compatibility roots remain supported.
+
 ## Scope
 
 Keep the existing workspace model and VFS skill discovery. Add environment
@@ -127,7 +136,7 @@ inside a command does not change the session's discovery scope.
 
 Support project and user `.agents/skills/`, a Lightspeed-specific skill root,
 and explicit additional roots. Provide documented compatibility roots for
-common client installations, such as `.claude/skills/` and `.codex/skills/`,
+project-local client installations, such as `.claude/skills/` and `.codex/skills/`,
 without recursively scanning every dot-directory or package cache. Resolve
 project ancestry within an explicit repository/work root boundary.
 
@@ -418,17 +427,19 @@ Progress:
 
 ### Implementation notes
 
-- `features.environments.skills` independently configures the session discovery
-  working directory, project ancestry boundary, and additional roots. The
-  endpoint handshake supplies its execution-user home directory; conventional
-  `.agents`, `.lightspeed`, `.claude`, and `.codex` roots are resolved there.
+- [Working directories and sources](p170-filesystem-working-directories-and-sources.md)
+  replaces the original nested skill scope. Both environment prompts and skills
+  now take optional root overrides; their shared directory lives on the
+  environment feature. Defaults search only `.agents` and `.lightspeed` under
+  working directory and execution home, with no ancestor search. Overrides
+  replace all defaults, including home; Claude/Codex roots require explicit paths.
 - Gateway and workflow idle refreshes share one environment discovery adapter
   and the existing immutable catalog publisher. Conditional observations use a
   bounded process-local cache scoped by universe, session, environment, query,
   connection, and environment grants; cache loss simply causes a complete scan.
-  Semantic snapshots remain durable context provenance. Failed scans retain
-  only the same environment's last observation as stale; revoked access drops
-  its advertised paths. Inspection does not request power changes.
+  Semantic snapshots remain durable context provenance. Failed scans publish
+  unavailability diagnostics without retaining paths from an older scope;
+  revoked access drops advertised paths. Inspection does not request power changes.
 - Generic scans now report canonical paths, support opt-in confined symlink
   traversal, distinguish missing roots from inspection failures, and enforce
   aggregate quotas. Transfer operations keep their existing secure backend and
@@ -477,17 +488,32 @@ TypeScript/Configurator generation reproduces all 13 checked artifacts exactly;
 TypeScript checks, consumer/Configurator tests, and builds pass. The root check's
 uncommitted-generated-file limitation described above still applies.
 
-### Explicit VFS discovery follow-up
+### VFS discovery enablement and defaults
 
-VFS discovery now requires `features.vfs.skills.roots`, a nonempty list of
-absolute paths inside declared workspace links. Absent `skills` disables the
-source. There are no conventional-root defaults or CLI chat enablement.
-The workflow refresh request carries the optional VFS discovery config as a
-single value. Runtime publication is marked with its source ownership so
-revocation can remove the VFS menu without touching environment or controller
-catalogs. Discovery remains at eligible idle boundaries; revocation performs
-no scan. The homogeneous source-oriented catalog API and environment discovery
-configuration remain unchanged.
+VFS skills and prompts are independently enabled by the presence of their
+configuration blocks. Absent blocks disable sourcing. Empty blocks discover
+`.agents/skills` and `.lightspeed/skills`, or `.agents/prompts` and
+`.lightspeed/prompts`, beneath each workspace link (including snapshots).
+Explicit nonempty root lists replace defaults and must remain inside links.
+No links yields no sources. This supersedes the earlier mandatory-skill-roots
+follow-up and restores the shared empty-block capability convention.
+
+The shared editor exposes Skill discovery and Prompt loading switches with
+optional root overrides. Clearing a field restores defaults; switching off
+removes the block. Prompts load as instructions; skills publish a menu.
+Workflow publication/revocation checks use block presence, including replay.
+The optional skill roots propagate through API and workflow contracts and
+runtime projection adapters. Existing explicit-root configurations retain
+their meaning. Discovery remains at eligible idle boundaries; revocation scans
+no files and clears only the corresponding runtime-owned source.
+
+Validation of default-root enablement: 927 scoped Rust library/schema tests
+passed (one existing ignored test), including default catalog publication and
+revocation replay. TypeScript checks, consumer tests (including all 245 web
+tests), and production/demo builds passed. All 16 generated artifacts reproduce
+exactly. The root check stops at its committed-file diff guard because this
+change updates generated files; the remaining checks were run separately.
+No live or credentialed tests were run.
 
 Validation: targeted engine, tools, runtime gateway, workflow, runner, API,
 projection, profile, and CLI/TUI tests pass, including explicit-root validation,

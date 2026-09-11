@@ -70,17 +70,39 @@ the content element so it cannot hide prepends from the scroller.
 Windows may split a run or tool batch. Results without a loaded call start
 render as continued tool activity and acquire their original metadata as older
 pages arrive. Partial generation totals are not presented as whole-run usage.
-Each finished run has a horizontal separator with a centered, hoverable button
-showing last-call context, cumulative input-plus-output usage, and duration. Counts below 1,000 stay exact;
-larger counts use `k`. Its popover breaks usage into input, output, model calls, tool calls,
-and the cache-hit share. Missing provider counts remain unavailable rather than
-becoming zero. Failed and cancelled runs retain their visible status.
-The context measurement describes the last request, not the next request's
-assembled context or the model's capacity. Statistics stay in the transcript;
-the composer has no context indicator. "Show run statistics" in the session-title
-and active bot-conversation menus toggles these rows, while failures remain
-visible. The preference defaults to on and is saved per user in local storage,
-shared across sessions, bots, universes, and tabs in this browser.
+The transcript groups entries into run sections: the input band, the work
+(thinking, tool calls, interim notes, steering, context updates), the final
+reply, and the outcome. Every step is one row — activity icon, verb, target,
+detail, duration — and success carries no badge; running, waiting, failed and
+cancelled rows are the only marked ones. Row details (Arguments, Result,
+Effects) open beneath the row with a mono meta line: tool name, call id, start
+time, duration, output size. Activity families come from the API's
+`ToolCallDisplayGroup` (explore, edit, execute, mcp, agent, bot, message,
+other); bot rows use the bot mark, and Emit rows resolve peer bot ids to
+display names through the bot roster. Delivered bot events (`origin: "event"`)
+render as bands headed by sender, kind and `#N`.
+A finished run's work folds behind one strip naming the outcome and duration
+("Worked for 2m 14s", "Failed after 38s"), the tool call count and failures.
+From medium widths up the strip ends with a hoverable statistics button
+showing last-call context and cumulative input-plus-output usage; on narrow
+screens that button is the first row of the opened run instead, so the strip
+stays readable. A run that did no tool work shows the same figures on its
+outcome line. Counts below 1,000 stay exact; larger counts use `k`. Its
+popover breaks usage into input, output, model calls, tool calls, and the
+cache-hit share; duration lives on the strip, not in the popover. Missing
+provider counts remain unavailable rather than becoming zero. Failed and
+cancelled runs retain their visible status. The context measurement describes
+the last request, not the next request's assembled context or the model's
+capacity. Statistics stay in the transcript; the composer has no context
+indicator. Durations render as whole milliseconds under 100 ms, tenths of a
+second under 10 s, then seconds, minutes and hours. Two preferences live in
+the session-title and active bot-conversation menus: "Collapse completed runs"
+(default on; applies when a session or older history loads, and a strip click
+overrides it per run until the preference changes) and "Show run statistics"
+(default on; hides the statistics button while failures stay visible). Both
+are saved per user in local storage, shared across sessions, bots, universes,
+and tabs in this browser. A live run streams open with a status row at its
+foot; a folded run mounts none of its work.
 History is reconstructed chronologically and deduplicated by event/entry ID;
 historical lifecycle transitions never overwrite live controls. History errors
 retry independently of live polling, and changing sessions aborts both paths.

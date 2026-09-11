@@ -10,6 +10,8 @@ import { NavLink, useLocation, useNavigate, useParams, useSearchParams } from "r
 import { Archive, ArrowLeft, ChevronDown, ListChecks, ListFilter, LoaderCircle, Plus, ShieldCheck, SlidersHorizontal, Trash2, X } from "lucide-react";
 import {
   api,
+  botLabel,
+  type BotListResponse,
   type Environment,
   type InlineProfile,
   type ProfileDocument,
@@ -92,17 +94,19 @@ import { sessionDraftKey } from "@/lib/sessions/draft";
 import { SessionComposer, type ComposerMode } from "@/components/session/composer";
 import { Switch } from "@/components/ui/switch";
 import {
-  ActiveRunMarker,
   ApprovalCards,
   QueuedRunsBar,
+  SystemChips,
   TranscriptEntryView,
   UserBand,
   type QueuedRunItem,
 } from "@/components/session/transcript-view";
+import { RunSectionView } from "@/components/session/run-section";
+import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/tool-trace";
+import { sectionsByRun } from "@/lib/sessions/run-sections";
 import { CenteredNote, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useSessionTail } from "@/lib/sessions/tail";
 import {
-  isTerminalToolStatus,
   runInProgress,
   type ActiveRun,
   type TranscriptEntry,
@@ -1367,10 +1371,8 @@ export function SessionDetail({
     message: string;
   } | null>(null);
 
-  const { showRunStatistics } = useUserPreferences();
-  const entries = useMemo(() => tail.transcript.entries.filter((entry) =>
-    showRunStatistics || entry.kind !== "run-summary" || entry.status !== "completed",
-  ), [tail.transcript.entries, showRunStatistics]);
+  const { showRunStatistics, collapseCompletedRuns } = useUserPreferences();
+  const entries = tail.transcript.entries;
   const loadFullText = useCallback(
     async (blobRef: string) => {
       const result = await api<{ bytesBase64: string }>(
@@ -1383,9 +1385,7 @@ export function SessionDetail({
   const activeRun = tail.transcript.activeRun;
   const queuedRuns = tail.transcript.queuedRuns;
   const runRevision = tail.transcript.runRevision;
-  const activeToolGroup = entries.some(
-    (entry) => entry.kind === "tool-group" && !isTerminalToolStatus(entry.status),
-  );
+  const sections = useMemo(() => sectionsByRun(entries, activeRun), [entries, activeRun]);
 
   // The session view is authoritative for run state; fold it into the tail
   // whenever it arrives (forward moves only), and refresh it on every run
@@ -1583,6 +1583,25 @@ export function SessionDetail({
   const owningBotHref = owningBotId
     ? `/u/${slug}/bots/${encodeURIComponent(owningBotId)}/chat/${encodeURIComponent(sessionId)}`
     : null;
+  // Emit rows and event bands name peer bots; only a bot's own sessions
+  // carry that traffic, and only bot managers may list the roster.
+  const botDirectory = useQuery({
+    queryKey: ["bots", universeId],
+    queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
+    enabled: owningBotId !== null,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const botRoster = botDirectory.data?.bots;
+  const transcriptLinks = useMemo<TranscriptLinks>(() => {
+    const names = new Map((botRoster ?? []).map((bot) => [bot.botId, botLabel(bot)]));
+    const href = sessionHref ?? ((target: string) => `/u/${slug}/sessions/${target}`);
+    return {
+      botName: (botId) => names.get(botId),
+      sessionHref: href,
+      navigate: (target) => void navigate(target),
+    };
+  }, [botRoster, sessionHref, slug, navigate]);
   // Operator override: the engine happily admits direct runs on a managed
   // session (they queue like any client run), so the gate here is policy,
   // not capability. Off by default because direct input bypasses the
@@ -1848,7 +1867,7 @@ export function SessionDetail({
             </DropdownMenu>
           </div>
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
-            {activeRun && !activeToolGroup && (
+            {activeRun && (
               <span className="hidden max-w-40 shrink truncate text-xs text-muted-foreground xl:inline">
                 {activeRun.label}…
               </span>
@@ -2015,6 +2034,7 @@ export function SessionDetail({
         runRevision={runRevision}
         sessionHref={sessionHref}
       />
+      <TranscriptLinksContext.Provider value={transcriptLinks}>
       <MessageScrollerProvider key={`${universeId}/${sessionId}`} autoScroll defaultScrollPosition="end">
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport preserveScrollOnPrepend>
@@ -2031,12 +2051,21 @@ export function SessionDetail({
                 pendingInTranscript.length === 0 && (
                   <CenteredNote>No conversation yet — say something below.</CenteredNote>
                 )}
-              {entries.map((entry) => (
-                <MessageScrollerItem
-                  key={entry.key}
-                  messageId={entry.key}
-                >
-                  <TranscriptEntryView entry={entry} loadFullText={loadFullText} showRunStatistics={showRunStatistics} />
+              {sections.map((section) => (
+                <MessageScrollerItem key={section.key} messageId={section.key}>
+                  {section.kind === "run" ? (
+                    <RunSectionView
+                      section={section}
+                      activeRun={activeRun}
+                      loadFullText={loadFullText}
+                      showRunStatistics={showRunStatistics}
+                      collapseCompletedRuns={collapseCompletedRuns}
+                    />
+                  ) : section.kind === "system" ? (
+                    <SystemChips entries={section.entries} />
+                  ) : (
+                    <TranscriptEntryView entry={section.entry} loadFullText={loadFullText} />
+                  )}
                 </MessageScrollerItem>
               ))}
               {pendingInTranscript.map((message) => (
@@ -2067,11 +2096,6 @@ export function SessionDetail({
                   />
                 </MessageScrollerItem>
               )}
-              {activeRun && !activeToolGroup && (
-                <MessageScrollerItem messageId="active-run">
-                  <ActiveRunMarker run={activeRun} />
-                </MessageScrollerItem>
-              )}
               {tail.error && entries.length > 0 && (
                 <p className="text-center text-xs text-destructive">
                   Connection lost — retrying. ({tail.error})
@@ -2090,6 +2114,7 @@ export function SessionDetail({
           activeRun={activeRun}
         />
       </MessageScrollerProvider>
+      </TranscriptLinksContext.Provider>
       {!closed && (
         <QueuedRunsBar items={queuedItems} onCancel={(runId) => void cancelQueued(runId)} />
       )}
@@ -2290,33 +2315,20 @@ export function SessionLineage({
       {origin && (
         <span className="flex min-w-0 flex-wrap items-center gap-1">
           <span>Parent:</span>
-          <Tooltip>
-            <TooltipTrigger
-              render={<NavLink to={href(origin.parentSessionId)} className={tagClass} />}
-            >
-              <span className={cn("truncate", !parentName && "font-mono font-normal")}>
-                {parentLabel}
-              </span>
-              {parent.data?.status && (
-                <span
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    parent.data.status === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
-                  )}
-                  aria-hidden="true"
-                />
-              )}
-            </TooltipTrigger>
-            <TooltipContent className="max-w-sm items-start">
-              <LineageTooltipDetails
-                id={origin.parentSessionId}
-                status={parent.data
-                  ? (parent.data.status === "closed" ? "closed" : "open")
-                  : undefined}
-                origin={parent.data?.origin ?? null}
+          <NavLink to={href(origin.parentSessionId)} className={tagClass}>
+            <span className={cn("truncate", !parentName && "font-mono font-normal")}>
+              {parentLabel}
+            </span>
+            {parent.data?.status && (
+              <span
+                className={cn(
+                  "size-1.5 shrink-0 rounded-full",
+                  parent.data.status === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
+                )}
+                aria-hidden="true"
               />
-            </TooltipContent>
-          </Tooltip>
+            )}
+          </NavLink>
         </span>
       )}
       {list.length > 0 && (
@@ -2393,46 +2405,18 @@ function SubagentLineageLink({
 }) {
   const childName = child.displayName?.trim();
   return (
-    <Tooltip>
-      <TooltipTrigger render={<NavLink to={to} className={className} />}>
-        <span className={cn("min-w-0 flex-1 truncate", !childName && "font-mono font-normal")}>
-          {childName || compactSessionId(child.id)}
-        </span>
-        <span
-          className={cn(
-            "size-1.5 shrink-0 rounded-full",
-            child.lifecycleStatus === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
-          )}
-          aria-hidden="true"
-        />
-      </TooltipTrigger>
-      <TooltipContent className="max-w-sm items-start">
-        <LineageTooltipDetails
-          id={child.id}
-          status={child.lifecycleStatus === "closed" ? "closed" : "open"}
-          origin={child.origin ?? null}
-        />
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-function LineageTooltipDetails({
-  id,
-  status,
-  origin,
-}: {
-  id: string;
-  status?: "open" | "closed";
-  origin: SessionOrigin | null;
-}) {
-  return (
-    <span className="flex min-w-0 flex-col gap-0.5">
-      <span>Session ID: <span className="wrap-anywhere font-mono">{id}</span></span>
-      <span>Status: {status === "closed" ? "Closed" : status === "open" ? "Open" : "…"}</span>
-      <span>Profile: <span className="font-mono">{origin?.agent.profileId ?? "—"}</span></span>
-      <span>Depth: {origin?.depth ?? 0}</span>
-    </span>
+    <NavLink to={to} className={className}>
+      <span className={cn("min-w-0 flex-1 truncate", !childName && "font-mono font-normal")}>
+        {childName || compactSessionId(child.id)}
+      </span>
+      <span
+        className={cn(
+          "size-1.5 shrink-0 rounded-full",
+          child.lifecycleStatus === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
+        )}
+        aria-hidden="true"
+      />
+    </NavLink>
   );
 }
 

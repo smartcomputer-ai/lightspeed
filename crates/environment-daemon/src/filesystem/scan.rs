@@ -39,6 +39,13 @@ pub fn scan(root: &Path, params: ScanParams) -> Result<ScanResponse> {
         .iter()
         .map(|p| glob::Pattern::new(p).map_err(|e| invalid(&e.to_string())))
         .collect::<Result<Vec<_>>>()?;
+    // Filename-only patterns select direct children, so unrelated subtrees do
+    // not consume scan budgets or cause failures for a nonrecursive query.
+    let direct_only = !params.include_patterns.is_empty()
+        && params
+            .include_patterns
+            .iter()
+            .all(|pattern| !pattern.contains('/') && !pattern.contains("**"));
     let canonical_root = root.canonicalize().map_err(io)?;
     let anchor = Directory::anchor(&canonical_root).map_err(io)?;
     let mut response = ScanResponse {
@@ -120,6 +127,9 @@ pub fn scan(root: &Path, params: ScanParams) -> Result<ScanResponse> {
                 let matches = patterns.is_empty() || patterns.iter().any(|p| p.matches(&path));
                 let mut data = None;
                 let content = if observed.is_dir() {
+                    if direct_only && !path.is_empty() {
+                        continue;
+                    }
                     if !ancestors.insert(canonical.clone()) {
                         return Err(error(Code::Conflict, "scan symlink loop"));
                     }

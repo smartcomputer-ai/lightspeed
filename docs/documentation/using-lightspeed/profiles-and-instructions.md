@@ -77,11 +77,20 @@ enable materialize into the selected environment; **Edit files** additionally
 enable capture into writable workspace links. Prompt or skill sourcing without
 file tools does not enable transfers. These rules also apply in session settings.
 
-VFS skill discovery is a separate opt-in: set **VFS skill roots** to nonempty
-absolute paths inside workspace links (`features.vfs.skills.roots`). Leaving
-that field empty disables it. File tools, links, and prompt sourcing do not
-enable discovery. Environment skill discovery is configured independently
-under `features.environments.skills`.
+VFS **Skill discovery** and **Prompt loading** are separate opt-in switches.
+Each enables its configuration block (`features.vfs.skills` or
+`features.vfs.prompts`); an empty block uses conventional directories beneath
+workspace links. Optional root overrides replace the defaults. Clearing an
+override restores defaults; switching off disables that source. File tools and
+links alone enable neither source. Environment skill discovery is configured
+independently under `features.environments.skills`; environment prompts use
+`features.environments.prompts` with the same enablement and override rules.
+
+Each domain has a **Working directory** setting: `features.vfs.workingDirectory`
+(default `/`) and `features.environments.workingDirectory` (default supplied by
+the selected machine). Configure `/workspace` explicitly if that is the desired
+VFS base. Environment file tools, commands, jobs, and discovery share the machine
+base; a per-command `cwd` override does not change the session setting.
 
 Apply the same reasoning to delegated work. A parent that can call a powerful
 child profile can ask that child to use its capabilities. The child's setup

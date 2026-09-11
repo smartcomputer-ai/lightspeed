@@ -134,7 +134,7 @@ pub(super) async fn prepare_workflow_tool(
         start.invocation.tool_batch_id.as_u64(),
         start.invocation.tool_call_id.as_str()
     );
-    let jobs = match tool_kind {
+    let mut jobs = match tool_kind {
         WorkflowJobToolKind::Submit => {
             let args: tools::environment::jobs::JobSubmitArgs =
                 serde_json::from_slice(&arguments).map_err(activity_error)?;
@@ -162,6 +162,19 @@ pub(super) async fn prepare_workflow_tool(
             ]
         }
     };
+    if let Some(cwd) = &execution_context.working_directory {
+        for job in &mut jobs {
+            let path = tools::environment::sources::absolute(
+                std::path::Path::new(cwd),
+                job.cwd.as_ref().map(|path| path.as_str()).unwrap_or("."),
+            )
+            .map_err(|error| activity_error(anyhow::anyhow!(error)))?;
+            job.cwd = Some(
+                environment_protocol::shared::EnvironmentPath::new(path.to_string_lossy())
+                    .map_err(activity_error)?,
+            );
+        }
+    }
     let params = environment_protocol::data::jobs::StartJobsParams {
         namespace: environment_id.as_str().to_owned(),
         request_id,

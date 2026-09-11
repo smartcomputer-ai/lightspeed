@@ -74,7 +74,7 @@ export function ProfilesPage({ admin }: { admin: boolean }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="flex min-h-0 min-w-0 flex-1">
       <aside
         className={cn(
           "w-full shrink-0 flex-col border-r md:flex md:w-80",
@@ -327,33 +327,33 @@ function ProfileEditor({
 
   return (
     <>
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
-        <NavLink to={`/u/${slug}/profiles`} className="md:hidden">
+      <header className="flex h-12 min-w-0 shrink-0 items-center gap-1.5 border-b px-2 md:gap-3 md:px-4">
+        <NavLink to={`/u/${slug}/profiles`} className="flex size-8 shrink-0 items-center justify-center md:hidden" aria-label="Back to profiles">
           <ChevronRight className="size-4 rotate-180" />
         </NavLink>
-        <h1 className="truncate text-sm font-semibold">
+        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
           {(draft.displayName as string) || profileId}
         </h1>
-        <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+        <code className="hidden max-w-48 truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground md:block">
           {profileId}
         </code>
-        <span className="shrink-0 text-xs text-muted-foreground">
+        <span className="hidden shrink-0 text-xs text-muted-foreground md:inline">
           r{(draft.revision as number) ?? "?"}
         </span>
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-1 md:gap-2">
           <Tabs value={tab} onValueChange={(v) => switchTab(v as "form" | "json")}>
-            <TabsList>
-              <TabsTrigger value="form">Form</TabsTrigger>
-              <TabsTrigger value="json">JSON</TabsTrigger>
+            <TabsList className="group-data-horizontal/tabs:h-8 md:group-data-horizontal/tabs:h-9">
+              <TabsTrigger value="form" className="px-1.5 text-xs md:px-2 md:text-sm">Form</TabsTrigger>
+              <TabsTrigger value="json" className="px-1.5 text-xs md:px-2 md:text-sm">JSON</TabsTrigger>
             </TabsList>
           </Tabs>
-          <Button size="sm" disabled={!dirty || save.isPending} onClick={submit}>
+          <Button size="sm" className="px-2 text-xs md:px-2.5 md:text-sm" disabled={!dirty || save.isPending} onClick={submit}>
             {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
           </Button>
           <AlertDialog>
             <AlertDialogTrigger
               render={
-                <Button variant="ghost" size="icon-sm" className="text-destructive" />
+                <Button variant="ghost" size="icon-sm" className="text-destructive" aria-label="Delete profile" />
               }
             >
               <Trash2 />

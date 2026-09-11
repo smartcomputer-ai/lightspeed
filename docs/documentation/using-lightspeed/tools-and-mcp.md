@@ -46,7 +46,9 @@ on live external access. Anthropic uses its native search and fetch tools,
 while the other API kinds use Lightspeed's public-URL fetch for page content.
 Do not treat a search result as proof that a page was fetched live.
 
-Optional allowed or blocked domains restrict search results. Anthropic accepts
+Optional allowed or blocked domains restrict search results. These fields are
+hidden under **Customize domains** by default; configured filters remain
+summarized while collapsed. Anthropic accepts
 one of those lists at a time. Search filters do not restrict **Fetch pages**
 or MCP tools, which have separate access paths.
 

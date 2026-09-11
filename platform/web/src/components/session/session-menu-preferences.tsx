@@ -11,6 +11,13 @@ export function SessionMenuPreferences() {
       <DropdownMenuSeparator />
       <DropdownMenuGroup>
         <DropdownMenuCheckboxItem
+          checked={preferences.collapseCompletedRuns}
+          onCheckedChange={preferences.setCollapseCompletedRuns}
+          closeOnClick={false}
+        >
+          Collapse completed runs
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
           checked={preferences.showRunStatistics}
           onCheckedChange={preferences.setShowRunStatistics}
           closeOnClick={false}

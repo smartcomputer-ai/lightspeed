@@ -36,6 +36,8 @@ enum ProfilesCommand {
     Read { profile_id: String },
     /// Import a profile file, provisioning local resources and upserting the registry record.
     Import {
+        /// Profile JSON file. VFS/environments accept workingDirectory and optional
+        /// prompts/skills blocks: {} uses conventional roots; roots replaces defaults.
         json: String,
         /// Skip live resource validation after local provisioning.
         #[arg(long = "no-check")]
@@ -1187,6 +1189,7 @@ mod tests {
                 context: None,
                 features: Some(api::FeaturesConfig {
                     vfs: Some(api::VfsFeature {
+                        working_directory: None,
                         version: api::CURRENT_FEATURE_VERSION,
                         workspace_links,
                         tools: None,

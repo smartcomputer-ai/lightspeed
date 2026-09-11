@@ -537,6 +537,7 @@ mod tests {
 
     fn request_with(calls: Vec<ToolInvocationRequest>) -> ToolInvocationBatchRequest {
         ToolInvocationBatchRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-a"),
             run_id: engine::RunId::new(1),
             turn_id: engine::TurnId::new(1),

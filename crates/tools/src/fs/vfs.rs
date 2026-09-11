@@ -1706,6 +1706,7 @@ mod tests {
         let result = CoreAgentTools::invoke_batch(
             &runtime,
             ToolInvocationBatchRequest {
+                vfs_working_directory: None,
                 session_id: SessionId::new("session_1"),
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),

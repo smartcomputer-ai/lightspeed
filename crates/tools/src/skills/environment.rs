@@ -1,18 +1,12 @@
 //! Environment discovery consumes generic endpoint observations independently of VFS.
 use super::{SkillId, parse_skill_frontmatter};
 use engine::{
-    BlobRef, ContextEntryInput, CoreAgentCommand, EnvironmentSkillsFeature,
+    BlobRef, ContextEntryInput, CoreAgentCommand, EnvironmentSkillsConfig,
     storage::{BlobStore, BlobStoreError},
 };
-use environment_protocol::{
-    data::inventory::{InventoryLimits, ScanParams, ScanResponse},
-    shared::EnvironmentPath,
-};
+use environment_protocol::data::inventory::{ScanParams, ScanResponse};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeSet,
-    path::{Component, Path, PathBuf},
-};
+use std::{collections::BTreeSet, path::Path};
 
 pub const ENVIRONMENT_SKILL_CATALOG_CONTEXT_KEY: &str = "runtime.catalog.skills.environment";
 
@@ -55,105 +49,17 @@ impl EnvironmentSkillCatalog {
     }
 }
 
-fn absolute(base: &Path, value: &str) -> Result<PathBuf, String> {
-    let path = if Path::new(value).is_absolute() {
-        PathBuf::from(value)
-    } else {
-        base.join(value)
-    };
-    let mut normalized = PathBuf::new();
-    for part in path.components() {
-        match part {
-            Component::ParentDir => {
-                if !normalized.pop() {
-                    return Err("path escapes root".into());
-                }
-            }
-            Component::CurDir => {}
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    if !normalized.is_absolute() {
-        return Err("discovery working directory must be absolute".into());
-    }
-    Ok(normalized)
-}
-
 pub fn environment_skill_scan_query(
-    config: &EnvironmentSkillsFeature,
-    default_cwd: Option<&str>,
+    config: &EnvironmentSkillsConfig,
+    cwd: Option<&str>,
     home: Option<&str>,
 ) -> Result<ScanParams, String> {
-    let cwd = config
-        .working_directory
-        .as_deref()
-        .or(default_cwd)
-        .ok_or("endpoint has no default working directory")?;
-    if !Path::new(cwd).is_absolute() {
-        return Err("working directory must be absolute".into());
-    }
-    let cwd = absolute(Path::new("/"), cwd)?;
-    let boundary = match &config.project_root {
-        Some(root) if Path::new(root).is_absolute() => absolute(Path::new("/"), root)?,
-        Some(_) => return Err("project root must be absolute".into()),
-        None => cwd.clone(),
-    };
-    if !cwd.starts_with(&boundary) {
-        return Err("working directory is outside project root".into());
-    }
-    let mut roots = BTreeSet::new();
-    let mut project = cwd.as_path();
-    loop {
-        for suffix in [
-            ".agents/skills",
-            ".lightspeed/skills",
-            ".claude/skills",
-            ".codex/skills",
-        ] {
-            roots.insert(project.join(suffix));
-        }
-        if project == boundary {
-            break;
-        }
-        project = project.parent().ok_or("invalid project ancestry")?;
-    }
-    let home = home.ok_or("endpoint does not advertise execution user home directory")?;
-    if !Path::new(home).is_absolute() {
-        return Err("endpoint home directory must be absolute".into());
-    }
-    for suffix in [
-        ".agents/skills",
-        ".lightspeed/skills",
-        ".claude/skills",
-        ".codex/skills",
-    ] {
-        roots.insert(absolute(Path::new(home), suffix)?);
-    }
-    for root in &config.additional_roots {
-        roots.insert(absolute(&cwd, root)?);
-    }
-    if roots.len() > 32 {
-        return Err("discovery exceeds 32 roots; narrow the project boundary".into());
-    }
-    Ok(ScanParams {
-        roots: roots
-            .into_iter()
-            .map(|p| EnvironmentPath::new(p.to_string_lossy()).map_err(|e| e.to_string()))
-            .collect::<Result<_, _>>()?,
-        include_patterns: vec!["SKILL.md".into(), "**/SKILL.md".into()],
-        read_content: true,
-        follow_symlinks: true,
-        digest_algorithm: None,
-        if_none_match: None,
-        limits: InventoryLimits {
-            max_entries: 4096,
-            max_depth: 8,
-            max_file_bytes: 64 * 1024,
-            max_total_bytes: 2 * 1024 * 1024,
-            max_manifest_bytes: 4 * 1024 * 1024,
-            max_duration_ms: 2000,
-        },
-    })
+    crate::environment::sources::scan_query(
+        config.roots.as_deref(),
+        cwd.ok_or("endpoint has no default working directory")?,
+        home,
+        "skills",
+    )
 }
 
 pub fn environment_skill_catalog(
@@ -257,28 +163,43 @@ mod tests {
         skills::*,
     };
     use engine::storage::InMemoryBlobStore;
-    use environment_protocol::data::inventory::{ScanContent, ScanEntry};
+    use environment_protocol::{
+        data::inventory::{ScanContent, ScanEntry},
+        shared::EnvironmentPath,
+    };
 
     #[test]
-    fn scope_uses_endpoint_home_and_bounded_session_ancestry() {
-        let config = EnvironmentSkillsFeature {
-            working_directory: Some("/repo/src/sub".into()),
-            project_root: Some("/repo".into()),
-            additional_roots: vec!["../installed".into()],
+    fn scope_defaults_and_overrides_are_independent_of_home() {
+        let config = EnvironmentSkillsConfig::default();
+        let query = environment_skill_scan_query(&config, Some("/project"), Some("/user")).unwrap();
+        assert_eq!(
+            query.roots.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+            vec![
+                "/project/.agents/skills",
+                "/project/.lightspeed/skills",
+                "/user/.agents/skills",
+                "/user/.lightspeed/skills"
+            ]
+        );
+        let config = EnvironmentSkillsConfig {
+            roots: Some(vec!["./custom".into(), "/user/.codex/skills".into()]),
         };
-        let query = environment_skill_scan_query(&config, Some("/ignored"), Some("/user")).unwrap();
-        let roots: Vec<_> = query.roots.iter().map(|p| p.as_str()).collect();
-        assert!(roots.contains(&"/repo/.agents/skills"));
-        assert!(roots.contains(&"/repo/src/sub/.agents/skills"));
-        assert!(roots.contains(&"/repo/src/installed"));
-        assert!(roots.contains(&"/user/.codex/skills"));
-        assert!(!roots.contains(&"/.agents/skills"));
-        assert!(environment_skill_scan_query(&config, None, None).is_err());
-        let config = EnvironmentSkillsFeature {
-            project_root: Some("/another".into()),
-            ..config
-        };
-        assert!(environment_skill_scan_query(&config, None, Some("/user")).is_err());
+        let query = environment_skill_scan_query(&config, Some("/project"), None).unwrap();
+        assert_eq!(
+            query.roots.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+            vec!["/project/custom", "/user/.codex/skills"]
+        );
+        assert_eq!(
+            environment_skill_scan_query(
+                &EnvironmentSkillsConfig::default(),
+                Some("/user"),
+                Some("/user")
+            )
+            .unwrap()
+            .roots
+            .len(),
+            2
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

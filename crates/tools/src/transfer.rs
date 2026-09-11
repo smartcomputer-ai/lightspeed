@@ -432,13 +432,29 @@ struct CaptureArgs {
     on_existing: TransferOnExisting,
 }
 
+fn resolve_environment_path(
+    ctx: &crate::environment::EnvironmentToolContext,
+    path: &EnvironmentPath,
+) -> ToolResult<EnvironmentPath> {
+    let Some(cwd) = &ctx.process_cwd else {
+        return Ok(path.clone());
+    };
+    let path =
+        crate::environment::sources::absolute(std::path::Path::new(cwd.as_str()), path.as_str())
+            .map_err(invalid)?;
+    EnvironmentPath::new(path.to_string_lossy()).map_err(|e| invalid(e.to_string()))
+}
+
 pub async fn invoke_materialize(
     vfs: &crate::fs::FsToolContext,
     ctx: &crate::environment::EnvironmentToolContext,
     operation_id: Option<&str>,
     arguments: serde_json::Value,
 ) -> ToolResult<crate::runtime::ToolInvocationOutput> {
-    let args: MaterializeArgs = crate::runtime::decode_args(arguments)?;
+    let mut args: MaterializeArgs = crate::runtime::decode_args(arguments)?;
+    args.source_vfs_path = crate::fs::tools::resolve_path(vfs, &args.source_vfs_path)?;
+    args.destination_environment_path =
+        resolve_environment_path(ctx, &args.destination_environment_path)?;
     let remote = ctx
         .transfer
         .as_deref()
@@ -476,7 +492,9 @@ pub async fn invoke_capture(
     operation_id: Option<&str>,
     arguments: serde_json::Value,
 ) -> ToolResult<crate::runtime::ToolInvocationOutput> {
-    let args: CaptureArgs = crate::runtime::decode_args(arguments)?;
+    let mut args: CaptureArgs = crate::runtime::decode_args(arguments)?;
+    args.destination_vfs_path = crate::fs::tools::resolve_path(vfs, &args.destination_vfs_path)?;
+    args.source_environment_path = resolve_environment_path(ctx, &args.source_environment_path)?;
     let remote = ctx
         .transfer
         .as_deref()

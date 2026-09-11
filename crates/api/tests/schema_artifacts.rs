@@ -181,18 +181,19 @@ fn compaction_schema_exposes_editor_field_names() {
 }
 
 #[test]
-fn vfs_skills_require_explicit_roots_in_wire_and_schema() {
+fn vfs_skills_support_default_roots_and_nonempty_overrides() {
     let bundle = api::export_schemas().schema_bundle;
     let schema = json!({
         "$ref": "#/definitions/VfsSkillsConfig",
         "definitions": bundle["definitions"].clone(),
     });
     let validator = jsonschema::validator_for(&schema).unwrap();
-    for invalid in [json!({}), json!({"roots": null}), json!({"roots": []})] {
-        assert!(!validator.is_valid(&invalid), "{invalid}");
-    }
-    for invalid in [json!({}), json!({"roots": null})] {
-        assert!(serde_json::from_value::<api::VfsSkillsConfig>(invalid).is_err());
+    assert!(!validator.is_valid(&json!({"roots": []})));
+    for enabled in [json!({}), json!({"roots": null})] {
+        assert!(validator.is_valid(&enabled));
+        let config: api::VfsSkillsConfig = serde_json::from_value(enabled).unwrap();
+        assert!(config.roots.is_none());
+        assert_eq!(serde_json::to_value(config).unwrap(), json!({}));
     }
     let enabled = json!({"roots": ["/workspace/team-skills"]});
     assert!(validator.is_valid(&enabled));
@@ -200,4 +201,45 @@ fn vfs_skills_require_explicit_roots_in_wire_and_schema() {
     assert_eq!(serde_json::to_value(config).unwrap(), enabled);
     let feature: api::VfsFeature = serde_json::from_value(json!({"tools": "edit"})).unwrap();
     assert!(feature.skills.is_none());
+}
+
+#[test]
+fn environment_sources_use_domain_directory_and_reject_old_scope_fields() {
+    let bundle = api::export_schemas().schema_bundle;
+    let config =
+        json!({"workingDirectory":"/project", "skills":{}, "prompts":{"roots":["./prompts"]}});
+    assert_validates(&bundle, "EnvironmentsFeature", &config);
+    let feature: api::EnvironmentsFeature = serde_json::from_value(config).unwrap();
+    assert_eq!(feature.working_directory.as_deref(), Some("/project"));
+    assert!(feature.skills.unwrap().roots.is_none());
+    assert_eq!(feature.prompts.unwrap().roots.unwrap(), vec!["./prompts"]);
+    for name in ["EnvironmentPromptsConfig", "EnvironmentSkillsConfig"] {
+        assert_validates(&bundle, name, &json!({}));
+        assert_validates(&bundle, name, &json!({"roots":["./custom"]}));
+    }
+    for old in [
+        json!({"workingDirectory":"/project"}),
+        json!({"projectRoot":"/project"}),
+        json!({"additionalRoots":["/team"]}),
+    ] {
+        assert!(serde_json::from_value::<api::EnvironmentPromptsConfig>(old.clone()).is_err());
+        assert!(serde_json::from_value::<api::EnvironmentSkillsConfig>(old).is_err());
+    }
+}
+
+#[test]
+fn environment_tool_grants_are_explicit_and_independent() {
+    let bundle = api::export_schemas().schema_bundle;
+    let empty: api::EnvironmentsFeature = serde_json::from_value(json!({})).unwrap();
+    assert!(empty.tools.is_none());
+    assert!(!empty.commands);
+    for surface in ["readOnly", "edit"] {
+        let value = json!({"tools":surface,"commands":true,"jobs":false,"prompts":{},"skills":{}});
+        assert_validates(&bundle, "EnvironmentsFeature", &value);
+        let config: api::EnvironmentsFeature = serde_json::from_value(value).unwrap();
+        assert!(config.commands);
+        assert!(!config.jobs);
+        assert!(config.prompts.is_some());
+        assert!(config.skills.is_some());
+    }
 }

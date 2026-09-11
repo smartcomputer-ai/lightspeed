@@ -232,7 +232,7 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
               <Button
                 variant="outline"
                 size="sm"
-                render={<Link to={`/u/${slug}/bots`} />}
+                nativeButton={false} render={<Link to={`/u/${slug}/bots`} />}
               >
                 Configure bots
               </Button>

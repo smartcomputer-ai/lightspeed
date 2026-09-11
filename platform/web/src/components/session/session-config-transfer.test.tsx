@@ -18,8 +18,8 @@ describe("profile and session transfer availability", () => {
 
   it.each([
     ["edit", false, "Enable Environments to also transfer files"],
-    ["readOnly", true, "Includes materialize to the selected environment."],
-    ["edit", true, "capture into writable workspace links"],
+    ["readOnly", true, "Materialize also requires Edit files on the environment."],
+    ["edit", true, "capture requires environment read access and a writable workspace link"],
     [undefined, true, "Prompt and skill sourcing alone does not enable transfers"],
   ] as const)("explains tools=%s and environments=%s", async (tools, environments, expected) => {
     document.body.append(container);

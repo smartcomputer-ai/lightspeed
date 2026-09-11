@@ -157,25 +157,16 @@ pub fn conventional_vfs_prompt_root_specs(
     let mut specs = Vec::new();
     let mut seen = BTreeSet::new();
     for link in links {
-        if matches!(
-            link.target,
-            ResolvedWorkspaceLinkTarget::AvailableWorkspace { .. }
-                | ResolvedWorkspaceLinkTarget::Unavailable {
-                    declared_target: engine::WorkspaceLinkTarget::Workspace { .. },
-                    ..
-                }
-        ) {
-            push_spec(
-                &mut specs,
-                &mut seen,
-                workspace_prompt_root(&link.path, ".lightspeed/prompts"),
-            );
-            push_spec(
-                &mut specs,
-                &mut seen,
-                workspace_prompt_root(&link.path, ".agents/prompts"),
-            );
-        }
+        push_spec(
+            &mut specs,
+            &mut seen,
+            workspace_prompt_root(&link.path, ".lightspeed/prompts"),
+        );
+        push_spec(
+            &mut specs,
+            &mut seen,
+            workspace_prompt_root(&link.path, ".agents/prompts"),
+        );
     }
     specs
 }
@@ -402,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn conventional_prompt_roots_are_added_for_workspace_links_only() {
+    fn conventional_prompt_roots_cover_workspace_and_snapshot_links() {
         let roots = conventional_vfs_prompt_root_specs(&[
             resolved_link(
                 "/workspace",
@@ -427,7 +418,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "/workspace/.lightspeed/prompts",
-                "/workspace/.agents/prompts"
+                "/workspace/.agents/prompts",
+                "/skills/system/.lightspeed/prompts",
+                "/skills/system/.agents/prompts"
             ]
         );
     }

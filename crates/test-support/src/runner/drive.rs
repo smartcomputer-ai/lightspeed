@@ -385,11 +385,9 @@ impl SessionRunner {
             return Ok(clear_catalog_command(current, SKILL_CATALOG_CONTEXT_KEY));
         };
         let links = self.resolve_workspace_links(state).await?;
-        let specs =
-            configured_vfs_skill_root_specs(&links, &skills_config.roots).map_err(|error| {
-                RunnerError::InvalidRequest {
-                    message: format!("configure VFS skill roots: {error}"),
-                }
+        let specs = configured_vfs_skill_root_specs(&links, skills_config.roots.as_deref())
+            .map_err(|error| RunnerError::InvalidRequest {
+                message: format!("configure VFS skill roots: {error}"),
             })?;
         if specs.is_empty() {
             return Ok(clear_catalog_command(current, SKILL_CATALOG_CONTEXT_KEY));
@@ -1205,7 +1203,7 @@ mod tests {
         config.features.vfs = Some(engine::VfsFeature {
             prompts: prompts.then_some(engine::VfsPromptsConfig::default()),
             skills: skills.then_some(engine::VfsSkillsConfig {
-                roots: vec!["/skills/system".into()],
+                roots: Some(vec!["/skills/system".into()]),
             }),
             ..engine::VfsFeature::default()
         });
@@ -1594,7 +1592,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn request_run_refreshes_configured_vfs_skill_catalog_before_planning() {
+    async fn request_run_refreshes_default_vfs_skill_catalog_before_planning() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let blobs = Arc::new(InMemoryBlobStore::new());
         let vfs = Arc::new(TestVfsCatalog::default());
@@ -1614,7 +1612,7 @@ mod tests {
             .expect("create session");
         let snapshot = create_inline_snapshot(blobs.as_ref(), None, CreateInlineSnapshotRequest::new(vec![
                 InlineFile::new(
-                    "deploy-review/SKILL.md",
+                    ".agents/skills/deploy-review/SKILL.md",
                     b"---\nname: deploy-review\ndescription: Use when reviewing deploys.\n---\n\nBody\n"
                         .to_vec(),
                 )
@@ -1635,7 +1633,11 @@ mod tests {
                 session_id: session_id.clone(),
                 observed_at_ms: 10,
                 command: CoreAgentCommand::OpenSession {
-                    config: vfs_config_with_links(false, true, vec![link]),
+                    config: {
+                        let mut config = vfs_config_with_links(false, true, vec![link]);
+                        config.features.vfs.as_mut().unwrap().skills = Some(Default::default());
+                        config
+                    },
                 },
                 max_steps: None,
             })
@@ -1675,7 +1677,7 @@ mod tests {
                 ..
             } if source_snapshot_ref == &snapshot.snapshot_ref
                 && source_link_path.as_str() == "/skills/system"
-                && skill_doc_path.as_str() == "/skills/system/deploy-review/SKILL.md"
+                && skill_doc_path.as_str() == "/skills/system/.agents/skills/deploy-review/SKILL.md"
         ));
         assert!(outcome.emitted_entries.iter().any(|entry| {
             matches!(
@@ -1717,7 +1719,7 @@ mod tests {
                 )
                 .unwrap(),
                 InlineFile::new(
-                    ".lightspeed/prompts/instructions.d/010-style.md",
+                    ".lightspeed/prompts/010-style.md",
                     b"Prefer concrete file references.\n".to_vec(),
                 )
                 .unwrap(),
@@ -1788,7 +1790,7 @@ mod tests {
         assert_eq!(
             first_report_paths,
             vec![
-                "/workspace/.lightspeed/prompts/instructions.d/010-style.md",
+                "/workspace/.lightspeed/prompts/010-style.md",
                 "/workspace/.lightspeed/prompts/instructions.md",
             ]
         );
@@ -1821,7 +1823,7 @@ mod tests {
             None,
             CreateInlineSnapshotRequest::new(vec![
                 InlineFile::new(
-                    ".lightspeed/prompts/instructions.d/020-focus.md",
+                    ".lightspeed/prompts/020-focus.md",
                     b"Mention tradeoffs explicitly.\n".to_vec(),
                 )
                 .unwrap(),

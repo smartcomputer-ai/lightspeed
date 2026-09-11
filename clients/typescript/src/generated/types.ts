@@ -125,10 +125,15 @@ export type AgentNotification =
 export type ToolItemStatus =
   "requested" | "running" | "succeeded" | "failed" | "cancelled" | "unavailable";
 /**
+ * Coarse activity family of a tool call, chosen by the projection from the
+ * tool name. Clients key icons and colours on it; the verb and target carry
+ * the specifics. Unknown tools land in `Other`.
+ *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolCallDisplayGroup".
  */
-export type ToolCallDisplayGroup = "explore" | "edit" | "execute" | "other";
+export type ToolCallDisplayGroup =
+  "other" | "explore" | "edit" | "execute" | "mcp" | "agent" | "bot" | "message";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextEntryKindView".
@@ -264,6 +269,13 @@ export type CompactionPolicy =
       mode: "providerStandalone";
       targetTokens?: number | null;
     };
+/**
+ * Agent-facing environment filesystem tools; independent of execution grants.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentToolSurface".
+ */
+export type EnvironmentToolSurface = "readOnly" | "edit";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProfileId".
@@ -2047,20 +2059,28 @@ export interface FeaturesConfig {
   web?: WebFeature | null;
 }
 /**
- * Grants active session environments and their process tool surface.
- * Model-driven selection and durable jobs are independent, default-off
- * sub-grants.
+ * Grants active session environments. Filesystem tools, commands, selection,
+ * durable jobs, prompts, and skills are independent, default-off sub-grants.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EnvironmentsFeature".
  */
 export interface EnvironmentsFeature {
   /**
+   * Grants command execution and process continuation. Commands may modify
+   * files even when filesystem tools are read-only or disabled.
+   */
+  commands?: boolean;
+  /**
    * Grants the advanced durable-job tool surface. The workflow binding is
    * installed for the session when granted; invocations still require an
    * active, ready environment with matching job capabilities.
    */
   jobs?: boolean;
+  /**
+   * Independent environment prompt loading; absent disables sourced instructions.
+   */
+  prompts?: EnvironmentPromptsConfig | null;
   /**
    * Absent means every registered provider is allowed.
    */
@@ -2082,28 +2102,51 @@ export interface EnvironmentsFeature {
   /**
    * Independent environment skill discovery. Absent disables discovery.
    */
-  skills?: EnvironmentSkillsFeature | null;
+  skills?: EnvironmentSkillsConfig | null;
+  /**
+   * Filesystem tool surface. Absent installs no filesystem tools; sources
+   * remain independent. Read-only does not restrict commands or durable jobs.
+   */
+  tools?: EnvironmentToolSurface | null;
   version?: number;
-}
-/**
- * Discovery scope resolved on the selected machine, never on the worker.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentSkillsFeature".
- */
-export interface EnvironmentSkillsFeature {
   /**
-   * Additional absolute or working-directory-relative discovery roots.
-   */
-  additionalRoots?: string[];
-  /**
-   * Absolute ancestor boundary. Absent scans only the working directory.
-   */
-  projectRoot?: string | null;
-  /**
-   * Absolute session working directory; absent uses the endpoint default.
+   * Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
    */
   workingDirectory?: string | null;
+}
+/**
+ * Prompt loading scope resolved on the selected machine, never on the worker.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentPromptsConfig".
+ */
+export interface EnvironmentPromptsConfig {
+  /**
+   * Optional source directories, absolute or relative to the environment
+   * working directory. Explicit nonempty lists replace all defaults,
+   * including home roots. Defaults are .agents/prompts and
+   * .lightspeed/prompts under working directory and execution home.
+   *
+   * @minItems 1
+   */
+  roots?: [string, ...string[]] | null;
+}
+/**
+ * Skill discovery scope resolved on the selected machine, never on the worker.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentSkillsConfig".
+ */
+export interface EnvironmentSkillsConfig {
+  /**
+   * Optional source directories, absolute or relative to the environment
+   * working directory. Explicit nonempty lists replace all defaults,
+   * including home roots. Defaults are .agents/skills and
+   * .lightspeed/skills under working directory and execution home.
+   *
+   * @minItems 1
+   */
+  roots?: [string, ...string[]] | null;
 }
 /**
  * Grants remote MCP tools by declaring linked servers from the universe MCP
@@ -2188,12 +2231,13 @@ export interface TimersFeature {
  */
 export interface VfsFeature {
   /**
-   * Prompt-instruction sourcing from the VFS.
+   * Prompt-instruction sourcing from the VFS. Absent disables loading;
+   * an empty block discovers conventional linked roots.
    */
   prompts?: VfsPromptsConfig | null;
   /**
    * Independent VFS skill discovery. Absent disables discovery and removes
-   * its runtime catalog; enabling it requires explicit linked roots.
+   * its runtime catalog; an empty block discovers conventional linked roots.
    */
   skills?: VfsSkillsConfig | null;
   /**
@@ -2206,6 +2250,10 @@ export interface VfsFeature {
   tools?: VfsToolSurface | null;
   version?: number;
   /**
+   * Absolute VFS tool working directory; absent uses /.
+   */
+  workingDirectory?: string | null;
+  /**
    * Catalog resources exposed in the session's workspace namespace.
    */
   workspaceLinks?: WorkspaceLink[];
@@ -2216,8 +2264,9 @@ export interface VfsFeature {
  */
 export interface VfsPromptsConfig {
   /**
-   * Absent means the conventional roots; an explicit list must be
-   * non-empty.
+   * Absent searches .agents/prompts and .lightspeed/prompts beneath each
+   * workspace link. Explicit roots replace these defaults and must be
+   * non-empty absolute paths contained in workspace links.
    */
   roots?: string[] | null;
 }
@@ -2227,12 +2276,13 @@ export interface VfsPromptsConfig {
  */
 export interface VfsSkillsConfig {
   /**
-   * Explicit absolute discovery roots in the linked VFS namespace. Must be
-   * non-empty and contained in workspace links; no roots are inferred.
+   * Absent searches .agents/skills and .lightspeed/skills beneath each
+   * workspace link. Explicit roots replace these defaults and must be
+   * non-empty absolute paths contained in workspace links.
    *
    * @minItems 1
    */
-  roots: [string, ...string[]];
+  roots?: [string, ...string[]] | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

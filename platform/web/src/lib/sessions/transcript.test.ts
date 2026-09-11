@@ -3,10 +3,12 @@ import type { SessionEvent, SessionItem } from "@/api";
 import {
   applyEvents,
   emptyTranscript,
+  formatDuration,
   formatTokens,
   isFailedToolCall,
   reconcileRuns,
   runInProgress,
+  type TranscriptEntry,
 } from "./transcript";
 import type { SessionRunView } from "@/api";
 import { TranscriptWindow } from "./transcript-window";
@@ -489,7 +491,7 @@ describe("session transcript traces", () => {
       }),
     ]);
 
-    expect(partial.activeRun).toEqual({
+    expect(partial.activeRun).toMatchObject({
       runId: "5",
       label: "running tools",
       cancelling: false,
@@ -517,7 +519,7 @@ describe("session transcript traces", () => {
       event(14, { type: "toolBatchCompleted", batchId: "batch-1" }),
     ]);
 
-    expect(complete.activeRun).toEqual({ runId: "5", label: "working", cancelling: false });
+    expect(complete.activeRun).toMatchObject({ runId: "5", label: "working", cancelling: false });
     expect(complete.entries[0]).toMatchObject({
       kind: "tool-group",
       status: "completedWithErrors",
@@ -628,7 +630,7 @@ describe("session transcript run control", () => {
       event(3, { type: "runAccepted", runId: "run_2" }),
       event(4, { type: "runAccepted", runId: "run_3" }),
     ]);
-    expect(state.activeRun).toEqual({ runId: "run_1", label: "running", cancelling: false });
+    expect(state.activeRun).toMatchObject({ runId: "run_1", label: "running", cancelling: false });
     expect(state.queuedRuns).toEqual([{ runId: "run_2" }, { runId: "run_3" }]);
     expect(runInProgress(state)).toBe(true);
 
@@ -637,11 +639,11 @@ describe("session transcript run control", () => {
       event(6, { type: "runCompleted", runId: "run_1" }),
       event(7, { type: "runStarted", runId: "run_3" }),
     ]);
-    expect(state.activeRun).toEqual({ runId: "run_3", label: "running", cancelling: false });
+    expect(state.activeRun).toMatchObject({ runId: "run_3", label: "running", cancelling: false });
     expect(state.queuedRuns).toEqual([]);
     expect(state.entries).toEqual([
       { kind: "marker", key: "evt-5", text: "queued message cancelled", tone: "muted" },
-      { kind: "run-summary", key: "evt-6", status: "completed", durationMs: 4, contextTokens: undefined, usage: undefined, usageComplete: true, toolCalls: 0 },
+      { kind: "run-summary", key: "evt-6", runId: "run_1", status: "completed", durationMs: 4, contextTokens: undefined, usage: undefined, usageComplete: true, toolCalls: 0 },
     ]);
 
     state = applyEvents(state, [event(8, { type: "runCompleted", runId: "run_3" })]);
@@ -669,7 +671,7 @@ describe("session transcript run control", () => {
       // Lifecycle labels no longer override "cancelling".
       event(5, { type: "turnCancelled", runId: "run_1" }),
     ]);
-    expect(state.activeRun).toEqual({ runId: "run_1", label: "cancelling", cancelling: true });
+    expect(state.activeRun).toMatchObject({ runId: "run_1", label: "cancelling", cancelling: true });
 
     state = applyEvents(state, [event(6, { type: "runCancelled", runId: "run_1" })]);
     expect(state.activeRun).toBeNull();
@@ -697,7 +699,7 @@ describe("session transcript run control", () => {
       }),
       event(4, { type: "approvalRunParked", runId: "run_1" }),
     ]);
-    expect(state.activeRun).toEqual({
+    expect(state.activeRun).toMatchObject({
       runId: "run_1",
       label: "approval required",
       cancelling: false,
@@ -763,7 +765,7 @@ describe("session transcript run control", () => {
       runView("run_2", "running"),
       runView("run_3", "queued", "later"),
     ]);
-    expect(state.activeRun).toEqual({ runId: "run_2", label: "running", cancelling: false });
+    expect(state.activeRun).toMatchObject({ runId: "run_2", label: "running", cancelling: false });
     expect(state.queuedRuns).toEqual([{ runId: "run_3" }]);
 
     // A stale snapshot never regresses what the tail already knows.
@@ -901,4 +903,60 @@ describe("run statistics", () => {
   it.each([[0, "0"], [750, "750"], [999, "999"], [1000, "1k"], [4200, "4.2k"], [78512, "78.5k"], [733000, "733k"]])(
     "formats %s tokens as %s", (count, expected) => expect(formatTokens(count as number)).toBe(expected),
   );
+
+  it.each([[0, "0ms"], [42, "42ms"], [99, "99ms"], [100, "0.1s"], [340, "0.3s"], [1_250, "1.3s"], [9_999, "10.0s"], [10_000, "10s"], [84_000, "1m 24s"], [3_600_000, "1h"]])(
+    "formats %s ms as %s", (ms, expected) => expect(formatDuration(ms as number)).toBe(expected),
+  );
+});
+
+describe("run attribution and timing", () => {
+  it("stamps the run on tool groups and reasoning and measures calls from observed times", () => {
+    const state = applyEvents(emptyTranscript(), [
+      event(1, { type: "runStarted", runId: "run_9" }, 1_000),
+      event(2, {
+        type: "contextEntriesApplied",
+        entries: [item("thought", { type: "reasoningState" }, {
+          preview: "**Plan**", source: { type: "assistantOutput", runId: "run_9", turnId: "turn-1" },
+        })],
+      }, 1_500),
+      event(3, {
+        type: "toolBatchStarted", runId: "run_9", batchId: "b1",
+        calls: [{ callId: "c1", toolName: "read_file", argumentsRef: "sha256:a" }],
+      }, 2_000),
+      event(4, { type: "toolCallStarted", runId: "run_9", batchId: "b1", callId: "c1" }, 2_500),
+      event(5, { type: "toolCallCompleted", runId: "run_9", batchId: "b1", callId: "c1", status: "succeeded", outputBytes: 412 }, 3_750),
+      event(6, { type: "runCompleted", runId: "run_9" }, 4_000),
+    ]);
+    expect(state.activeRun).toBeNull();
+    expect(state.entries).toMatchObject([
+      { kind: "reasoning", runId: "run_9" },
+      { kind: "tool-group", runId: "run_9", calls: [{
+        callId: "c1", startedAtMs: 2_500, completedAtMs: 3_750, durationMs: 1_250, outputBytes: 412,
+      }] },
+      { kind: "run-summary", runId: "run_9", durationMs: 3_000 },
+    ]);
+  });
+
+  it("carries the run start onto the active run and leaves a call's duration unknown without its start", () => {
+    const state = applyEvents(emptyTranscript(), [
+      event(1, { type: "runStarted", runId: "run_9" }, 5_000),
+      event(2, { type: "toolCallCompleted", runId: "run_9", batchId: "b1", callId: "c1", status: "succeeded" }, 6_000),
+    ]);
+    expect(state.activeRun).toMatchObject({ runId: "run_9", startedAtMs: 5_000 });
+    expect(state.entries).toMatchObject([{ kind: "tool-group", runId: "run_9", calls: [{ callId: "c1", completedAtMs: 6_000 }] }]);
+    const call = (state.entries[0] as Extract<TranscriptEntry, { kind: "tool-group" }>).calls[0]!;
+    expect(call.durationMs).toBeUndefined();
+    expect(call.startedAtMs).toBeUndefined();
+  });
+
+  it("attributes a context-only tool group to the run its items name", () => {
+    const state = applyEvents(emptyTranscript(), [event(1, {
+      type: "contextEntriesApplied",
+      entries: [
+        item("tool", { type: "toolCall", callId: "c1", name: "grep" }, { source: { type: "assistantOutput", runId: "run_4", turnId: "t" } }),
+        item("result", { type: "toolResult", callId: "c1", isError: false }, { text: "ok", source: { type: "tool", runId: "run_4", turnId: "t", batchId: "b" } }),
+      ],
+    })]);
+    expect(state.entries).toMatchObject([{ kind: "tool-group", runId: "run_4", status: "succeeded" }]);
+  });
 });

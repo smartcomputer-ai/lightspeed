@@ -100,6 +100,8 @@ pub struct ToolInvocationBatchRequest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspace_links: Vec<WorkspaceLink>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vfs_working_directory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_environment_id: Option<EnvironmentId>,
     pub environment_policy: Option<EnvironmentPolicyRuntime>,
     /// Admitted sub-agent grant for this tool batch. Runtime executors pin
@@ -123,7 +125,13 @@ pub struct ToolInvocationBatchRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentPolicyRuntime {
     pub version: u32,
+    #[serde(default)]
+    pub tools: Option<crate::EnvironmentToolSurface>,
+    #[serde(default)]
+    pub commands: bool,
     pub allowed_provider_ids: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_registration_key_ids: Option<Vec<String>>,
 }
@@ -137,14 +145,22 @@ impl EnvironmentPolicyRuntime {
     ) -> Self {
         Self {
             version: Self::VERSION,
+            tools: None,
+            commands: false,
             allowed_provider_ids,
+            working_directory: None,
             allowed_registration_key_ids,
         }
     }
 
     /// Lower the session's environments grant into the runtime policy.
     pub fn from_feature(feature: &crate::EnvironmentsFeature) -> Self {
-        Self::new(feature.providers.clone(), feature.registration_keys.clone())
+        Self {
+            working_directory: feature.working_directory.clone(),
+            tools: feature.tools,
+            commands: feature.commands,
+            ..Self::new(feature.providers.clone(), feature.registration_keys.clone())
+        }
     }
 }
 
@@ -340,6 +356,8 @@ pub struct ToolInvocationCallRequest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspace_links: Vec<WorkspaceLink>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vfs_working_directory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_environment_id: Option<EnvironmentId>,
     pub environment_policy: Option<EnvironmentPolicyRuntime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -374,6 +392,7 @@ impl ToolInvocationCallRequest {
             turn_id: self.turn_id,
             batch_id: self.batch_id,
             workspace_links: self.workspace_links,
+            vfs_working_directory: self.vfs_working_directory,
             active_environment_id: self.active_environment_id,
             environment_policy: self.environment_policy,
             subagents_policy: self.subagents_policy,
@@ -410,6 +429,7 @@ impl ToolInvocationBatchRequest {
             turn_id: self.turn_id,
             batch_id: self.batch_id,
             workspace_links: self.workspace_links.clone(),
+            vfs_working_directory: self.vfs_working_directory.clone(),
             active_environment_id: self.active_environment_id.clone(),
             environment_policy: self.environment_policy.clone(),
             subagents_policy: self.subagents_policy.clone(),
@@ -642,6 +662,7 @@ mod tests {
 
     fn batch_request_with_calls(call_ids: &[&str]) -> ToolInvocationBatchRequest {
         ToolInvocationBatchRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-a"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(2),
@@ -767,6 +788,7 @@ mod promise_base_tests {
     #[test]
     fn per_call_requests_get_their_own_promise_slot_and_rebuild_the_batch_base() {
         let batch = ToolInvocationBatchRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-1"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),

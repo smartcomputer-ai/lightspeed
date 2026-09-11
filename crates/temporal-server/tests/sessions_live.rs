@@ -412,6 +412,7 @@ async fn run_fake_live_client(
     let mut enabled_config = started_view.config.clone().expect("started session config");
     let mut enabled_features = enabled_config.features.unwrap_or_default();
     enabled_features.vfs = Some(api::VfsFeature {
+        working_directory: None,
         version: api::CURRENT_FEATURE_VERSION,
         workspace_links: Vec::new(),
         tools: None,
@@ -419,6 +420,10 @@ async fn run_fake_live_client(
         skills: None,
     });
     enabled_features.environments = Some(api::EnvironmentsFeature {
+        tools: Some(api::EnvironmentToolSurface::Edit),
+        commands: true,
+        working_directory: None,
+        prompts: None,
         version: api::CURRENT_FEATURE_VERSION,
         providers: None,
         registration_keys: None,

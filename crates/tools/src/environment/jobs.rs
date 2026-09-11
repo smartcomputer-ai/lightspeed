@@ -127,6 +127,8 @@ impl JobRunArgs {
 #[serde(deny_unknown_fields)]
 pub struct JobSubmitExecutionContextV1 {
     pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
     pub environment_id: String,
     pub allowed_provider_ids: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -143,6 +145,7 @@ impl JobSubmitExecutionContextV1 {
     ) -> Self {
         Self {
             version: Self::VERSION,
+            working_directory: None,
             environment_id,
             allowed_provider_ids,
             allowed_registration_key_ids,

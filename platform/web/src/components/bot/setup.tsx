@@ -634,7 +634,7 @@ function ProfileSwitcher({
           <Button
             variant="ghost"
             size="sm"
-            render={<Link to={`/u/${slug}/profiles/${encodeURIComponent(bot.profileId)}`} />}
+            nativeButton={false} render={<Link to={`/u/${slug}/profiles/${encodeURIComponent(bot.profileId)}`} />}
           >
             Open on the Profiles page <ArrowUpRight data-icon="inline-end" />
           </Button>

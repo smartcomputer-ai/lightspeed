@@ -63,6 +63,7 @@ import {
   type Conversation,
   type ProfileInit,
   type ScriptedEvent,
+  mcpDisplay,
 } from "./builders";
 import { TELEGRAM_ACCOUNT_ID, WHATSAPP_ACCOUNT_ID } from "./platform";
 
@@ -619,7 +620,7 @@ const main = (botId: string): { sessionId: string; label: string } => ({ session
 
 /// A PagerDuty MCP call that the server refused.
 function pagerdutyFailure(name: string, args: Record<string, unknown>, output: string): DemoToolCall {
-  return tool(`pagerduty.${name}`, `pagerduty.${name}`, args, { group: "other", verb: "MCP", target: `pagerduty.${name}` }, output, true);
+  return tool(`pagerduty.${name}`, `pagerduty.${name}`, args, mcpDisplay(`pagerduty.${name}`, args), output, true);
 }
 
 /// Support's `nw` CLI in the support-tools environment.

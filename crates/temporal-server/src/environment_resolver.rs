@@ -392,6 +392,21 @@ mod tests {
                             "initialize" => {
                                 serde_json::json!({ "protocolVersion": environment_protocol::shared::CURRENT_PROTOCOL_VERSION, "connectionId": "test", "capabilities": {"filesystemRead": true, "filesystemScan": supported.load(Ordering::SeqCst)}, "defaultCwd": root, "homeDirectory": root, "implementation": {"name": "test", "version": "1"} })
                             }
+                            "fs/getMetadata" => {
+                                let fs = environment_daemon::filesystem::LocalFileSystem::new(
+                                    root.clone(),
+                                    root.clone(),
+                                    false,
+                                );
+                                serde_json::to_value(
+                                    fs.get_metadata(
+                                        serde_json::from_value(request["params"].clone()).unwrap(),
+                                    )
+                                    .await
+                                    .unwrap(),
+                                )
+                                .unwrap()
+                            }
                             "fs/scan" => {
                                 scans.fetch_add(1, Ordering::SeqCst);
                                 let fs = environment_daemon::filesystem::LocalFileSystem::new(
@@ -490,7 +505,7 @@ mod tests {
         std::fs::write(&skill_path, doc.replace("Review code.", "Review changes.")).unwrap();
         let edited = entry(refresh(Some(&available)).await.unwrap());
         assert_ne!(edited.content, available.content);
-        // A partial result retains the same source as stale; it cannot claim deletion.
+        // An incomplete scan reports unavailable and removes obsolete catalog paths.
         std::fs::write(&skill_path, vec![b'x'; 65537]).unwrap();
         let stale = entry(refresh(Some(&edited)).await.unwrap());
         let catalog: EnvironmentSkillCatalog = serde_json::from_slice(
@@ -500,13 +515,17 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(catalog.availability, EnvironmentSkillAvailability::Stale);
-        assert_eq!(catalog.skills.len(), 1);
+        assert_eq!(
+            catalog.availability,
+            EnvironmentSkillAvailability::Unavailable
+        );
+        assert!(catalog.skills.is_empty());
         assert!(refresh(Some(&stale)).await.unwrap().is_none());
         // Missing fs/scan is explicit unavailable discovery, with no RPC fallback.
         supported.store(false, Ordering::SeqCst);
         let before = scans.load(Ordering::SeqCst);
-        assert!(refresh(Some(&stale)).await.unwrap().is_none());
+        let unsupported = entry(refresh(Some(&stale)).await.unwrap());
+        assert!(refresh(Some(&unsupported)).await.unwrap().is_none());
         assert_eq!(scans.load(Ordering::SeqCst), before);
         supported.store(true, Ordering::SeqCst);
         std::fs::remove_file(&skill_path).unwrap();
@@ -584,7 +603,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             timed_out_catalog.availability,
-            EnvironmentSkillAvailability::Stale
+            EnvironmentSkillAvailability::Unavailable
         );
         task.abort();
     }

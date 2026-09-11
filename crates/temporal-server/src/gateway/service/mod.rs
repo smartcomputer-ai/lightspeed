@@ -905,8 +905,18 @@ impl GatewayAgentApi {
             // adds nothing extra today beyond the same surface.
             config.concurrency = tools::concurrency::ConcurrencyToolsetConfig::timer();
         }
-        if include_environment_tools {
-            config.builtin.environment = tools::toolset::EnvironmentToolsetConfig::basic();
+        if include_environment_tools && let Some(environment) = &features.environments {
+            config.builtin.environment.filesystem = match environment.tools {
+                None => tools::toolset::FilesystemToolsetConfig::disabled(),
+                Some(engine::EnvironmentToolSurface::ReadOnly) => {
+                    tools::toolset::FilesystemToolsetConfig::read_only()
+                }
+                Some(engine::EnvironmentToolSurface::Edit) => {
+                    tools::toolset::FilesystemToolsetConfig::workspace_edit()
+                }
+            };
+            config.builtin.environment.run_process = environment.commands;
+            config.builtin.environment.continue_process = environment.commands;
         }
         if include_job_read_tool {
             config.builtin.environment.job_read = true;

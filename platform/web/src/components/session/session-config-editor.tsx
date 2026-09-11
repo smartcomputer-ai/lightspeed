@@ -273,6 +273,10 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
     const feature = record(sourceFeatures[name]);
     const next: RecordValue = {};
 
+    if (name === "vfs" || name === "environments") {
+      if (["readOnly", "edit"].includes(string(feature.tools))) next.tools = feature.tools;
+      if (string(feature.workingDirectory)) next.workingDirectory = feature.workingDirectory;
+    }
     if (name === "vfs") {
       if (["readOnly", "edit"].includes(string(feature.tools))) next.tools = feature.tools;
       if (Array.isArray(feature.workspaceLinks) && feature.workspaceLinks.length) {
@@ -297,7 +301,9 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
       }
       for (const key of ["prompts", "skills"] as const) {
         const roots = stringList(record(feature[key]).roots).filter(Boolean);
-        if (roots.length) next[key] = { roots };
+        if (feature[key] != null) {
+          next[key] = record(feature[key]).roots == null ? {} : { roots };
+        }
       }
     }
     if (name === "web") {
@@ -329,8 +335,14 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
       const providers = stringList(feature.providers).filter(Boolean);
       if (providers.length) next.providers = providers;
       if (feature.selectionTools === true) next.selectionTools = true;
+      if (feature.commands === true) next.commands = true;
       if (feature.jobs === true) next.jobs = true;
-      if ("skills" in feature) next.skills = record(feature.skills);
+      for (const key of ["skills", "prompts"] as const) {
+        if (feature[key] != null) {
+          const source = record(feature[key]);
+          next[key] = source.roots == null ? {} : { roots: stringList(source.roots) };
+        }
+      }
     }
     if (name === "mcp") {
       const servers = Array.isArray(feature.servers)
@@ -383,6 +395,30 @@ function configError(config: SessionConfig | undefined, pinnedApiKind?: string):
   }
   const linkError = workspaceLinksError(workspaceLinksFromConfig(config));
   if (linkError) return linkError;
+  const features = record(config.features);
+  const vfs = record(features.vfs);
+  for (const key of ["skills", "prompts"] as const) {
+    const source = record(vfs[key]);
+    if (source.roots == null) continue;
+    const label = key === "skills" ? "VFS skill" : "VFS prompt";
+    const roots = stringList(source.roots);
+    if (!roots.length) return `${label} root overrides must not be empty; clear the override to use defaults.`;
+    const links = workspaceLinksFromConfig(config);
+    if (roots.some((root) => !isCanonicalAbsolutePath(root)
+      || !links.some((link) => link.path === "/" || root === link.path || root.startsWith(`${link.path}/`)))) {
+      return `${label} roots must be absolute paths inside workspace links.`;
+    }
+  }
+  const vfsCwd = string(vfs.workingDirectory);
+  if (vfsCwd && (!isCanonicalAbsolutePath(vfsCwd) || (vfsCwd !== "/" && !workspaceLinksFromConfig(config).some((link) => link.path === "/" || vfsCwd === link.path || vfsCwd.startsWith(`${link.path}/`))))) {
+    return "VFS working directory must be / or an absolute path inside a workspace link.";
+  }
+  const environment = record(features.environments);
+  if (string(environment.workingDirectory) && !string(environment.workingDirectory).startsWith("/")) return "Environment working directory must be absolute.";
+  for (const key of ["skills", "prompts"] as const) {
+    const roots = record(environment[key]).roots;
+    if (roots != null && !stringList(roots).length) return "Environment source root overrides must not be empty; clear the override to use defaults.";
+  }
   return null;
 }
 
@@ -464,7 +500,8 @@ export function SessionConfigEditor({
     change((next) => {
       const nextFeatures = record(next.features);
       if (enabled) {
-        if (name === "web") nextFeatures.web = { search: {} };
+        if (name === "vfs") nextFeatures.vfs = { tools: "edit", prompts: {}, skills: {} };
+        else if (name === "web") nextFeatures.web = { search: {}, fetch: {} };
         else if (name === "mcp") {
           nextFeatures.mcp = { servers: [{ serverId: firstUsableMcpServerId(mcpServers) }] };
         }
@@ -641,7 +678,7 @@ function EnvironmentFeatureEditor({
   };
   const setEnabled = (nextEnabled: boolean) => change((next) => {
     const nextFeatures = record(next.features);
-    if (nextEnabled) nextFeatures.environments = {};
+    if (nextEnabled) nextFeatures.environments = { tools: "edit", commands: true, jobs: true, prompts: {}, skills: {} };
     else delete nextFeatures.environments;
     if (Object.keys(nextFeatures).length) next.features = nextFeatures;
     else delete next.features;
@@ -831,7 +868,7 @@ function ModelFields({ config, models, manualModel, onManualModelChange, pinnedA
             </ComboboxList>
           </ComboboxContent>
         </Combobox>
-        <FieldDescription>
+        <FieldDescription className="text-xs">
           {currentModel
             ? `${currentModel.providerId} · ${currentModel.apiKind}`
             : models.length
@@ -855,7 +892,7 @@ function ModelFields({ config, models, manualModel, onManualModelChange, pinnedA
               ))}
             </datalist>
           )}
-          <FieldDescription>
+          <FieldDescription className="text-xs">
             {currentModel?.capabilities.reasoningEfforts?.length
               ? "Choose a known tier or enter any provider-supported value."
               : "No tiers are known. Enter a provider-supported value, or leave unset for its default."}
@@ -1026,7 +1063,7 @@ function GenerationFields({ config, change }: { config: RecordValue; change: (fn
                   <SelectItem value="flex">Flex</SelectItem>
                 </SelectContent>
               </Select>
-              <FieldDescription>
+              <FieldDescription className="text-xs">
                 Applied to every run. Fast prioritizes latency; Flex uses lower-priority processing.
               </FieldDescription>
             </Field>
@@ -1052,7 +1089,7 @@ function GenerationFields({ config, change }: { config: RecordValue; change: (fn
                 onChange={(e) => update("toolChoice", { type: "specific", toolId: e.target.value })}
                 placeholder="env.run_process"
               />
-              <FieldDescription>
+              <FieldDescription className="text-xs">
                 Use the enabled tool's registry ID, such as env.run_process or vfs.read_file.
                 Builtin tool names are resolved for the selected model. For custom functions, use the function name.
               </FieldDescription>
@@ -1172,8 +1209,6 @@ function VfsFields({
   workspacesLoading: boolean;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
-  const prompts = record(feature.prompts);
-  const skills = record(feature.skills);
   const links = Array.isArray(feature.workspaceLinks)
     ? feature.workspaceLinks.map(record)
     : [];
@@ -1222,45 +1257,22 @@ function VfsFields({
               <SelectItem value="edit">Edit files</SelectItem>
             </SelectContent>
           </Select>
-          <FieldDescription>
+          <FieldDescription className="text-xs">
             {!environmentsGranted
               ? "Enable Environments to also transfer files between linked workspaces and a selected environment."
               : feature.tools === "edit"
-                ? "Includes materialize to the selected environment and capture into writable workspace links."
+                ? "Transfers into the environment require environment Edit files; capture requires environment read access and a writable workspace link."
                 : feature.tools === "readOnly"
-                  ? "Includes materialize to the selected environment. Linked VFS files remain read only through these tools."
+                  ? "Materialize also requires Edit files on the environment. Linked VFS files remain read only through these tools."
                   : "Choose Read only or Edit files to enable workspace transfer tools. Prompt and skill sourcing alone does not enable transfers."}
           </FieldDescription>
         </Field>
-        <Field>
-          <FieldLabel>Prompt roots</FieldLabel>
-          <Input
-            className="font-mono"
-            value={commaList(prompts.roots)}
-            onChange={(e) => patch((next) => {
-              const roots = listFromInput(e.target.value);
-              if (roots.length) next.prompts = { roots };
-              else delete next.prompts;
-            })}
-            placeholder="/prompts, /team/prompts"
-          />
-          <FieldDescription className="text-xs">Comma-separated paths.</FieldDescription>
-        </Field>
-        <Field>
-          <FieldLabel>VFS skill roots</FieldLabel>
-          <Input
-            className="font-mono"
-            value={commaList(skills.roots)}
-            onChange={(e) => patch((next) => {
-              const roots = listFromInput(e.target.value);
-              if (roots.length) next.skills = { roots };
-              else delete next.skills;
-            })}
-            placeholder="/skills, /team/skills"
-          />
-          <FieldDescription className="text-xs">Comma-separated absolute paths inside workspace links. Empty disables VFS skill discovery; environment skills are configured separately.</FieldDescription>
-        </Field>
       </div>
+
+      <SourceDiscoveryFields source="vfs-prompts" feature={feature} patch={patch} />
+      <SourceDiscoveryFields source="vfs" feature={feature} patch={patch} />
+
+      <WorkingDirectoryField feature={feature} patch={patch} />
 
       <div className="grid gap-3 border-t pt-4">
         <div className="flex min-w-0 items-center justify-between gap-3">
@@ -1290,7 +1302,7 @@ function VfsFields({
           </Button>
         </div>
         {links.length === 0 && (
-          <p className="text-sm text-muted-foreground">No workspace links.</p>
+          <p className="text-xs text-muted-foreground">No workspace links.</p>
         )}
         {links.map((link, index) => {
           const target = record(link.target);
@@ -1435,9 +1447,14 @@ function WebFields({
   apiKind: string;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
   const search = record(feature.search);
+  const allowedCount = stringList(search.allowedDomains).length;
+  const blockedCount = stringList(search.blockedDomains).length;
   const fetchEnabled = "fetch" in feature;
   const searchEnabled = "search" in feature;
+  useEffect(() => { if (!searchEnabled) setOpen(false); }, [searchEnabled]);
   const exclusiveDomainFilters = apiKind === "anthropic:messages";
   const setSubfeature = (name: "fetch" | "search", enabled: boolean) => patch((next) => {
     if (enabled) next[name] = {};
@@ -1453,10 +1470,24 @@ function WebFields({
         <Label className="gap-2 font-normal"><Checkbox checked={searchEnabled} onCheckedChange={(checked) => setSubfeature("search", checked === true)} />Search the web</Label>
       </div>
       {searchEnabled && (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          aria-label="Customize search domains"
+          aria-expanded={open}
+          aria-controls={`${id}-domains`}
+          onClick={() => setOpen((value) => !value)}
+          className="w-fit cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {(allowedCount > 0 || blockedCount > 0) && <>{[allowedCount > 0 && `${allowedCount} allowed`, blockedCount > 0 && `${blockedCount} blocked`].filter(Boolean).join(", ")} · </>}
+          {open ? "Hide domains" : "Customize domains"}
+        </button>
+      )}
+      {searchEnabled && open && (
+        <div id={`${id}-domains`} className="grid gap-3 sm:grid-cols-2">
           <Field>
-            <FieldLabel>Allowed domains</FieldLabel>
+            <FieldLabel htmlFor={`${id}-allowed`}>Allowed domains</FieldLabel>
             <Input
+              id={`${id}-allowed`}
               value={commaList(search.allowedDomains)}
               onChange={(e) => patch((next) => {
                 const domains = listFromInput(e.target.value);
@@ -1471,8 +1502,9 @@ function WebFields({
             <FieldDescription className="text-xs">Comma-separated domains. Empty allows all.</FieldDescription>
           </Field>
           <Field>
-            <FieldLabel>Blocked domains</FieldLabel>
+            <FieldLabel htmlFor={`${id}-blocked`}>Blocked domains</FieldLabel>
             <Input
+              id={`${id}-blocked`}
               value={commaList(search.blockedDomains)}
               onChange={(e) => patch((next) => {
                 const domains = listFromInput(e.target.value);
@@ -1488,7 +1520,7 @@ function WebFields({
           </Field>
         </div>
       )}
-      {searchEnabled && exclusiveDomainFilters && (
+      {searchEnabled && open && exclusiveDomainFilters && (
         <FieldDescription className="text-xs">
           Anthropic accepts either an allowed-domain list or a blocked-domain list, not both.
         </FieldDescription>
@@ -1506,6 +1538,8 @@ function SubagentFields({
   profiles: ProfileOption[];
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
   const agents = subagentProfileIds(feature.agents);
   const limits = [
     { key: "maxDepth", label: "Max depth", placeholder: "2", hint: "How deep sub-agents may nest below this session." },
@@ -1513,6 +1547,7 @@ function SubagentFields({
     { key: "maxConcurrent", label: "Max concurrent", placeholder: "4", hint: "Open sub-agent sessions under the root at once." },
     { key: "deadlineMs", label: "Deadline (ms)", placeholder: "3600000", hint: "Per-child run deadline; at most 24 hours." },
   ] as const;
+  const customLimits = limits.filter((limit) => feature[limit.key] != null).length;
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       <Field className="sm:col-span-2">
@@ -1529,23 +1564,37 @@ function SubagentFields({
           The agent menu. Every listed profile must exist; the model sees ids and descriptions in its sub-agent catalog.
         </FieldDescription>
       </Field>
-      {limits.map((limit) => (
-        <Field key={limit.key}>
-          <FieldLabel>{limit.label}</FieldLabel>
-          <Input
-            type="number"
-            min="1"
-            placeholder={limit.placeholder}
-            value={numberString(feature[limit.key])}
-            onChange={(e) => patch((next) => {
-              const value = parseNumber(e.target.value);
-              if (value === undefined) delete next[limit.key];
-              else next[limit.key] = value;
-            })}
-          />
-          <FieldDescription className="text-xs">{limit.hint}</FieldDescription>
-        </Field>
-      ))}
+      <button
+        type="button"
+        aria-label="Customize sub-agent limits"
+        aria-expanded={open}
+        aria-controls={`${id}-limits`}
+        onClick={() => setOpen((value) => !value)}
+        className="w-fit cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring sm:col-span-2"
+      >
+        {customLimits > 0 && <>{customLimits} custom {customLimits === 1 ? "limit" : "limits"} · </>}
+        {open ? "Hide limits" : "Customize limits"}
+      </button>
+      {open && <div id={`${id}-limits`} className="grid gap-4 sm:col-span-2 sm:grid-cols-2">
+        {limits.map((limit) => (
+          <Field key={limit.key}>
+            <FieldLabel htmlFor={`${id}-${limit.key}`}>{limit.label}</FieldLabel>
+            <Input
+              id={`${id}-${limit.key}`}
+              type="number"
+              min="1"
+              placeholder={limit.placeholder}
+              value={numberString(feature[limit.key])}
+              onChange={(e) => patch((next) => {
+                const value = parseNumber(e.target.value);
+                if (value === undefined) delete next[limit.key];
+                else next[limit.key] = value;
+              })}
+            />
+            <FieldDescription className="text-xs">{limit.hint}</FieldDescription>
+          </Field>
+        ))}
+      </div>}
     </div>
   );
 }
@@ -1609,6 +1658,103 @@ function profileLabel(profile: ProfileOption | undefined, profileId: string): st
   return profile?.displayName || profileId;
 }
 
+function WorkingDirectoryField({ environment, feature, patch }: {
+  environment?: boolean;
+  feature: RecordValue;
+  patch: (fn: (feature: RecordValue) => void) => void;
+}) {
+  const id = useId();
+  return <Field>
+    <FieldLabel htmlFor={id}>Working directory</FieldLabel>
+    <Input id={id} aria-label={`${environment ? "Environment" : "VFS"} working directory`}
+      className="font-mono" value={string(feature.workingDirectory)} placeholder={environment ? "Environment default" : "/"}
+      onChange={(event) => patch((next) => {
+        if (event.target.value) next.workingDirectory = event.target.value;
+        else delete next.workingDirectory;
+      })} />
+    <FieldDescription className="text-xs">{environment
+      ? "Absolute machine directory for file tools, commands, jobs, and discovery. Empty uses the environment default."
+      : "Absolute linked VFS directory for relative file paths. Empty uses /. Source discovery still searches every workspace link."}</FieldDescription>
+  </Field>;
+}
+
+function SourceDiscoveryFields({ source, feature, patch }: {
+  source: "vfs" | "vfs-prompts" | "environment" | "environment-prompts";
+  feature: RecordValue;
+  patch: (fn: (feature: RecordValue) => void) => void;
+}) {
+  const id = useId();
+  const environment = source.startsWith("environment");
+  const prompts = source.endsWith("prompts");
+  const configKey = prompts ? "prompts" : "skills";
+  const enabled = feature[configKey] != null;
+  const settings = record(feature[configKey]);
+  const roots = stringList(settings.roots);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (!enabled) setOpen(false); }, [enabled]);
+  const domain = environment ? "Environment" : "VFS";
+  const switchLabel = `${domain} ${prompts ? "prompt loading" : "skill discovery"}`;
+  const update = (key: string, value: unknown) => patch((next) => {
+    const settings = { ...record(next[configKey]) };
+    if (value === undefined) delete settings[key]; else settings[key] = value;
+    next[configKey] = settings;
+  });
+  return (
+    <div className="grid min-w-0 max-w-full gap-3 rounded-lg border p-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="grid min-w-0 gap-1">
+          <Label htmlFor={id}>{prompts ? "Prompt loading" : "Skill discovery"}</Label>
+          <p className="text-xs text-muted-foreground">
+            {prompts ? "Load .md and .txt files as instructions." : "Let the agent discover and read available skills."}
+          </p>
+          {enabled && (
+            <button
+              type="button"
+              aria-label={`Configure ${switchLabel}`}
+              aria-expanded={open}
+              aria-controls={`${id}-settings`}
+              onClick={() => setOpen((value) => !value)}
+              className="w-fit cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {roots.length > 0 && <>{roots.length} custom {roots.length === 1 ? "root" : "roots"} · </>}
+              {open ? "Hide root settings" : roots.length ? "Edit roots" : "Customize roots"}
+            </button>
+          )}
+        </div>
+        <Switch id={id} aria-label={switchLabel}
+          checked={enabled}
+          onCheckedChange={(checked) => patch((next) => {
+            if (checked) next[configKey] = {};
+            else delete next[configKey];
+          })}
+        />
+      </div>
+      {enabled && open && (
+        <div id={`${id}-settings`} className="grid gap-3 border-t pt-3">
+          <p className="text-xs text-muted-foreground">
+            {prompts ? `Load direct .md and .txt files from ${domain} prompt roots in alphabetical order. Number prefixes are optional; subfolders are ignored.` : `Advertise ${domain} skills for the agent to read when relevant.`}
+          </p>
+          <Field>
+            <FieldLabel htmlFor={`${id}-roots`}>{domain} {prompts ? "prompt" : "skill"} roots</FieldLabel>
+            <Input id={`${id}-roots`} className="font-mono" value={commaList(settings.roots)}
+              placeholder="Default directories"
+              onChange={(e) => {
+                const roots = listFromInput(e.target.value);
+                update("roots", roots.length ? roots : undefined);
+              }} />
+            <FieldDescription className="text-xs">
+              {`Empty searches .agents/${configKey} and .lightspeed/${configKey} ${environment ? "under the working directory and execution user’s home" : "beneath each workspace link"}. `}
+              {environment
+                ? "Comma-separated overrides replace all defaults, including home. Paths may be absolute or relative to the working directory."
+                : "Comma-separated overrides replace all defaults and must be absolute paths inside workspace links."}
+            </FieldDescription>
+          </Field>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EnvironmentFields({
   feature,
   providers,
@@ -1619,6 +1765,8 @@ function EnvironmentFields({
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
   const jobsId = useId();
+  const commandsId = useId();
+  const filesId = useId();
   const selectionToolsId = useId();
   const value = stringList(feature.providers);
   const providerMap = new Map(providers.map((provider) => [provider.providerId, provider]));
@@ -1631,6 +1779,67 @@ function EnvironmentFields({
   );
   return (
     <div className="grid gap-4">
+      <Field>
+        <FieldLabel htmlFor={filesId}>File tools</FieldLabel>
+        <Select value={string(feature.tools) || "none"} onValueChange={(value) => patch((next) => {
+          if (value === "none") delete next.tools;
+          else next.tools = value;
+        })}>
+          <SelectTrigger id={filesId} aria-label="Environment file tools" className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">No file tools</SelectItem>
+            <SelectItem value="readOnly">Read only</SelectItem>
+            <SelectItem value="edit">Edit files</SelectItem>
+          </SelectContent>
+        </Select>
+        <FieldDescription className="text-xs">Read only allows reading, listing, and searching. Edit also allows file changes and transfers into the environment. Prompts and skills are independent.</FieldDescription>
+      </Field>
+      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
+        <div className="grid min-w-0 gap-1">
+          <Label htmlFor={commandsId}>Command execution</Label>
+          <p className="text-xs text-muted-foreground">Run commands and continue processes. Commands can modify files regardless of the File tools setting.</p>
+        </div>
+        <Switch id={commandsId} aria-label="Environment command execution" checked={feature.commands === true}
+          onCheckedChange={(checked) => patch((next) => {
+            if (checked) next.commands = true;
+            else delete next.commands;
+          })} />
+      </div>
+      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
+        <div className="grid min-w-0 gap-1">
+          <Label htmlFor={jobsId}>Durable jobs</Label>
+          <p className="text-xs text-muted-foreground">
+            Run durable jobs independently of command execution. Jobs can modify files regardless of the File tools setting.
+          </p>
+        </div>
+        <Switch
+          id={jobsId}
+          checked={feature.jobs === true}
+          onCheckedChange={(checked) => patch((next) => {
+            if (checked === true) next.jobs = true;
+            else delete next.jobs;
+          })}
+        />
+      </div>
+      <SourceDiscoveryFields source="environment-prompts" feature={feature} patch={patch} />
+      <SourceDiscoveryFields source="environment" feature={feature} patch={patch} />
+      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
+        <div className="grid min-w-0 gap-1">
+          <Label htmlFor={selectionToolsId}>Environment selection tools</Label>
+          <p className="text-xs text-muted-foreground">
+            Let the model list, activate, and deactivate allowed environments. Reading the active environment is always available.
+          </p>
+        </div>
+        <Switch
+          id={selectionToolsId}
+          checked={feature.selectionTools === true}
+          onCheckedChange={(checked) => patch((next) => {
+            if (checked === true) next.selectionTools = true;
+            else delete next.selectionTools;
+          })}
+        />
+      </div>
+      <WorkingDirectoryField environment feature={feature} patch={patch} />
       <Field>
         <FieldLabel>Allowed providers</FieldLabel>
         <Combobox
@@ -1686,38 +1895,6 @@ function EnvironmentFields({
           Empty allows every registered provider. Selection resolves live universe environments.
         </FieldDescription>
       </Field>
-      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
-        <div className="grid min-w-0 gap-1">
-          <Label htmlFor={selectionToolsId}>Environment selection tools</Label>
-          <p className="text-xs text-muted-foreground">
-            Let the model list, activate, and deactivate allowed environments. Reading the active environment is always available.
-          </p>
-        </div>
-        <Switch
-          id={selectionToolsId}
-          checked={feature.selectionTools === true}
-          onCheckedChange={(checked) => patch((next) => {
-            if (checked === true) next.selectionTools = true;
-            else delete next.selectionTools;
-          })}
-        />
-      </div>
-      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
-        <div className="grid min-w-0 gap-1">
-          <Label htmlFor={jobsId}>Durable jobs</Label>
-          <p className="text-xs text-muted-foreground">
-            Allow the agent to use durable job tools on capable environments.
-          </p>
-        </div>
-        <Switch
-          id={jobsId}
-          checked={feature.jobs === true}
-          onCheckedChange={(checked) => patch((next) => {
-            if (checked === true) next.jobs = true;
-            else delete next.jobs;
-          })}
-        />
-      </div>
     </div>
   );
 }

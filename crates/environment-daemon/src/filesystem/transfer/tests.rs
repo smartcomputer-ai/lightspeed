@@ -932,13 +932,16 @@ async fn scan_installer_layouts_aliases_collisions_and_semantic_publication() {
     std::fs::write(home.join(".codex/skills/copy/SKILL.md"), doc).unwrap();
     symlink(&canonical, root.join("project/.agents/skills/review")).unwrap();
     symlink(&canonical, root.join("project/.agents/skills/alias")).unwrap();
-    let config = engine::EnvironmentSkillsFeature {
-        working_directory: Some(cwd.to_string_lossy().into_owned()),
-        project_root: Some(root.join("project").to_string_lossy().into_owned()),
-        additional_roots: vec![],
+    let config = engine::EnvironmentSkillsConfig {
+        roots: Some(vec![
+            root.join("project/.agents/skills")
+                .to_string_lossy()
+                .into_owned(),
+            home.join(".codex/skills").to_string_lossy().into_owned(),
+        ]),
     };
     let runtime = runtime(&root, true);
-    let mut query = environment_skill_scan_query(&config, None, home.to_str()).unwrap();
+    let mut query = environment_skill_scan_query(&config, cwd.to_str(), home.to_str()).unwrap();
     let first = runtime.filesystem().scan(query.clone()).await.unwrap();
     assert!(first.complete, "{:?}", first.diagnostics);
     let catalog = environment_skill_catalog("machine-a", &first).unwrap();

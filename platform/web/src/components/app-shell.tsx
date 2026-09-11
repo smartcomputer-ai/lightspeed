@@ -38,6 +38,7 @@ import {
 import { BotFaceIcon } from "@/components/icons/bot";
 import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
+import { isMobileDetailRoute } from "@/lib/shell-navigation";
 import type { SessionUser } from "@/auth";
 import { canManage, rememberUniverse, useUniverses } from "@/lib/universes";
 
@@ -286,10 +287,12 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         </SidebarFooter>
       </Sidebar>
       <SidebarInset className="max-h-svh">
-        <header className="flex h-12 shrink-0 items-center gap-2 px-4 md:hidden">
-          <SidebarTrigger />
-          <span className="text-sm font-medium">{mobileTitle}</span>
-        </header>
+        {!isMobileDetailRoute(location.pathname) && (
+          <header className="flex h-12 shrink-0 items-center gap-2 px-4 md:hidden">
+            <SidebarTrigger />
+            <span className="text-sm font-medium">{mobileTitle}</span>
+          </header>
+        )}
         {/* Master-detail surfaces (sessions, workspaces, profiles, bots)
             manage their own panes and scrolling — full-bleed. Everything else
             gets the centered scrolling column. */}

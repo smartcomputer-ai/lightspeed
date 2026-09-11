@@ -310,6 +310,10 @@ pub(crate) enum ChatToolDisplayGroup {
     Explore,
     Edit,
     Execute,
+    Mcp,
+    Agent,
+    Bot,
+    Message,
     Other,
 }
 

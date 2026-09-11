@@ -28,7 +28,7 @@ export function ProviderReadinessBanner({
           ? "The configured model provider key was rejected. Sessions cannot run until a valid model provider API key is set."
           : "No model provider is configured for this universe. Sessions cannot run until a model provider API key is added."}
       </span>
-      <Button size="sm" render={<Link to={addIntegrationHref(slug, "openAiApiKey")} />}>
+      <Button size="sm" nativeButton={false} render={<Link to={addIntegrationHref(slug, "openAiApiKey")} />}>
         Add API key
       </Button>
     </div>

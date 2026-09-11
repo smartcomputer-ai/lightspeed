@@ -1361,11 +1361,17 @@ fn environment_tool_subgrants_are_default_off_and_map_explicit_opt_in() {
         serde_json::from_value(serde_json::json!({})).expect("empty environment feature");
     assert!(!default_feature.selection_tools);
     assert!(!default_feature.jobs);
+    assert!(!default_feature.commands);
+    assert!(default_feature.tools.is_none());
 
     let config = engine_session_config_from_api(
         api::SessionConfig {
             features: Some(api::FeaturesConfig {
                 environments: Some(api::EnvironmentsFeature {
+                    tools: Some(api::EnvironmentToolSurface::Edit),
+                    commands: true,
+                    working_directory: None,
+                    prompts: None,
                     version: api::CURRENT_FEATURE_VERSION,
                     providers: None,
                     registration_keys: None,
@@ -1490,6 +1496,7 @@ fn vfs_feature_grant_maps_tool_surfaces() {
             api::SessionConfig {
                 features: Some(api::FeaturesConfig {
                     vfs: Some(api::VfsFeature {
+                        working_directory: None,
                         version: api::CURRENT_FEATURE_VERSION,
                         workspace_links: Vec::new(),
                         tools: Some(api_surface),
@@ -1515,6 +1522,7 @@ fn vfs_feature_grant_maps_tool_surfaces() {
         api::SessionConfig {
             features: Some(api::FeaturesConfig {
                 vfs: Some(api::VfsFeature {
+                    working_directory: None,
                     version: api::CURRENT_FEATURE_VERSION,
                     workspace_links: Vec::new(),
                     tools: None,
@@ -1545,7 +1553,7 @@ fn profile_and_session_grants_derive_vfs_transfer_tools() {
             }
             if environments {
                 // Selection tools and jobs are independent of transfer availability.
-                features["environments"] = serde_json::json!({});
+                features["environments"] = serde_json::json!({"tools":"edit"});
             }
             let profile: api::ProfileDocument =
                 serde_json::from_value(serde_json::json!({"config": {"features": features}}))
@@ -2706,9 +2714,7 @@ async fn skill_list_reads_latest_structured_provenance() {
     let mut config =
         engine_session_config_from_api(api::SessionConfig::default(), openai_model()).unwrap();
     config.features.vfs = Some(engine::VfsFeature {
-        skills: Some(engine::VfsSkillsConfig {
-            roots: vec!["/skills/system".into()],
-        }),
+        skills: Some(engine::VfsSkillsConfig::default()),
         ..Default::default()
     });
     state.lifecycle.config = Some(config);
@@ -2825,4 +2831,50 @@ async fn skill_list_reads_latest_structured_provenance() {
         response.catalogs[0].availability,
         api::SkillCatalogAvailability::Unavailable
     );
+}
+
+#[test]
+fn environment_filesystem_and_commands_are_independent_grants() {
+    for surface in [None, Some("readOnly"), Some("edit")] {
+        for commands in [false, true] {
+            let mut features = serde_json::json!({"vfs":{"tools":"edit"},"environments":{"commands":commands,"jobs":true,"skills":{},"prompts":{}}});
+            if let Some(surface) = surface {
+                features["environments"]["tools"] = serde_json::json!(surface);
+            }
+            let config = engine_session_config_from_api(
+                serde_json::from_value(serde_json::json!({"features":features})).unwrap(),
+                openai_model(),
+            )
+            .unwrap();
+            let registered = tools::toolset::register_toolset(
+                &GatewayAgentApi::session_toolset_config(&config, true, false),
+            )
+            .unwrap();
+            for (id, granted) in [
+                ("env.read_file", surface.is_some()),
+                ("env.grep", surface.is_some()),
+                ("env.glob", surface.is_some()),
+                ("env.list_dir", surface.is_some()),
+                ("env.write_file", surface == Some("edit")),
+                ("env.edit_file", surface == Some("edit")),
+                ("env.apply_patch", surface == Some("edit")),
+                ("env.run_process", commands),
+                ("env.continue_process", commands),
+                ("vfs.materialize", surface == Some("edit")),
+                ("vfs.capture", surface.is_some()),
+            ] {
+                assert_eq!(
+                    registered.tools.contains_key(&ToolName::new(id)),
+                    granted,
+                    "{id}, {surface:?}, commands={commands}"
+                );
+            }
+            let absent = tools::toolset::register_toolset(
+                &GatewayAgentApi::session_toolset_config(&config, false, false),
+            )
+            .unwrap();
+            assert!(!absent.tools.contains_key(&ToolName::new("env.read_file")));
+            assert!(!absent.tools.contains_key(&ToolName::new("env.run_process")));
+        }
+    }
 }

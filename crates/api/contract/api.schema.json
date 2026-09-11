@@ -8570,6 +8570,24 @@
         }
       ]
     },
+    "EnvironmentPromptsConfig": {
+      "additionalProperties": false,
+      "description": "Prompt loading scope resolved on the selected machine, never on the worker.",
+      "properties": {
+        "roots": {
+          "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/prompts and\n.lightspeed/prompts under working directory and execution home.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "EnvironmentProviderBindingListParams": {
       "type": "object"
     },
@@ -8907,29 +8925,18 @@
       "description": "A freshly minted registration secret. `Debug` output is redacted so the\nplaintext cannot leak through derived logging; it is shown once.",
       "type": "string"
     },
-    "EnvironmentSkillsFeature": {
+    "EnvironmentSkillsConfig": {
       "additionalProperties": false,
-      "description": "Discovery scope resolved on the selected machine, never on the worker.",
+      "description": "Skill discovery scope resolved on the selected machine, never on the worker.",
       "properties": {
-        "additionalRoots": {
-          "default": [],
-          "description": "Additional absolute or working-directory-relative discovery roots.",
+        "roots": {
+          "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/skills and\n.lightspeed/skills under working directory and execution home.",
           "items": {
             "type": "string"
           },
-          "type": "array"
-        },
-        "projectRoot": {
-          "description": "Absolute ancestor boundary. Absent scans only the working directory.",
+          "minItems": 1,
           "type": [
-            "string",
-            "null"
-          ]
-        },
-        "workingDirectory": {
-          "description": "Absolute session working directory; absent uses the endpoint default.",
-          "type": [
-            "string",
+            "array",
             "null"
           ]
         }
@@ -9095,6 +9102,14 @@
       ],
       "type": "object"
     },
+    "EnvironmentToolSurface": {
+      "description": "Agent-facing environment filesystem tools; independent of execution grants.",
+      "enum": [
+        "readOnly",
+        "edit"
+      ],
+      "type": "string"
+    },
     "EnvironmentView": {
       "properties": {
         "createdAtMs": {
@@ -9194,12 +9209,28 @@
     },
     "EnvironmentsFeature": {
       "additionalProperties": false,
-      "description": "Grants active session environments and their process tool surface.\nModel-driven selection and durable jobs are independent, default-off\nsub-grants.",
+      "description": "Grants active session environments. Filesystem tools, commands, selection,\ndurable jobs, prompts, and skills are independent, default-off sub-grants.",
       "properties": {
+        "commands": {
+          "default": false,
+          "description": "Grants command execution and process continuation. Commands may modify\nfiles even when filesystem tools are read-only or disabled.",
+          "type": "boolean"
+        },
         "jobs": {
           "default": false,
           "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
           "type": "boolean"
+        },
+        "prompts": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentPromptsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Independent environment prompt loading; absent disables sourced instructions."
         },
         "providers": {
           "description": "Absent means every registered provider is allowed.",
@@ -9229,7 +9260,7 @@
         "skills": {
           "anyOf": [
             {
-              "$ref": "#/definitions/EnvironmentSkillsFeature"
+              "$ref": "#/definitions/EnvironmentSkillsConfig"
             },
             {
               "type": "null"
@@ -9237,11 +9268,29 @@
           ],
           "description": "Independent environment skill discovery. Absent disables discovery."
         },
+        "tools": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentToolSurface"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Filesystem tool surface. Absent installs no filesystem tools; sources\nremain independent. Read-only does not restrict commands or durable jobs."
+        },
         "version": {
           "default": 1,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "workingDirectory": {
+          "description": "Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -16087,13 +16136,50 @@
       "type": "object"
     },
     "ToolCallDisplayGroup": {
-      "enum": [
-        "explore",
-        "edit",
-        "execute",
-        "other"
-      ],
-      "type": "string"
+      "description": "Coarse activity family of a tool call, chosen by the projection from the\ntool name. Clients key icons and colours on it; the verb and target carry\nthe specifics. Unknown tools land in `Other`.",
+      "oneOf": [
+        {
+          "enum": [
+            "other"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "explore",
+          "description": "Reads the environment or the web without changing it.",
+          "type": "string"
+        },
+        {
+          "const": "edit",
+          "description": "Writes or patches files.",
+          "type": "string"
+        },
+        {
+          "const": "execute",
+          "description": "Runs or controls a process.",
+          "type": "string"
+        },
+        {
+          "const": "mcp",
+          "description": "Calls a tool on an MCP server, through the builtin bridge or a\nprovider-native MCP block.",
+          "type": "string"
+        },
+        {
+          "const": "agent",
+          "description": "Delegates to a sub-agent or waits on one.",
+          "type": "string"
+        },
+        {
+          "const": "bot",
+          "description": "Bot-to-bot traffic and a bot's own configuration tools.",
+          "type": "string"
+        },
+        {
+          "const": "message",
+          "description": "Sends into a chat conversation on a channel.",
+          "type": "string"
+        }
+      ]
     },
     "ToolCallDisplayView": {
       "properties": {
@@ -16520,7 +16606,7 @@
               "type": "null"
             }
           ],
-          "description": "Prompt-instruction sourcing from the VFS."
+          "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional linked roots."
         },
         "skills": {
           "anyOf": [
@@ -16531,7 +16617,7 @@
               "type": "null"
             }
           ],
-          "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; enabling it requires explicit linked roots."
+          "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional linked roots."
         },
         "tools": {
           "anyOf": [
@@ -16550,6 +16636,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "workingDirectory": {
+          "description": "Absolute VFS tool working directory; absent uses /.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "workspaceLinks": {
           "description": "Catalog resources exposed in the session's workspace namespace.",
           "items": {
@@ -16564,7 +16657,7 @@
       "additionalProperties": false,
       "properties": {
         "roots": {
-          "description": "Absent means the conventional roots; an explicit list must be\nnon-empty.",
+          "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
           "items": {
             "type": "string"
           },
@@ -16580,17 +16673,17 @@
       "additionalProperties": false,
       "properties": {
         "roots": {
-          "description": "Explicit absolute discovery roots in the linked VFS namespace. Must be\nnon-empty and contained in workspace links; no roots are inferred.",
+          "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
           "items": {
             "type": "string"
           },
           "minItems": 1,
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
         }
       },
-      "required": [
-        "roots"
-      ],
       "type": "object"
     },
     "VfsSnapshotCommitParams": {

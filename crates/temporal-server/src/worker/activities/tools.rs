@@ -693,6 +693,7 @@ mod tests {
     fn batch(calls: Vec<ToolInvocationRequest>) -> ToolInvokeBatchActivityRequest {
         ToolInvokeBatchActivityRequest {
             request: ToolInvocationBatchRequest {
+                vfs_working_directory: None,
                 session_id: SessionId::new("session-mixed"),
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),

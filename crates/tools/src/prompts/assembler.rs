@@ -21,8 +21,6 @@ use crate::{
     },
 };
 
-const INSTRUCTIONS_FILE: &str = "instructions.md";
-const INSTRUCTIONS_DIR: &str = "instructions.d";
 const CONTEXT_KEY_MAX_LEN: usize = 128;
 
 pub struct PromptRootInput<'a> {
@@ -303,35 +301,8 @@ fn prompt_instruction_inputs_for_entries(
 async fn scan_root(input: &PromptRootInput<'_>) -> RootScanResult {
     let mut scan = RootScan::new(&input.root);
 
-    let instruction_path = match input.root.root_path.join(INSTRUCTIONS_FILE) {
-        Ok(path) => path,
-        Err(error) => {
-            scan.warn(
-                Some(input.root.root_path.as_str().to_owned()),
-                PromptWarningKind::InvalidPath {
-                    message: error.to_string(),
-                },
-            );
-            return scan.finish();
-        }
-    };
-    if let Some(source) = read_prompt_source(input, &instruction_path).await {
-        scan.sources.push(source);
-    }
-
-    let instruction_dir = match input.root.root_path.join(INSTRUCTIONS_DIR) {
-        Ok(path) => path,
-        Err(error) => {
-            scan.warn(
-                Some(input.root.root_path.as_str().to_owned()),
-                PromptWarningKind::InvalidPath {
-                    message: error.to_string(),
-                },
-            );
-            return scan.finish();
-        }
-    };
-    let entries = match input.fs.read_directory(&instruction_dir).await {
+    let instruction_dir = &input.root.root_path;
+    let entries = match input.fs.read_directory(instruction_dir).await {
         Ok(entries) => entries,
         Err(FsError::NotFound { .. }) => return scan.finish(),
         Err(error) => {
@@ -346,7 +317,9 @@ async fn scan_root(input: &PromptRootInput<'_>) -> RootScanResult {
     };
     let mut files = entries
         .into_iter()
-        .filter(|entry| entry.is_file && entry.file_name.ends_with(".md"))
+        .filter(|entry| {
+            entry.is_file && (entry.file_name.ends_with(".md") || entry.file_name.ends_with(".txt"))
+        })
         .collect::<Vec<_>>();
     files.sort_by(|left, right| left.file_name.cmp(&right.file_name));
     for entry in files {
@@ -819,12 +792,8 @@ impl ResolvedPromptSource {
         }
     }
 
-    fn sort_key(&self) -> (String, u8, String) {
-        (
-            self.root_id.clone(),
-            source_order(&self.path),
-            self.path.clone(),
-        )
+    fn sort_key(&self) -> (String, String) {
+        (self.root_id.clone(), self.path.clone())
     }
 }
 
@@ -881,14 +850,6 @@ struct SourceFingerprintPayload<'a> {
     inputs: &'a [PromptSourceFingerprintInput],
 }
 
-fn source_order(path: &str) -> u8 {
-    if path.ends_with(INSTRUCTIONS_FILE) {
-        0
-    } else {
-        1
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -907,12 +868,24 @@ mod tests {
                 "Base\r\nrules\n",
             ),
             (
-                "/workspace/.lightspeed/prompts/instructions.d/020-style.md",
+                "/workspace/.lightspeed/prompts/020-style.txt",
                 "Style rules\n",
             ),
             (
-                "/workspace/.lightspeed/prompts/instructions.d/010-safety.md",
+                "/workspace/.lightspeed/prompts/010-safety.md",
                 "Safety rules\n",
+            ),
+            (
+                "/workspace/.lightspeed/prompts/notes.json",
+                "Ignore other formats",
+            ),
+            (
+                "/workspace/.lightspeed/prompts/nested/hidden.md",
+                "Ignore nested",
+            ),
+            (
+                "/workspace/.lightspeed/prompts/instructions.d/legacy.md",
+                "Ignore legacy",
             ),
         ])
         .await;
@@ -932,15 +905,15 @@ mod tests {
         assert!(build.report.sources.iter().all(|source| source.published));
         assert_eq!(
             build.entries[0].content_ref,
-            BlobRef::from_bytes(b"Base\r\nrules\n")
-        );
-        assert_eq!(
-            build.entries[1].content_ref,
             BlobRef::from_bytes(b"Safety rules\n")
         );
         assert_eq!(
-            build.entries[2].content_ref,
+            build.entries[1].content_ref,
             BlobRef::from_bytes(b"Style rules\n")
+        );
+        assert_eq!(
+            build.entries[2].content_ref,
+            BlobRef::from_bytes(b"Base\r\nrules\n")
         );
         assert!(
             build.entries[0].key.as_str() < build.entries[1].key.as_str()
@@ -966,7 +939,7 @@ mod tests {
                 "Base rules\n",
             ),
             (
-                "/workspace/.lightspeed/prompts/instructions.d/010-long.md",
+                "/workspace/.lightspeed/prompts/010-long.md",
                 "This source is too long to publish\n",
             ),
         ])

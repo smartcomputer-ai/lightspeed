@@ -27,7 +27,8 @@ It should have a clear description, read-only VFS tools, and its own read-only
 link to the `release-notes` workspace at `/workspace`.
 
 Open the parent `release-editor` profile and enable **Sub-agents**. In
-**Agents**, select `release-reviewer`. Set a small limit for this task, for
+**Agents**, select `release-reviewer`. Optional limits are hidden by default;
+choose **Customize limits** to edit them. Set small limits for this task, for
 example **Max depth** `1`, **Max descendants** `8`, **Max concurrent** `2`, and
 **Deadline (ms)** `300000`. Save and start a new session from the parent
 profile, or apply it to an existing idle session.

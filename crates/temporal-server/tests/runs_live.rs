@@ -191,6 +191,7 @@ fn run_control_session_config(model: &ModelSelection) -> SessionConfig {
         model: Some(model_to_api(model)),
         features: Some(api::FeaturesConfig {
             vfs: Some(api::VfsFeature {
+                working_directory: None,
                 version: api::CURRENT_FEATURE_VERSION,
                 workspace_links: Vec::new(),
                 tools: Some(api::VfsToolSurface::ReadOnly),
@@ -726,6 +727,7 @@ async fn run_parallel_tool_batch_live_client(
             model: Some(model_to_api(&model)),
             features: Some(api::FeaturesConfig {
                 vfs: Some(api::VfsFeature {
+                    working_directory: None,
                     version: api::CURRENT_FEATURE_VERSION,
                     workspace_links: Vec::new(),
                     tools: Some(api::VfsToolSurface::ReadOnly),
@@ -1048,6 +1050,7 @@ async fn run_unbounded_hosted_run_live_client(
             model: Some(model_to_api(&model)),
             features: Some(api::FeaturesConfig {
                 vfs: Some(api::VfsFeature {
+                    working_directory: None,
                     version: api::CURRENT_FEATURE_VERSION,
                     workspace_links: Vec::new(),
                     tools: None,

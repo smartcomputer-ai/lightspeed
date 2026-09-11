@@ -417,6 +417,9 @@ pub struct FeaturesConfig {
 pub struct VfsFeature {
     #[serde(default = "default_feature_version")]
     pub version: u32,
+    /// Absolute VFS tool working directory; absent uses /.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
     /// Catalog resources exposed in the session's workspace namespace.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspace_links: Vec<WorkspaceLink>,
@@ -427,11 +430,12 @@ pub struct VfsFeature {
     /// Prompt/skill sourcing alone does not grant transfer tools.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<VfsToolSurface>,
-    /// Prompt-instruction sourcing from the VFS.
+    /// Prompt-instruction sourcing from the VFS. Absent disables loading;
+    /// an empty block discovers conventional linked roots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompts: Option<VfsPromptsConfig>,
     /// Independent VFS skill discovery. Absent disables discovery and removes
-    /// its runtime catalog; enabling it requires explicit linked roots.
+    /// its runtime catalog; an empty block discovers conventional linked roots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skills: Option<VfsSkillsConfig>,
 }
@@ -472,19 +476,22 @@ pub enum VfsToolSurface {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VfsPromptsConfig {
-    /// Absent means the conventional roots; an explicit list must be
-    /// non-empty.
+    /// Absent searches .agents/prompts and .lightspeed/prompts beneath each
+    /// workspace link. Explicit roots replace these defaults and must be
+    /// non-empty absolute paths contained in workspace links.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roots: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VfsSkillsConfig {
-    /// Explicit absolute discovery roots in the linked VFS namespace. Must be
-    /// non-empty and contained in workspace links; no roots are inferred.
+    /// Absent searches .agents/skills and .lightspeed/skills beneath each
+    /// workspace link. Explicit roots replace these defaults and must be
+    /// non-empty absolute paths contained in workspace links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
-    pub roots: Vec<String>,
+    pub roots: Option<Vec<String>>,
 }
 
 /// Grants network access through the web toolset; `fetch` and `search` are
@@ -573,14 +580,24 @@ pub struct TimersFeature {
     pub version: u32,
 }
 
-/// Grants active session environments and their process tool surface.
-/// Model-driven selection and durable jobs are independent, default-off
-/// sub-grants.
+/// Grants active session environments. Filesystem tools, commands, selection,
+/// durable jobs, prompts, and skills are independent, default-off sub-grants.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EnvironmentsFeature {
     #[serde(default = "default_feature_version")]
     pub version: u32,
+    /// Filesystem tool surface. Absent installs no filesystem tools; sources
+    /// remain independent. Read-only does not restrict commands or durable jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<EnvironmentToolSurface>,
+    /// Grants command execution and process continuation. Commands may modify
+    /// files even when filesystem tools are read-only or disabled.
+    #[serde(default)]
+    pub commands: bool,
+    /// Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
     /// Absent means every registered provider is allowed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub providers: Option<Vec<EnvironmentProviderId>>,
@@ -601,24 +618,46 @@ pub struct EnvironmentsFeature {
     /// active, ready environment with matching job capabilities.
     #[serde(default)]
     pub jobs: bool,
+    /// Independent environment prompt loading; absent disables sourced instructions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<EnvironmentPromptsConfig>,
     /// Independent environment skill discovery. Absent disables discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skills: Option<EnvironmentSkillsFeature>,
+    pub skills: Option<EnvironmentSkillsConfig>,
 }
 
-/// Discovery scope resolved on the selected machine, never on the worker.
+/// Agent-facing environment filesystem tools; independent of execution grants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum EnvironmentToolSurface {
+    ReadOnly,
+    Edit,
+}
+
+/// Prompt loading scope resolved on the selected machine, never on the worker.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct EnvironmentSkillsFeature {
-    /// Absolute session working directory; absent uses the endpoint default.
+pub struct EnvironmentPromptsConfig {
+    /// Optional source directories, absolute or relative to the environment
+    /// working directory. Explicit nonempty lists replace all defaults,
+    /// including home roots. Defaults are .agents/prompts and
+    /// .lightspeed/prompts under working directory and execution home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub working_directory: Option<String>,
-    /// Absolute ancestor boundary. Absent scans only the working directory.
+    #[schemars(length(min = 1))]
+    pub roots: Option<Vec<String>>,
+}
+
+/// Skill discovery scope resolved on the selected machine, never on the worker.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EnvironmentSkillsConfig {
+    /// Optional source directories, absolute or relative to the environment
+    /// working directory. Explicit nonempty lists replace all defaults,
+    /// including home roots. Defaults are .agents/skills and
+    /// .lightspeed/skills under working directory and execution home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_root: Option<String>,
-    /// Additional absolute or working-directory-relative discovery roots.
-    #[serde(default)]
-    pub additional_roots: Vec<String>,
+    #[schemars(length(min = 1))]
+    pub roots: Option<Vec<String>>,
 }
 
 /// Grants remote MCP tools by declaring linked servers from the universe MCP

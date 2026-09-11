@@ -2056,7 +2056,20 @@ fn features_config_to_api(
             .environments
             .as_ref()
             .map(|environments| api::EnvironmentsFeature {
+                tools: environments.tools.map(|surface| match surface {
+                    engine::EnvironmentToolSurface::ReadOnly => {
+                        api::EnvironmentToolSurface::ReadOnly
+                    }
+                    engine::EnvironmentToolSurface::Edit => api::EnvironmentToolSurface::Edit,
+                }),
+                commands: environments.commands,
                 version: environments.version,
+                working_directory: environments.working_directory.clone(),
+                prompts: environments.prompts.as_ref().map(|source| {
+                    api::EnvironmentPromptsConfig {
+                        roots: source.roots.clone(),
+                    }
+                }),
                 providers: environments.providers.clone(),
                 registration_keys: environments.registration_keys.clone(),
                 selection_tools: environments.selection_tools,
@@ -2064,10 +2077,8 @@ fn features_config_to_api(
                 skills: environments
                     .skills
                     .as_ref()
-                    .map(|skills| api::EnvironmentSkillsFeature {
-                        working_directory: skills.working_directory.clone(),
-                        project_root: skills.project_root.clone(),
-                        additional_roots: skills.additional_roots.clone(),
+                    .map(|skills| api::EnvironmentSkillsConfig {
+                        roots: skills.roots.clone(),
                     }),
             }),
         mcp: features.mcp.as_ref().map(mcp_feature_to_api),
@@ -2077,6 +2088,7 @@ fn features_config_to_api(
 fn vfs_feature_to_api(vfs: &engine::VfsFeature) -> api::VfsFeature {
     api::VfsFeature {
         version: vfs.version,
+        working_directory: vfs.working_directory.clone(),
         workspace_links: vfs
             .workspace_links
             .iter()
@@ -2528,7 +2540,7 @@ fn openai_mcp_call_display(value: &Value) -> Option<ProviderContextDisplayView> 
     let server_label = json_field_text(value, "server_label");
     let tool_name = match server_label.as_deref() {
         Some(server_label) if !server_label.is_empty() => format!("{server_label}.{name}"),
-        _ => name,
+        _ => name.clone(),
     };
     let raw_status = value.get("status").and_then(Value::as_str);
     let error = json_field_text(value, "error");
@@ -2547,9 +2559,11 @@ fn openai_mcp_call_display(value: &Value) -> Option<ProviderContextDisplayView> 
 
     Some(ProviderContextDisplayView {
         summary: ToolCallDisplayView {
-            group: ToolCallDisplayGroup::Other,
-            verb: "MCP".to_owned(),
-            target: Some(tool_name.clone()),
+            group: ToolCallDisplayGroup::Mcp,
+            verb: server_label
+                .filter(|label| !label.is_empty())
+                .unwrap_or_else(|| "MCP".to_owned()),
+            target: Some(name),
             detail,
         },
         tool_name,
@@ -2709,16 +2723,19 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                     .or_else(|| first_string(json, &["query"]))
             }),
         },
+        // Same sentence as a provider-native MCP block: the server is the
+        // verb, the tool the target, so both paths read alike.
         "mcp_call" => ToolCallDisplayView {
-            group: ToolCallDisplayGroup::Other,
+            group: ToolCallDisplayGroup::Mcp,
             verb: json
                 .as_ref()
-                .and_then(|json| first_string(json, &["tool"]))
-                .unwrap_or_else(|| "MCP tool".to_owned()),
-            target: json
+                .and_then(|json| first_string(json, &["server"]))
+                .unwrap_or_else(|| "MCP".to_owned()),
+            target: json.as_ref().and_then(|json| first_string(json, &["tool"])),
+            detail: json
                 .as_ref()
-                .and_then(|json| first_string(json, &["server"])),
-            detail: Some("MCP tool".to_owned()),
+                .and_then(|json| json.get("arguments"))
+                .and_then(first_scalar_text),
         },
         "write_file" | "write" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Edit,
@@ -2772,6 +2789,155 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .as_ref()
                 .and_then(|json| first_string(json, &["shell_id", "handle", "id"])),
             detail: None,
+        },
+        "agent_run" | "agent_spawn" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Agent,
+            verb: if normalized == "agent_run" {
+                "Delegate"
+            } else {
+                "Spawn"
+            }
+            .to_owned(),
+            target: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["agent"])),
+            detail: json.as_ref().and_then(|json| {
+                first_string(json, &["label"])
+                    .or_else(|| first_string(json, &["input"]).map(|input| summary_line(&input)))
+            }),
+        },
+        "await" | "cancel" | "detach" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Agent,
+            verb: match normalized.as_str() {
+                "await" => "Await",
+                "cancel" => "Cancel",
+                _ => "Detach",
+            }
+            .to_owned(),
+            target: json.as_ref().and_then(|json| string_list(json, "promises")),
+            detail: json.as_ref().and_then(|json| {
+                let count = json
+                    .get("promises")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                let any = first_string(json, &["mode"]).is_some_and(|mode| mode == "any");
+                match (count, any) {
+                    (0 | 1, false) => None,
+                    (0 | 1, true) => Some("any".to_owned()),
+                    (count, false) => Some(format!("{count} promises")),
+                    (count, true) => Some(format!("{count} promises · any")),
+                }
+            }),
+        },
+        "bot_emit" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Bot,
+            verb: "Emit".to_owned(),
+            target: Some(
+                match json.as_ref().and_then(|json| first_string(json, &["to"])) {
+                    Some(to) => format!("to {to}"),
+                    None => "to self".to_owned(),
+                },
+            ),
+            detail: json.as_ref().and_then(|json| {
+                let mut parts = first_string(json, &["kind"])
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                if json.get("reply").and_then(Value::as_bool) == Some(true) {
+                    parts.push("reply requested".to_owned());
+                }
+                if let Some(key) = first_string(json, &["sessionKey"]) {
+                    parts.push(format!("key {key}"));
+                }
+                (!parts.is_empty()).then(|| parts.join(" · "))
+            }),
+        },
+        "bot_event_resolve" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Bot,
+            verb: "Resolve".to_owned(),
+            target: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["outcome"])),
+            detail: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["summary"]))
+                .map(|summary| summary_line(&summary)),
+        },
+        "bot_event_read" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Bot,
+            verb: "Read event".to_owned(),
+            target: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["seq"]))
+                .map(|seq| format!("#{seq}")),
+            detail: json.as_ref().and_then(|json| first_string(json, &["path"])),
+        },
+        "bot_event_list" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Bot,
+            verb: "List events".to_owned(),
+            target: None,
+            detail: None,
+        },
+        "bot_status" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Bot,
+            verb: "Check status".to_owned(),
+            target: None,
+            detail: None,
+        },
+        "bot_trigger_put" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Bot,
+            verb: "Set trigger".to_owned(),
+            target: json.as_ref().and_then(|json| first_string(json, &["name"])),
+            detail: json.as_ref().and_then(|json| first_string(json, &["kind"])),
+        },
+        "bot_trigger_delete" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Bot,
+            verb: "Remove trigger".to_owned(),
+            target: json.as_ref().and_then(|json| first_string(json, &["name"])),
+            detail: None,
+        },
+        "bot_trigger_list" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Bot,
+            verb: "List triggers".to_owned(),
+            target: None,
+            detail: None,
+        },
+        "bot_filter_test" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Bot,
+            verb: "Test filter".to_owned(),
+            target: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["filter"])),
+            detail: None,
+        },
+        "bot_brief_put" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Bot,
+            verb: "Update brief".to_owned(),
+            target: None,
+            detail: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["brief"]))
+                .map(|brief| summary_line(&brief)),
+        },
+        "message_send" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Message,
+            verb: "Send".to_owned(),
+            target: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["text"]))
+                .map(|text| summary_line(&text)),
+            detail: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["replyTo", "reply_to"]))
+                .map(|reply| format!("reply to #{reply}")),
+        },
+        "message_noop" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Message,
+            verb: "Skip".to_owned(),
+            target: None,
+            detail: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["reason"]))
+                .map(|reason| summary_line(&reason)),
         },
         "sleep" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Other,
@@ -2827,6 +2993,44 @@ fn json_text(value: &Value) -> Option<String> {
         Value::Number(value) => Some(value.to_string()),
         _ => None,
     }
+}
+
+/// The first non-empty line of a longer text, cut to a readable width so it
+/// fits a one-line activity row.
+fn summary_line(text: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("");
+    if line.chars().count() <= MAX_CHARS {
+        return line.to_owned();
+    }
+    let mut cut: String = line.chars().take(MAX_CHARS - 1).collect();
+    cut.push('…');
+    cut
+}
+
+/// Comma-joined string items of an array field.
+fn string_list(json: &Value, key: &str) -> Option<String> {
+    let items = json
+        .get(key)?
+        .as_array()?
+        .iter()
+        .filter_map(json_text)
+        .collect::<Vec<_>>();
+    (!items.is_empty()).then(|| items.join(", "))
+}
+
+/// The first scalar value inside an object, as a short hint of what a
+/// generic call was about (an id, a query, a path).
+fn first_scalar_text(value: &Value) -> Option<String> {
+    value.as_object()?.values().find_map(|value| match value {
+        Value::String(text) if !text.trim().is_empty() => Some(summary_line(text)),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    })
 }
 
 fn command_display(json: &Value) -> Option<String> {
@@ -2906,9 +3110,126 @@ mod tests {
             r#"{"server":"configurator","tool":"lightspeed_models_list","arguments":{}}"#,
         )
         .expect("display");
-        assert_eq!(display.verb, "lightspeed_models_list");
-        assert_eq!(display.target.as_deref(), Some("configurator"));
-        assert_ne!(display.verb, "mcp_call");
+        assert_eq!(display.group, ToolCallDisplayGroup::Mcp);
+        assert_eq!(display.verb, "configurator");
+        assert_eq!(display.target.as_deref(), Some("lightspeed_models_list"));
+        assert_eq!(display.detail, None);
+
+        let display = tool_call_display(
+            "mcp_call",
+            r#"{"server":"stripe","tool":"retrieve_subscription","arguments":{"id":"sub_1R0aB3"}}"#,
+        )
+        .expect("display");
+        assert_eq!(display.detail.as_deref(), Some("sub_1R0aB3"));
+    }
+
+    #[test]
+    fn provider_native_mcp_call_reads_like_the_builtin_bridge() {
+        let display = openai_mcp_call_display(&serde_json::json!({
+            "type": "mcp_call",
+            "name": "retrieve_subscription",
+            "server_label": "stripe",
+            "status": "completed",
+        }))
+        .expect("display");
+        assert_eq!(display.summary.group, ToolCallDisplayGroup::Mcp);
+        assert_eq!(display.summary.verb, "stripe");
+        assert_eq!(
+            display.summary.target.as_deref(),
+            Some("retrieve_subscription")
+        );
+        assert_eq!(display.tool_name, "stripe.retrieve_subscription");
+    }
+
+    #[test]
+    fn subagent_calls_display_the_profile_and_the_brief() {
+        let display = tool_call_display(
+            "agent_run",
+            r#"{"agent":"reviewer","input":"Review the diff on skills2.\n\nFocus on tests."}"#,
+        )
+        .expect("display");
+        assert_eq!(display.group, ToolCallDisplayGroup::Agent);
+        assert_eq!(display.verb, "Delegate");
+        assert_eq!(display.target.as_deref(), Some("reviewer"));
+        assert_eq!(
+            display.detail.as_deref(),
+            Some("Review the diff on skills2.")
+        );
+
+        let display = tool_call_display(
+            "agent_spawn",
+            r#"{"agent":"researcher","input":"Find prior art","label":"Prior art"}"#,
+        )
+        .expect("display");
+        assert_eq!(display.verb, "Spawn");
+        assert_eq!(display.detail.as_deref(), Some("Prior art"));
+
+        let display = tool_call_display(
+            "await",
+            r#"{"promises":["promise_3","promise_4"],"mode":"any"}"#,
+        )
+        .expect("display");
+        assert_eq!(display.group, ToolCallDisplayGroup::Agent);
+        assert_eq!(display.verb, "Await");
+        assert_eq!(display.target.as_deref(), Some("promise_3, promise_4"));
+        assert_eq!(display.detail.as_deref(), Some("2 promises · any"));
+    }
+
+    #[test]
+    fn bot_emit_distinguishes_self_from_addressed_peers() {
+        let display = tool_call_display(
+            "bot_emit",
+            r#"{"kind":"bug.confirmed","summary":"Duplicates on page boundary","to":"escalations","reply":true}"#,
+        )
+        .expect("display");
+        assert_eq!(display.group, ToolCallDisplayGroup::Bot);
+        assert_eq!(display.verb, "Emit");
+        assert_eq!(display.target.as_deref(), Some("to escalations"));
+        assert_eq!(
+            display.detail.as_deref(),
+            Some("bug.confirmed · reply requested")
+        );
+
+        let display = tool_call_display(
+            "bot_emit",
+            r#"{"kind":"research.followup","summary":"Nightly","sessionKey":"nightly"}"#,
+        )
+        .expect("display");
+        assert_eq!(display.target.as_deref(), Some("to self"));
+        assert_eq!(
+            display.detail.as_deref(),
+            Some("research.followup · key nightly")
+        );
+    }
+
+    #[test]
+    fn channel_message_tools_display_as_messages() {
+        let display = tool_call_display(
+            "message_send",
+            r#"{"text":"On it — checking the logs now.\nMore soon.","replyTo":12}"#,
+        )
+        .expect("display");
+        assert_eq!(display.group, ToolCallDisplayGroup::Message);
+        assert_eq!(display.verb, "Send");
+        assert_eq!(
+            display.target.as_deref(),
+            Some("On it — checking the logs now.")
+        );
+        assert_eq!(display.detail.as_deref(), Some("reply to #12"));
+
+        let display =
+            tool_call_display("message_noop", r#"{"reason":"already answered"}"#).expect("display");
+        assert_eq!(display.verb, "Skip");
+        assert_eq!(display.detail.as_deref(), Some("already answered"));
+    }
+
+    #[test]
+    fn summary_line_takes_the_first_line_and_cuts_on_a_char_boundary() {
+        assert_eq!(summary_line("\n  first 🦀 line \nsecond"), "first 🦀 line");
+        let long = "é".repeat(100);
+        let cut = summary_line(&long);
+        assert_eq!(cut.chars().count(), 80);
+        assert!(cut.ends_with('…'));
     }
 
     #[test]
@@ -3605,9 +3926,9 @@ mod tests {
                 text_truncated: false,
                 display: Some(ProviderContextDisplayView {
                     summary: ToolCallDisplayView {
-                        group: ToolCallDisplayGroup::Other,
-                        verb: "MCP".to_owned(),
-                        target: Some("echo.echo".to_owned()),
+                        group: ToolCallDisplayGroup::Mcp,
+                        verb: "echo".to_owned(),
+                        target: Some("echo".to_owned()),
                         detail: None,
                     },
                     tool_name: "echo.echo".to_owned(),
@@ -3969,6 +4290,7 @@ mod tests {
             },
             features: engine::FeaturesConfig {
                 vfs: Some(engine::VfsFeature {
+                    working_directory: None,
                     version: engine::CURRENT_FEATURE_VERSION,
                     workspace_links: Vec::new(),
                     tools: Some(engine::VfsToolSurface::ReadOnly),
@@ -3976,7 +4298,7 @@ mod tests {
                         roots: Some(vec!["/prompts".to_owned()]),
                     }),
                     skills: Some(engine::VfsSkillsConfig {
-                        roots: vec!["/workspace/skills".into()],
+                        roots: Some(vec!["/workspace/skills".into()]),
                     }),
                 }),
                 web: Some(engine::WebFeature {
@@ -4000,7 +4322,11 @@ mod tests {
                     },
                 }),
                 timers: Some(engine::TimersFeature::default()),
-                environments: Some(engine::EnvironmentsFeature::default()),
+                environments: Some(engine::EnvironmentsFeature {
+                    tools: Some(engine::EnvironmentToolSurface::Edit),
+                    commands: true,
+                    ..Default::default()
+                }),
                 mcp: Some(engine::McpFeature {
                     version: engine::CURRENT_FEATURE_VERSION,
                     servers: vec![engine::McpServerLink {
@@ -4041,6 +4367,7 @@ mod tests {
                 }),
                 features: Some(api::FeaturesConfig {
                     vfs: Some(api::VfsFeature {
+                        working_directory: None,
                         version: api::CURRENT_FEATURE_VERSION,
                         workspace_links: Vec::new(),
                         tools: Some(api::VfsToolSurface::ReadOnly),
@@ -4048,7 +4375,7 @@ mod tests {
                             roots: Some(vec!["/prompts".to_owned()]),
                         }),
                         skills: Some(api::VfsSkillsConfig {
-                            roots: vec!["/workspace/skills".into()]
+                            roots: Some(vec!["/workspace/skills".into()])
                         }),
                     }),
                     web: Some(api::WebFeature {
@@ -4074,6 +4401,10 @@ mod tests {
                         version: api::CURRENT_FEATURE_VERSION,
                     }),
                     environments: Some(api::EnvironmentsFeature {
+                        tools: Some(api::EnvironmentToolSurface::Edit),
+                        commands: true,
+                        working_directory: None,
+                        prompts: None,
                         version: api::CURRENT_FEATURE_VERSION,
                         providers: None,
                         registration_keys: None,

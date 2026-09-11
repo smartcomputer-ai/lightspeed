@@ -260,12 +260,27 @@ pub struct ToolCallDisplayView {
     pub detail: Option<String>,
 }
 
+/// Coarse activity family of a tool call, chosen by the projection from the
+/// tool name. Clients key icons and colours on it; the verb and target carry
+/// the specifics. Unknown tools land in `Other`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolCallDisplayGroup {
+    /// Reads the environment or the web without changing it.
     Explore,
+    /// Writes or patches files.
     Edit,
+    /// Runs or controls a process.
     Execute,
+    /// Calls a tool on an MCP server, through the builtin bridge or a
+    /// provider-native MCP block.
+    Mcp,
+    /// Delegates to a sub-agent or waits on one.
+    Agent,
+    /// Bot-to-bot traffic and a bot's own configuration tools.
+    Bot,
+    /// Sends into a chat conversation on a channel.
+    Message,
     Other,
 }
 

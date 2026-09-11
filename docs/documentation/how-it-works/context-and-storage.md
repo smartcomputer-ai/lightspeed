@@ -89,9 +89,8 @@ is active or already queued; it is not an unconditional refresh before each
 previously queued task.
 
 Prompt discovery reads conventional locations such as `.lightspeed/prompts`
-and `.agents/prompts` in linked VFS workspaces. It assembles `instructions.md`
-and the sorted immediate Markdown files in `instructions.d`, with source
-information and warnings recorded in an assembly report. A source exceeding
+and `.agents/prompts` in linked VFS workspaces. It assembles direct `.md` and
+`.txt` files in filename order, without recursion, with source information and warnings recorded in an assembly report. A source exceeding
 its limit is omitted whole rather than silently turned into truncated
 instructions.
 

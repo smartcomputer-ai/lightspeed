@@ -228,6 +228,8 @@ describe("environment feature config", () => {
       features: {
         environments: {
           providers: ["sandbox-a"],
+          tools: "readOnly",
+          commands: true,
           selectionTools: true,
           jobs: true,
         },
@@ -236,6 +238,8 @@ describe("environment feature config", () => {
       features: {
         environments: {
           providers: ["sandbox-a"],
+          tools: "readOnly",
+          commands: true,
           selectionTools: true,
           jobs: true,
         },
@@ -368,17 +372,23 @@ describe("MCP feature config", () => {
 });
 
 describe("independent skill discovery configuration", () => {
-  it("requires explicit VFS roots without changing the environment scope", () => {
-    const environments = { skills: { workingDirectory: "/project", additionalRoots: ["/team"] } };
-    for (const skills of [undefined, {}, { roots: [] }]) {
-      const normalized = normalizeSessionConfig({ features: {
-        vfs: { tools: "edit", skills }, environments,
-      } });
-      expect(normalized).toEqual({ features: { vfs: { tools: "edit" }, environments } });
+  it("preserves default and explicit VFS roots without changing the environment scope", () => {
+    const environments = { workingDirectory: "/project", skills: { roots: ["/team"] } };
+    expect(normalizeSessionConfig({ features: {
+      vfs: { tools: "edit" }, environments,
+    } })).toEqual({ features: { vfs: { tools: "edit" }, environments } });
+    for (const skills of [{}, { roots: [] }]) {
+      expect(normalizeSessionConfig({ features: { vfs: { skills }, environments } }))
+        .toEqual({ features: { vfs: { skills }, environments } });
     }
     const normalized = normalizeSessionConfig({ features: {
       vfs: { skills: { roots: ["/workspace/skills"] } }, environments,
     } });
     expect(normalized).toEqual({ features: { vfs: { skills: { roots: ["/workspace/skills"] } }, environments } });
   });
+});
+
+it.each([undefined, "readOnly", "edit"])("preserves environment file surface %s without granting commands", (tools) => {
+  const environments = tools ? { tools } : {};
+  expect(normalizeSessionConfig({ features: { environments } })).toEqual({ features: { environments } });
 });

@@ -138,7 +138,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
             .with_environment_gateway(gateway_config.clone()));
         let activities = WorkerActivities::for_universe(universe_id,
             ActivityState::from_pg_store(state.store.clone(), Arc::new(TransferLlm { blobs: state.store.clone() }), hosted.clone())
-                .with_hosted_tools(hosted));
+                .with_hosted_tools(hosted).with_environment_gateway(gateway_config.clone()));
         let gateway_config = gateway_config.clone();
         let store = state.store.clone();
         run_with_live_worker(activities, |client, queue, base_session| async move {
@@ -249,6 +249,18 @@ async fn run_case(
         vfs::InlineFile::new("/keep.txt", b"keep VFS sibling".to_vec())?,
         vfs::InlineFile::new("/output/obsolete.txt", b"remove on capture".to_vec())?,
     ];
+    for (name, body) in [
+        ("010-first.txt", "VFS first"),
+        ("020-second.md", "VFS second"),
+        ("instructions.md", "VFS last"),
+        ("nested/deep/hidden.md", "must not load"),
+        ("ignore.json", "must not load"),
+    ] {
+        files.push(vfs::InlineFile::new(
+            format!("/.agents/prompts/{name}"),
+            body.as_bytes().to_vec(),
+        )?);
+    }
     // More than one inventory page, with repeated content.
     for i in 0..130 {
         files.push(vfs::InlineFile::new(
@@ -276,6 +288,17 @@ async fn run_case(
     std::fs::create_dir_all(root.join("capture-source"))?;
     std::fs::write(root.join("capture-source/shared.bin"), &original)?;
     std::fs::write(root.join("capture-source/new.bin"), &captured)?;
+    let prompts = root.join(".agents/prompts");
+    std::fs::create_dir_all(prompts.join("nested/deep"))?;
+    for (name, body) in [
+        ("010-first.txt", "Environment first"),
+        ("020-second.md", "Environment second"),
+        ("instructions.md", "Environment last"),
+        ("nested/deep/hidden.md", "must not load"),
+        ("ignore.json", "must not load"),
+    ] {
+        std::fs::write(prompts.join(name), body)?;
+    }
     let mut features = json!({"vfs": {
         "workspaceLinks": [{"path":"/workspace","target":{"type":"workspace","workspaceId":workspace.workspace_id},"access":"readWrite"}]
     }});
@@ -290,7 +313,15 @@ async fn run_case(
         features["vfs"]["prompts"] = json!({});
     }
     if mode != "noenv" {
-        features["environments"] = json!({});
+        features["environments"] = if mode == "sourcing" {
+            json!({})
+        } else {
+            json!({"tools":"edit"})
+        };
+    }
+    if mode == "sourcing" {
+        features["environments"]["workingDirectory"] = json!(root);
+        features["environments"]["prompts"] = json!({"roots":[".agents/prompts"]});
     }
     let mut model = temporal_server::default_model_from_env();
     model.api_kind = provider;
@@ -457,6 +488,33 @@ impl CoreAgentLlm for TransferLlm {
                 test_support::scripted_tool_id(&request, name).is_some(),
                 expected,
                 "{mode}: {name}"
+            );
+        }
+        if mode == "sourcing" {
+            let mut vfs_prompts = Vec::new();
+            let mut environment_prompts = Vec::new();
+            for entry in &request.request.context.entries {
+                let key = entry.key.as_ref().map(|key| key.as_str()).unwrap_or("");
+                if key.starts_with("instructions.100.prompts") {
+                    vfs_prompts.push(
+                        self.blobs
+                            .read_text(&entry.content.content_ref)
+                            .await
+                            .unwrap(),
+                    );
+                } else if key == "instructions.110.environment" {
+                    environment_prompts.push(
+                        self.blobs
+                            .read_text(&entry.content.content_ref)
+                            .await
+                            .unwrap(),
+                    );
+                }
+            }
+            assert_eq!(vfs_prompts, vec!["VFS first", "VFS second", "VFS last"]);
+            assert_eq!(
+                environment_prompts,
+                vec!["Environment first\n\nEnvironment second\n\nEnvironment last"]
             );
         }
         let step = request

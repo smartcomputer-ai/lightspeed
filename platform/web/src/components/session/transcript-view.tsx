@@ -1,18 +1,16 @@
-import { useId, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Check, Loader2, ShieldQuestion, TriangleAlert, X } from "lucide-react";
+import { useContext, useId, useLayoutEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, Check, Inbox, Loader2, ShieldQuestion, TriangleAlert, X } from "lucide-react";
 import type { PendingApprovalView } from "@lightspeed-ai/agent-client";
+import { BotIcon } from "@/components/icons/bot";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Message, MessageContent } from "@/components/ui/message";
 import { MarkdownContent } from "@/components/session/markdown-content";
-import { RunStats } from "@/components/session/run-stats";
+import { RunOutcomeLine } from "@/components/session/run-stats";
 import type { FullTextLoader } from "@/components/session/expandable-content";
-import { ReasoningTrace, ToolGroupTrace } from "@/components/session/tool-trace";
-import {
-  type ActiveRun,
-  type TranscriptEntry,
-} from "@/lib/sessions/transcript";
+import { ReasoningTrace, ToolGroupTrace, TranscriptLinksContext } from "@/components/session/tool-trace";
+import { type TranscriptEntry } from "@/lib/sessions/transcript";
 import { cn } from "@/lib/utils";
 
 /// Full-width transcript rows without avatars. User inputs use muted bands;
@@ -32,6 +30,7 @@ export function TranscriptEntryView({
       return entry.role === "user" ? (
         <UserBand
           text={entry.text}
+          origin={entry.origin}
           steering={entry.steering === true}
         />
       ) : (
@@ -63,21 +62,13 @@ export function TranscriptEntryView({
         </Message>
       );
     case "system":
-      return (
-        <Marker
-          variant="separator"
-          className={entry.superseded ? "opacity-50" : undefined}
-          title={entry.superseded ? "Superseded by a newer version" : undefined}
-        >
-          <MarkerContent>{entry.text}</MarkerContent>
-        </Marker>
-      );
+      return <SystemChips entries={[entry]} />;
     case "reasoning":
       return <ReasoningTrace text={entry.text} />;
     case "tool-group":
       return <ToolGroupTrace group={entry} loadFullText={loadFullText} />;
     case "run-summary":
-      return <RunStats summary={entry} showStatistics={showRunStatistics} />;
+      return <RunOutcomeLine summary={entry} showStatistics={showRunStatistics} />;
     case "marker":
       return entry.tone === "error" ? (
         <Marker className="text-destructive">
@@ -94,6 +85,50 @@ export function TranscriptEntryView({
   }
 }
 
+/// Context entries that are not conversation: instructions and catalog
+/// versions, as small chips on one row. A superseded version stays dimmed.
+export function SystemChips({ entries }: { entries: Extract<TranscriptEntry, { kind: "system" }>[] }) {
+  return (
+    <div className="flex min-w-0 flex-wrap gap-1.5 px-2 py-0.5" aria-label="Context updates">
+      {entries.map((entry) => (
+        <span
+          key={entry.key}
+          className={cn(
+            "max-w-full truncate rounded-full border border-dashed px-2 text-[11px] leading-4 text-muted-foreground",
+            entry.superseded && "opacity-50",
+          )}
+          title={entry.superseded ? `${entry.text} — superseded by a newer version` : entry.text}
+        >
+          {entry.text}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/// The delivered form of a bot event opens with one header line:
+/// `── event #N · kind · source · time`. Split it off so the band can show
+/// the sender and kind as a header instead of a rule of text.
+export function parseEventPrompt(text: string): {
+  seq: string | null;
+  kind: string | null;
+  source: string | null;
+  time: string | null;
+  body: string;
+} | null {
+  const newline = text.indexOf("\n");
+  const first = (newline === -1 ? text : text.slice(0, newline)).trim();
+  if (!first.startsWith("── event #")) return null;
+  const parts = first.slice(2).trim().split(" · ");
+  return {
+    seq: parts[0]?.replace(/^event #/, "") || null,
+    kind: parts[1] ?? null,
+    source: parts[2] ?? null,
+    time: parts[3] ?? null,
+    body: newline === -1 ? "" : text.slice(newline + 1).replace(/^\n+/, ""),
+  };
+}
+
 function citationHost(url: string): string {
   try {
     return new URL(url).hostname || url;
@@ -108,10 +143,14 @@ const COLLAPSED_TEXT_HEIGHT = 160;
 
 export function UserBand({
   text,
+  origin,
   pending = false,
   steering = false,
 }: {
   text: string;
+  /// Application-supplied origin of the input; `event` marks a delivered bot
+  /// event, which gets a sender header instead of a plain band.
+  origin?: string;
   pending?: boolean;
   /// A message injected into a running run rather than its initial input.
   steering?: boolean;
@@ -120,6 +159,9 @@ export function UserBand({
   const contentRef = useRef<HTMLDivElement>(null);
   const [overflowing, setOverflowing] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const links = useContext(TranscriptLinksContext);
+  const event = origin === "event" ? parseEventPrompt(text) : null;
+  const body = event ? event.body : text;
 
   useLayoutEffect(() => {
     const content = contentRef.current;
@@ -133,7 +175,7 @@ export function UserBand({
     const observer = new ResizeObserver(measure);
     observer.observe(content);
     return () => observer.disconnect();
-  }, [text, steering]);
+  }, [body, steering]);
 
   return (
     <Message>
@@ -143,9 +185,21 @@ export function UserBand({
           className={cn(
             "w-full max-w-full",
             pending && "opacity-60",
+            event && "*:data-[slot=bubble-content]:border-l-2 *:data-[slot=bubble-content]:border-l-teal-600/60 *:data-[slot=bubble-content]:rounded-l-sm dark:*:data-[slot=bubble-content]:border-l-teal-300/50",
           )}
         >
           <BubbleContent className="w-full">
+            {event && (
+              <div className="mb-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                {event.source?.startsWith("bot:")
+                  ? <BotIcon size={14} className="shrink-0 text-teal-700 dark:text-teal-300" />
+                  : <Inbox className="size-3.5 shrink-0 text-teal-700 dark:text-teal-300" />}
+                <span className="font-medium text-foreground">{eventSourceLabel(event.source, links.botName)}</span>
+                {event.kind && <><span aria-hidden="true">·</span><span className="font-mono text-[11px]">{event.kind}</span></>}
+                {event.seq && <><span aria-hidden="true">·</span><span>#{event.seq}</span></>}
+                {event.time && <span className="ml-auto tabular-nums">{event.time}</span>}
+              </div>
+            )}
             <div
               id={contentId}
               className="overflow-hidden"
@@ -165,7 +219,7 @@ export function UserBand({
                     steer
                   </span>
                 )}
-                {text}
+                {body}
               </div>
             </div>
             {overflowing && (
@@ -191,6 +245,22 @@ export function UserBand({
       </MessageContent>
     </Message>
   );
+}
+
+/// "Support Triage" for `bot:support-triage`, "github webhook" for
+/// `webhook:github`; anything else stays as delivered.
+function eventSourceLabel(
+  source: string | null,
+  botName: ((botId: string) => string | undefined) | undefined,
+): string {
+  if (!source) return "Event";
+  const colon = source.indexOf(":");
+  if (colon === -1) return source;
+  const family = source.slice(0, colon);
+  const name = source.slice(colon + 1);
+  if (family === "bot") return botName?.(name) ?? name;
+  if (["webhook", "schedule", "poll", "chat"].includes(family)) return `${name} ${family}`;
+  return source;
 }
 
 export interface QueuedRunItem {
@@ -257,19 +327,6 @@ export function QueuedRunsBar({
         </ul>
       </div>
     </div>
-  );
-}
-
-/// Live spinner row while a run is in flight, with the TUI's status
-/// vocabulary (queued / running / thinking / running tools / …).
-export function ActiveRunMarker({ run }: { run: ActiveRun }) {
-  return (
-    <Marker role="status">
-      <MarkerIcon>
-        <Loader2 className="animate-spin" />
-      </MarkerIcon>
-      <MarkerContent>{run.label}…</MarkerContent>
-    </Marker>
   );
 }
 

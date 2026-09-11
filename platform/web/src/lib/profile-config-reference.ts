@@ -13,10 +13,17 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
   },
   // Capability grants. An absent feature is not granted; \`{}\` grants it with defaults. Every block carries a behavior \`version\` that pins semantics.
   "features": {
-    // Grants active session environments and their process tool surface. Model-driven selection and durable jobs are independent, default-off sub-grants.
+    // Grants active session environments. Filesystem tools, commands, selection, durable jobs, prompts, and skills are independent, default-off sub-grants.
     "environments": {
+      // Grants command execution and process continuation. Commands may modify files even when filesystem tools are read-only or disabled.
+      "commands": true | false,
       // Grants the advanced durable-job tool surface. The workflow binding is installed for the session when granted; invocations still require an active, ready environment with matching job capabilities.
       "jobs": true | false,
+      // Independent environment prompt loading; absent disables sourced instructions.
+      "prompts": {
+        // Optional source directories, absolute or relative to the environment working directory. Explicit nonempty lists replace all defaults, including home roots. Defaults are .agents/prompts and .lightspeed/prompts under working directory and execution home.
+        "roots": ["string"],
+      },
       // Absent means every registered provider is allowed.
       "providers": ["string"],
       // Registration keys whose registered environments the session may list and activate; absent means every key. Independent of \`providers\`: each list scopes its own environment source, and external environments pass only when neither list is set.
@@ -25,14 +32,14 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
       "selectionTools": true | false,
       // Independent environment skill discovery. Absent disables discovery.
       "skills": {
-        // Additional absolute or working-directory-relative discovery roots.
-        "additionalRoots": ["string"],
-        // Absolute ancestor boundary. Absent scans only the working directory.
-        "projectRoot": "string",
-        // Absolute session working directory; absent uses the endpoint default.
-        "workingDirectory": "string",
+        // Optional source directories, absolute or relative to the environment working directory. Explicit nonempty lists replace all defaults, including home roots. Defaults are .agents/skills and .lightspeed/skills under working directory and execution home.
+        "roots": ["string"],
       },
+      // Filesystem tool surface. Absent installs no filesystem tools; sources remain independent. Read-only does not restrict commands or durable jobs.
+      "tools": "readOnly" | "edit",
       "version": 0,
+      // Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
+      "workingDirectory": "string",
     },
     // Grants remote MCP tools by declaring linked servers from the universe MCP catalog; must link at least one server, with unique server ids.
     "mcp": {
@@ -66,20 +73,21 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
     },
     // Grants the session virtual filesystem. Workspace links declare the session-visible namespace and the VFS catalog is surfaced. Sub-grants are independent; \`{}\` grants a VFS with no tools and no sourcing.
     "vfs": {
-      // Prompt-instruction sourcing from the VFS.
+      // Prompt-instruction sourcing from the VFS. Absent disables loading; an empty block discovers conventional linked roots.
       "prompts": {
-        // Absent means the conventional roots; an explicit list must be non-empty.
+        // Absent searches .agents/prompts and .lightspeed/prompts beneath each workspace link. Explicit roots replace these defaults and must be non-empty absolute paths contained in workspace links.
         "roots": ["string"],
       },
-      // Independent VFS skill discovery. Absent disables discovery and removes its runtime catalog; enabling it requires explicit linked roots.
+      // Independent VFS skill discovery. Absent disables discovery and removes its runtime catalog; an empty block discovers conventional linked roots.
       "skills": {
-        // Explicit absolute discovery roots in the linked VFS namespace. Must be non-empty and contained in workspace links; no roots are inferred.
-        // (required when this object is present)
+        // Absent searches .agents/skills and .lightspeed/skills beneath each workspace link. Explicit roots replace these defaults and must be non-empty absolute paths contained in workspace links.
         "roots": ["string"],
       },
       // Agent-facing filesystem tool surface; absent = no fs tools. Per-path writability is defined by each workspace link's own access. With the environments feature granted, \`readOnly\` also exposes \`vfs_materialize\`; \`edit\` additionally exposes \`vfs_capture\`. Prompt/skill sourcing alone does not grant transfer tools.
       "tools": "readOnly" | "edit",
       "version": 0,
+      // Absolute VFS tool working directory; absent uses /.
+      "workingDirectory": "string",
       // Catalog resources exposed in the session's workspace namespace.
       "workspaceLinks": [{
         // (required when this object is present)

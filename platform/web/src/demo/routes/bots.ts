@@ -27,6 +27,7 @@ import type {
 import type { ProfileDocument } from "@/api";
 import {
   DEFAULT_MODEL,
+  EVENT_ORIGIN,
   activeRun,
   applyEntries,
   closeSession,
@@ -562,7 +563,7 @@ function deliver(
   target.managed.lastActiveAtMs = Date.now();
   const active = activeRun(session);
   if (active && whenBusy === "steer") {
-    const steered = steerRun(store, session, active.id, prompt);
+    const steered = steerRun(store, session, active.id, prompt, EVENT_ORIGIN);
     if (steered) {
       resolveEvent(record, event, "steered", `steered run ${active.id}`, null, {
         deliveryId,
@@ -579,7 +580,7 @@ function deliver(
           type: "runInput",
           inputIndex: 0,
           runId: active.id,
-        }),
+        }, EVENT_ORIGIN),
       ],
       { runId: active.id },
     );
@@ -611,7 +612,7 @@ function deliver(
       });
       return;
     }
-    const run = startRun(store, universe, session, { text: prompt });
+    const run = startRun(store, universe, session, { text: prompt, origin: EVENT_ORIGIN });
     delivery.runId = run.id;
     state.controllerStatus = "delivering_event";
     watchRun(session, run, (finished) => {

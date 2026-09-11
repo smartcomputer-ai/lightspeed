@@ -60,6 +60,7 @@ import {
   writeFile,
   type EventLog,
   type ScriptedEvent,
+  mcpDisplay,
 } from "./builders";
 import { INCUS_PROVIDER_ID } from "./platform";
 
@@ -204,7 +205,7 @@ function vfsListDir(path: string, entries: string[]): DemoToolCall {
 
 /// A Linear MCP tool, shown under the Linear verb.
 function linear(name: string, args: Record<string, unknown>, detail: string, output: string, isError = false): DemoToolCall {
-  return tool(`linear.${name}`, `linear.${name}`, args, { group: "other", verb: "Linear", target: name, detail }, output, isError);
+  return tool(`linear.${name}`, `linear.${name}`, args, mcpDisplay(`linear.${name}`, args, detail), output, isError);
 }
 
 const LINEAR_401 = "request failed: 401 Unauthorized — the Linear MCP server rejected the workspace token (rotated 2026-08-24). Reconnect the `linear` server on the Integrations page.";

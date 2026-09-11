@@ -171,8 +171,23 @@ pub async fn resolve_linked_vfs_skill_roots(
 
 pub fn configured_vfs_skill_root_specs(
     links: &[ResolvedWorkspaceLink],
-    roots: &[String],
+    roots: Option<&[String]>,
 ) -> Result<Vec<VfsSkillRootSpec>, SkillVfsRootError> {
+    let defaults;
+    let roots = match roots {
+        Some(roots) => roots,
+        None => {
+            defaults = links
+                .iter()
+                .flat_map(|link| {
+                    [".agents/skills", ".lightspeed/skills"].map(|suffix| {
+                        format!("{}/{suffix}", link.path.as_str().trim_end_matches('/'))
+                    })
+                })
+                .collect::<Vec<_>>();
+            &defaults
+        }
+    };
     roots
         .iter()
         .map(|root| {
@@ -504,6 +519,41 @@ mod tests {
     }
 
     #[test]
+    fn default_skill_roots_cover_links_and_explicit_roots_replace_defaults() {
+        let links = ["/", "/workspace"].map(|path| {
+            resolved_link(
+                path,
+                ResolvedWorkspaceLinkTarget::AvailableSnapshot {
+                    snapshot_ref: engine::BlobRef::from_bytes(b"snapshot"),
+                },
+                WorkspaceLinkAccess::ReadOnly,
+            )
+        });
+        let defaults = configured_vfs_skill_root_specs(&links, None).unwrap();
+        assert_eq!(
+            defaults
+                .iter()
+                .map(|root| root.root_path.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "/.agents/skills",
+                "/.lightspeed/skills",
+                "/workspace/.agents/skills",
+                "/workspace/.lightspeed/skills",
+            ]
+        );
+        let overrides =
+            configured_vfs_skill_root_specs(&links, Some(&["/workspace/custom".into()])).unwrap();
+        assert_eq!(overrides.len(), 1);
+        assert_eq!(overrides[0].root_path.as_str(), "/workspace/custom");
+        assert!(
+            configured_vfs_skill_root_specs(&[], None)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn empty_configured_roots_do_not_infer_roots_from_links() {
         let links = vec![resolved_link(
             "/skills/system",
@@ -516,7 +566,7 @@ mod tests {
             WorkspaceLinkAccess::ReadOnly,
         )];
         assert!(
-            configured_vfs_skill_root_specs(&links, &[])
+            configured_vfs_skill_root_specs(&links, Some(&[]))
                 .unwrap()
                 .is_empty()
         );
@@ -526,7 +576,7 @@ mod tests {
     fn configured_skill_roots_preserve_source_locations() {
         let roots = configured_vfs_skill_root_specs(
             &[],
-            &["/skills/system".to_owned(), "/custom/skills".to_owned()],
+            Some(&["/skills/system".to_owned(), "/custom/skills".to_owned()]),
         )
         .expect("configured roots");
 
