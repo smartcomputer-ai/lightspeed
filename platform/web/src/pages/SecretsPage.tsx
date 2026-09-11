@@ -161,7 +161,7 @@ function SecretsList({ universeId, slug }: { universeId: string; slug: string })
               title="Model provider credentials"
               description="API keys and OAuth connections used by session models for discovery and inference. These are not used for MCP servers or general service authentication."
               actions={
-                <Button variant="outline" size="sm" render={<Link to={integrationsHref} />}>
+                <Button variant="outline" size="sm" nativeButton={false} render={<Link to={integrationsHref} />}>
                   Manage in Integrations
                 </Button>
               }

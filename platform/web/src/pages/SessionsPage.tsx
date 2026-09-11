@@ -2290,33 +2290,20 @@ export function SessionLineage({
       {origin && (
         <span className="flex min-w-0 flex-wrap items-center gap-1">
           <span>Parent:</span>
-          <Tooltip>
-            <TooltipTrigger
-              render={<NavLink to={href(origin.parentSessionId)} className={tagClass} />}
-            >
-              <span className={cn("truncate", !parentName && "font-mono font-normal")}>
-                {parentLabel}
-              </span>
-              {parent.data?.status && (
-                <span
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    parent.data.status === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
-                  )}
-                  aria-hidden="true"
-                />
-              )}
-            </TooltipTrigger>
-            <TooltipContent className="max-w-sm items-start">
-              <LineageTooltipDetails
-                id={origin.parentSessionId}
-                status={parent.data
-                  ? (parent.data.status === "closed" ? "closed" : "open")
-                  : undefined}
-                origin={parent.data?.origin ?? null}
+          <NavLink to={href(origin.parentSessionId)} className={tagClass}>
+            <span className={cn("truncate", !parentName && "font-mono font-normal")}>
+              {parentLabel}
+            </span>
+            {parent.data?.status && (
+              <span
+                className={cn(
+                  "size-1.5 shrink-0 rounded-full",
+                  parent.data.status === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
+                )}
+                aria-hidden="true"
               />
-            </TooltipContent>
-          </Tooltip>
+            )}
+          </NavLink>
         </span>
       )}
       {list.length > 0 && (
@@ -2393,46 +2380,18 @@ function SubagentLineageLink({
 }) {
   const childName = child.displayName?.trim();
   return (
-    <Tooltip>
-      <TooltipTrigger render={<NavLink to={to} className={className} />}>
-        <span className={cn("min-w-0 flex-1 truncate", !childName && "font-mono font-normal")}>
-          {childName || compactSessionId(child.id)}
-        </span>
-        <span
-          className={cn(
-            "size-1.5 shrink-0 rounded-full",
-            child.lifecycleStatus === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
-          )}
-          aria-hidden="true"
-        />
-      </TooltipTrigger>
-      <TooltipContent className="max-w-sm items-start">
-        <LineageTooltipDetails
-          id={child.id}
-          status={child.lifecycleStatus === "closed" ? "closed" : "open"}
-          origin={child.origin ?? null}
-        />
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-function LineageTooltipDetails({
-  id,
-  status,
-  origin,
-}: {
-  id: string;
-  status?: "open" | "closed";
-  origin: SessionOrigin | null;
-}) {
-  return (
-    <span className="flex min-w-0 flex-col gap-0.5">
-      <span>Session ID: <span className="wrap-anywhere font-mono">{id}</span></span>
-      <span>Status: {status === "closed" ? "Closed" : status === "open" ? "Open" : "…"}</span>
-      <span>Profile: <span className="font-mono">{origin?.agent.profileId ?? "—"}</span></span>
-      <span>Depth: {origin?.depth ?? 0}</span>
-    </span>
+    <NavLink to={to} className={className}>
+      <span className={cn("min-w-0 flex-1 truncate", !childName && "font-mono font-normal")}>
+        {childName || compactSessionId(child.id)}
+      </span>
+      <span
+        className={cn(
+          "size-1.5 shrink-0 rounded-full",
+          child.lifecycleStatus === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
+        )}
+        aria-hidden="true"
+      />
+    </NavLink>
   );
 }
 
