@@ -57,8 +57,9 @@ Use "Acorn 1.2" as the release name. Preserve uncertainty in the source:
 an absent compatibility statement is not evidence of compatibility.
 ```
 
-Open the release-editor profile and set **Prompt roots** to
-`/workspace/.lightspeed/prompts`. Save, then create a new session from the
+Open the release-editor profile and enable **Prompt loading** under
+**Virtual File System**. Leave **VFS prompt roots** empty to use conventional
+directories beneath each workspace link. Save, then create a new session from the
 profile or apply the updated setup to an existing idle session.
 
 Lightspeed looks inside each configured root for `instructions.md`, followed
@@ -70,10 +71,13 @@ For example, this optional file adds a second instruction source:
 ```
 
 Use it for a short convention such as “Use sentence case for headings.” The
-root is explicit: merely placing `.lightspeed` files in a workspace does not
-enable sourcing. The UI accepts comma-separated roots, and leaving the field
-empty disables it. Roots have a deterministic order; their order in the
-textbox is not a priority mechanism.
+capability is explicit: merely placing `.lightspeed` files in a workspace does
+not enable sourcing. With `prompts: {}`, Lightspeed searches `.agents/prompts`
+and `.lightspeed/prompts` beneath each workspace link, including snapshot links.
+Optional comma-separated root overrides replace these defaults. Clearing the
+field restores defaults; switching off **Prompt loading** disables sourcing
+and removes its sourced instructions at the next reconciliation. Roots have a
+deterministic order; their order in the textbox is not a priority mechanism.
 
 Sourced files combine with the profile's custom text. Keep them consistent;
 their ordering does not resolve conflicting instructions. See
@@ -178,8 +182,9 @@ belongs in the existing instruction mechanism.
 ## Configure VFS discovery explicitly
 
 VFS skill discovery is independently opt-in through the session or profile's
-`features.vfs.skills` block. Supply a nonempty list of absolute roots inside
-existing workspace links, for example:
+`features.vfs.skills` block. An empty block enables `.agents/skills` and
+`.lightspeed/skills` beneath each workspace link, including snapshot links.
+No links means nothing to discover. For example:
 
 ```json
 {
@@ -191,21 +196,29 @@ existing workspace links, for example:
         "access": "readOnly"
       }],
       "tools": "readOnly",
-      "skills": { "roots": ["/workspace/.lightspeed/skills"] }
+      "skills": {}
     }
   }
 }
 ```
 
 Omitting `features.vfs.skills` disables discovery and removes its runtime
-catalog. Empty blocks, null roots, empty root lists, and paths outside links
-are invalid. Workspace links, filesystem tools, prompt sourcing, and CLI chat
-defaults do not enable skill discovery. There are no inferred VFS roots: even
-`/skills/system` or `.agents/skills` must be listed explicitly. The profile
-editor, new-session form, and session settings expose a **Skill discovery** switch
-under **Virtual File System**. Enable it and fill **VFS skill roots**; an empty
-list must be completed before saving. Turn the switch off to disable discovery.
-CLI profile documents use the same configuration.
+catalog. To replace the conventional roots, supply a nonempty `roots` list of
+absolute paths inside workspace links, such as
+`"skills": { "roots": ["/workspace/team-skills"] }`. An explicit empty list
+and paths outside links are invalid. Workspace links, filesystem tools, prompt
+sourcing, and CLI chat defaults do not enable skill discovery.
+
+The profile editor, new-session form, and session settings expose a
+**Skill discovery** switch under **Virtual File System**. It enables defaults
+immediately. Optional **VFS skill roots** replace the defaults; clearing the
+field restores defaults while leaving discovery enabled. Turn the switch off
+to disable discovery. CLI profile documents use the same configuration.
+
+The same enablement rules apply to `features.vfs.prompts`: absent is disabled,
+`prompts: {}` uses conventional roots, and explicit roots replace them. Prompts
+are loaded automatically as instructions; skills are advertised for the agent
+to read when relevant.
 
 Changes are discovered at eligible idle boundaries, including preparation for
 new work when no run is active or queued. There are no within-run refresh
@@ -313,8 +326,8 @@ Transfer files explicitly when a process needs them; see
 | --- | --- |
 | A file exists in the browser but the agent cannot find it | Combine its workspace-relative path with the link's session path, and check the current session setup. |
 | A write fails despite edit tools | Check link access and whether the target is a snapshot. Read-only links remain read-only. |
-| Prompt files have no effect | Configure a nonempty prompt root inside a link, use the conventional filenames, and start the next run after the update. |
-| A skill is absent from the catalog | Check the explicit root, direct child directory, exact `SKILL.md` name, and required frontmatter. |
+| Prompt files have no effect | Enable Prompt loading, check the default or overridden roots inside links, use the conventional filenames, and start the next run after the update. |
+| A skill is absent from the catalog | Enable Skill discovery and check the default or overridden root, direct child directory, exact `SKILL.md` name, and required frontmatter. |
 | A discovered skill has not affected the answer | Inspect whether the agent read it, or select it with `/skill` or `skills use`. Discovery alone loads only its catalog entry. |
 | Saving reports a revision conflict | Reload and reconcile with the intervening edit; do not assume the save was merged. |
 

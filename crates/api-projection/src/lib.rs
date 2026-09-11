@@ -3976,7 +3976,7 @@ mod tests {
                         roots: Some(vec!["/prompts".to_owned()]),
                     }),
                     skills: Some(engine::VfsSkillsConfig {
-                        roots: vec!["/workspace/skills".into()],
+                        roots: Some(vec!["/workspace/skills".into()]),
                     }),
                 }),
                 web: Some(engine::WebFeature {
@@ -4048,7 +4048,7 @@ mod tests {
                             roots: Some(vec!["/prompts".to_owned()]),
                         }),
                         skills: Some(api::VfsSkillsConfig {
-                            roots: vec!["/workspace/skills".into()]
+                            roots: Some(vec!["/workspace/skills".into()])
                         }),
                     }),
                     web: Some(api::WebFeature {

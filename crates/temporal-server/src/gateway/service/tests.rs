@@ -2706,9 +2706,7 @@ async fn skill_list_reads_latest_structured_provenance() {
     let mut config =
         engine_session_config_from_api(api::SessionConfig::default(), openai_model()).unwrap();
     config.features.vfs = Some(engine::VfsFeature {
-        skills: Some(engine::VfsSkillsConfig {
-            roots: vec!["/skills/system".into()],
-        }),
+        skills: Some(engine::VfsSkillsConfig::default()),
         ..Default::default()
     });
     state.lifecycle.config = Some(config);

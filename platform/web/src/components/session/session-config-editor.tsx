@@ -297,9 +297,9 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
       }
       for (const key of ["prompts", "skills"] as const) {
         const roots = stringList(record(feature[key]).roots).filter(Boolean);
-        // Preserve an enabled, incomplete skill draft; validation blocks saving
-        // until roots are supplied or discovery is explicitly switched off.
-        if (roots.length || (key === "skills" && feature.skills != null)) next[key] = { roots };
+        if (feature[key] != null) {
+          next[key] = record(feature[key]).roots == null ? {} : { roots };
+        }
       }
     }
     if (name === "web") {
@@ -387,13 +387,16 @@ function configError(config: SessionConfig | undefined, pinnedApiKind?: string):
   if (linkError) return linkError;
   const features = record(config.features);
   const vfs = record(features.vfs);
-  if (vfs.skills != null) {
-    const roots = stringList(record(vfs.skills).roots);
-    if (!roots.length) return "VFS skill discovery requires at least one skill root.";
+  for (const key of ["skills", "prompts"] as const) {
+    const source = record(vfs[key]);
+    if (source.roots == null) continue;
+    const label = key === "skills" ? "VFS skill" : "VFS prompt";
+    const roots = stringList(source.roots);
+    if (!roots.length) return `${label} root overrides must not be empty; clear the override to use defaults.`;
     const links = workspaceLinksFromConfig(config);
     if (roots.some((root) => !isCanonicalAbsolutePath(root)
       || !links.some((link) => link.path === "/" || root === link.path || root.startsWith(`${link.path}/`)))) {
-      return "VFS skill roots must be absolute paths inside workspace links.";
+      return `${label} roots must be absolute paths inside workspace links.`;
     }
   }
   const environmentSkills = record(record(features.environments).skills);
@@ -1190,7 +1193,6 @@ function VfsFields({
   workspacesLoading: boolean;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
-  const prompts = record(feature.prompts);
   const links = Array.isArray(feature.workspaceLinks)
     ? feature.workspaceLinks.map(record)
     : [];
@@ -1249,23 +1251,10 @@ function VfsFields({
                   : "Choose Read only or Edit files to enable workspace transfer tools. Prompt and skill sourcing alone does not enable transfers."}
           </FieldDescription>
         </Field>
-        <Field>
-          <FieldLabel>Prompt roots</FieldLabel>
-          <Input
-            className="font-mono"
-            value={commaList(prompts.roots)}
-            onChange={(e) => patch((next) => {
-              const roots = listFromInput(e.target.value);
-              if (roots.length) next.prompts = { roots };
-              else delete next.prompts;
-            })}
-            placeholder="/prompts, /team/prompts"
-          />
-          <FieldDescription className="text-xs">Comma-separated paths.</FieldDescription>
-        </Field>
       </div>
 
-      <SkillDiscoveryFields source="vfs" feature={feature} patch={patch} />
+      <SourceDiscoveryFields source="vfs-prompts" feature={feature} patch={patch} />
+      <SourceDiscoveryFields source="vfs" feature={feature} patch={patch} />
 
       <div className="grid gap-3 border-t pt-4">
         <div className="flex min-w-0 items-center justify-between gap-3">
@@ -1614,34 +1603,37 @@ function profileLabel(profile: ProfileOption | undefined, profileId: string): st
   return profile?.displayName || profileId;
 }
 
-function SkillDiscoveryFields({ source, feature, patch }: {
-  source: "vfs" | "environment";
+function SourceDiscoveryFields({ source, feature, patch }: {
+  source: "vfs" | "vfs-prompts" | "environment";
   feature: RecordValue;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
   const id = useId();
-  const enabled = feature.skills != null;
-  const skills = record(feature.skills);
   const environment = source === "environment";
+  const prompts = source === "vfs-prompts";
+  const configKey = prompts ? "prompts" : "skills";
+  const enabled = feature[configKey] != null;
+  const skills = record(feature[configKey]);
+  const switchLabel = prompts ? "VFS prompt loading" : `${environment ? "Environment" : "VFS"} skill discovery`;
   const update = (key: string, value: unknown) => patch((next) => {
-    const settings = { ...record(next.skills) };
+    const settings = { ...record(next[configKey]) };
     if (value === undefined) delete settings[key]; else settings[key] = value;
-    next.skills = settings;
+    next[configKey] = settings;
   });
   return (
     <div className="grid gap-4 rounded-lg border p-3">
       <div className="flex items-start justify-between gap-4">
         <div className="grid gap-1">
-          <Label htmlFor={id}>Skill discovery</Label>
+          <Label htmlFor={id}>{prompts ? "Prompt loading" : "Skill discovery"}</Label>
           <p className="text-xs text-muted-foreground">
-            {environment ? "Discover project skills and skills in .agents/skills and .lightspeed/skills under the environment user’s home directory." : "Discover skills in linked VFS workspaces."}
+            {environment ? "Discover project skills and skills in .agents/skills and .lightspeed/skills under the environment user’s home directory." : prompts ? "Automatically load VFS prompt files as instructions." : "Advertise VFS skills for the agent to read when relevant."}
           </p>
         </div>
-        <Switch id={id} aria-label={`${environment ? "Environment" : "VFS"} skill discovery`}
+        <Switch id={id} aria-label={switchLabel}
           checked={enabled}
           onCheckedChange={(checked) => patch((next) => {
-            if (checked) next.skills = environment ? {} : { roots: [] };
-            else delete next.skills;
+            if (checked) next[configKey] = {};
+            else delete next[configKey];
           })}
         />
       </div>
@@ -1674,11 +1666,19 @@ function SkillDiscoveryFields({ source, feature, patch }: {
         </div>
       ) : (
         <Field>
-          <FieldLabel htmlFor={`${id}-roots`}>VFS skill roots</FieldLabel>
+          <FieldLabel htmlFor={`${id}-roots`}>{prompts ? "VFS prompt roots" : "VFS skill roots"}</FieldLabel>
           <Input id={`${id}-roots`} className="font-mono" value={commaList(skills.roots)}
-            placeholder="/workspace/.lightspeed/skills"
-            onChange={(e) => update("roots", listFromInput(e.target.value))} />
-          <FieldDescription>Required: one or more comma-separated absolute paths inside workspace links.</FieldDescription>
+            placeholder={prompts ? "Default prompt directories" : "Default skill directories"}
+            onChange={(e) => {
+              const roots = listFromInput(e.target.value);
+              update("roots", roots.length ? roots : undefined);
+            }} />
+          <FieldDescription>
+            {prompts
+              ? "Empty searches .agents/prompts and .lightspeed/prompts beneath each workspace link."
+              : "Empty searches .agents/skills and .lightspeed/skills beneath each workspace link."}
+            {" Overrides are comma-separated absolute paths inside workspace links and replace the defaults."}
+          </FieldDescription>
         </Field>
       ))}
     </div>
@@ -1794,7 +1794,7 @@ function EnvironmentFields({
           })}
         />
       </div>
-      <SkillDiscoveryFields source="environment" feature={feature} patch={patch} />
+      <SourceDiscoveryFields source="environment" feature={feature} patch={patch} />
     </div>
   );
 }

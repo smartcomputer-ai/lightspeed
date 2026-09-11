@@ -168,7 +168,7 @@ impl ListSelectionView {
                 vec![
                     ListSelectionRow::new(
                         "no skills",
-                        "configure features.vfs.skills.roots or environment skills",
+                        "enable VFS or environment skill discovery",
                         PickerSelection::Skill {
                             skill_id: String::new(),
                         },

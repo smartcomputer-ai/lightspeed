@@ -1102,7 +1102,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Prompt-instruction sourcing from the VFS."
+              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional linked roots."
             },
             "skills": {
               "anyOf": [
@@ -1113,7 +1113,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; enabling it requires explicit linked roots."
+              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional linked roots."
             },
             "tools": {
               "anyOf": [
@@ -1148,7 +1148,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent means the conventional roots; an explicit list must be\nnon-empty.",
+              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
               "items": {
                 "type": "string"
               },
@@ -1166,17 +1166,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Explicit absolute discovery roots in the linked VFS namespace. Must be\nnon-empty and contained in workspace links; no roots are inferred.",
+              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
               "items": {
                 "type": "string"
               },
               "minItems": 1,
-              "type": "array"
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
-          "required": [
-            "roots"
-          ],
           "type": "object"
         },
         "VfsToolSurface": {
@@ -2030,7 +2030,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Prompt-instruction sourcing from the VFS."
+              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional linked roots."
             },
             "skills": {
               "anyOf": [
@@ -2041,7 +2041,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; enabling it requires explicit linked roots."
+              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional linked roots."
             },
             "tools": {
               "anyOf": [
@@ -2076,7 +2076,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent means the conventional roots; an explicit list must be\nnon-empty.",
+              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
               "items": {
                 "type": "string"
               },
@@ -2094,17 +2094,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Explicit absolute discovery roots in the linked VFS namespace. Must be\nnon-empty and contained in workspace links; no roots are inferred.",
+              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
               "items": {
                 "type": "string"
               },
               "minItems": 1,
-              "type": "array"
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
-          "required": [
-            "roots"
-          ],
           "type": "object"
         },
         "VfsToolSurface": {
@@ -4422,7 +4422,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Prompt-instruction sourcing from the VFS."
+              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional linked roots."
             },
             "skills": {
               "anyOf": [
@@ -4433,7 +4433,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; enabling it requires explicit linked roots."
+              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional linked roots."
             },
             "tools": {
               "anyOf": [
@@ -4468,7 +4468,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent means the conventional roots; an explicit list must be\nnon-empty.",
+              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
               "items": {
                 "type": "string"
               },
@@ -4486,17 +4486,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Explicit absolute discovery roots in the linked VFS namespace. Must be\nnon-empty and contained in workspace links; no roots are inferred.",
+              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
               "items": {
                 "type": "string"
               },
               "minItems": 1,
-              "type": "array"
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
-          "required": [
-            "roots"
-          ],
           "type": "object"
         },
         "VfsToolSurface": {
@@ -6343,7 +6343,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Prompt-instruction sourcing from the VFS."
+              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional linked roots."
             },
             "skills": {
               "anyOf": [
@@ -6354,7 +6354,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; enabling it requires explicit linked roots."
+              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional linked roots."
             },
             "tools": {
               "anyOf": [
@@ -6389,7 +6389,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent means the conventional roots; an explicit list must be\nnon-empty.",
+              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
               "items": {
                 "type": "string"
               },
@@ -6407,17 +6407,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Explicit absolute discovery roots in the linked VFS namespace. Must be\nnon-empty and contained in workspace links; no roots are inferred.",
+              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
               "items": {
                 "type": "string"
               },
               "minItems": 1,
-              "type": "array"
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
-          "required": [
-            "roots"
-          ],
           "type": "object"
         },
         "VfsToolSurface": {
@@ -7577,7 +7577,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Prompt-instruction sourcing from the VFS."
+              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional linked roots."
             },
             "skills": {
               "anyOf": [
@@ -7588,7 +7588,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; enabling it requires explicit linked roots."
+              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional linked roots."
             },
             "tools": {
               "anyOf": [
@@ -7623,7 +7623,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent means the conventional roots; an explicit list must be\nnon-empty.",
+              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
               "items": {
                 "type": "string"
               },
@@ -7641,17 +7641,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Explicit absolute discovery roots in the linked VFS namespace. Must be\nnon-empty and contained in workspace links; no roots are inferred.",
+              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
               "items": {
                 "type": "string"
               },
               "minItems": 1,
-              "type": "array"
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
-          "required": [
-            "roots"
-          ],
           "type": "object"
         },
         "VfsToolSurface": {

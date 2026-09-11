@@ -63,21 +63,34 @@ it("enables defaults, edits environment scope, and disables without changing oth
   await toggle("Environment skill discovery");
   expect(current).toEqual({ features: { environments: { jobs: true }, vfs: { tools: "edit" } } });
 });
-it("keeps VFS discovery enabled while roots are incomplete and validates linked paths", async () => {
+it.each([
+  ["skills", "VFS skill discovery", "VFS skill roots"],
+  ["prompts", "VFS prompt loading", "VFS prompt roots"],
+])("enables %s defaults, validates overrides, and restores defaults when cleared", async (key, switchName, label) => {
   await setup({ features: { environments: { skills: {} }, vfs: {
     workspaceLinks: [{ path: "/workspace", access: "readOnly", target: { type: "workspace", workspaceId: "workspace_1" } }],
   } } });
-  await toggle("VFS skill discovery");
-  expect(error).toContain("at least one");
-  await input("VFS skill roots", "/outside/skills");
+  await toggle(switchName);
+  expect(error).toBeNull();
+  expect(current).toHaveProperty(`features.vfs.${key}`, {});
+  await input(label, "/outside/custom");
   expect(error).toContain("inside workspace links");
-  await input("VFS skill roots", "/workspace/skills");
+  await input(label, "/workspace/custom");
   expect(error).toBeNull();
-  await input("VFS skill roots", "");
-  expect(error).toContain("at least one");
-  expect(container.querySelector('[aria-label="VFS skill discovery"]')?.getAttribute("aria-checked")).toBe("true");
-  await toggle("VFS skill discovery");
+  expect(current).toHaveProperty(`features.vfs.${key}.roots`, ["/workspace/custom"]);
+  await input(label, "");
   expect(error).toBeNull();
-  expect(current).not.toHaveProperty("features.vfs.skills");
+  expect(current).toHaveProperty(`features.vfs.${key}`, {});
+  expect(container.querySelector(`[aria-label="${switchName}"]`)?.getAttribute("aria-checked")).toBe("true");
+  await toggle(switchName);
+  expect(error).toBeNull();
+  expect(current).not.toHaveProperty(`features.vfs.${key}`);
   expect(current).toHaveProperty("features.environments.skills", {});
+});
+it("allows both VFS sources to be enabled without links", async () => {
+  await setup({ features: { vfs: {} } });
+  await toggle("VFS skill discovery");
+  await toggle("VFS prompt loading");
+  expect(error).toBeNull();
+  expect(current).toEqual({ features: { vfs: { skills: {}, prompts: {} } } });
 });

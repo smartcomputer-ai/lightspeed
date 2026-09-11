@@ -104,7 +104,7 @@ Lightspeed covers the table stakes of a modern agent harness. Everything below w
   non-Anthropic routes
 - [x] **Catalogs**: one keyed text representation for VFS, skill, sub-agent,
   and client catalogs, with independent source data and version history
-- [x] **Skills**: an opt-in VFS catalog with explicitly configured linked roots
+- [x] **Skills**: an opt-in VFS catalog with conventional linked roots or explicit overrides
   and ordinary file reads; CLI and
   chat selection ask the agent to read and use the selected skill
 - [x] **Hosted and native MCP**: connect local or remote servers with API keys

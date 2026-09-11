@@ -92,7 +92,7 @@ impl GatewayAgentApi {
             ));
         };
         let links = self.resolve_session_workspace_links(state).await?;
-        let specs = configured_vfs_skill_root_specs(&links, &skills_config.roots)
+        let specs = configured_vfs_skill_root_specs(&links, skills_config.roots.as_deref())
             .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
         if specs.is_empty() {
             return Ok(tools::catalog::clear_catalog_command(
@@ -239,7 +239,7 @@ async fn vfs_skill_list_from_context(
             .as_ref()
             .and_then(|config| config.features.vfs.as_ref())
             .and_then(|vfs| vfs.skills.as_ref())
-            .is_some_and(|skills| !skills.roots.is_empty())
+            .is_some()
     {
         return Ok(SkillListResponse {
             catalogs: Vec::new(),

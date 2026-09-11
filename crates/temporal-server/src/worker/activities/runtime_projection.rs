@@ -168,8 +168,8 @@ pub(super) async fn refresh_runtime_projection(
             ),
         });
     };
-    let specs =
-        configured_vfs_skill_root_specs(&links, &skills_config.roots).map_err(activity_error)?;
+    let specs = configured_vfs_skill_root_specs(&links, skills_config.roots.as_deref())
+        .map_err(activity_error)?;
     if specs.is_empty() {
         return Ok(RuntimeProjectionRefreshActivityResult {
             commands: append_optional(

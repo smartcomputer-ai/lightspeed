@@ -66,15 +66,14 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
     },
     // Grants the session virtual filesystem. Workspace links declare the session-visible namespace and the VFS catalog is surfaced. Sub-grants are independent; \`{}\` grants a VFS with no tools and no sourcing.
     "vfs": {
-      // Prompt-instruction sourcing from the VFS.
+      // Prompt-instruction sourcing from the VFS. Absent disables loading; an empty block discovers conventional linked roots.
       "prompts": {
-        // Absent means the conventional roots; an explicit list must be non-empty.
+        // Absent searches .agents/prompts and .lightspeed/prompts beneath each workspace link. Explicit roots replace these defaults and must be non-empty absolute paths contained in workspace links.
         "roots": ["string"],
       },
-      // Independent VFS skill discovery. Absent disables discovery and removes its runtime catalog; enabling it requires explicit linked roots.
+      // Independent VFS skill discovery. Absent disables discovery and removes its runtime catalog; an empty block discovers conventional linked roots.
       "skills": {
-        // Explicit absolute discovery roots in the linked VFS namespace. Must be non-empty and contained in workspace links; no roots are inferred.
-        // (required when this object is present)
+        // Absent searches .agents/skills and .lightspeed/skills beneath each workspace link. Explicit roots replace these defaults and must be non-empty absolute paths contained in workspace links.
         "roots": ["string"],
       },
       // Agent-facing filesystem tool surface; absent = no fs tools. Per-path writability is defined by each workspace link's own access. With the environments feature granted, \`readOnly\` also exposes \`vfs_materialize\`; \`edit\` additionally exposes \`vfs_capture\`. Prompt/skill sourcing alone does not grant transfer tools.

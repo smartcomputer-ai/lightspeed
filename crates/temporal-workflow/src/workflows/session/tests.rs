@@ -1765,9 +1765,7 @@ fn vfs_skill_revocation_is_source_scoped_and_replays() {
             },
             access: engine::WorkspaceLinkAccess::ReadOnly,
         }],
-        skills: Some(engine::VfsSkillsConfig {
-            roots: vec!["/skills".into()],
-        }),
+        skills: Some(engine::VfsSkillsConfig::default()),
         ..Default::default()
     });
     config.features.environments = Some(engine::EnvironmentsFeature {

@@ -552,7 +552,7 @@ fn vfs_skill_discovery_enabled(state: &CoreAgentState) -> bool {
         .as_ref()
         .and_then(|config| config.features.vfs.as_ref())
         .and_then(|feature| feature.skills.as_ref())
-        .is_some_and(|skills| !skills.roots.is_empty())
+        .is_some()
 }
 
 pub(super) fn invalid_vfs_skill_catalog_command(

@@ -225,17 +225,20 @@ pub enum VfsToolSurface {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VfsPromptsConfig {
-    /// VFS roots to source prompts from. `None` means the conventional
-    /// roots; an explicit list must be non-empty.
+    /// Absent searches .agents/prompts and .lightspeed/prompts beneath each
+    /// workspace link. Explicit roots replace these defaults and must be
+    /// non-empty absolute paths contained in workspace links.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roots: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VfsSkillsConfig {
-    /// Explicit absolute discovery roots in the linked VFS namespace. Must be
-    /// non-empty and contained in workspace links; no roots are inferred.
-    pub roots: Vec<String>,
+    /// Absent searches .agents/skills and .lightspeed/skills beneath each
+    /// workspace link. Explicit roots replace these defaults and must be
+    /// non-empty absolute paths contained in workspace links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roots: Option<Vec<String>>,
 }
 
 /// Grants network access through the web toolset. `fetch` and `search` are
@@ -619,7 +622,7 @@ fn validate_features(
             validate_source_roots("vfs prompts", prompts.roots.as_deref(), &link_paths)?;
         }
         if let Some(skills) = &vfs.skills {
-            validate_source_roots("vfs skills", Some(&skills.roots), &link_paths)?;
+            validate_source_roots("vfs skills", skills.roots.as_deref(), &link_paths)?;
         }
     }
     if let Some(web) = &features.web {
@@ -1209,10 +1212,30 @@ mod tests {
     }
 
     #[test]
+    fn empty_vfs_source_blocks_enable_defaults_without_links() {
+        let mut config = config(ProviderApiKind::OpenAiResponses, None);
+        config.features.vfs = Some(VfsFeature {
+            skills: Some(VfsSkillsConfig::default()),
+            prompts: Some(VfsPromptsConfig::default()),
+            ..Default::default()
+        });
+        config.validate().unwrap();
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["features"]["vfs"]["skills"], serde_json::json!({}));
+        assert_eq!(json["features"]["vfs"]["prompts"], serde_json::json!({}));
+        assert_eq!(
+            serde_json::from_value::<SessionConfig>(json).unwrap(),
+            config
+        );
+    }
+
+    #[test]
     fn explicit_empty_source_roots_are_rejected() {
         let mut config = config(ProviderApiKind::OpenAiResponses, None);
         config.features.vfs = Some(VfsFeature {
-            skills: Some(VfsSkillsConfig { roots: Vec::new() }),
+            skills: Some(VfsSkillsConfig {
+                roots: Some(Vec::new()),
+            }),
             ..VfsFeature::default()
         });
 
@@ -1251,7 +1274,7 @@ mod tests {
             vec!["/workspace/skills", "/workspace/skills"],
         ] {
             config.features.vfs.as_mut().unwrap().skills = Some(VfsSkillsConfig {
-                roots: roots.into_iter().map(String::from).collect(),
+                roots: Some(roots.into_iter().map(String::from).collect()),
             });
             assert!(matches!(
                 config.validate(),
@@ -1259,12 +1282,15 @@ mod tests {
             ));
         }
         config.features.vfs.as_mut().unwrap().skills = Some(VfsSkillsConfig {
-            roots: vec!["/workspace/team-skills".into()],
+            roots: Some(vec!["/workspace/team-skills".into()]),
         });
         config.validate().unwrap();
         config.features.environments = None;
         config.validate().unwrap();
-        assert!(serde_json::from_str::<VfsSkillsConfig>("{}").is_err());
+        assert_eq!(
+            serde_json::from_str::<VfsSkillsConfig>("{}").unwrap(),
+            VfsSkillsConfig::default()
+        );
     }
 
     #[test]

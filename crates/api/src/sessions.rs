@@ -427,11 +427,12 @@ pub struct VfsFeature {
     /// Prompt/skill sourcing alone does not grant transfer tools.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<VfsToolSurface>,
-    /// Prompt-instruction sourcing from the VFS.
+    /// Prompt-instruction sourcing from the VFS. Absent disables loading;
+    /// an empty block discovers conventional linked roots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompts: Option<VfsPromptsConfig>,
     /// Independent VFS skill discovery. Absent disables discovery and removes
-    /// its runtime catalog; enabling it requires explicit linked roots.
+    /// its runtime catalog; an empty block discovers conventional linked roots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skills: Option<VfsSkillsConfig>,
 }
@@ -472,19 +473,22 @@ pub enum VfsToolSurface {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VfsPromptsConfig {
-    /// Absent means the conventional roots; an explicit list must be
-    /// non-empty.
+    /// Absent searches .agents/prompts and .lightspeed/prompts beneath each
+    /// workspace link. Explicit roots replace these defaults and must be
+    /// non-empty absolute paths contained in workspace links.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roots: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VfsSkillsConfig {
-    /// Explicit absolute discovery roots in the linked VFS namespace. Must be
-    /// non-empty and contained in workspace links; no roots are inferred.
+    /// Absent searches .agents/skills and .lightspeed/skills beneath each
+    /// workspace link. Explicit roots replace these defaults and must be
+    /// non-empty absolute paths contained in workspace links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
-    pub roots: Vec<String>,
+    pub roots: Option<Vec<String>>,
 }
 
 /// Grants network access through the web toolset; `fetch` and `search` are

@@ -2188,12 +2188,13 @@ export interface TimersFeature {
  */
 export interface VfsFeature {
   /**
-   * Prompt-instruction sourcing from the VFS.
+   * Prompt-instruction sourcing from the VFS. Absent disables loading;
+   * an empty block discovers conventional linked roots.
    */
   prompts?: VfsPromptsConfig | null;
   /**
    * Independent VFS skill discovery. Absent disables discovery and removes
-   * its runtime catalog; enabling it requires explicit linked roots.
+   * its runtime catalog; an empty block discovers conventional linked roots.
    */
   skills?: VfsSkillsConfig | null;
   /**
@@ -2216,8 +2217,9 @@ export interface VfsFeature {
  */
 export interface VfsPromptsConfig {
   /**
-   * Absent means the conventional roots; an explicit list must be
-   * non-empty.
+   * Absent searches .agents/prompts and .lightspeed/prompts beneath each
+   * workspace link. Explicit roots replace these defaults and must be
+   * non-empty absolute paths contained in workspace links.
    */
   roots?: string[] | null;
 }
@@ -2227,12 +2229,13 @@ export interface VfsPromptsConfig {
  */
 export interface VfsSkillsConfig {
   /**
-   * Explicit absolute discovery roots in the linked VFS namespace. Must be
-   * non-empty and contained in workspace links; no roots are inferred.
+   * Absent searches .agents/skills and .lightspeed/skills beneath each
+   * workspace link. Explicit roots replace these defaults and must be
+   * non-empty absolute paths contained in workspace links.
    *
    * @minItems 1
    */
-  roots: [string, ...string[]];
+  roots?: [string, ...string[]] | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

@@ -4,8 +4,8 @@ Status: implemented, 2026-09-09. Separate VFS and environment catalogs use idle-
 
 UI follow-up, 2026-09-11: the shared profile/session configuration editor exposes
 independent skill discovery switches for environments and VFS, with environment
-scope fields and required linked VFS roots. Empty VFS drafts remain editable and
-are validated before saving.
+scope fields and optional linked VFS root overrides. Empty blocks enable
+conventional roots; explicit overrides are validated before saving.
 
 Discovery follow-up, 2026-09-11: automatic home discovery now searches only
 `.agents/skills` and `.lightspeed/skills`. Settings describe this scope without
@@ -489,17 +489,32 @@ TypeScript/Configurator generation reproduces all 13 checked artifacts exactly;
 TypeScript checks, consumer/Configurator tests, and builds pass. The root check's
 uncommitted-generated-file limitation described above still applies.
 
-### Explicit VFS discovery follow-up
+### VFS discovery enablement and defaults
 
-VFS discovery now requires `features.vfs.skills.roots`, a nonempty list of
-absolute paths inside declared workspace links. Absent `skills` disables the
-source. There are no conventional-root defaults or CLI chat enablement.
-The workflow refresh request carries the optional VFS discovery config as a
-single value. Runtime publication is marked with its source ownership so
-revocation can remove the VFS menu without touching environment or controller
-catalogs. Discovery remains at eligible idle boundaries; revocation performs
-no scan. The homogeneous source-oriented catalog API and environment discovery
-configuration remain unchanged.
+VFS skills and prompts are independently enabled by the presence of their
+configuration blocks. Absent blocks disable sourcing. Empty blocks discover
+`.agents/skills` and `.lightspeed/skills`, or `.agents/prompts` and
+`.lightspeed/prompts`, beneath each workspace link (including snapshots).
+Explicit nonempty root lists replace defaults and must remain inside links.
+No links yields no sources. This supersedes the earlier mandatory-skill-roots
+follow-up and restores the shared empty-block capability convention.
+
+The shared editor exposes Skill discovery and Prompt loading switches with
+optional root overrides. Clearing a field restores defaults; switching off
+removes the block. Prompts load as instructions; skills publish a menu.
+Workflow publication/revocation checks use block presence, including replay.
+The optional skill roots propagate through API and workflow contracts and
+runtime projection adapters. Existing explicit-root configurations retain
+their meaning. Discovery remains at eligible idle boundaries; revocation scans
+no files and clears only the corresponding runtime-owned source.
+
+Validation of default-root enablement: 927 scoped Rust library/schema tests
+passed (one existing ignored test), including default catalog publication and
+revocation replay. TypeScript checks, consumer tests (including all 245 web
+tests), and production/demo builds passed. All 16 generated artifacts reproduce
+exactly. The root check stops at its committed-file diff guard because this
+change updates generated files; the remaining checks were run separately.
+No live or credentialed tests were run.
 
 Validation: targeted engine, tools, runtime gateway, workflow, runner, API,
 projection, profile, and CLI/TUI tests pass, including explicit-root validation,
