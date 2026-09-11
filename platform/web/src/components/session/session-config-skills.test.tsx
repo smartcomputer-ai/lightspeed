@@ -25,7 +25,7 @@ async function setup(value: SessionConfig) {
   }
   await act(async () => root.render(<Harness />));
   for (const button of container.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")) {
-    if (button.textContent?.includes("Environments") || button.textContent?.includes("Virtual File System")) {
+    if (button.textContent?.includes("Environments") || button.textContent?.includes("Virtual File System") || button.textContent?.includes("Sub-agents") || button.textContent?.includes("Web")) {
       await act(async () => button.click());
     }
   }
@@ -34,6 +34,13 @@ async function toggle(name: string) {
   const button = container.querySelector<HTMLButtonElement>(`[role="switch"][aria-label="${name}"]`);
   expect(button).not.toBeNull();
   await act(async () => button!.click());
+}
+async function expand(name: string) {
+  const button = container.querySelector<HTMLButtonElement>(`button[aria-label="Configure ${name}"]`);
+  expect(button).not.toBeNull();
+  expect(button!.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => button!.click());
+  expect(button!.getAttribute("aria-expanded")).toBe("true");
 }
 async function input(label: string, value: string) {
   const fieldLabel = Array.from(container.querySelectorAll("label")).find((item) => item.textContent === label);
@@ -52,6 +59,8 @@ it("shares the environment working directory while source overrides remain indep
   await toggle("Environment skill discovery");
   await toggle("Environment prompt loading");
   expect(error).toBeNull();
+  await expand("Environment skill discovery");
+  await expand("Environment prompt loading");
   await input("Environment skill roots", "./skills, /team/skills");
   await input("Environment prompt roots", "./prompts");
   expect(current).toMatchObject({ features: { environments: { workingDirectory: "/project", jobs: true, skills: { roots: ["./skills", "/team/skills"] }, prompts: { roots: ["./prompts"] } } } });
@@ -72,6 +81,7 @@ it.each([
   await toggle(switchName);
   expect(error).toBeNull();
   expect(current).toHaveProperty(`features.vfs.${key}`, {});
+  await expand(switchName);
   await input(label, "/outside/custom");
   expect(error).toContain("inside workspace links");
   await input(label, "/workspace/custom");
@@ -103,4 +113,81 @@ it("uses explicit VFS directory settings without inferring /workspace", async ()
   expect(error).toBeNull();
   await input("VFS working directory", "");
   expect(current).not.toHaveProperty("features.vfs.workingDirectory");
+});
+
+it.each([
+  ["vfs", "skills", "VFS skill discovery"],
+  ["vfs", "prompts", "VFS prompt loading"],
+  ["environments", "skills", "Environment skill discovery"],
+  ["environments", "prompts", "Environment prompt loading"],
+])("keeps %s %s defaults compact and exposes root overrides on demand", async (domain, key, name) => {
+  await setup({ features: { [domain]: { [key]: {} } } });
+  expect(container.querySelector('input[placeholder="Default directories"]')).toBeNull();
+  const before = JSON.stringify(current);
+  await expand(name);
+  expect(container.querySelector('input[placeholder="Default directories"]')).not.toBeNull();
+  expect(JSON.stringify(current)).toBe(before);
+  await toggle(name);
+  expect(container.querySelector('input[placeholder="Default directories"]')).toBeNull();
+  await toggle(name);
+  expect(container.querySelector('input[placeholder="Default directories"]')).toBeNull();
+  expect(current).toHaveProperty(`features.${domain}.${key}`, {});
+});
+it("summarizes existing overrides while collapsed and preserves them on expansion", async () => {
+  await setup({ features: { environments: { skills: { roots: ["./skills", "/team"] } } } });
+  expect(container.textContent).toContain("2 custom roots");
+  expect(container.querySelector('input[placeholder="Default directories"]')).toBeNull();
+  await expand("Environment skill discovery");
+  expect((container.querySelector('input[placeholder="Default directories"]') as HTMLInputElement).value).toBe("./skills, /team");
+  await input("Environment skill roots", "");
+  expect(container.textContent).not.toContain("custom roots");
+  expect(current).toHaveProperty("features.environments.skills", {});
+});
+
+it("hides sub-agent limits by default and preserves overrides while collapsed", async () => {
+  await setup({ features: { subagents: { agents: ["reviewer"], maxDepth: 3, maxDescendants: 24 } } });
+  expect(container.textContent).toContain("Agents");
+  expect(container.textContent).toContain("2 custom limits");
+  expect(container.querySelector('input[type="number"]')).toBeNull();
+  const button = container.querySelector<HTMLButtonElement>('[aria-label="Customize sub-agent limits"]')!;
+  const before = JSON.stringify(current);
+  await act(async () => button.click());
+  expect(button.getAttribute("aria-expanded")).toBe("true");
+  expect(container.querySelectorAll('input[type="number"]')).toHaveLength(4);
+  expect(JSON.stringify(current)).toBe(before);
+  await input("Max depth", "4");
+  expect(current).toHaveProperty("features.subagents.maxDepth", 4);
+  await input("Max descendants", "");
+  expect(current).not.toHaveProperty("features.subagents.maxDescendants");
+  await act(async () => button.click());
+  expect(container.querySelector('input[type="number"]')).toBeNull();
+  expect(current).toHaveProperty("features.subagents.maxDepth", 4);
+  expect(container.textContent).toContain("1 custom limit");
+});
+
+it("hides search domain filters by default and preserves them while collapsed", async () => {
+  await setup({ features: { web: { fetch: {}, search: { allowedDomains: ["example.com"] } } } });
+  expect(container.textContent).toContain("Search the web");
+  expect(container.textContent).toContain("1 allowed");
+  expect(container.querySelector('input[placeholder="All domains"]')).toBeNull();
+  const button = container.querySelector<HTMLButtonElement>('[aria-label="Customize search domains"]')!;
+  const before = JSON.stringify(current);
+  await act(async () => button.click());
+  expect(button.getAttribute("aria-expanded")).toBe("true");
+  expect(JSON.stringify(current)).toBe(before);
+  await input("Allowed domains", "example.com, docs.example.com");
+  expect(current).toHaveProperty("features.web.search.allowedDomains", ["example.com", "docs.example.com"]);
+  await act(async () => button.click());
+  expect(container.querySelector('input[placeholder="All domains"]')).toBeNull();
+  expect(container.textContent).toContain("2 allowed");
+});
+it("preserves exclusive domain filter behavior when customized", async () => {
+  await setup({ model: { apiKind: "anthropic:messages", providerId: "anthropic", model: "test" }, features: { web: { search: { allowedDomains: ["example.com"] } } } });
+  const button = container.querySelector<HTMLButtonElement>('[aria-label="Customize search domains"]')!;
+  await act(async () => button.click());
+  await input("Blocked domains", "blocked.example.com");
+  expect(current).toHaveProperty("features.web.search.blockedDomains", ["blocked.example.com"]);
+  expect(current).not.toHaveProperty("features.web.search.allowedDomains");
+  await input("Blocked domains", "");
+  expect(current).toHaveProperty("features.web.search", {});
 });

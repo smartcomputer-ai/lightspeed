@@ -1443,9 +1443,14 @@ function WebFields({
   apiKind: string;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
   const search = record(feature.search);
+  const allowedCount = stringList(search.allowedDomains).length;
+  const blockedCount = stringList(search.blockedDomains).length;
   const fetchEnabled = "fetch" in feature;
   const searchEnabled = "search" in feature;
+  useEffect(() => { if (!searchEnabled) setOpen(false); }, [searchEnabled]);
   const exclusiveDomainFilters = apiKind === "anthropic:messages";
   const setSubfeature = (name: "fetch" | "search", enabled: boolean) => patch((next) => {
     if (enabled) next[name] = {};
@@ -1461,10 +1466,24 @@ function WebFields({
         <Label className="gap-2 font-normal"><Checkbox checked={searchEnabled} onCheckedChange={(checked) => setSubfeature("search", checked === true)} />Search the web</Label>
       </div>
       {searchEnabled && (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          aria-label="Customize search domains"
+          aria-expanded={open}
+          aria-controls={`${id}-domains`}
+          onClick={() => setOpen((value) => !value)}
+          className="w-fit cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {(allowedCount > 0 || blockedCount > 0) && <>{[allowedCount > 0 && `${allowedCount} allowed`, blockedCount > 0 && `${blockedCount} blocked`].filter(Boolean).join(", ")} · </>}
+          {open ? "Hide domains" : "Customize domains"}
+        </button>
+      )}
+      {searchEnabled && open && (
+        <div id={`${id}-domains`} className="grid gap-3 sm:grid-cols-2">
           <Field>
-            <FieldLabel>Allowed domains</FieldLabel>
+            <FieldLabel htmlFor={`${id}-allowed`}>Allowed domains</FieldLabel>
             <Input
+              id={`${id}-allowed`}
               value={commaList(search.allowedDomains)}
               onChange={(e) => patch((next) => {
                 const domains = listFromInput(e.target.value);
@@ -1479,8 +1498,9 @@ function WebFields({
             <FieldDescription className="text-xs">Comma-separated domains. Empty allows all.</FieldDescription>
           </Field>
           <Field>
-            <FieldLabel>Blocked domains</FieldLabel>
+            <FieldLabel htmlFor={`${id}-blocked`}>Blocked domains</FieldLabel>
             <Input
+              id={`${id}-blocked`}
               value={commaList(search.blockedDomains)}
               onChange={(e) => patch((next) => {
                 const domains = listFromInput(e.target.value);
@@ -1496,7 +1516,7 @@ function WebFields({
           </Field>
         </div>
       )}
-      {searchEnabled && exclusiveDomainFilters && (
+      {searchEnabled && open && exclusiveDomainFilters && (
         <FieldDescription className="text-xs">
           Anthropic accepts either an allowed-domain list or a blocked-domain list, not both.
         </FieldDescription>
@@ -1514,6 +1534,8 @@ function SubagentFields({
   profiles: ProfileOption[];
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
   const agents = subagentProfileIds(feature.agents);
   const limits = [
     { key: "maxDepth", label: "Max depth", placeholder: "2", hint: "How deep sub-agents may nest below this session." },
@@ -1521,6 +1543,7 @@ function SubagentFields({
     { key: "maxConcurrent", label: "Max concurrent", placeholder: "4", hint: "Open sub-agent sessions under the root at once." },
     { key: "deadlineMs", label: "Deadline (ms)", placeholder: "3600000", hint: "Per-child run deadline; at most 24 hours." },
   ] as const;
+  const customLimits = limits.filter((limit) => feature[limit.key] != null).length;
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       <Field className="sm:col-span-2">
@@ -1537,23 +1560,37 @@ function SubagentFields({
           The agent menu. Every listed profile must exist; the model sees ids and descriptions in its sub-agent catalog.
         </FieldDescription>
       </Field>
-      {limits.map((limit) => (
-        <Field key={limit.key}>
-          <FieldLabel>{limit.label}</FieldLabel>
-          <Input
-            type="number"
-            min="1"
-            placeholder={limit.placeholder}
-            value={numberString(feature[limit.key])}
-            onChange={(e) => patch((next) => {
-              const value = parseNumber(e.target.value);
-              if (value === undefined) delete next[limit.key];
-              else next[limit.key] = value;
-            })}
-          />
-          <FieldDescription className="text-xs">{limit.hint}</FieldDescription>
-        </Field>
-      ))}
+      <button
+        type="button"
+        aria-label="Customize sub-agent limits"
+        aria-expanded={open}
+        aria-controls={`${id}-limits`}
+        onClick={() => setOpen((value) => !value)}
+        className="w-fit cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring sm:col-span-2"
+      >
+        {customLimits > 0 && <>{customLimits} custom {customLimits === 1 ? "limit" : "limits"} · </>}
+        {open ? "Hide limits" : "Customize limits"}
+      </button>
+      {open && <div id={`${id}-limits`} className="grid gap-4 sm:col-span-2 sm:grid-cols-2">
+        {limits.map((limit) => (
+          <Field key={limit.key}>
+            <FieldLabel htmlFor={`${id}-${limit.key}`}>{limit.label}</FieldLabel>
+            <Input
+              id={`${id}-${limit.key}`}
+              type="number"
+              min="1"
+              placeholder={limit.placeholder}
+              value={numberString(feature[limit.key])}
+              onChange={(e) => patch((next) => {
+                const value = parseNumber(e.target.value);
+                if (value === undefined) delete next[limit.key];
+                else next[limit.key] = value;
+              })}
+            />
+            <FieldDescription className="text-xs">{limit.hint}</FieldDescription>
+          </Field>
+        ))}
+      </div>}
     </div>
   );
 }
@@ -1647,7 +1684,10 @@ function SourceDiscoveryFields({ source, feature, patch }: {
   const prompts = source.endsWith("prompts");
   const configKey = prompts ? "prompts" : "skills";
   const enabled = feature[configKey] != null;
-  const skills = record(feature[configKey]);
+  const settings = record(feature[configKey]);
+  const roots = stringList(settings.roots);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (!enabled) setOpen(false); }, [enabled]);
   const domain = environment ? "Environment" : "VFS";
   const switchLabel = `${domain} ${prompts ? "prompt loading" : "skill discovery"}`;
   const update = (key: string, value: unknown) => patch((next) => {
@@ -1656,13 +1696,26 @@ function SourceDiscoveryFields({ source, feature, patch }: {
     next[configKey] = settings;
   });
   return (
-    <div className="grid gap-4 rounded-lg border p-3">
+    <div className="grid min-w-0 max-w-full gap-3 rounded-lg border p-3">
       <div className="flex items-start justify-between gap-4">
-        <div className="grid gap-1">
+        <div className="grid min-w-0 gap-1">
           <Label htmlFor={id}>{prompts ? "Prompt loading" : "Skill discovery"}</Label>
           <p className="text-xs text-muted-foreground">
-            {prompts ? `Load direct .md and .txt files from ${domain} prompt roots in alphabetical order. Number prefixes are optional; subfolders are ignored.` : `Advertise ${domain} skills for the agent to read when relevant.`}
+            {prompts ? "Load .md and .txt files as instructions." : "Let the agent discover and read available skills."}
           </p>
+          {enabled && (
+            <button
+              type="button"
+              aria-label={`Configure ${switchLabel}`}
+              aria-expanded={open}
+              aria-controls={`${id}-settings`}
+              onClick={() => setOpen((value) => !value)}
+              className="w-fit cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {roots.length > 0 && <>{roots.length} custom {roots.length === 1 ? "root" : "roots"} · </>}
+              {open ? "Hide root settings" : roots.length ? "Edit roots" : "Customize roots"}
+            </button>
+          )}
         </div>
         <Switch id={id} aria-label={switchLabel}
           checked={enabled}
@@ -1672,22 +1725,27 @@ function SourceDiscoveryFields({ source, feature, patch }: {
           })}
         />
       </div>
-      {enabled && (
-        <Field>
-          <FieldLabel htmlFor={`${id}-roots`}>{domain} {prompts ? "prompt" : "skill"} roots</FieldLabel>
-          <Input id={`${id}-roots`} className="font-mono" value={commaList(skills.roots)}
-            placeholder="Default directories"
-            onChange={(e) => {
-              const roots = listFromInput(e.target.value);
-              update("roots", roots.length ? roots : undefined);
-            }} />
-          <FieldDescription>
-            {`Empty searches .agents/${configKey} and .lightspeed/${configKey} ${environment ? "under the working directory and execution user’s home" : "beneath each workspace link"}. `}
-            {environment
-              ? "Comma-separated overrides replace all defaults, including home. Paths may be absolute or relative to the working directory."
-              : "Comma-separated overrides replace all defaults and must be absolute paths inside workspace links."}
-          </FieldDescription>
-        </Field>
+      {enabled && open && (
+        <div id={`${id}-settings`} className="grid gap-3 border-t pt-3">
+          <p className="text-xs text-muted-foreground">
+            {prompts ? `Load direct .md and .txt files from ${domain} prompt roots in alphabetical order. Number prefixes are optional; subfolders are ignored.` : `Advertise ${domain} skills for the agent to read when relevant.`}
+          </p>
+          <Field>
+            <FieldLabel htmlFor={`${id}-roots`}>{domain} {prompts ? "prompt" : "skill"} roots</FieldLabel>
+            <Input id={`${id}-roots`} className="font-mono" value={commaList(settings.roots)}
+              placeholder="Default directories"
+              onChange={(e) => {
+                const roots = listFromInput(e.target.value);
+                update("roots", roots.length ? roots : undefined);
+              }} />
+            <FieldDescription>
+              {`Empty searches .agents/${configKey} and .lightspeed/${configKey} ${environment ? "under the working directory and execution user’s home" : "beneath each workspace link"}. `}
+              {environment
+                ? "Comma-separated overrides replace all defaults, including home. Paths may be absolute or relative to the working directory."
+                : "Comma-separated overrides replace all defaults and must be absolute paths inside workspace links."}
+            </FieldDescription>
+          </Field>
+        </div>
       )}
     </div>
   );

@@ -58,7 +58,8 @@ an absent compatibility statement is not evidence of compatibility.
 ```
 
 Open the release-editor profile and enable **Prompt loading** under
-**Virtual File System**. Leave **VFS prompt roots** empty to use conventional
+**Virtual File System**. Root overrides are optional: choose **Customize roots** under
+**Prompt loading** to edit them. Leave **VFS prompt roots** empty to use conventional
 directories beneath each workspace link. Save, then create a new session from the
 profile or apply the updated setup to an existing idle session.
 

@@ -97,7 +97,10 @@ fall back to another domain; report source unavailability.
   settings. The UI may suggest `/workspace` for a matching VFS link but must
   persist that choice explicitly.
 - Provide matching **Prompt loading** and **Skill discovery** switches with
-  optional root overrides. Clearing the field restores defaults; switching off
+  root overrides behind a secondary **Customize roots** action. The bordered
+  rows match Durable jobs and Environment selection tools: label and description
+  on the left, switch on the right. Custom-root counts remain visible while
+  collapsed. Clearing the field restores defaults; switching off
   removes the block. Explain default directories and full replacement semantics.
 - Update engine/API config, runtime adapters, environment prompt publication,
   shared editors, CLI help, and docs. Regenerate API/workflow contracts and all
@@ -151,3 +154,21 @@ compilation. The expanded hosted transfer live test also passed: both VFS and
 environment `.md`/`.txt` prompts reached the scripted model in filename order,
 with nested and unsupported files excluded. The fixture now configures its
 shared gateway for idle discovery as well as tools.
+
+The shared profile/new-session/existing-session editor now presents prompt and
+skill capabilities as bordered switch rows matching Durable jobs and Environment
+selection tools. Defaults require only the switch; a secondary Customize roots
+action reveals root overrides and discovery details without changing
+the configuration. Existing overrides are summarized while collapsed. All 30
+focused editor tests and the web TypeScript check passed.
+
+The same secondary customization pattern now hides optional sub-agent depth,
+descendant count, concurrency, and deadline fields by default. The required
+agent selector remains visible, and custom-limit counts stay visible while
+collapsed. Expansion does not alter configuration. All 31 focused editor tests
+and the web TypeScript check passed.
+
+Web search domain allow/block lists also use a secondary Customize domains action,
+with configured counts visible while collapsed. Fetch/search controls remain
+visible, and provider-specific exclusivity is preserved. All 33 focused editor
+tests and the web TypeScript check passed.
