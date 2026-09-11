@@ -655,14 +655,14 @@ fn validate_features(
     if let Some(vfs) = &features.vfs {
         validate_feature_version("vfs", vfs.version)?;
         let link_paths = validate_workspace_links(&vfs.workspace_links)?;
-        if let Some(cwd) = &vfs.working_directory {
-            if cwd != "/" {
-                validate_source_roots(
-                    "vfs working directory",
-                    Some(std::slice::from_ref(cwd)),
-                    &link_paths,
-                )?;
-            }
+        if let Some(cwd) = &vfs.working_directory
+            && cwd != "/"
+        {
+            validate_source_roots(
+                "vfs working directory",
+                Some(std::slice::from_ref(cwd)),
+                &link_paths,
+            )?;
         }
         if let Some(prompts) = &vfs.prompts {
             validate_source_roots("vfs prompts", prompts.roots.as_deref(), &link_paths)?;
@@ -684,12 +684,12 @@ fn validate_features(
     }
     if let Some(environments) = &features.environments {
         validate_feature_version("environments", environments.version)?;
-        if let Some(cwd) = &environments.working_directory {
-            if !cwd.starts_with('/') || cwd.contains('\0') {
-                return Err(DomainError::InvariantViolation(
-                    "environment working directory must be absolute".into(),
-                ));
-            }
+        if let Some(cwd) = &environments.working_directory
+            && (!cwd.starts_with('/') || cwd.contains('\0'))
+        {
+            return Err(DomainError::InvariantViolation(
+                "environment working directory must be absolute".into(),
+            ));
         }
         for roots in [
             environments

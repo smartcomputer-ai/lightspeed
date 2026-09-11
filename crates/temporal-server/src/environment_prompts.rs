@@ -138,8 +138,10 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        let mut feature = EnvironmentsFeature::default();
-        feature.skills = Some(Default::default());
+        let feature = EnvironmentsFeature {
+            skills: Some(Default::default()),
+            ..Default::default()
+        };
         assert!(
             refresh(
                 &blobs,
