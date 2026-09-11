@@ -217,6 +217,13 @@ fn features_from_api(
         environments: features
             .environments
             .map(|environments| engine::EnvironmentsFeature {
+                tools: environments.tools.map(|surface| match surface {
+                    api::EnvironmentToolSurface::ReadOnly => {
+                        engine::EnvironmentToolSurface::ReadOnly
+                    }
+                    api::EnvironmentToolSurface::Edit => engine::EnvironmentToolSurface::Edit,
+                }),
+                commands: environments.commands,
                 version: environments.version,
                 working_directory: environments.working_directory,
                 prompts: environments

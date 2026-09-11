@@ -1312,6 +1312,33 @@ fn environment_read_target(
     }
 }
 
+/// Reject ungranted operations before connecting to or waking a machine.
+fn environment_tool_denial(
+    policy: Option<&engine::EnvironmentPolicyRuntime>,
+    call: &engine::ToolInvocationRequest,
+) -> Option<&'static str> {
+    let id = call.tool_id.as_ref()?.as_str();
+    let surface = policy.and_then(|policy| policy.tools);
+    match id {
+        "env.read_file" | "env.grep" | "env.glob" | "env.list_dir" | "vfs.capture"
+            if surface.is_none() =>
+        {
+            Some("environment filesystem read tools are not granted")
+        }
+        "env.write_file" | "env.edit_file" | "env.apply_patch" | "vfs.materialize"
+            if surface != Some(engine::EnvironmentToolSurface::Edit) =>
+        {
+            Some("environment filesystem editing is not granted")
+        }
+        "env.run_process" | "env.continue_process"
+            if !policy.is_some_and(|policy| policy.commands) =>
+        {
+            Some("environment command execution is not granted")
+        }
+        _ => None,
+    }
+}
+
 fn supplied_environment_policy(
     request: &ToolInvocationBatchRequest,
 ) -> Result<EnvironmentAccessPolicy, CoreAgentIoError> {
@@ -1475,7 +1502,13 @@ impl CoreAgentTools for SessionTools {
             // setup entirely.
             let mut results = Vec::with_capacity(request.calls.len());
             for call in &request.calls {
-                if call.workflow_tool.is_some() {
+                if let Some(message) =
+                    environment_tool_denial(request.environment_policy.as_ref(), call)
+                {
+                    results.push(
+                        failed_result(self.blobs.as_ref(), call.call_id.clone(), message).await?,
+                    );
+                } else if call.workflow_tool.is_some() {
                     results.push(
                         self.invoke_supplied_workflow_tool_call(
                             &request,
@@ -1507,11 +1540,17 @@ impl CoreAgentTools for SessionTools {
         }
 
         let has_vfs_call = request.calls.iter().any(|call| {
+            if environment_tool_denial(request.environment_policy.as_ref(), call).is_some() {
+                return false;
+            }
             call.tool_id
                 .as_ref()
                 .is_some_and(|id| BuiltinToolRequirements::for_id(id).vfs)
         });
         let has_environment_call = request.calls.iter().any(|call| {
+            if environment_tool_denial(request.environment_policy.as_ref(), call).is_some() {
+                return false;
+            }
             call.tool_id
                 .as_ref()
                 .is_some_and(|id| BuiltinToolRequirements::for_id(id).active_environment)
@@ -1548,7 +1587,13 @@ impl CoreAgentTools for SessionTools {
 
             let mut results = Vec::with_capacity(request.calls.len());
             for call in &request.calls {
-                if call.workflow_tool.is_some() {
+                if let Some(message) =
+                    environment_tool_denial(request.environment_policy.as_ref(), call)
+                {
+                    results.push(
+                        failed_result(self.blobs.as_ref(), call.call_id.clone(), message).await?,
+                    );
+                } else if call.workflow_tool.is_some() {
                     results.push(
                         self.invoke_supplied_workflow_tool_call(
                             &request,
@@ -1660,6 +1705,11 @@ impl SessionTools {
         request: engine::ToolInvocationCallRequest,
     ) -> Result<ToolCallExecution, CoreAgentIoError> {
         let call = request.call.clone();
+        if let Some(message) = environment_tool_denial(request.environment_policy.as_ref(), &call) {
+            return failed_result(self.blobs.as_ref(), call.call_id, message)
+                .await
+                .map(ToolCallExecution::Completed);
+        }
         // Batch-unit tools never arrive here: the workflow routes batches
         // containing them through the batch activity.
         if call.workflow_tool.is_some()
@@ -2090,6 +2140,126 @@ mod tests {
                 model: "test".into(),
             },
         }
+    }
+
+    fn test_environment_policy(
+        providers: Option<Vec<String>>,
+        keys: Option<Vec<String>>,
+    ) -> engine::EnvironmentPolicyRuntime {
+        engine::EnvironmentPolicyRuntime {
+            tools: Some(engine::EnvironmentToolSurface::Edit),
+            commands: true,
+            ..engine::EnvironmentPolicyRuntime::new(providers, keys)
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ungranted_environment_operations_fail_before_resolving_domains() {
+        for tools_grant in [
+            None,
+            Some(engine::EnvironmentToolSurface::ReadOnly),
+            Some(engine::EnvironmentToolSurface::Edit),
+        ] {
+            for commands in [false, true] {
+                let policy = engine::EnvironmentPolicyRuntime {
+                    tools: tools_grant,
+                    commands,
+                    ..engine::EnvironmentPolicyRuntime::new(None, None)
+                };
+                for (id, allowed) in [
+                    ("env.read_file", tools_grant.is_some()),
+                    ("env.grep", tools_grant.is_some()),
+                    ("env.glob", tools_grant.is_some()),
+                    ("env.list_dir", tools_grant.is_some()),
+                    (
+                        "env.write_file",
+                        tools_grant == Some(engine::EnvironmentToolSurface::Edit),
+                    ),
+                    (
+                        "env.edit_file",
+                        tools_grant == Some(engine::EnvironmentToolSurface::Edit),
+                    ),
+                    (
+                        "env.apply_patch",
+                        tools_grant == Some(engine::EnvironmentToolSurface::Edit),
+                    ),
+                    (
+                        "vfs.materialize",
+                        tools_grant == Some(engine::EnvironmentToolSurface::Edit),
+                    ),
+                    ("vfs.capture", tools_grant.is_some()),
+                    ("env.run_process", commands),
+                    ("env.continue_process", commands),
+                ] {
+                    let blobs = Arc::new(InMemoryBlobStore::new());
+                    let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
+                    let mut request = per_call_request("read_file", b"{}", &[]);
+                    request.call.tool_id = Some(ToolName::new(id));
+                    request.environment_policy = Some(policy.clone());
+                    assert_eq!(
+                        environment_tool_denial(Some(&policy), &request.call).is_none(),
+                        allowed,
+                        "{id}"
+                    );
+                    if allowed {
+                        continue;
+                    }
+                    // No active environment, workspace links, or argument blob: refusal
+                    // must happen before resolving any of these effectful resources.
+                    let call = tools.invoke_call(request.clone()).await.unwrap();
+                    let batch = tools
+                        .invoke_batch(request.into_batch_request())
+                        .await
+                        .unwrap()
+                        .completed_result()
+                        .unwrap();
+                    for result in [call, batch.results[0].clone()] {
+                        assert_eq!(result.status, ToolCallStatus::Failed);
+                        assert!(
+                            blobs
+                                .read_text(result.error_ref.as_ref().unwrap())
+                                .await
+                                .unwrap()
+                                .contains("not granted")
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn denied_environment_call_does_not_block_an_independent_vfs_read() {
+        let (blobs, tools, session_id, links) = session_tools_with_readme_link().await;
+        let mut request =
+            per_call_request("vfs_read_file", br#"{"path":"/workspace/README.md"}"#, &[]);
+        request.session_id = session_id;
+        request.workspace_links = links;
+        request.call.arguments_ref = blobs
+            .put_bytes(br#"{"path":"/workspace/README.md"}"#.to_vec())
+            .await
+            .unwrap();
+        let mut denied = request.call.clone();
+        denied.call_id = ToolCallId::new("denied");
+        denied.tool_id = Some(ToolName::new("env.write_file"));
+        let mut batch = request.into_batch_request();
+        batch.calls.push(denied);
+        let results = tools
+            .invoke_batch(batch)
+            .await
+            .unwrap()
+            .completed_result()
+            .unwrap()
+            .results;
+        assert_eq!(results[0].status, ToolCallStatus::Succeeded);
+        assert_eq!(results[1].status, ToolCallStatus::Failed);
+        assert!(
+            blobs
+                .read_text(results[1].error_ref.as_ref().unwrap())
+                .await
+                .unwrap()
+                .contains("not granted")
+        );
     }
 
     fn per_call_request(
@@ -3263,8 +3433,7 @@ mod tests {
                     request.session_id = session_id;
                     request.workspace_links = workspace_links.clone();
                     request.active_environment_id = Some(EnvironmentId::new("test"));
-                    request.environment_policy =
-                        Some(engine::EnvironmentPolicyRuntime::new(None, None));
+                    request.environment_policy = Some(test_environment_policy(None, None));
                     request.call.arguments_ref = blobs.put_bytes(args).await.unwrap();
                     let builtin = request.call.builtin.as_mut().unwrap();
                     builtin.model.api_kind = api_kind;
@@ -3504,7 +3673,7 @@ mod tests {
             for tool_name in ["environment_read", "environment_list"] {
                 let mut request = per_call_request(tool_name, b"{}", &[]);
                 request.active_environment_id = Some(environment_id.clone());
-                request.environment_policy = Some(engine::EnvironmentPolicyRuntime::new(
+                request.environment_policy = Some(test_environment_policy(
                     Some(vec!["allowed".to_owned()]),
                     None,
                 ));
@@ -3562,7 +3731,7 @@ mod tests {
             promise_id_base: 1,
             workspace_links: Vec::new(),
             active_environment_id: Some(EnvironmentId::new("environment-allowed-1")),
-            environment_policy: Some(engine::EnvironmentPolicyRuntime::new(
+            environment_policy: Some(test_environment_policy(
                 Some(vec!["allowed".to_owned()]),
                 None,
             )),
@@ -3637,7 +3806,7 @@ mod tests {
             promise_id_base: 1,
             workspace_links: Vec::new(),
             active_environment_id: Some(EnvironmentId::new("environment-pending")),
-            environment_policy: Some(engine::EnvironmentPolicyRuntime::new(None, None)),
+            environment_policy: Some(test_environment_policy(None, None)),
             subagents_policy: None,
             call: engine::ToolInvocationRequest {
                 builtin: Some(test_builtin_runtime()),
@@ -3818,7 +3987,7 @@ mod tests {
             batch_id: ToolBatchId::new(1),
             promise_id_base: 1,
             active_environment_id: Some(EnvironmentId::new("environment-allowed-1")),
-            environment_policy: Some(engine::EnvironmentPolicyRuntime::new(
+            environment_policy: Some(test_environment_policy(
                 Some(vec!["allowed".to_owned()]),
                 None,
             )),
@@ -4031,7 +4200,7 @@ mod tests {
                 batch_id: ToolBatchId::new(1),
                 promise_id_base: 1,
                 active_environment_id: Some(EnvironmentId::new("test")),
-                environment_policy: Some(engine::EnvironmentPolicyRuntime::new(None, None)),
+                environment_policy: Some(test_environment_policy(None, None)),
                 subagents_policy: None,
                 workspace_links,
                 calls: vec![

@@ -293,12 +293,25 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "EnvironmentToolSurface": {
+          "description": "Agent-facing environment filesystem tools; independent of execution grants.",
+          "enum": [
+            "readOnly",
+            "edit"
+          ],
+          "type": "string"
+        },
         "EnvironmentsFeature": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants active session environments and their process tool surface.\nModel-driven selection and durable jobs are independent, default-off\nsub-grants.",
+          "description": "Grants active session environments. Filesystem tools, commands, selection,\ndurable jobs, prompts, and skills are independent, default-off sub-grants.",
           "properties": {
+            "commands": {
+              "default": false,
+              "description": "Grants command execution and process continuation. Commands may modify\nfiles even when filesystem tools are read-only or disabled.",
+              "type": "boolean"
+            },
             "jobs": {
               "default": false,
               "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
@@ -350,6 +363,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 }
               ],
               "description": "Independent environment skill discovery. Absent disables discovery."
+            },
+            "tools": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentToolSurface"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filesystem tool surface. Absent installs no filesystem tools; sources\nremain independent. Read-only does not restrict commands or durable jobs."
             },
             "version": {
               "default": 1,
@@ -1591,12 +1615,25 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "EnvironmentToolSurface": {
+          "description": "Agent-facing environment filesystem tools; independent of execution grants.",
+          "enum": [
+            "readOnly",
+            "edit"
+          ],
+          "type": "string"
+        },
         "EnvironmentsFeature": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants active session environments and their process tool surface.\nModel-driven selection and durable jobs are independent, default-off\nsub-grants.",
+          "description": "Grants active session environments. Filesystem tools, commands, selection,\ndurable jobs, prompts, and skills are independent, default-off sub-grants.",
           "properties": {
+            "commands": {
+              "default": false,
+              "description": "Grants command execution and process continuation. Commands may modify\nfiles even when filesystem tools are read-only or disabled.",
+              "type": "boolean"
+            },
             "jobs": {
               "default": false,
               "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
@@ -1648,6 +1685,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 }
               ],
               "description": "Independent environment skill discovery. Absent disables discovery."
+            },
+            "tools": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentToolSurface"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filesystem tool surface. Absent installs no filesystem tools; sources\nremain independent. Read-only does not restrict commands or durable jobs."
             },
             "version": {
               "default": 1,
@@ -3720,12 +3768,25 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "EnvironmentToolSurface": {
+          "description": "Agent-facing environment filesystem tools; independent of execution grants.",
+          "enum": [
+            "readOnly",
+            "edit"
+          ],
+          "type": "string"
+        },
         "EnvironmentsFeature": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants active session environments and their process tool surface.\nModel-driven selection and durable jobs are independent, default-off\nsub-grants.",
+          "description": "Grants active session environments. Filesystem tools, commands, selection,\ndurable jobs, prompts, and skills are independent, default-off sub-grants.",
           "properties": {
+            "commands": {
+              "default": false,
+              "description": "Grants command execution and process continuation. Commands may modify\nfiles even when filesystem tools are read-only or disabled.",
+              "type": "boolean"
+            },
             "jobs": {
               "default": false,
               "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
@@ -3777,6 +3838,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 }
               ],
               "description": "Independent environment skill discovery. Absent disables discovery."
+            },
+            "tools": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentToolSurface"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filesystem tool surface. Absent installs no filesystem tools; sources\nremain independent. Read-only does not restrict commands or durable jobs."
             },
             "version": {
               "default": 1,
@@ -5777,12 +5849,25 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "EnvironmentToolSurface": {
+          "description": "Agent-facing environment filesystem tools; independent of execution grants.",
+          "enum": [
+            "readOnly",
+            "edit"
+          ],
+          "type": "string"
+        },
         "EnvironmentsFeature": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants active session environments and their process tool surface.\nModel-driven selection and durable jobs are independent, default-off\nsub-grants.",
+          "description": "Grants active session environments. Filesystem tools, commands, selection,\ndurable jobs, prompts, and skills are independent, default-off sub-grants.",
           "properties": {
+            "commands": {
+              "default": false,
+              "description": "Grants command execution and process continuation. Commands may modify\nfiles even when filesystem tools are read-only or disabled.",
+              "type": "boolean"
+            },
             "jobs": {
               "default": false,
               "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
@@ -5834,6 +5919,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 }
               ],
               "description": "Independent environment skill discovery. Absent disables discovery."
+            },
+            "tools": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentToolSurface"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filesystem tool surface. Absent installs no filesystem tools; sources\nremain independent. Read-only does not restrict commands or durable jobs."
             },
             "version": {
               "default": 1,
@@ -7045,12 +7141,25 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "EnvironmentToolSurface": {
+          "description": "Agent-facing environment filesystem tools; independent of execution grants.",
+          "enum": [
+            "readOnly",
+            "edit"
+          ],
+          "type": "string"
+        },
         "EnvironmentsFeature": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants active session environments and their process tool surface.\nModel-driven selection and durable jobs are independent, default-off\nsub-grants.",
+          "description": "Grants active session environments. Filesystem tools, commands, selection,\ndurable jobs, prompts, and skills are independent, default-off sub-grants.",
           "properties": {
+            "commands": {
+              "default": false,
+              "description": "Grants command execution and process continuation. Commands may modify\nfiles even when filesystem tools are read-only or disabled.",
+              "type": "boolean"
+            },
             "jobs": {
               "default": false,
               "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
@@ -7102,6 +7211,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 }
               ],
               "description": "Independent environment skill discovery. Absent disables discovery."
+            },
+            "tools": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentToolSurface"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filesystem tool surface. Absent installs no filesystem tools; sources\nremain independent. Read-only does not restrict commands or durable jobs."
             },
             "version": {
               "default": 1,

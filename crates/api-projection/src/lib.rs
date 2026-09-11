@@ -2056,6 +2056,13 @@ fn features_config_to_api(
             .environments
             .as_ref()
             .map(|environments| api::EnvironmentsFeature {
+                tools: environments.tools.map(|surface| match surface {
+                    engine::EnvironmentToolSurface::ReadOnly => {
+                        api::EnvironmentToolSurface::ReadOnly
+                    }
+                    engine::EnvironmentToolSurface::Edit => api::EnvironmentToolSurface::Edit,
+                }),
+                commands: environments.commands,
                 version: environments.version,
                 working_directory: environments.working_directory.clone(),
                 prompts: environments.prompts.as_ref().map(|source| {
@@ -4006,7 +4013,11 @@ mod tests {
                     },
                 }),
                 timers: Some(engine::TimersFeature::default()),
-                environments: Some(engine::EnvironmentsFeature::default()),
+                environments: Some(engine::EnvironmentsFeature {
+                    tools: Some(engine::EnvironmentToolSurface::Edit),
+                    commands: true,
+                    ..Default::default()
+                }),
                 mcp: Some(engine::McpFeature {
                     version: engine::CURRENT_FEATURE_VERSION,
                     servers: vec![engine::McpServerLink {
@@ -4081,6 +4092,8 @@ mod tests {
                         version: api::CURRENT_FEATURE_VERSION,
                     }),
                     environments: Some(api::EnvironmentsFeature {
+                        tools: Some(api::EnvironmentToolSurface::Edit),
+                        commands: true,
                         working_directory: None,
                         prompts: None,
                         version: api::CURRENT_FEATURE_VERSION,

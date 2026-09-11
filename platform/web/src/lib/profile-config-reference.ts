@@ -13,8 +13,10 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
   },
   // Capability grants. An absent feature is not granted; \`{}\` grants it with defaults. Every block carries a behavior \`version\` that pins semantics.
   "features": {
-    // Grants active session environments and their process tool surface. Model-driven selection and durable jobs are independent, default-off sub-grants.
+    // Grants active session environments. Filesystem tools, commands, selection, durable jobs, prompts, and skills are independent, default-off sub-grants.
     "environments": {
+      // Grants command execution and process continuation. Commands may modify files even when filesystem tools are read-only or disabled.
+      "commands": true | false,
       // Grants the advanced durable-job tool surface. The workflow binding is installed for the session when granted; invocations still require an active, ready environment with matching job capabilities.
       "jobs": true | false,
       // Independent environment prompt loading; absent disables sourced instructions.
@@ -33,6 +35,8 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
         // Optional source directories, absolute or relative to the environment working directory. Explicit nonempty lists replace all defaults, including home roots. Defaults are .agents/skills and .lightspeed/skills under working directory and execution home.
         "roots": ["string"],
       },
+      // Filesystem tool surface. Absent installs no filesystem tools; sources remain independent. Read-only does not restrict commands or durable jobs.
+      "tools": "readOnly" | "edit",
       "version": 0,
       // Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
       "workingDirectory": "string",

@@ -29,11 +29,14 @@ Open the session you want to use. With no active or queued runs, choose
 **Session settings**, enable **Environments**, and select the machine under
 **Active environment**. Choose **Apply setup**.
 
-Leave **Environment selection tools** and **Durable jobs** off for this first
-check. The base capability gives the agent environment inspection, file,
-and process tools according to the machine's capabilities. The two switches
-grant additional operations; they are not prerequisites for running a simple
-command on the machine you selected.
+Enabling **Environments** in the profile or session editor selects **Edit files**
+and enables **Command execution**, **Durable jobs**, **Prompt loading**, and
+**Skill discovery**. You can adjust each independently. Existing configurations
+keep their saved settings; omitted API grants remain off.
+
+**Environment selection tools**, below **Skill discovery**, remains off by
+default. For this first check, turn **Durable jobs** off too; **Command execution**
+is sufficient to run a simple command on the machine you selected.
 
 Send:
 
@@ -51,6 +54,25 @@ The environment's default working directory belongs to the daemon setup.
 Commands can choose a different working directory. Neither setting confines
 the process to that directory; it runs with the operating-system permissions
 of the daemon user.
+
+## Choose the tool grants
+
+Under **Environments** in a profile or session setup, **File tools** offers
+**No file tools**, **Read only**, or **Edit files**. Read only exposes reading,
+listing, search, and glob tools. Edit adds write, edit, and patch tools.
+**Command execution** independently enables starting and continuing processes;
+**Durable jobs** independently enables workflow-backed jobs. All are off when
+omitted. Prompt loading and skill discovery do not implicitly grant file or
+command tools; enable Read only if the agent should read discovered skills.
+
+```json
+{"features":{"environments":{"tools":"readOnly","commands":false,"jobs":false}}}
+```
+
+These are tool grants, subject to the endpoint's capabilities and operating-system
+permissions. Read-only file tools do not constrain commands or jobs: either can
+modify files when enabled. Source discovery remains separately authorized by
+its prompt/skill capability. Selection and environment status remain separate.
 
 ## Keep files in the right domain
 

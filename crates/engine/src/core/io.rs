@@ -125,6 +125,10 @@ pub struct ToolInvocationBatchRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentPolicyRuntime {
     pub version: u32,
+    #[serde(default)]
+    pub tools: Option<crate::EnvironmentToolSurface>,
+    #[serde(default)]
+    pub commands: bool,
     pub allowed_provider_ids: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
@@ -141,6 +145,8 @@ impl EnvironmentPolicyRuntime {
     ) -> Self {
         Self {
             version: Self::VERSION,
+            tools: None,
+            commands: false,
             allowed_provider_ids,
             working_directory: None,
             allowed_registration_key_ids,
@@ -151,6 +157,8 @@ impl EnvironmentPolicyRuntime {
     pub fn from_feature(feature: &crate::EnvironmentsFeature) -> Self {
         Self {
             working_directory: feature.working_directory.clone(),
+            tools: feature.tools,
+            commands: feature.commands,
             ..Self::new(feature.providers.clone(), feature.registration_keys.clone())
         }
     }

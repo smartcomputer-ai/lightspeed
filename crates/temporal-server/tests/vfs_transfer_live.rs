@@ -313,7 +313,11 @@ async fn run_case(
         features["vfs"]["prompts"] = json!({});
     }
     if mode != "noenv" {
-        features["environments"] = json!({});
+        features["environments"] = if mode == "sourcing" {
+            json!({})
+        } else {
+            json!({"tools":"edit"})
+        };
     }
     if mode == "sourcing" {
         features["environments"]["workingDirectory"] = json!(root);

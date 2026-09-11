@@ -228,6 +228,8 @@ describe("environment feature config", () => {
       features: {
         environments: {
           providers: ["sandbox-a"],
+          tools: "readOnly",
+          commands: true,
           selectionTools: true,
           jobs: true,
         },
@@ -236,6 +238,8 @@ describe("environment feature config", () => {
       features: {
         environments: {
           providers: ["sandbox-a"],
+          tools: "readOnly",
+          commands: true,
           selectionTools: true,
           jobs: true,
         },
@@ -382,4 +386,9 @@ describe("independent skill discovery configuration", () => {
     } });
     expect(normalized).toEqual({ features: { vfs: { skills: { roots: ["/workspace/skills"] } }, environments } });
   });
+});
+
+it.each([undefined, "readOnly", "edit"])("preserves environment file surface %s without granting commands", (tools) => {
+  const environments = tools ? { tools } : {};
+  expect(normalizeSessionConfig({ features: { environments } })).toEqual({ features: { environments } });
 });

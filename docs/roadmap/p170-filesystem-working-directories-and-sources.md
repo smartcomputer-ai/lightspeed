@@ -172,3 +172,46 @@ Web search domain allow/block lists also use a secondary Customize domains actio
 with configured counts visible while collapsed. Fetch/search controls remain
 visible, and provider-specific exclusivity is preserved. All 33 focused editor
 tests and the web TypeScript check passed.
+
+## Environment filesystem and command grants
+
+Environment settings now include independent `tools` (`readOnly` or `edit`,
+absent means no file tools) and `commands` (default false) alongside the existing
+`jobs` grant. Empty environments no longer implicitly grant file or process tools.
+Existing profiles that need the former surface must explicitly set `tools: "edit"`
+and `commands: true`; no stored sessions or profiles are silently broadened.
+
+Read-only exposes read/list/search/glob; Edit adds write/edit/patch. Commands
+control process start/continuation, and jobs remain independent. Either execution
+capability can write files regardless of the filesystem tool setting. Sources
+remain independent, including environment reads performed for discovery.
+
+Catalog construction and runtime dispatch enforce the new grants. Runtime
+refusals occur before environment resolution or wake. Materialize requires
+environment Edit; capture requires environment read access, alongside the
+existing VFS source/destination grants and linked-path permissions. Endpoint
+capabilities and filesystem permissions remain additional restrictions.
+
+Grant validation passed: the server library suite and focused dispatch tests,
+engine, API projection, workflow, and schema tests; workspace test compilation;
+258 TypeScript tests; typechecking and production builds. API and workflow
+contracts were regenerated, and TypeScript/configurator/reference generation
+was verified reproducible. The root `npm run check` stops at its clean-generated-
+diff guard while these intended generated changes are uncommitted; its remaining
+checks passed separately.
+
+All 14 selected live tests passed serially against local infrastructure:
+environment providers/registration, profiles, sessions, and hosted VFS transfers
+(including environment prompt loading). Provider-backed model tests were excluded.
+The profile provisioning test now accepts either Provisioning or Ready on its
+initial read, because a concurrently running development reconciler can complete
+provisioning before that read; readiness, ownership, and cleanup checks remain.
+
+Enabling Environments in the shared editor now explicitly selects Edit file
+tools, command execution, durable jobs, prompt loading, and skill discovery.
+Existing configurations retain their grants; omitted API grants remain off.
+Environment selection tools follow skill discovery and remain opt-in.
+
+Enabling VFS in the shared editor likewise selects Edit file tools and enables
+prompt loading and skill discovery with default roots. Saved configurations and
+workspace link permissions remain unchanged.

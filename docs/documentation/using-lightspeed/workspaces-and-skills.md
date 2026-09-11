@@ -21,7 +21,9 @@ relative to that workspace, and creates directories in the path as needed.
 Open a file, edit its contents, and choose **Save**.
 
 In a profile's **Virtual File System: Files, Instructions, Skills** section,
-choose **File tools**, then add a **Workspace link**:
+enabling VFS selects **Edit files** and turns on **Prompt loading** and **Skill
+discovery**. Adjust these independently, then add a **Workspace link**. Existing
+configurations keep their saved settings.
 
 | Setting | Meaning |
 | --- | --- |
@@ -232,7 +234,8 @@ separate identities with no cross-domain merging, deduplication, or fallback.
 
 In the profile editor, new-session form, or session settings, set **Working
 directory** directly under **Environments**, then enable **Skill discovery** or
-**Prompt loading** independently. The directory is shared by file tools,
+**Prompt loading** independently. Enable environment **Read only** file tools
+if the agent should read discovered skill documents. The directory is shared by file tools,
 commands, jobs, and discovery; empty uses the selected endpoint's default.
 
 ```json
@@ -240,6 +243,7 @@ commands, jobs, and discovery; empty uses the selected endpoint's default.
   "features": {
     "environments": {
       "workingDirectory": "/workspace/project",
+      "tools": "readOnly",
       "skills": {},
       "prompts": { "roots": ["./team-prompts"] }
     }

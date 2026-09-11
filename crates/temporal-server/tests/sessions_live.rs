@@ -420,6 +420,8 @@ async fn run_fake_live_client(
         skills: None,
     });
     enabled_features.environments = Some(api::EnvironmentsFeature {
+        tools: Some(api::EnvironmentToolSurface::Edit),
+        commands: true,
         working_directory: None,
         prompts: None,
         version: api::CURRENT_FEATURE_VERSION,

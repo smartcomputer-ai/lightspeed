@@ -51,6 +51,11 @@ replace concurrent workspace edits.
 The recorded tool result retains that snapshot and its file blobs even when
 workspace publication fails.
 
+Environment permissions also apply: materialize requires environment **Edit files**;
+capture requires environment **Read only** or **Edit files**. VFS read access
+is required for materialize, and a writable VFS link plus VFS editing tools for
+capture. Command execution is not needed for either transfer.
+
 ## Content reuse and large files
 
 A transfer is one logical operation across many bounded exchanges. Inventories

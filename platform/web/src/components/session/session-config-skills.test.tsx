@@ -191,3 +191,45 @@ it("preserves exclusive domain filter behavior when customized", async () => {
   await input("Blocked domains", "");
   expect(current).toHaveProperty("features.web.search", {});
 });
+
+it("configures environment file tools and commands independently of sources and jobs", async () => {
+  await setup({ features: { environments: { tools: "readOnly", jobs: true, skills: {}, prompts: {} } } });
+  expect(current).not.toHaveProperty("features.environments.commands");
+  await toggle("Environment command execution");
+  expect(current).toHaveProperty("features.environments.commands", true);
+  expect(current).toHaveProperty("features.environments.tools", "readOnly");
+  expect(container.querySelector('[aria-label="Environment file tools"]')?.textContent).toContain("Read only");
+  await toggle("Environment command execution");
+  expect(current).toEqual({ features: { environments: { tools: "readOnly", jobs: true, skills: {}, prompts: {} } } });
+});
+
+it("enables environments with ergonomic grants and places selection after discovery", async () => {
+  await setup({});
+  await toggle("Enable Environments");
+  expect(current).toEqual({ features: { environments: {
+    tools: "edit", commands: true, jobs: true, prompts: {}, skills: {},
+  } } });
+  const text = container.textContent!;
+  expect(text.indexOf("Environment selection tools")).toBeGreaterThan(text.indexOf("Skill discovery"));
+  expect(container.querySelector('[aria-label="Environment command execution"]')?.getAttribute("aria-checked")).toBe("true");
+  await toggle("Enable Environments");
+  expect(current ?? {}).not.toHaveProperty("features.environments");
+});
+
+it("enables VFS with editing and default prompt and skill discovery", async () => {
+  await setup({});
+  await toggle("Enable Virtual File System: Files, Instructions, Skills");
+  expect(current).toEqual({ features: { vfs: { tools: "edit", prompts: {}, skills: {} } } });
+  expect(container.querySelector('[aria-label="VFS prompt loading"]')?.getAttribute("aria-checked")).toBe("true");
+  expect(container.querySelector('[aria-label="VFS skill discovery"]')?.getAttribute("aria-checked")).toBe("true");
+  await toggle("Enable Virtual File System: Files, Instructions, Skills");
+  expect(current ?? {}).not.toHaveProperty("features.vfs");
+});
+
+it("enables Web with search and page fetching", async () => {
+  await setup({});
+  await toggle("Enable Web");
+  expect(current).toEqual({ features: { web: { search: {}, fetch: {} } } });
+  await toggle("Enable Web");
+  expect(current ?? {}).not.toHaveProperty("features.web");
+});

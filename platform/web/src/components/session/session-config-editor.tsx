@@ -274,6 +274,7 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
     const next: RecordValue = {};
 
     if (name === "vfs" || name === "environments") {
+      if (["readOnly", "edit"].includes(string(feature.tools))) next.tools = feature.tools;
       if (string(feature.workingDirectory)) next.workingDirectory = feature.workingDirectory;
     }
     if (name === "vfs") {
@@ -334,6 +335,7 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
       const providers = stringList(feature.providers).filter(Boolean);
       if (providers.length) next.providers = providers;
       if (feature.selectionTools === true) next.selectionTools = true;
+      if (feature.commands === true) next.commands = true;
       if (feature.jobs === true) next.jobs = true;
       for (const key of ["skills", "prompts"] as const) {
         if (feature[key] != null) {
@@ -498,7 +500,8 @@ export function SessionConfigEditor({
     change((next) => {
       const nextFeatures = record(next.features);
       if (enabled) {
-        if (name === "web") nextFeatures.web = { search: {} };
+        if (name === "vfs") nextFeatures.vfs = { tools: "edit", prompts: {}, skills: {} };
+        else if (name === "web") nextFeatures.web = { search: {}, fetch: {} };
         else if (name === "mcp") {
           nextFeatures.mcp = { servers: [{ serverId: firstUsableMcpServerId(mcpServers) }] };
         }
@@ -675,7 +678,7 @@ function EnvironmentFeatureEditor({
   };
   const setEnabled = (nextEnabled: boolean) => change((next) => {
     const nextFeatures = record(next.features);
-    if (nextEnabled) nextFeatures.environments = {};
+    if (nextEnabled) nextFeatures.environments = { tools: "edit", commands: true, jobs: true, prompts: {}, skills: {} };
     else delete nextFeatures.environments;
     if (Object.keys(nextFeatures).length) next.features = nextFeatures;
     else delete next.features;
@@ -865,7 +868,7 @@ function ModelFields({ config, models, manualModel, onManualModelChange, pinnedA
             </ComboboxList>
           </ComboboxContent>
         </Combobox>
-        <FieldDescription>
+        <FieldDescription className="text-xs">
           {currentModel
             ? `${currentModel.providerId} · ${currentModel.apiKind}`
             : models.length
@@ -889,7 +892,7 @@ function ModelFields({ config, models, manualModel, onManualModelChange, pinnedA
               ))}
             </datalist>
           )}
-          <FieldDescription>
+          <FieldDescription className="text-xs">
             {currentModel?.capabilities.reasoningEfforts?.length
               ? "Choose a known tier or enter any provider-supported value."
               : "No tiers are known. Enter a provider-supported value, or leave unset for its default."}
@@ -1060,7 +1063,7 @@ function GenerationFields({ config, change }: { config: RecordValue; change: (fn
                   <SelectItem value="flex">Flex</SelectItem>
                 </SelectContent>
               </Select>
-              <FieldDescription>
+              <FieldDescription className="text-xs">
                 Applied to every run. Fast prioritizes latency; Flex uses lower-priority processing.
               </FieldDescription>
             </Field>
@@ -1086,7 +1089,7 @@ function GenerationFields({ config, change }: { config: RecordValue; change: (fn
                 onChange={(e) => update("toolChoice", { type: "specific", toolId: e.target.value })}
                 placeholder="env.run_process"
               />
-              <FieldDescription>
+              <FieldDescription className="text-xs">
                 Use the enabled tool's registry ID, such as env.run_process or vfs.read_file.
                 Builtin tool names are resolved for the selected model. For custom functions, use the function name.
               </FieldDescription>
@@ -1237,7 +1240,6 @@ function VfsFields({
 
   return (
     <div className="grid gap-5">
-      <WorkingDirectoryField feature={feature} patch={patch} />
       <div className="grid gap-4 sm:grid-cols-2">
         <Field className="sm:col-span-2">
           <FieldLabel>File tools</FieldLabel>
@@ -1255,13 +1257,13 @@ function VfsFields({
               <SelectItem value="edit">Edit files</SelectItem>
             </SelectContent>
           </Select>
-          <FieldDescription>
+          <FieldDescription className="text-xs">
             {!environmentsGranted
               ? "Enable Environments to also transfer files between linked workspaces and a selected environment."
               : feature.tools === "edit"
-                ? "Includes materialize to the selected environment and capture into writable workspace links."
+                ? "Transfers into the environment require environment Edit files; capture requires environment read access and a writable workspace link."
                 : feature.tools === "readOnly"
-                  ? "Includes materialize to the selected environment. Linked VFS files remain read only through these tools."
+                  ? "Materialize also requires Edit files on the environment. Linked VFS files remain read only through these tools."
                   : "Choose Read only or Edit files to enable workspace transfer tools. Prompt and skill sourcing alone does not enable transfers."}
           </FieldDescription>
         </Field>
@@ -1269,6 +1271,8 @@ function VfsFields({
 
       <SourceDiscoveryFields source="vfs-prompts" feature={feature} patch={patch} />
       <SourceDiscoveryFields source="vfs" feature={feature} patch={patch} />
+
+      <WorkingDirectoryField feature={feature} patch={patch} />
 
       <div className="grid gap-3 border-t pt-4">
         <div className="flex min-w-0 items-center justify-between gap-3">
@@ -1298,7 +1302,7 @@ function VfsFields({
           </Button>
         </div>
         {links.length === 0 && (
-          <p className="text-sm text-muted-foreground">No workspace links.</p>
+          <p className="text-xs text-muted-foreground">No workspace links.</p>
         )}
         {links.map((link, index) => {
           const target = record(link.target);
@@ -1668,7 +1672,7 @@ function WorkingDirectoryField({ environment, feature, patch }: {
         if (event.target.value) next.workingDirectory = event.target.value;
         else delete next.workingDirectory;
       })} />
-    <FieldDescription>{environment
+    <FieldDescription className="text-xs">{environment
       ? "Absolute machine directory for file tools, commands, jobs, and discovery. Empty uses the environment default."
       : "Absolute linked VFS directory for relative file paths. Empty uses /. Source discovery still searches every workspace link."}</FieldDescription>
   </Field>;
@@ -1738,7 +1742,7 @@ function SourceDiscoveryFields({ source, feature, patch }: {
                 const roots = listFromInput(e.target.value);
                 update("roots", roots.length ? roots : undefined);
               }} />
-            <FieldDescription>
+            <FieldDescription className="text-xs">
               {`Empty searches .agents/${configKey} and .lightspeed/${configKey} ${environment ? "under the working directory and execution user’s home" : "beneath each workspace link"}. `}
               {environment
                 ? "Comma-separated overrides replace all defaults, including home. Paths may be absolute or relative to the working directory."
@@ -1761,6 +1765,8 @@ function EnvironmentFields({
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
   const jobsId = useId();
+  const commandsId = useId();
+  const filesId = useId();
   const selectionToolsId = useId();
   const value = stringList(feature.providers);
   const providerMap = new Map(providers.map((provider) => [provider.providerId, provider]));
@@ -1773,6 +1779,66 @@ function EnvironmentFields({
   );
   return (
     <div className="grid gap-4">
+      <Field>
+        <FieldLabel htmlFor={filesId}>File tools</FieldLabel>
+        <Select value={string(feature.tools) || "none"} onValueChange={(value) => patch((next) => {
+          if (value === "none") delete next.tools;
+          else next.tools = value;
+        })}>
+          <SelectTrigger id={filesId} aria-label="Environment file tools" className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">No file tools</SelectItem>
+            <SelectItem value="readOnly">Read only</SelectItem>
+            <SelectItem value="edit">Edit files</SelectItem>
+          </SelectContent>
+        </Select>
+        <FieldDescription className="text-xs">Read only allows reading, listing, and searching. Edit also allows file changes and transfers into the environment. Prompts and skills are independent.</FieldDescription>
+      </Field>
+      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
+        <div className="grid min-w-0 gap-1">
+          <Label htmlFor={commandsId}>Command execution</Label>
+          <p className="text-xs text-muted-foreground">Run commands and continue processes. Commands can modify files regardless of the File tools setting.</p>
+        </div>
+        <Switch id={commandsId} aria-label="Environment command execution" checked={feature.commands === true}
+          onCheckedChange={(checked) => patch((next) => {
+            if (checked) next.commands = true;
+            else delete next.commands;
+          })} />
+      </div>
+      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
+        <div className="grid min-w-0 gap-1">
+          <Label htmlFor={jobsId}>Durable jobs</Label>
+          <p className="text-xs text-muted-foreground">
+            Run durable jobs independently of command execution. Jobs can modify files regardless of the File tools setting.
+          </p>
+        </div>
+        <Switch
+          id={jobsId}
+          checked={feature.jobs === true}
+          onCheckedChange={(checked) => patch((next) => {
+            if (checked === true) next.jobs = true;
+            else delete next.jobs;
+          })}
+        />
+      </div>
+      <SourceDiscoveryFields source="environment-prompts" feature={feature} patch={patch} />
+      <SourceDiscoveryFields source="environment" feature={feature} patch={patch} />
+      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
+        <div className="grid min-w-0 gap-1">
+          <Label htmlFor={selectionToolsId}>Environment selection tools</Label>
+          <p className="text-xs text-muted-foreground">
+            Let the model list, activate, and deactivate allowed environments. Reading the active environment is always available.
+          </p>
+        </div>
+        <Switch
+          id={selectionToolsId}
+          checked={feature.selectionTools === true}
+          onCheckedChange={(checked) => patch((next) => {
+            if (checked === true) next.selectionTools = true;
+            else delete next.selectionTools;
+          })}
+        />
+      </div>
       <WorkingDirectoryField environment feature={feature} patch={patch} />
       <Field>
         <FieldLabel>Allowed providers</FieldLabel>
@@ -1829,40 +1895,6 @@ function EnvironmentFields({
           Empty allows every registered provider. Selection resolves live universe environments.
         </FieldDescription>
       </Field>
-      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
-        <div className="grid min-w-0 gap-1">
-          <Label htmlFor={selectionToolsId}>Environment selection tools</Label>
-          <p className="text-xs text-muted-foreground">
-            Let the model list, activate, and deactivate allowed environments. Reading the active environment is always available.
-          </p>
-        </div>
-        <Switch
-          id={selectionToolsId}
-          checked={feature.selectionTools === true}
-          onCheckedChange={(checked) => patch((next) => {
-            if (checked === true) next.selectionTools = true;
-            else delete next.selectionTools;
-          })}
-        />
-      </div>
-      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
-        <div className="grid min-w-0 gap-1">
-          <Label htmlFor={jobsId}>Durable jobs</Label>
-          <p className="text-xs text-muted-foreground">
-            Allow the agent to use durable job tools on capable environments.
-          </p>
-        </div>
-        <Switch
-          id={jobsId}
-          checked={feature.jobs === true}
-          onCheckedChange={(checked) => patch((next) => {
-            if (checked === true) next.jobs = true;
-            else delete next.jobs;
-          })}
-        />
-      </div>
-      <SourceDiscoveryFields source="environment-prompts" feature={feature} patch={patch} />
-      <SourceDiscoveryFields source="environment" feature={feature} patch={patch} />
     </div>
   );
 }

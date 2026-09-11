@@ -226,3 +226,20 @@ fn environment_sources_use_domain_directory_and_reject_old_scope_fields() {
         assert!(serde_json::from_value::<api::EnvironmentSkillsConfig>(old).is_err());
     }
 }
+
+#[test]
+fn environment_tool_grants_are_explicit_and_independent() {
+    let bundle = api::export_schemas().schema_bundle;
+    let empty: api::EnvironmentsFeature = serde_json::from_value(json!({})).unwrap();
+    assert!(empty.tools.is_none());
+    assert!(!empty.commands);
+    for surface in ["readOnly", "edit"] {
+        let value = json!({"tools":surface,"commands":true,"jobs":false,"prompts":{},"skills":{}});
+        assert_validates(&bundle, "EnvironmentsFeature", &value);
+        let config: api::EnvironmentsFeature = serde_json::from_value(value).unwrap();
+        assert!(config.commands);
+        assert!(!config.jobs);
+        assert!(config.prompts.is_some());
+        assert!(config.skills.is_some());
+    }
+}

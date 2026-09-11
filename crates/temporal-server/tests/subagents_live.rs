@@ -982,6 +982,8 @@ async fn run_agent_run_inherit_environment_live_client(
         })
         .await?;
     let environments_feature = api::EnvironmentsFeature {
+        tools: Some(api::EnvironmentToolSurface::Edit),
+        commands: true,
         working_directory: None,
         prompts: None,
         version: api::CURRENT_FEATURE_VERSION,

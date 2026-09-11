@@ -580,14 +580,21 @@ pub struct TimersFeature {
     pub version: u32,
 }
 
-/// Grants active session environments and their process tool surface.
-/// Model-driven selection and durable jobs are independent, default-off
-/// sub-grants.
+/// Grants active session environments. Filesystem tools, commands, selection,
+/// durable jobs, prompts, and skills are independent, default-off sub-grants.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EnvironmentsFeature {
     #[serde(default = "default_feature_version")]
     pub version: u32,
+    /// Filesystem tool surface. Absent installs no filesystem tools; sources
+    /// remain independent. Read-only does not restrict commands or durable jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<EnvironmentToolSurface>,
+    /// Grants command execution and process continuation. Commands may modify
+    /// files even when filesystem tools are read-only or disabled.
+    #[serde(default)]
+    pub commands: bool,
     /// Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
@@ -617,6 +624,14 @@ pub struct EnvironmentsFeature {
     /// Independent environment skill discovery. Absent disables discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skills: Option<EnvironmentSkillsConfig>,
+}
+
+/// Agent-facing environment filesystem tools; independent of execution grants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum EnvironmentToolSurface {
+    ReadOnly,
+    Edit,
 }
 
 /// Prompt loading scope resolved on the selected machine, never on the worker.

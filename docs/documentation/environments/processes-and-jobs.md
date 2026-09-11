@@ -12,13 +12,16 @@ commands manage environments rather than execute commands. You can use the
 CLI's chat interface with the same session and capabilities.
 
 Start with [an active environment](using-environments.md) and a model that
-can call its process tools. The first exercise needs a POSIX shell and common
+can call its process tools. Enable **Command execution** under **Environments**
+in the profile or session setup (`features.environments.commands: true`). This
+is independent of **Durable jobs**, which keeps its own grant. The first exercise needs a POSIX shell and common
 utilities such as `grep`. The example Incus image supplies them.
 
 ## Run a check against a file
 
 Use the release notes from [Build your first agent](../getting-started/first-agent.md).
-Ask the agent to prepare a separate machine copy:
+Set environment **File tools** to **Edit files** for this exercise, then ask the
+agent to prepare a separate machine copy:
 
 ```text
 Create a new, uniquely named task directory under the active environment's

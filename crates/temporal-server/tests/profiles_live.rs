@@ -105,6 +105,8 @@ async fn run_profile_provision_live_client(
             model: Some(model_to_api(&model)),
             features: Some(api::FeaturesConfig {
                 environments: Some(api::EnvironmentsFeature {
+                    tools: Some(api::EnvironmentToolSurface::Edit),
+                    commands: true,
                     working_directory: None,
                     prompts: None,
                     version: api::CURRENT_FEATURE_VERSION,
@@ -217,10 +219,13 @@ async fn run_profile_provision_live_client(
     assert_eq!(listed.len(), 1);
     let environment = &listed[0];
     assert_eq!(environment.environment_id, active);
-    assert_eq!(
+    // A concurrently running development reconciler may finish provisioning
+    // before this read; both states preserve the asynchronous start contract.
+    assert!(matches!(
         environment.status,
         api::EnvironmentLifecycleStatusView::Provisioning
-    );
+            | api::EnvironmentLifecycleStatusView::Ready
+    ));
     assert_eq!(
         environment.request_id,
         environments::EnvironmentProvisionRequestId::for_session(&session_id)

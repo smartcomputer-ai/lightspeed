@@ -265,6 +265,13 @@ export type CompactionPolicy =
       targetTokens?: number | null;
     };
 /**
+ * Agent-facing environment filesystem tools; independent of execution grants.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentToolSurface".
+ */
+export type EnvironmentToolSurface = "readOnly" | "edit";
+/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProfileId".
  */
@@ -2047,14 +2054,18 @@ export interface FeaturesConfig {
   web?: WebFeature | null;
 }
 /**
- * Grants active session environments and their process tool surface.
- * Model-driven selection and durable jobs are independent, default-off
- * sub-grants.
+ * Grants active session environments. Filesystem tools, commands, selection,
+ * durable jobs, prompts, and skills are independent, default-off sub-grants.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EnvironmentsFeature".
  */
 export interface EnvironmentsFeature {
+  /**
+   * Grants command execution and process continuation. Commands may modify
+   * files even when filesystem tools are read-only or disabled.
+   */
+  commands?: boolean;
   /**
    * Grants the advanced durable-job tool surface. The workflow binding is
    * installed for the session when granted; invocations still require an
@@ -2087,6 +2098,11 @@ export interface EnvironmentsFeature {
    * Independent environment skill discovery. Absent disables discovery.
    */
   skills?: EnvironmentSkillsConfig | null;
+  /**
+   * Filesystem tool surface. Absent installs no filesystem tools; sources
+   * remain independent. Read-only does not restrict commands or durable jobs.
+   */
+  tools?: EnvironmentToolSurface | null;
   version?: number;
   /**
    * Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
