@@ -72,7 +72,7 @@ export function SessionComposer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter" || event.shiftKey) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
       return;
     }
     event.preventDefault();
@@ -95,7 +95,7 @@ export function SessionComposer({
         {disabled && disabledReason && !banner && (
           <p className="pb-2 text-xs text-muted-foreground">{disabledReason}</p>
         )}
-        <div className="flex items-end gap-2">
+        <div className="flex items-center gap-2">
         <textarea
           disabled={disabled}
           value={text}
@@ -104,7 +104,7 @@ export function SessionComposer({
           placeholder={placeholder}
           aria-label="Message"
           rows={1}
-          className="field-sizing-content max-h-40 min-h-9 flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="field-sizing-content max-h-40 min-h-9 min-w-0 flex-1 resize-none rounded-md border bg-background px-3 py-2 text-base md:text-sm [@media(pointer:coarse)]:text-base outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         />
         {runActive && !disabled && (
           <Button

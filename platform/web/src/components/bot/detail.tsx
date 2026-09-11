@@ -232,7 +232,7 @@ export function BotDetail({
       {togglePause.error && (
         <p className="border-b bg-destructive/10 px-4 py-1.5 text-xs text-destructive">{togglePause.error.message}</p>
       )}
-      <nav className="flex h-10 shrink-0 items-stretch gap-0.5 overflow-x-auto border-b px-2" aria-label="Bot conversations and activity">
+      <nav className="flex h-10 shrink-0 items-stretch gap-0.5 overflow-x-auto overflow-y-hidden overscroll-y-none touch-pan-x touch-pinch-zoom border-b px-2" aria-label="Bot conversations and activity">
         {controller ? (
           inline.map((tab) => {
             const active = view === "chat" && selected === tab.id;
@@ -240,7 +240,7 @@ export function BotDetail({
               <span
                 key={tab.id}
                 className={cn(
-                  "-mb-px flex shrink-0 items-stretch border-b-2",
+                  "flex shrink-0 items-stretch border-b-2",
                   active ? "border-primary" : "border-transparent",
                 )}
               >
@@ -249,7 +249,7 @@ export function BotDetail({
                   end
                   title={tab.hint}
                   className={cn(
-                    "flex max-w-48 items-center gap-1.5 px-2.5 pt-2.5 pb-2 text-sm whitespace-nowrap",
+                    "flex max-w-48 items-center gap-1.5 px-2.5 py-2 text-sm whitespace-nowrap",
                     active ? "pr-1 font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
                   )}
                 >
@@ -327,7 +327,7 @@ function TabLink({
       end
       title={title}
       className={cn(
-        "-mb-px flex max-w-48 shrink-0 items-center gap-1.5 border-b-2 px-2.5 pt-2.5 pb-2 text-sm whitespace-nowrap",
+        "flex max-w-48 shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-2 text-sm whitespace-nowrap",
         active
           ? "border-primary font-medium text-foreground"
           : "border-transparent text-muted-foreground hover:text-foreground",
@@ -348,7 +348,7 @@ function OverflowTabs({ tabs, sessionHref }: { tabs: ConversationTab[]; sessionH
         render={
           <button
             type="button"
-            className="-mb-px flex shrink-0 items-center gap-1 border-b-2 border-transparent px-2 pt-2.5 pb-2 text-sm text-muted-foreground hover:text-foreground"
+            className="flex shrink-0 items-center gap-1 border-b-2 border-transparent px-2 py-2 text-sm text-muted-foreground hover:text-foreground"
           />
         }
       >
