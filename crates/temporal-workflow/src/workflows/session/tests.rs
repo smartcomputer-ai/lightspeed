@@ -528,6 +528,7 @@ fn pending_resume(batch_id: u64) -> PendingToolBatchResume {
             claim_observed_at_ms: 1_000,
             output: engine::ToolBatchResumeOutput::AwaitTool {
                 result_ref: engine::BlobRef::from_bytes(b"await output"),
+                additional_context: Vec::new(),
             },
         },
     }

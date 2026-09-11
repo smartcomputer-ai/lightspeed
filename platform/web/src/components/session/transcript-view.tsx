@@ -9,8 +9,10 @@ import { Message, MessageContent } from "@/components/ui/message";
 import { MarkdownContent } from "@/components/session/markdown-content";
 import { RunOutcomeLine } from "@/components/session/run-stats";
 import type { FullTextLoader } from "@/components/session/expandable-content";
-import { ReasoningTrace, ToolGroupTrace, TranscriptLinksContext } from "@/components/session/tool-trace";
-import { type TranscriptEntry } from "@/lib/sessions/transcript";
+import { ReasoningTrace, ToolGroupTrace } from "@/components/session/tool-trace";
+import { TranscriptLinksContext } from "@/components/session/transcript-links";
+import { type TranscriptEntry, type TranscriptMedia } from "@/lib/sessions/transcript";
+import { MediaStrip } from "@/components/session/media";
 import { cn } from "@/lib/utils";
 
 /// Full-width transcript rows without avatars. User inputs use muted bands;
@@ -32,6 +34,7 @@ export function TranscriptEntryView({
           text={entry.text}
           origin={entry.origin}
           steering={entry.steering === true}
+          media={entry.media}
         />
       ) : (
         <Message>
@@ -146,6 +149,7 @@ export function UserBand({
   origin,
   pending = false,
   steering = false,
+  media,
 }: {
   text: string;
   /// Application-supplied origin of the input; `event` marks a delivered bot
@@ -154,6 +158,8 @@ export function UserBand({
   pending?: boolean;
   /// A message injected into a running run rather than its initial input.
   steering?: boolean;
+  /// Images and documents sent with the input.
+  media?: TranscriptMedia[];
 }) {
   const contentId = useId();
   const contentRef = useRef<HTMLDivElement>(null);
@@ -222,6 +228,7 @@ export function UserBand({
                 {body}
               </div>
             </div>
+            {media?.length ? <MediaStrip items={media} className={cn(body ? "mt-2" : "")} /> : null}
             {overflowing && (
               <div className="mt-1 flex justify-center">
                 <button

@@ -30,16 +30,35 @@ pub enum NativeMcpExecutionOutcome {
         visible: String,
         is_error: bool,
         assets: Vec<NativeMcpAsset>,
+        /// Admitted `content` assets, in content order, that become media
+        /// entries after the tool result. Indexes point into `assets`.
+        media: Vec<NativeMcpMedia>,
     },
     NeedsApproval {
         subject: engine::ApprovalSubject,
     },
 }
 
+/// Binary content stripped out of a tool result: `image` and `audio` blocks
+/// and embedded `resource` blobs, from `content` first and then from
+/// `structuredContent`, in document order.
 pub struct NativeMcpAsset {
     pub bytes: Vec<u8>,
+    /// Content identity of `bytes`; the store returns the same reference.
+    pub blob_ref: engine::BlobRef,
     pub media_type: Option<String>,
     pub kind: String,
+    /// Resource `uri`, when the asset came from an embedded resource.
+    pub uri: Option<String>,
+}
+
+/// One admitted asset the model gets to see.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeMcpMedia {
+    pub asset_index: usize,
+    pub kind: engine::media::MediaKind,
+    pub media_type: String,
+    pub name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -437,6 +456,7 @@ impl NativeMcpRuntime {
                 output,
                 is_error: false,
                 assets: Vec::new(),
+                media: Vec::new(),
             });
         }
         let cursor = object
@@ -484,6 +504,7 @@ impl NativeMcpRuntime {
             output,
             is_error: false,
             assets: Vec::new(),
+            media: Vec::new(),
         })
     }
 
@@ -553,6 +574,7 @@ impl NativeMcpRuntime {
                         output,
                         is_error: true,
                         assets: Vec::new(),
+                        media: Vec::new(),
                     });
                 }
                 Some(true) => {}
@@ -597,13 +619,21 @@ impl NativeMcpRuntime {
                 .insert("structuredContent".to_owned(), structured);
         }
         let mut assets = Vec::new();
-        extract_mcp_assets(&mut output, &mut assets)?;
-        let visible = visible_mcp_result(&raw, &output);
+        // `content` assets come first so their indexes line up with the
+        // content blocks the visible text labels.
+        if let Some(content) = output.get_mut("content") {
+            extract_mcp_assets(content, &mut assets)?;
+        }
+        if let Some(structured) = output.get_mut("structuredContent") {
+            extract_mcp_assets(structured, &mut assets)?;
+        }
+        let (visible, media) = visible_mcp_result(&raw, &output, &assets);
         Ok(NativeMcpExecutionOutcome::Completed {
             output,
             visible,
             is_error: result.is_error.unwrap_or(false),
             assets,
+            media,
         })
     }
 
@@ -830,12 +860,14 @@ fn extract_mcp_assets(
                     .map_err(|error| format!("MCP {kind:?} content is invalid base64: {error}"))?;
                 let index = assets.len();
                 assets.push(NativeMcpAsset {
+                    blob_ref: engine::BlobRef::from_bytes(&bytes),
                     bytes,
                     media_type: object
                         .get("mimeType")
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_owned),
                     kind: kind.clone().expect("matched content kind"),
+                    uri: None,
                 });
                 object.insert("blobIndex".to_owned(), serde_json::json!(index));
             }
@@ -852,12 +884,17 @@ fn extract_mcp_assets(
                     .map_err(|error| format!("MCP resource content is invalid base64: {error}"))?;
                 let index = assets.len();
                 assets.push(NativeMcpAsset {
+                    blob_ref: engine::BlobRef::from_bytes(&bytes),
                     bytes,
                     media_type: resource
                         .get("mimeType")
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_owned),
                     kind: "resource".to_owned(),
+                    uri: resource
+                        .get("uri")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
                 });
                 resource.insert("blobIndex".to_owned(), serde_json::json!(index));
             }
@@ -915,30 +952,193 @@ fn spec_from_target(
     }
 }
 
-fn visible_mcp_result(raw: &serde_json::Value, fallback: &serde_json::Value) -> String {
-    let texts = raw
+/// The model-visible text of a tool result plus the assets the model gets to
+/// see. Text blocks pass through. Every binary block is announced by position
+/// and handle (`[image 1 · media:3f9a2c1d4e7b · image/png · 38 KiB]`) when
+/// admitted, or dropped with its reason (`[image 2 omitted: image/svg+xml is
+/// not supported]`); tool-produced media never fails the run. Embedded text
+/// resources and resource links are rendered inline since the structured
+/// output is not model-visible.
+fn visible_mcp_result(
+    raw: &serde_json::Value,
+    fallback: &serde_json::Value,
+    assets: &[NativeMcpAsset],
+) -> (String, Vec<NativeMcpMedia>) {
+    use engine::media::{
+        MediaRejection, admit_tool_media, tool_media_line, tool_media_omitted_line,
+    };
+
+    let mut lines = Vec::new();
+    let mut media = Vec::new();
+    let mut next_asset = 0usize;
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut next_index = |label: &'static str| -> usize {
+        let count = counts.entry(label).or_insert(0);
+        *count += 1;
+        *count
+    };
+    let blocks = raw
         .get("content")
         .and_then(serde_json::Value::as_array)
         .into_iter()
-        .flatten()
-        .filter_map(|block| {
-            if block.get("type").and_then(serde_json::Value::as_str) == Some("text") {
-                block
-                    .get("text")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned)
-            } else {
-                block
-                    .get("type")
-                    .and_then(serde_json::Value::as_str)
-                    .map(|kind| format!("[MCP {kind} content stored as structured output]"))
+        .flatten();
+    for block in blocks {
+        let kind = block.get("type").and_then(serde_json::Value::as_str);
+        let mime = |value: &serde_json::Value| {
+            value
+                .get("mimeType")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        };
+        match kind {
+            Some("text") => {
+                if let Some(text) = block.get("text").and_then(serde_json::Value::as_str) {
+                    lines.push(text.to_owned());
+                }
             }
-        })
-        .collect::<Vec<_>>();
-    if texts.is_empty() {
+            Some(label @ ("image" | "audio")) if block.get("data").is_some() => {
+                let asset_index = next_asset;
+                next_asset += 1;
+                let Some(asset) = assets.get(asset_index) else {
+                    continue;
+                };
+                let index = next_index(if label == "image" { "image" } else { "audio" });
+                let admission = if label == "audio" {
+                    Err(MediaRejection::UnsupportedMediaType {
+                        media_type: asset
+                            .media_type
+                            .clone()
+                            .unwrap_or_else(|| "audio".to_owned()),
+                    })
+                } else {
+                    admit_tool_media(asset.media_type.as_deref(), asset.bytes.len() as u64)
+                };
+                let admission = admission.and_then(|kind| {
+                    if media.len() >= engine::media::MAX_TOOL_MEDIA_ITEMS {
+                        Err(MediaRejection::TooMany {
+                            limit: engine::media::MAX_TOOL_MEDIA_ITEMS,
+                        })
+                    } else {
+                        Ok(kind)
+                    }
+                });
+                match admission {
+                    Ok(kind) => {
+                        let media_type = engine::media::normalized_media_type(
+                            asset.media_type.as_deref().unwrap_or_default(),
+                        );
+                        lines.push(tool_media_line(
+                            kind,
+                            index,
+                            &asset.blob_ref,
+                            &media_type,
+                            None,
+                            asset.bytes.len() as u64,
+                        ));
+                        media.push(NativeMcpMedia {
+                            asset_index,
+                            kind,
+                            media_type,
+                            name: None,
+                        });
+                    }
+                    Err(rejection) => {
+                        lines.push(tool_media_omitted_line(label, index, &rejection));
+                    }
+                }
+            }
+            Some("resource") => {
+                let Some(resource) = block.get("resource") else {
+                    lines.push("[MCP resource content stored as structured output]".to_owned());
+                    continue;
+                };
+                let uri = resource.get("uri").and_then(serde_json::Value::as_str);
+                if let Some(text) = resource.get("text").and_then(serde_json::Value::as_str) {
+                    match uri {
+                        Some(uri) => lines.push(format!("[resource: {uri}]\n{text}")),
+                        None => lines.push(text.to_owned()),
+                    }
+                    continue;
+                }
+                if resource.get("blob").is_none() {
+                    lines.push("[MCP resource content stored as structured output]".to_owned());
+                    continue;
+                }
+                let asset_index = next_asset;
+                next_asset += 1;
+                let Some(asset) = assets.get(asset_index) else {
+                    continue;
+                };
+                let name = uri.map(resource_name);
+                let index = next_index("document");
+                let admission =
+                    admit_tool_media(asset.media_type.as_deref(), asset.bytes.len() as u64)
+                        .and_then(|kind| {
+                            if media.len() >= engine::media::MAX_TOOL_MEDIA_ITEMS {
+                                Err(MediaRejection::TooMany {
+                                    limit: engine::media::MAX_TOOL_MEDIA_ITEMS,
+                                })
+                            } else {
+                                Ok(kind)
+                            }
+                        });
+                match admission {
+                    Ok(kind) => {
+                        let media_type = engine::media::normalized_media_type(
+                            asset.media_type.as_deref().unwrap_or_default(),
+                        );
+                        lines.push(tool_media_line(
+                            kind,
+                            index,
+                            &asset.blob_ref,
+                            &media_type,
+                            name.as_deref(),
+                            asset.bytes.len() as u64,
+                        ));
+                        media.push(NativeMcpMedia {
+                            asset_index,
+                            kind,
+                            media_type,
+                            name,
+                        });
+                    }
+                    Err(rejection) => {
+                        lines.push(tool_media_omitted_line("document", index, &rejection));
+                    }
+                }
+            }
+            Some("resource_link") => {
+                let uri = block
+                    .get("uri")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                match mime(block) {
+                    Some(mime) => lines.push(format!("[resource_link: {uri} · {mime}]")),
+                    None => lines.push(format!("[resource_link: {uri}]")),
+                }
+            }
+            Some(other) => {
+                lines.push(format!("[MCP {other} content stored as structured output]"));
+            }
+            None => {}
+        }
+    }
+    let visible = if lines.is_empty() {
         serde_json::to_string(fallback).unwrap_or_else(|_| "MCP tool returned a result".to_owned())
     } else {
-        texts.join("\n")
+        lines.join("\n")
+    };
+    (visible, media)
+}
+
+/// The last path segment of a resource URI, used as a document name.
+fn resource_name(uri: &str) -> String {
+    let trimmed = uri.trim_end_matches('/');
+    let name = trimmed.rsplit(['/', ':']).next().unwrap_or(trimmed);
+    if name.is_empty() {
+        uri.to_owned()
+    } else {
+        name.to_owned()
     }
 }
 
@@ -1304,5 +1504,155 @@ mod tests {
         assert!(serialized_len(&second).unwrap() <= MCP_FIND_PAGE_MAX_BYTES);
         assert_eq!(second["tools"][0]["name"], format!("tool_{cursor:02}"));
         assert!(second["nextCursor"].is_null());
+    }
+
+    fn png_bytes() -> Vec<u8> {
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(&[0u8; 1024]);
+        bytes
+    }
+
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    fn native_result(
+        content: serde_json::Value,
+    ) -> (String, Vec<NativeMcpMedia>, Vec<NativeMcpAsset>) {
+        let raw = serde_json::json!({ "content": content });
+        let mut output = serde_json::json!({ "content": raw["content"].clone() });
+        let mut assets = Vec::new();
+        extract_mcp_assets(output.get_mut("content").expect("content"), &mut assets)
+            .expect("extract");
+        let (visible, media) = visible_mcp_result(&raw, &output, &assets);
+        (visible, media, assets)
+    }
+
+    #[test]
+    fn visible_text_announces_admitted_media_by_position_and_handle() {
+        let png = png_bytes();
+        let jpeg = b"\xff\xd8\xff\xe0 second".to_vec();
+        let pdf = b"%PDF-1.7 report".to_vec();
+        let (visible, media, assets) = native_result(serde_json::json!([
+            {"type": "text", "text": "Row 1 rendered."},
+            {"type": "image", "mimeType": "image/png", "data": b64(&png)},
+            {"type": "image", "mimeType": "image/jpeg", "data": b64(&jpeg)},
+            {"type": "resource", "resource": {
+                "uri": "imaginator://assets/qyk567/report.pdf",
+                "mimeType": "application/pdf", "blob": b64(&pdf)
+            }},
+            {"type": "resource", "resource": {"uri": "imaginator://models", "mimeType": "application/json", "text": "{}"}},
+            {"type": "resource_link", "uri": "https://example.test/full.png", "mimeType": "image/png"}
+        ]));
+        let lines = visible.lines().collect::<Vec<_>>();
+        assert_eq!(lines[0], "Row 1 rendered.");
+        assert_eq!(
+            lines[1],
+            format!(
+                "[image 1 · {} · image/png · 2 KiB]",
+                engine::media::media_handle(&engine::BlobRef::from_bytes(&png))
+            )
+        );
+        assert!(
+            lines[2].starts_with("[image 2 · media:") && lines[2].ends_with("· image/jpeg · 11 B]"),
+            "{}",
+            lines[2]
+        );
+        assert!(
+            lines[3].starts_with("[document 1 · media:")
+                && lines[3].contains("· application/pdf · report.pdf ·"),
+            "{}",
+            lines[3]
+        );
+        assert_eq!(lines[4], "[resource: imaginator://models]");
+        assert_eq!(lines[5], "{}");
+        assert_eq!(
+            lines[6],
+            "[resource_link: https://example.test/full.png · image/png]"
+        );
+        assert_eq!(
+            media,
+            vec![
+                NativeMcpMedia {
+                    asset_index: 0,
+                    kind: engine::media::MediaKind::Image,
+                    media_type: "image/png".into(),
+                    name: None
+                },
+                NativeMcpMedia {
+                    asset_index: 1,
+                    kind: engine::media::MediaKind::Image,
+                    media_type: "image/jpeg".into(),
+                    name: None
+                },
+                NativeMcpMedia {
+                    asset_index: 2,
+                    kind: engine::media::MediaKind::Document,
+                    media_type: "application/pdf".into(),
+                    name: Some("report.pdf".into())
+                },
+            ]
+        );
+        assert_eq!(assets.len(), 3);
+        assert_eq!(
+            assets[2].uri.as_deref(),
+            Some("imaginator://assets/qyk567/report.pdf")
+        );
+    }
+
+    #[test]
+    fn unsupported_oversized_and_excess_media_are_dropped_with_notes_not_errors() {
+        let mut content = vec![
+            serde_json::json!({"type": "image", "mimeType": "image/svg+xml", "data": b64(b"<svg/>")}),
+            serde_json::json!({"type": "audio", "mimeType": "audio/wav", "data": b64(b"RIFF")}),
+            serde_json::json!({"type": "image", "mimeType": "image/png", "data": b64(&vec![0u8; (engine::media::MAX_TOOL_MEDIA_BYTES + 1) as usize])}),
+        ];
+        for index in 0..9u8 {
+            content.push(serde_json::json!({"type": "image", "mimeType": "image/png", "data": b64(&[index; 16])}));
+        }
+        let (visible, media, _) = native_result(serde_json::Value::Array(content));
+        let lines = visible.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines[0],
+            "[image 1 omitted: image/svg+xml is not supported]"
+        );
+        assert_eq!(lines[1], "[audio 1 omitted: audio/wav is not supported]");
+        assert_eq!(
+            lines[2],
+            format!(
+                "[image 2 omitted: {} bytes exceeds the {} byte limit]",
+                engine::media::MAX_TOOL_MEDIA_BYTES + 1,
+                engine::media::MAX_TOOL_MEDIA_BYTES
+            )
+        );
+        assert_eq!(media.len(), engine::media::MAX_TOOL_MEDIA_ITEMS);
+        assert!(lines[3].starts_with("[image 3 · media:"));
+        assert_eq!(
+            lines[11],
+            "[image 11 omitted: at most 8 media items per result]"
+        );
+        assert_eq!(lines.len(), 12);
+    }
+
+    #[test]
+    fn media_entries_are_built_from_admitted_assets_in_order() {
+        let (_, media, assets) = native_result(serde_json::json!([
+            {"type": "image", "mimeType": "image/png", "data": b64(&png_bytes())}
+        ]));
+        let item = &media[0];
+        let entry = engine::media::media_context_entry(
+            assets[item.asset_index].blob_ref.clone(),
+            &item.media_type,
+            item.kind,
+            item.name.as_deref(),
+        );
+        assert_eq!(entry.content.media_type.as_deref(), Some("image/png"));
+        assert_eq!(entry.preview.as_deref(), Some("[image]"));
+        assert!(matches!(
+            entry.kind,
+            engine::ContextEntryKind::Message {
+                role: engine::ContextMessageRole::User
+            }
+        ));
     }
 }

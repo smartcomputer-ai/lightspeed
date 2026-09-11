@@ -884,3 +884,66 @@ fn dumps(execution: &llm_runtime::LlmGenerationExecution) -> &llm_runtime::LlmDe
         .as_ref()
         .expect("live adapters are built with debug dumps enabled")
 }
+
+/// A tool result that hands the model two images and a PDF as media entries:
+/// the model must tell the images apart by position, read the document, and
+/// name the blue image by the handle the tool result announced.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY (costs real money)"]
+async fn openai_completions_runtime_live_sees_tool_media() {
+    use support::tool_media::{
+        TOOL_MEDIA_PROMPT, assert_tool_media_answer, retained, tool_media_entries,
+        view_images_tool_spec,
+    };
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let prompt_ref = text_blob(&blobs, TOOL_MEDIA_PROMPT).await;
+    let tool = view_images_tool_spec(&blobs).await;
+    let user_source = ContextEntrySource::RunInput {
+        run_id: RunId::new(1),
+        input_index: 0,
+    };
+    let mut first_request = generation_request(vec![entry(
+        1,
+        ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        user_source.clone(),
+        prompt_ref.clone(),
+    )]);
+    first_request.request.tools = vec![tool.clone()];
+    first_request.request.tool_choice = Some(ToolChoice::Specific {
+        tool_name: ToolName::try_new("view_images").expect("tool name"),
+    });
+    first_request.request.output_limit = Some(2048);
+    let adapter = live_adapter(blobs.clone());
+    let first = adapter
+        .generate(first_request)
+        .await
+        .expect("tool-call generation");
+    assert_eq!(first.result.facts.finish, LlmFinish::ToolCalls);
+    let observed = &first.result.facts.tool_calls[0];
+
+    let mut entries = vec![entry(
+        1,
+        ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        user_source,
+        prompt_ref,
+    )];
+    entries.extend(retained(2, &first.result.context_entries));
+    let fixture =
+        tool_media_entries(&blobs, observed.call_id.clone(), entries.len() as u64 + 1).await;
+    entries.extend(fixture.entries.clone());
+    let mut second_request = generation_request(entries);
+    second_request.turn_id = TurnId::new(2);
+    second_request.request.tools = vec![tool];
+    second_request.request.tool_choice = Some(ToolChoice::Auto);
+    second_request.request.output_limit = Some(2048);
+
+    let second = adapter
+        .generate(second_request)
+        .await
+        .expect("tool-result generation");
+    assert_tool_media_answer(&assistant_text(&blobs, &second).await, &fixture);
+}

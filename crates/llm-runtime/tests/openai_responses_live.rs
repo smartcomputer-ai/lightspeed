@@ -974,3 +974,109 @@ fn dumps(execution: &llm_runtime::LlmGenerationExecution) -> &llm_runtime::LlmDe
         .as_ref()
         .expect("live adapters are built with debug dumps enabled")
 }
+
+/// A tool result that hands the model two images and a PDF as media entries:
+/// the model must tell the images apart by position, read the document, and
+/// name the blue image by the handle the tool result announced.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY (costs real money)"]
+async fn openai_responses_live_adapter_sees_tool_media() {
+    use support::tool_media::{
+        TOOL_MEDIA_PROMPT, assert_tool_media_answer, assistant_entry, retained, tool_media_entries,
+        view_images_tool_spec,
+    };
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let input_ref = text_blob(&blobs, TOOL_MEDIA_PROMPT).await;
+    let tool = view_images_tool_spec(&blobs).await;
+    let user_entry = ContextEntry {
+        key: None,
+        entry_id: ContextEntryId::new(1),
+        kind: ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        source: ContextEntrySource::RunInput {
+            run_id: RunId::new(1),
+            input_index: 0,
+        },
+        content: engine::ContentRef::text(input_ref),
+        preview: None,
+        origin: None,
+        provenance_ref: None,
+        token_estimate: None,
+        supersedes: None,
+    };
+    let request = |turn: u64, entries: Vec<ContextEntry>, tool_choice: Option<ToolChoice>| {
+        LlmGenerationRequest {
+            session_id: SessionId::new("session-live"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(turn),
+            request: LlmRequest {
+                model: ModelSelection {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    provider_id: "openai".to_string(),
+                    model: live_model(),
+                },
+                request_fingerprint: format!("live-openai-responses-tool-media-{turn}"),
+                context: ContextSnapshot {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    context_revision: 0,
+                    entries,
+                    token_estimate: None,
+                },
+                tools: vec![tool.clone()],
+                tool_choice,
+                output_limit: Some(2048),
+                reasoning_effort: None,
+                parallel_tool_use: Some(false),
+                processing_tier: None,
+                provider_response_id: None,
+                compaction: None,
+                params: Some(openai_params(&OpenAiResponsesParams {
+                    store: Some(false),
+                    stream: Some(false),
+                    ..OpenAiResponsesParams::default()
+                })),
+            },
+        }
+    };
+    let adapter = OpenAiResponsesLlmAdapter::new(
+        retrying_openai_responses_client(live_client()),
+        blobs.clone(),
+    )
+    .with_debug_dumps(true);
+
+    let execution = adapter
+        .generate(request(
+            1,
+            vec![user_entry.clone()],
+            Some(ToolChoice::RequiredAny),
+        ))
+        .await
+        .expect("generate tool call");
+    assert_eq!(execution.result.facts.finish, LlmFinish::ToolCalls);
+    let tool_call = execution
+        .result
+        .facts
+        .tool_calls
+        .first()
+        .expect("observed tool call");
+    assert_eq!(tool_call.tool_name.as_str(), "view_images");
+
+    let mut entries = vec![user_entry];
+    entries.extend(retained(2, &execution.result.context_entries));
+    let fixture =
+        tool_media_entries(&blobs, tool_call.call_id.clone(), entries.len() as u64 + 1).await;
+    entries.extend(fixture.entries.clone());
+
+    let followup_execution = adapter
+        .generate(request(2, entries, Some(ToolChoice::Auto)))
+        .await
+        .expect("generate final answer");
+    assert_eq!(
+        followup_execution.result.status,
+        LlmGenerationStatus::Succeeded
+    );
+    let final_text =
+        support::content_text(blobs.as_ref(), &assistant_entry(&followup_execution)).await;
+    assert_tool_media_answer(&final_text, &fixture);
+}

@@ -348,6 +348,24 @@ pub struct PromiseSourcePoll {
     pub poll_attempt: u32,
 }
 
+/// Ref-only snapshot of the promises joined calls completed on. The activity
+/// prepares, per promise, the context entries its payload supplies beside
+/// the call result (media a child handed up, for example).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinedContextPreparationRequest {
+    #[serde(default)]
+    pub results: Vec<AwaitPromiseResult>,
+}
+
+/// The combined await result plus the context entries the awaited payloads
+/// supply beside it, bounded as one result.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AwaitMaterializationResult {
+    pub result_ref: BlobRef,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub additional_context: Vec<engine::ContextEntryInput>,
+}
+
 /// Bounded, ref-only snapshot passed to the storage-backed await materializer.
 /// The activity replaces root refs with their JSON/text values without moving
 /// the root bytes through workflow history.

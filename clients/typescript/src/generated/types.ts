@@ -1928,6 +1928,14 @@ export interface CitationView {
  */
 export interface ContentRefView {
   contentRef: string;
+  /**
+   * The model-facing name of provider-native media (an admitted image or
+   * PDF): `media:` plus the first twelve hex characters of `content_ref`.
+   * The model writes it as a URL (`![…](media:3f9a2c1d4e7b)`) to refer to
+   * media it was shown; resolve it against the media of the same session.
+   * Absent for text and other content.
+   */
+  mediaHandle?: string | null;
   mediaType?: string | null;
   providerKind?: string | null;
 }
@@ -2640,6 +2648,13 @@ export interface ToolCallView {
   durationMs?: number | null;
   effects?: ToolEffectView[];
   isError?: boolean;
+  /**
+   * Media the call handed the model (MCP images and documents, file
+   * reads, sub-agent hand-offs), in the order the model saw it. Each item
+   * is also a user-role media entry of the run; fetch bytes with
+   * `blobs/read`.
+   */
+  media?: ToolCallMediaView[];
   output?: string | null;
   /**
    * When the call was dispatched for execution, from the committed
@@ -2652,6 +2667,23 @@ export interface ToolCallView {
    */
   toolId?: string | null;
   toolName: string;
+}
+/**
+ * One media item a tool call handed the model.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ToolCallMediaView".
+ */
+export interface ToolCallMediaView {
+  blobRef: string;
+  /**
+   * `media:` plus the first twelve hex characters of `blob_ref`; what the
+   * model calls this item.
+   */
+  handle: string;
+  kind: MediaKind;
+  mime: string;
+  name?: string | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

@@ -39,7 +39,7 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> String {
     };
     let text = match tool.operation() {
         BuiltinToolOperation::ReadFile => {
-            "Read a UTF-8 file with optional 1-based line offset and line limit."
+            "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference."
         }
         BuiltinToolOperation::WriteFile => {
             "Write full UTF-8 file content, creating parent directories when needed."
@@ -314,7 +314,9 @@ pub(super) async fn invoke_json(
         BuiltinToolOperation::ReadFile => {
             let fs_ctx = ctx.filesystem()?;
             let result = invoke_read_file(fs_ctx, decode_args(arguments)?).await?;
+            let media = result.media_outputs();
             encode_output(&result, result.line_numbered_text.clone())
+                .map(|output| output.with_media(media))
         }
         BuiltinToolOperation::WriteFile => {
             let fs_ctx = ctx.filesystem()?;

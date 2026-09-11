@@ -107,6 +107,7 @@ import { sectionsByRun } from "@/lib/sessions/run-sections";
 import { CenteredNote, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useSessionTail } from "@/lib/sessions/tail";
 import {
+  mediaByHandle,
   runInProgress,
   type ActiveRun,
   type TranscriptEntry,
@@ -1593,6 +1594,16 @@ export function SessionDetail({
     retry: false,
   });
   const botRoster = botDirectory.data?.bots;
+  const loadMedia = useCallback(
+    async (blobRef: string, mime: string) => {
+      const result = await api<{ bytesBase64: string }>(
+        "GET", `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(blobRef)}`,
+      );
+      return `data:${mime};base64,${result.bytesBase64}`;
+    },
+    [universeId],
+  );
+  const transcriptMedia = useMemo(() => mediaByHandle(entries), [entries]);
   const transcriptLinks = useMemo<TranscriptLinks>(() => {
     const names = new Map((botRoster ?? []).map((bot) => [bot.botId, botLabel(bot)]));
     const href = sessionHref ?? ((target: string) => `/u/${slug}/sessions/${target}`);
@@ -1600,8 +1611,10 @@ export function SessionDetail({
       botName: (botId) => names.get(botId),
       sessionHref: href,
       navigate: (target) => void navigate(target),
+      loadMedia,
+      mediaByHandle: transcriptMedia,
     };
-  }, [botRoster, sessionHref, slug, navigate]);
+  }, [botRoster, sessionHref, slug, navigate, loadMedia, transcriptMedia]);
   // Operator override: the engine happily admits direct runs on a managed
   // session (they queue like any client run), so the gate here is policy,
   // not capability. Off by default because direct input bypasses the

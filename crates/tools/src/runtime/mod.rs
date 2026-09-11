@@ -124,6 +124,39 @@ pub struct ToolInvocationOutput {
     pub model_visible_text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<ToolEffect>,
+    /// Admitted media the tool hands the model, in the order the visible
+    /// text announces it. Each item becomes a user-role media entry after the
+    /// tool result; the bytes are already in CAS.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<ToolMediaOutput>,
+}
+
+impl ToolInvocationOutput {
+    pub fn with_media(mut self, media: Vec<ToolMediaOutput>) -> Self {
+        self.media = media;
+        self
+    }
+}
+
+/// One admitted media asset a tool produced.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolMediaOutput {
+    pub content_ref: engine::BlobRef,
+    pub media_type: String,
+    pub kind: engine::media::MediaKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl ToolMediaOutput {
+    pub fn context_entry(&self) -> engine::ContextEntryInput {
+        engine::media::media_context_entry(
+            self.content_ref.clone(),
+            &self.media_type,
+            self.kind,
+            self.name.as_deref(),
+        )
+    }
 }
 
 #[async_trait]
@@ -158,5 +191,6 @@ where
         output_json,
         model_visible_text: model_visible_text.into(),
         effects: Vec::new(),
+        media: Vec::new(),
     })
 }

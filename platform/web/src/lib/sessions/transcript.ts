@@ -9,6 +9,18 @@ import type { SessionEvent, SessionItem, SessionRunView, ToolCallDisplay } from 
 /// into one entry, run-lifecycle events drive a human status vocabulary,
 /// and opaque engine reasoning markers are filtered out.
 
+/// Media the model was shown, named the way the model names it: `media:` plus
+/// the first twelve hex characters of the blob reference. Assistant text
+/// refers to it by that handle (`![…](media:3f9a2c1d4e7b)`), so the transcript
+/// resolves handles against the media it has folded.
+export interface TranscriptMedia {
+  handle: string;
+  blobRef: string;
+  mime: string;
+  kind: "image" | "document";
+  name?: string;
+}
+
 export type TranscriptEntry =
   | {
       kind: "message";
@@ -16,6 +28,8 @@ export type TranscriptEntry =
       role: "user" | "assistant";
       origin?: string;
       text: string;
+      /// Images and documents sent with the input, in order.
+      media?: TranscriptMedia[];
       citations?: Array<{ url: string; title?: string | null; citedText?: string | null }>;
       /// The run this entry belongs to, when the engine recorded one.
       runId?: string;
@@ -72,6 +86,9 @@ export interface TranscriptToolCall {
   durationMs?: number;
   /// Model-visible output size before the projection budget, when reported.
   outputBytes?: number;
+  /// Media the call handed the model (MCP images, file reads, sub-agent
+  /// hand-offs), in the order the model saw it.
+  media?: TranscriptMedia[];
 }
 
 export interface TranscriptToolGroup {
@@ -549,6 +566,13 @@ export function reconcileRuns(
 
 function applyItems(state: TranscriptState, items: SessionItem[]) {
   let generatedToolGroup: number | null = null;
+  // A tool commits its result and the media it hands the model in one
+  // event, media after result; the media folds into that call.
+  let lastToolResultCallId: string | null = null;
+  // Run input commits its text and media items together; they fold into
+  // one band. Steering batches are their own bands.
+  let openInputEntry: number | null = null;
+  let openInputKey: string | null = null;
 
   for (const item of items) {
     if (state.seenItems.has(item.id)) {
@@ -558,6 +582,38 @@ function applyItems(state: TranscriptState, items: SessionItem[]) {
     const kind = item.kind;
     const source = item.source;
     const runId = source && "runId" in source ? String(source.runId) : undefined;
+
+    if (kind.type === "message" && kind.role === "user" && item.content.mediaHandle) {
+      const media = transcriptMedia(item);
+      if (source?.type === "tool") {
+        if (lastToolResultCallId) {
+          const callId = lastToolResultCallId;
+          updateToolCall(state, callId, (call) => ({ ...call, media: [...(call.media ?? []), media] }));
+        }
+      } else {
+        const key = inputBandKey(item);
+        if (key !== openInputKey) openInputEntry = null;
+        openInputKey = key;
+        openInputEntry = appendInputMedia(state, openInputEntry, item, media, runId);
+      }
+      continue;
+    }
+    if (kind.type === "toolResult") {
+      lastToolResultCallId = kind.callId;
+    } else if (kind.type !== "message") {
+      lastToolResultCallId = null;
+    }
+    if (kind.type === "message" && kind.role === "user" && item.text && source?.type !== "tool") {
+      const key = inputBandKey(item);
+      if (key !== openInputKey) openInputEntry = null;
+      openInputKey = key;
+      openInputEntry = appendInputText(state, openInputEntry, item, runId);
+      continue;
+    }
+    if (kind.type === "message") {
+      openInputEntry = null;
+      openInputKey = null;
+    }
     if (source && "runId" in source) {
       if (kind.type === "toolCall" || kind.type === "toolResult") {
         recordToolCall(state, String(source.runId), kind.callId);
@@ -706,6 +762,115 @@ function applyNonToolCallItem(
     default:
       break;
   }
+}
+
+function transcriptMedia(item: SessionItem): TranscriptMedia {
+  const mime = item.content.mediaType ?? "application/octet-stream";
+  const name = mediaPreviewName(item.preview);
+  return {
+    handle: item.content.mediaHandle ?? mediaHandleFor(item.content.contentRef),
+    blobRef: item.content.contentRef,
+    mime,
+    kind: mime.startsWith("image/") ? "image" : "document",
+    ...(name ? { name } : {}),
+  };
+}
+
+/// The handle the model uses for a blob: `media:` plus the first twelve hex
+/// characters of its reference. Mirrors the server's derivation for media
+/// items that carry no explicit handle (run input items, for example).
+export function mediaHandleFor(blobRef: string): string {
+  const hex = blobRef.slice(blobRef.lastIndexOf(":") + 1);
+  return `media:${hex.slice(0, 12)}`;
+}
+
+/// The name in a media preview, `[image: photo.png]` → `photo.png`.
+function mediaPreviewName(preview: string | null | undefined): string | undefined {
+  const match = preview?.trim().match(/^\[[a-z]+: (.+)\]$/);
+  const name = match?.[1]?.trim();
+  return name ? name : undefined;
+}
+
+/// Items that belong in the same band: the same run's input, or the same
+/// steering batch. Anything else starts a new band.
+function inputBandKey(item: SessionItem): string {
+  const source = item.source;
+  if (!source) return "input";
+  if (source.type === "steering") return `steering:${source.runId}:${source.steeringId}`;
+  return "runId" in source ? `${source.type}:${source.runId}` : source.type;
+}
+
+/// User input folds its text and media items, committed together, into one
+/// band; `open` is the band still being assembled in this event, if any.
+function inputEntry(
+  state: TranscriptState,
+  open: number | null,
+  item: SessionItem,
+  runId: string | undefined,
+): number {
+  const source = item.source ?? null;
+  if (open !== null) {
+    const entry = state.entries[open];
+    if (entry?.kind === "message" && entry.role === "user" && entry.runId === runId) {
+      return open;
+    }
+  }
+  state.entries.push({
+    kind: "message",
+    key: item.id,
+    role: "user",
+    text: "",
+    ...(item.origin ? { origin: item.origin } : {}),
+    ...(runId ? { runId } : {}),
+    ...(source?.type === "steering" ? { steering: true } : {}),
+  });
+  return state.entries.length - 1;
+}
+
+function appendInputText(
+  state: TranscriptState,
+  open: number | null,
+  item: SessionItem,
+  runId: string | undefined,
+): number {
+  const index = inputEntry(state, open, item, runId);
+  const entry = state.entries[index];
+  if (entry?.kind === "message") {
+    const text = entry.text ? `${entry.text}\n\n${item.text ?? ""}` : (item.text ?? "");
+    state.entries[index] = { ...entry, text };
+  }
+  return index;
+}
+
+function appendInputMedia(
+  state: TranscriptState,
+  open: number | null,
+  item: SessionItem,
+  media: TranscriptMedia,
+  runId: string | undefined,
+): number {
+  const index = inputEntry(state, open, item, runId);
+  const entry = state.entries[index];
+  if (entry?.kind === "message") {
+    state.entries[index] = { ...entry, media: [...(entry.media ?? []), media] };
+  }
+  return index;
+}
+
+/// Every media item the transcript has folded, by handle, for resolving the
+/// `media:` links assistant text writes.
+export function mediaByHandle(entries: TranscriptEntry[]): Map<string, TranscriptMedia> {
+  const map = new Map<string, TranscriptMedia>();
+  for (const entry of entries) {
+    if (entry.kind === "message") {
+      for (const media of entry.media ?? []) map.set(media.handle, media);
+    } else if (entry.kind === "tool-group") {
+      for (const call of entry.calls) {
+        for (const media of call.media ?? []) map.set(media.handle, media);
+      }
+    }
+  }
+  return map;
 }
 
 function ensureToolCall(

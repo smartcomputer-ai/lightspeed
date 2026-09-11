@@ -239,6 +239,26 @@ pub struct ToolCallView {
     /// the remainder of the started/completed window is overhead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Media the call handed the model (MCP images and documents, file
+    /// reads, sub-agent hand-offs), in the order the model saw it. Each item
+    /// is also a user-role media entry of the run; fetch bytes with
+    /// `blobs/read`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<ToolCallMediaView>,
+}
+
+/// One media item a tool call handed the model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallMediaView {
+    /// `media:` plus the first twelve hex characters of `blob_ref`; what the
+    /// model calls this item.
+    pub handle: String,
+    pub blob_ref: String,
+    pub mime: String,
+    pub kind: MediaKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

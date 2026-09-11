@@ -141,11 +141,31 @@ pub(super) async fn put_blob(
 pub(super) async fn materialize_await_result(
     deps: &StorageActivityDeps,
     request: temporal_workflow::AwaitMaterializationRequest,
-) -> Result<BlobRef, ActivityError> {
+) -> Result<temporal_workflow::AwaitMaterializationResult, ActivityError> {
     if request.results.len() > 32 {
         return Err(activity_error(anyhow::anyhow!(
             "await materialization exceeds the 32-Promise limit"
         )));
+    }
+
+    // An `await` is one result, so the awaited payloads share one media
+    // budget, in await order.
+    let mut additional_context = Vec::new();
+    let mut budget = engine::media::MAX_TOOL_MEDIA_ITEMS;
+    let mut omitted = 0usize;
+    for result in &request.results {
+        if result.status != "resolved" {
+            continue;
+        }
+        let Some(payload_ref) = &result.payload_ref else {
+            continue;
+        };
+        let (entries, left_out) = prepare_payload_context(deps, payload_ref, &mut budget).await?;
+        additional_context.extend(entries);
+        omitted += left_out;
+    }
+    if omitted > 0 {
+        additional_context.push(omission_note(deps, omitted, "await result").await?);
     }
 
     let mut results = Vec::with_capacity(request.results.len());
@@ -216,7 +236,125 @@ pub(super) async fn materialize_await_result(
             .await
             .map_err(activity_error)?;
     }
-    Ok(aggregate_ref)
+    Ok(temporal_workflow::AwaitMaterializationResult {
+        result_ref: aggregate_ref,
+        additional_context,
+    })
+}
+
+/// Context a resolved payload supplies beside its result, prepared for the
+/// model. A payload names media in a top-level `media` list of descriptors;
+/// each admitted one (a supported type, a blob that is in CAS, within the
+/// byte limit) becomes a media entry, in list order, until `budget` runs
+/// out. Anything malformed, missing, or unsupported contributes nothing, and
+/// nothing here fails the resume. Returns the entries and how many admitted
+/// items the budget left out.
+async fn prepare_payload_context(
+    deps: &StorageActivityDeps,
+    payload_ref: &BlobRef,
+    budget: &mut usize,
+) -> Result<(Vec<engine::ContextEntryInput>, usize), ActivityError> {
+    let bytes = deps
+        .blobs
+        .read_bytes(payload_ref)
+        .await
+        .map_err(activity_error)?;
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Ok((Vec::new(), 0));
+    };
+    let Some(listed) = payload.get("media").and_then(serde_json::Value::as_array) else {
+        return Ok((Vec::new(), 0));
+    };
+    let mut entries = Vec::new();
+    let mut omitted = 0usize;
+    for item in listed {
+        let Ok(descriptor) = serde_json::from_value::<engine::media::MediaDescriptor>(item.clone())
+        else {
+            continue;
+        };
+        let Some(admitted) = engine::media::MediaDescriptor::new(
+            descriptor.content_ref.clone(),
+            &descriptor.media_type,
+            descriptor.name.as_deref(),
+        ) else {
+            continue;
+        };
+        let Ok(info) = deps.blobs.stat_blob(&admitted.content_ref).await else {
+            continue;
+        };
+        if engine::media::admit_tool_media(Some(&admitted.media_type), info.byte_len).is_err() {
+            continue;
+        }
+        if *budget == 0 {
+            omitted += 1;
+            continue;
+        }
+        *budget -= 1;
+        entries.push(admitted.context_entry());
+    }
+    Ok((entries, omitted))
+}
+
+/// A user-role text entry telling the model that media beyond the cap was
+/// left out of one result.
+async fn omission_note(
+    deps: &StorageActivityDeps,
+    omitted: usize,
+    what: &str,
+) -> Result<engine::ContextEntryInput, ActivityError> {
+    let text = format!(
+        "[{omitted} media item{} omitted: at most {} per {what}]",
+        if omitted == 1 { "" } else { "s" },
+        engine::media::MAX_TOOL_MEDIA_ITEMS
+    );
+    let content_ref = deps
+        .blobs
+        .put_bytes(text.clone().into_bytes())
+        .await
+        .map_err(activity_error)?;
+    Ok(engine::ContextEntryInput {
+        kind: engine::ContextEntryKind::Message {
+            role: engine::ContextMessageRole::User,
+        },
+        content: engine::ContentRef::text(content_ref),
+        preview: Some(text),
+        origin: None,
+        provenance_ref: None,
+        token_estimate: None,
+    })
+}
+
+/// Joined calls complete separately, so each promise's payload supplies its
+/// own bounded supplements beside its own call result.
+pub(super) async fn prepare_joined_context(
+    deps: &StorageActivityDeps,
+    request: temporal_workflow::JoinedContextPreparationRequest,
+) -> Result<Vec<engine::PromiseContextEntries>, ActivityError> {
+    let mut prepared = Vec::new();
+    for result in request.results {
+        if result.status != "resolved" {
+            continue;
+        }
+        let Some(payload_ref) = result.payload_ref else {
+            continue;
+        };
+        let Ok(promise_id) = engine::PromiseId::try_new(result.promise_id.clone()) else {
+            continue;
+        };
+        let mut budget = engine::media::MAX_TOOL_MEDIA_ITEMS;
+        let (mut entries, omitted) =
+            prepare_payload_context(deps, &payload_ref, &mut budget).await?;
+        if omitted > 0 {
+            entries.push(omission_note(deps, omitted, "result").await?);
+        }
+        if !entries.is_empty() {
+            prepared.push(engine::PromiseContextEntries {
+                promise_id,
+                entries,
+            });
+        }
+    }
+    Ok(prepared)
 }
 
 /// Bounded CAS load + JSON Schema check of one keyed reply payload against
@@ -879,6 +1017,164 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn joined_context_keeps_admitted_listed_blobs_in_order() {
+        let deps = storage_deps(Arc::new(InMemorySessionStore::new()));
+        let png = deps
+            .blobs
+            .put_bytes(b"\x89PNG\r\n\x1a\n....".to_vec())
+            .await
+            .expect("png");
+        let pdf = deps
+            .blobs
+            .put_bytes(b"%PDF-1.7 report".to_vec())
+            .await
+            .expect("pdf");
+        let missing = engine::BlobRef::from_bytes(b"never stored");
+        let describe = |blob_ref: &engine::BlobRef, media_type: &str, name: &str| {
+            json!({
+                "handle": engine::media::media_handle(blob_ref),
+                "content_ref": blob_ref,
+                "media_type": media_type,
+                "kind": if media_type == "application/pdf" { "document" } else { "image" },
+                "name": name,
+            })
+        };
+        let payload = deps
+            .blobs
+            .put_bytes(
+                serde_json::to_vec(&json!({
+                    "status": "completed",
+                    "output": "see the render",
+                    "media": [
+                        describe(&pdf, "application/pdf", "report.pdf"),
+                        describe(&missing, "image/png", "gone.png"),
+                        describe(&png, "image/svg+xml", "vector.svg"),
+                        {"not": "a descriptor"},
+                        describe(&png, "image/png", "render.png"),
+                    ]
+                }))
+                .expect("payload"),
+            )
+            .await
+            .expect("payload blob");
+        let text_payload = deps
+            .blobs
+            .put_bytes(b"plain text payload".to_vec())
+            .await
+            .expect("text payload");
+
+        let prepared = prepare_joined_context(
+            &deps,
+            temporal_workflow::JoinedContextPreparationRequest {
+                results: vec![
+                    temporal_workflow::AwaitPromiseResult {
+                        promise_id: "promise_1".to_owned(),
+                        status: "resolved".to_owned(),
+                        payload_ref: Some(payload),
+                        error_ref: None,
+                    },
+                    temporal_workflow::AwaitPromiseResult {
+                        promise_id: "promise_2".to_owned(),
+                        status: "resolved".to_owned(),
+                        payload_ref: Some(text_payload),
+                        error_ref: None,
+                    },
+                    temporal_workflow::AwaitPromiseResult {
+                        promise_id: "promise_3".to_owned(),
+                        status: "failed".to_owned(),
+                        payload_ref: None,
+                        error_ref: None,
+                    },
+                ],
+            },
+        )
+        .await
+        .expect("prepare");
+
+        assert_eq!(prepared.len(), 1, "{prepared:?}");
+        assert_eq!(prepared[0].promise_id.as_str(), "promise_1");
+        let previews = prepared[0]
+            .entries
+            .iter()
+            .map(|entry| entry.preview.clone().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            previews,
+            vec!["[document: report.pdf]", "[image: render.png]"]
+        );
+        assert_eq!(prepared[0].entries[1].content.content_ref, png);
+        assert_eq!(
+            prepared[0].entries[1].content.media_type.as_deref(),
+            Some("image/png")
+        );
+    }
+
+    /// An `await` is one result: its awaited payloads share one media
+    /// budget, in await order, and the model is told what was left out.
+    #[tokio::test(flavor = "current_thread")]
+    async fn await_materialization_caps_media_across_promises_with_a_note() {
+        let deps = storage_deps(Arc::new(InMemorySessionStore::new()));
+        let mut payloads = Vec::new();
+        for promise in 0..2u8 {
+            let mut media = Vec::new();
+            for index in 0..5u8 {
+                let blob = deps
+                    .blobs
+                    .put_bytes(vec![0x89, b'P', b'N', b'G', promise, index])
+                    .await
+                    .expect("png");
+                media.push(json!({
+                    "handle": engine::media::media_handle(&blob),
+                    "content_ref": blob,
+                    "media_type": "image/png",
+                    "kind": "image",
+                    "name": format!("p{promise}-{index}.png"),
+                }));
+            }
+            let payload = deps
+                .blobs
+                .put_bytes(
+                    serde_json::to_vec(&json!({"status": "completed", "media": media})).unwrap(),
+                )
+                .await
+                .expect("payload");
+            payloads.push(payload);
+        }
+        let materialized = materialize_await_result(
+            &deps,
+            temporal_workflow::AwaitMaterializationRequest {
+                outcome: temporal_workflow::AwaitOutcome::Terminal,
+                results: payloads
+                    .iter()
+                    .enumerate()
+                    .map(|(index, payload)| temporal_workflow::AwaitPromiseResult {
+                        promise_id: format!("promise_{index}"),
+                        status: "resolved".to_owned(),
+                        payload_ref: Some(payload.clone()),
+                        error_ref: None,
+                    })
+                    .collect(),
+            },
+        )
+        .await
+        .expect("materialize");
+        let previews = materialized
+            .additional_context
+            .iter()
+            .map(|entry| entry.preview.clone().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(previews.len(), engine::media::MAX_TOOL_MEDIA_ITEMS + 1);
+        assert_eq!(previews[0], "[image: p0-0.png]");
+        assert_eq!(previews[7], "[image: p1-2.png]");
+        assert_eq!(
+            previews[8],
+            "[2 media items omitted: at most 8 per await result]"
+        );
+        let note = &materialized.additional_context[8];
+        assert_eq!(note.content.media_type.as_deref(), Some("text/plain"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn await_materialization_embeds_json_text_and_opaque_roots_in_order() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let blobs = Arc::new(InMemoryBlobStore::new());
@@ -900,7 +1196,7 @@ mod tests {
             blob_graph: None,
         };
 
-        let result_ref = materialize_await_result(
+        let materialized = materialize_await_result(
             &deps,
             temporal_workflow::AwaitMaterializationRequest {
                 outcome: temporal_workflow::AwaitOutcome::Timeout,
@@ -936,7 +1232,7 @@ mod tests {
         .expect("materialize await");
         let value: serde_json::Value = serde_json::from_slice(
             &blobs
-                .read_bytes(&result_ref)
+                .read_bytes(&materialized.result_ref)
                 .await
                 .expect("aggregate bytes"),
         )

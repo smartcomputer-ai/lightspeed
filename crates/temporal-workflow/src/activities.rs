@@ -7,11 +7,11 @@ use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::{
     AppendEventsRequest, AwaitEnvironmentReadyActivityRequest, AwaitEnvironmentReadyActivityResult,
-    AwaitMaterializationRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
-    CreateOrLoadSessionResult, EnvironmentJobCancelActivityRequest,
+    AwaitMaterializationRequest, AwaitMaterializationResult, ContextCompactActivityRequest,
+    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, EnvironmentJobCancelActivityRequest,
     EnvironmentJobPollActivityRequest, EnvironmentJobPollActivityResult,
     EnvironmentJobPrepareWorkflowToolRequest, EnvironmentJobStartActivityRequest,
-    EnvironmentJobStartActivityResult, LlmGenerateActivityRequest,
+    EnvironmentJobStartActivityResult, JoinedContextPreparationRequest, LlmGenerateActivityRequest,
     PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PutBlobRequest,
     ReadBlobRequest, ReadBlobResult, RuntimeProjectionRefreshActivityRequest,
     RuntimeProjectionRefreshActivityResult, SubagentCloseActivityRequest,
@@ -27,6 +27,7 @@ pub const ACTIVITY_CREATE_OR_LOAD_SESSION: &str = "WorkflowActivities::create_or
 pub const ACTIVITY_PUT_BLOB: &str = "WorkflowActivities::put_blob";
 pub const ACTIVITY_READ_BLOB: &str = "WorkflowActivities::read_blob";
 pub const ACTIVITY_MATERIALIZE_AWAIT_RESULT: &str = "WorkflowActivities::materialize_await_result";
+pub const ACTIVITY_PREPARE_JOINED_CONTEXT: &str = "WorkflowActivities::prepare_joined_context";
 pub const ACTIVITY_APPEND_EVENTS: &str = "WorkflowActivities::append_events";
 pub const ACTIVITY_LLM_GENERATE: &str = "WorkflowActivities::llm_generate";
 pub const ACTIVITY_PREPROCESS_RUN_INPUT: &str = "WorkflowActivities::preprocess_run_input";
@@ -83,13 +84,24 @@ impl WorkflowActivities {
         unimplemented!("workflow activity definition only")
     }
 
-    /// Load the bounded Promise root refs directly from CAS and write one
-    /// canonical aggregate result, returning only its content ref to history.
+    /// Load the bounded Promise root refs directly from CAS, write one
+    /// canonical aggregate result, and prepare the context entries the
+    /// payloads supply beside it; only refs and entries return to history.
     #[activity(name = ACTIVITY_MATERIALIZE_AWAIT_RESULT)]
     pub async fn materialize_await_result(
         _ctx: ActivityContext,
         _request: AwaitMaterializationRequest,
-    ) -> Result<BlobRef, ActivityError> {
+    ) -> Result<AwaitMaterializationResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    /// Prepare, per joined promise, the context entries its payload supplies
+    /// beside the call result; the bytes stay in CAS.
+    #[activity(name = ACTIVITY_PREPARE_JOINED_CONTEXT)]
+    pub async fn prepare_joined_context(
+        _ctx: ActivityContext,
+        _request: JoinedContextPreparationRequest,
+    ) -> Result<Vec<engine::PromiseContextEntries>, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 

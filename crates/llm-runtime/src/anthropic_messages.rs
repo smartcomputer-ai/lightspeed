@@ -672,8 +672,10 @@ async fn materialize_messages(
             }
             continue;
         }
-        let (role, block) = materialize_block(blobs, entry).await?;
-        push_block(&mut messages, role, block)?;
+        let (role, blocks) = materialize_block(blobs, entry).await?;
+        for block in blocks {
+            push_block(&mut messages, role, block)?;
+        }
     }
     Ok(messages)
 }
@@ -690,6 +692,12 @@ async fn text_blocks(blobs: &dyn BlobStore, entry: &ContextEntry) -> LlmAdapterR
     }
 }
 
+/// Append a block to the trailing message of `role`, or open a new one.
+/// Anthropic requires every `tool_result` block of a user message to come
+/// before its other content, while a tool's media entries follow its result
+/// in context; when parallel calls interleave results and media, a later
+/// result is inserted after the last result already in the message, so
+/// results stay first and media keeps call order behind them.
 fn push_block(
     messages: &mut Vec<am::MessageParam>,
     role: am::MessageRole,
@@ -697,7 +705,19 @@ fn push_block(
 ) -> LlmAdapterResult<()> {
     match messages.last_mut() {
         Some(message) if message.role == role => match &mut message.content {
-            am::MessageParamContent::Blocks(blocks) => blocks.push(block),
+            am::MessageParamContent::Blocks(blocks) => {
+                if matches!(block, am::ContentBlockParam::ToolResult(_)) {
+                    let after_results = blocks
+                        .iter()
+                        .rposition(|existing| {
+                            matches!(existing, am::ContentBlockParam::ToolResult(_))
+                        })
+                        .map_or(0, |index| index + 1);
+                    blocks.insert(after_results, block);
+                } else {
+                    blocks.push(block);
+                }
+            }
             am::MessageParamContent::Text(_) => {
                 return Err(LlmAdapterError::InvalidProviderRequest {
                     message: "Anthropic message lowering produced unexpected text content"
@@ -741,10 +761,13 @@ async fn materialize_input_message(
     Ok((message.role, blocks))
 }
 
+/// One context entry as the blocks of one role. Media entries (images, PDFs)
+/// materialize as a text announcement naming the media handle followed by
+/// the provider-native block, so the model can refer to what it was shown.
 async fn materialize_block(
     blobs: &dyn BlobStore,
     entry: &ContextEntry,
-) -> LlmAdapterResult<(am::MessageRole, am::ContentBlockParam)> {
+) -> LlmAdapterResult<(am::MessageRole, Vec<am::ContentBlockParam>)> {
     match &entry.kind {
         ContextEntryKind::Message { role } => {
             let role = match role {
@@ -753,36 +776,45 @@ async fn materialize_block(
             };
             if let Some(mime) = crate::blob_io::image_media_type(entry.content.media_type.as_deref()) {
                 let data = crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
-                return Ok((role, am::ContentBlockParam::image_base64(mime, data)));
+                return Ok((
+                    role,
+                    vec![
+                        am::ContentBlockParam::text(crate::blob_io::media_announcement(entry)),
+                        am::ContentBlockParam::image_base64(mime, data),
+                    ],
+                ));
             }
             if let Some(document) = crate::blob_io::document_entry(
                 entry.content.media_type.as_deref(),
                 entry.preview.as_deref(),
             ) {
-                let block = if document.is_pdf {
+                let blocks = if document.is_pdf {
                     let data = crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
-                    am::ContentBlockParam::document_base64(document.mime, data, document.name)
+                    vec![
+                        am::ContentBlockParam::text(crate::blob_io::media_announcement(entry)),
+                        am::ContentBlockParam::document_base64(document.mime, data, document.name),
+                    ]
                 } else {
                     let text = read_text(blobs, &entry.content.content_ref).await?;
-                    am::ContentBlockParam::document_text(text, document.name)
+                    vec![am::ContentBlockParam::document_text(text, document.name)]
                 };
-                return Ok((role, block));
+                return Ok((role, blocks));
             }
             let text = crate::blob_io::read_message_text(blobs, &entry.content).await?;
-            Ok((role, am::ContentBlockParam::text(text)))
+            Ok((role, vec![am::ContentBlockParam::text(text)]))
         }
         ContextEntryKind::ToolResult { call_id, is_error } => {
             let output = read_text(blobs, &entry.content.content_ref).await?;
             Ok((
                 am::MessageRole::User,
-                am::ContentBlockParam::ToolResult(am::ToolResultBlockParam {
+                vec![am::ContentBlockParam::ToolResult(am::ToolResultBlockParam {
                     r#type: "tool_result".to_owned(),
                     tool_use_id: call_id.as_str().to_owned(),
                     content: Some(Value::String(output)),
                     is_error: if *is_error { Some(true) } else { None },
                     cache_control: None,
                     extra: Default::default(),
-                }),
+                })],
             ))
         }
         ContextEntryKind::Instructions => Err(LlmAdapterError::InvalidProviderRequest {
@@ -790,10 +822,10 @@ async fn materialize_block(
         }),
         ContextEntryKind::Catalog { .. } => Ok((
             am::MessageRole::User,
-            am::ContentBlockParam::text(
+            vec![am::ContentBlockParam::text(
                 crate::catalog_prompts::stored_catalog_text(blobs, entry, &entry.content.content_ref)
                     .await?,
-            ),
+            )],
         )),
         ContextEntryKind::ToolCall { .. }
         | ContextEntryKind::ReasoningState
@@ -807,7 +839,10 @@ async fn materialize_block(
                 });
             }
             let raw = read_json(blobs, &entry.content.content_ref).await?;
-            Ok((am::MessageRole::Assistant, am::ContentBlockParam::Raw(raw)))
+            Ok((
+                am::MessageRole::Assistant,
+                vec![am::ContentBlockParam::Raw(raw)],
+            ))
         }
         ContextEntryKind::McpApprovalResponse { .. } => {
             Err(LlmAdapterError::InvalidProviderRequest {
@@ -3903,12 +3938,23 @@ mod tests {
             supersedes: None,
         };
 
-        let (role, block) = materialize_block(&blobs, &entry)
+        let (role, blocks) = materialize_block(&blobs, &entry)
             .await
             .expect("materialize image entry");
 
         assert_eq!(role, am::MessageRole::User);
-        let value = serde_json::to_value(&block).expect("serialize block");
+        assert_eq!(blocks.len(), 2, "announcement then image");
+        let announcement = serde_json::to_value(&blocks[0]).expect("serialize announcement");
+        assert_eq!(announcement["type"], json!("text"));
+        assert_eq!(
+            announcement["text"],
+            json!(format!(
+                "[image · {} · image/jpeg]",
+                engine::media::media_handle(&entry.content.content_ref)
+            ))
+        );
+        let block = &blocks[1];
+        let value = serde_json::to_value(block).expect("serialize block");
         assert_eq!(value["type"], json!("image"));
         assert_eq!(value["source"]["type"], json!("base64"));
         assert_eq!(value["source"]["media_type"], json!("image/jpeg"));
@@ -3948,12 +3994,22 @@ mod tests {
             supersedes: None,
         };
 
-        let (role, block) = materialize_block(&blobs, &entry)
+        let (role, blocks) = materialize_block(&blobs, &entry)
             .await
             .expect("materialize pdf entry");
 
         assert_eq!(role, am::MessageRole::User);
-        let value = serde_json::to_value(&block).expect("serialize block");
+        assert_eq!(blocks.len(), 2, "announcement then document");
+        let announcement = serde_json::to_value(&blocks[0]).expect("serialize announcement");
+        assert_eq!(
+            announcement["text"],
+            json!(format!(
+                "[document: offer.pdf · {} · application/pdf]",
+                engine::media::media_handle(&entry.content.content_ref)
+            ))
+        );
+        let block = &blocks[1];
+        let value = serde_json::to_value(block).expect("serialize block");
         assert_eq!(value["type"], json!("document"));
         assert_eq!(value["source"]["type"], json!("base64"));
         assert_eq!(value["source"]["media_type"], json!("application/pdf"));
@@ -3989,12 +4045,18 @@ mod tests {
             supersedes: None,
         };
 
-        let (role, block) = materialize_block(&blobs, &entry)
+        let (role, blocks) = materialize_block(&blobs, &entry)
             .await
             .expect("materialize markdown entry");
 
         assert_eq!(role, am::MessageRole::User);
-        let value = serde_json::to_value(&block).expect("serialize block");
+        assert_eq!(
+            blocks.len(),
+            1,
+            "text documents carry no media announcement"
+        );
+        let block = &blocks[0];
+        let value = serde_json::to_value(block).expect("serialize block");
         assert_eq!(value["type"], json!("document"));
         assert_eq!(value["source"]["type"], json!("text"));
         assert_eq!(value["source"]["media_type"], json!("text/plain"));
@@ -4027,11 +4089,13 @@ mod tests {
             supersedes: None,
         };
 
-        let (_, block) = materialize_block(&blobs, &entry)
+        let (_, blocks) = materialize_block(&blobs, &entry)
             .await
             .expect("materialize text entry");
 
-        let value = serde_json::to_value(&block).expect("serialize block");
+        assert_eq!(blocks.len(), 1);
+        let block = &blocks[0];
+        let value = serde_json::to_value(block).expect("serialize block");
         assert_eq!(value["type"], json!("text"));
         assert_eq!(value["text"], json!("just a normal message"));
     }
@@ -4242,5 +4306,157 @@ mod tests {
             error,
             LlmAdapterError::InvalidProviderRequest { .. }
         ));
+    }
+
+    /// A tool result followed by the media its tool produced: an image and a
+    /// PDF, both tool-sourced user-role message entries.
+    async fn tool_result_with_media(blobs: &InMemoryBlobStore) -> Vec<ContextEntry> {
+        let tool_source = ContextEntrySource::Tool {
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            batch_id: None,
+        };
+        let result_ref = blobs
+            .insert_text("[image 1 · media:x · image/png · 4 B]")
+            .await;
+        let image_ref = blobs
+            .put_bytes(vec![0x89, 0x50, 0x4e, 0x47])
+            .await
+            .expect("store image");
+        let pdf_ref = blobs
+            .put_bytes(b"%PDF-1.4 fake".to_vec())
+            .await
+            .expect("store pdf");
+        let make = |id: u64,
+                    kind: ContextEntryKind,
+                    content: engine::ContentRef,
+                    preview: Option<&str>| {
+            ContextEntry {
+                entry_id: ContextEntryId::new(id),
+                key: None,
+                kind,
+                source: tool_source.clone(),
+                content,
+                preview: preview.map(str::to_owned),
+                origin: None,
+                provenance_ref: None,
+                token_estimate: None,
+                supersedes: None,
+            }
+        };
+        vec![
+            make(
+                1,
+                ContextEntryKind::ToolResult {
+                    call_id: ToolCallId::try_new("call_1").expect("call id"),
+                    is_error: false,
+                },
+                engine::ContentRef::text(result_ref),
+                None,
+            ),
+            make(
+                2,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                engine::ContentRef {
+                    content_ref: image_ref,
+                    media_type: Some("image/png".to_owned()),
+                    provider_kind: None,
+                },
+                Some("[image]"),
+            ),
+            make(
+                3,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                engine::ContentRef {
+                    content_ref: pdf_ref,
+                    media_type: Some("application/pdf".to_owned()),
+                    provider_kind: None,
+                },
+                Some("[document: report.pdf]"),
+            ),
+        ]
+    }
+
+    /// Two parallel calls commit result A, media A, result B, media B;
+    /// Anthropic must receive both results first, then the media in call order.
+    #[tokio::test(flavor = "current_thread")]
+    async fn parallel_tool_results_stay_ahead_of_their_media() {
+        let blobs = InMemoryBlobStore::new();
+        let mut entries = tool_result_with_media(&blobs).await;
+        let mut second = tool_result_with_media(&blobs).await;
+        for (index, entry) in second.iter_mut().enumerate() {
+            entry.entry_id = ContextEntryId::new(10 + index as u64);
+            if let ContextEntryKind::ToolResult { call_id, .. } = &mut entry.kind {
+                *call_id = ToolCallId::try_new("call_2").expect("call id");
+            }
+        }
+        entries.extend(second);
+        let messages = materialize_messages(&blobs, &entries)
+            .await
+            .expect("materialize");
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        let value = serde_json::to_value(&messages[0]).expect("json");
+        let blocks = value["content"].as_array().expect("blocks");
+        let kinds = blocks
+            .iter()
+            .map(|block| block["type"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                "tool_result",
+                "tool_result",
+                "text",
+                "image",
+                "text",
+                "document",
+                "text",
+                "image",
+                "text",
+                "document"
+            ]
+        );
+        assert_eq!(blocks[0]["tool_use_id"], json!("call_1"));
+        assert_eq!(blocks[1]["tool_use_id"], json!("call_2"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tool_media_entries_follow_the_tool_result_in_one_user_message() {
+        let blobs = InMemoryBlobStore::new();
+        let entries = tool_result_with_media(&blobs).await;
+        let messages = materialize_messages(&blobs, &entries)
+            .await
+            .expect("materialize");
+        assert_eq!(messages.len(), 1, "one user message: {messages:?}");
+        let value = serde_json::to_value(&messages[0]).expect("json");
+        assert_eq!(value["role"], json!("user"));
+        let blocks = value["content"].as_array().expect("blocks");
+        let kinds = blocks
+            .iter()
+            .map(|block| block["type"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec!["tool_result", "text", "image", "text", "document"],
+            "tool_result first, then announcement + block per asset"
+        );
+        assert_eq!(blocks[0]["tool_use_id"], json!("call_1"));
+        assert!(
+            blocks[1]["text"]
+                .as_str()
+                .expect("announcement")
+                .starts_with("[image · media:")
+        );
+        assert!(
+            blocks[3]["text"]
+                .as_str()
+                .expect("announcement")
+                .starts_with("[document: report.pdf · media:")
+        );
+        assert_eq!(blocks[4]["title"], json!("report.pdf"));
     }
 }

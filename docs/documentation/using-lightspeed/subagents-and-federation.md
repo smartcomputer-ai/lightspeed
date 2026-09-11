@@ -117,7 +117,11 @@ finishes or is canceled; force-closing the session cancels it.
 
 The result includes a status such as `completed`, `failed`, `cancelled`, or
 `deadline`, plus output or error information and the child session ID. Check
-the status before treating the output as a completed review. A child returns
+the status before treating the output as a completed review. A child that
+looked at images or documents hands them up by linking their `media:` handles
+in its answer: the result's `media` list names each one, and the parent sees
+them as media right after the result, under the same handles. A handle the
+child never saw stays plain text. A child returns
 one run's result and closes automatically; there is no child-continuation
 conversation tool.
 

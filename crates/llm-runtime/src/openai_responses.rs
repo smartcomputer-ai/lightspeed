@@ -462,11 +462,17 @@ async fn materialize_input_item(
                 let data = crate::blob_io::read_base64(blobs, &item.content.content_ref).await?;
                 return Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                     role,
-                    content: oai::InputMessageContent::Parts(vec![oai::InputContent::InputImage {
-                        r#type: oai::InputImageContentType::InputImage,
-                        image_url: format!("data:{mime};base64,{data}"),
-                        detail: None,
-                    }]),
+                    content: oai::InputMessageContent::Parts(vec![
+                        oai::InputContent::InputText {
+                            r#type: oai::InputContentType::InputText,
+                            text: crate::blob_io::media_announcement(item),
+                        },
+                        oai::InputContent::InputImage {
+                            r#type: oai::InputImageContentType::InputImage,
+                            image_url: format!("data:{mime};base64,{data}"),
+                            detail: None,
+                        },
+                    ]),
                     extra: Default::default(),
                 }));
             }
@@ -474,15 +480,23 @@ async fn materialize_input_item(
                 item.content.media_type.as_deref(),
                 item.preview.as_deref(),
             ) {
-                let part = if document.is_pdf {
+                let parts = if document.is_pdf {
                     let data =
                         crate::blob_io::read_base64(blobs, &item.content.content_ref).await?;
-                    oai::InputContent::InputFile {
-                        r#type: oai::InputFileContentType::InputFile,
-                        filename: Some(document.name.unwrap_or_else(|| "document.pdf".to_owned())),
-                        file_data: Some(format!("data:{};base64,{data}", document.mime)),
-                        file_id: None,
-                    }
+                    vec![
+                        oai::InputContent::InputText {
+                            r#type: oai::InputContentType::InputText,
+                            text: crate::blob_io::media_announcement(item),
+                        },
+                        oai::InputContent::InputFile {
+                            r#type: oai::InputFileContentType::InputFile,
+                            filename: Some(
+                                document.name.unwrap_or_else(|| "document.pdf".to_owned()),
+                            ),
+                            file_data: Some(format!("data:{};base64,{data}", document.mime)),
+                            file_id: None,
+                        },
+                    ]
                 } else {
                     // The Responses API takes files as PDF only; text-based
                     // documents are inlined with their name as a header.
@@ -491,14 +505,14 @@ async fn materialize_input_item(
                         Some(name) => format!("[document: {name}]"),
                         None => "[document]".to_owned(),
                     };
-                    oai::InputContent::InputText {
+                    vec![oai::InputContent::InputText {
                         r#type: oai::InputContentType::InputText,
                         text: format!("{header}\n{text}"),
-                    }
+                    }]
                 };
                 return Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                     role,
-                    content: oai::InputMessageContent::Parts(vec![part]),
+                    content: oai::InputMessageContent::Parts(parts),
                     extra: Default::default(),
                 }));
             }
@@ -3267,10 +3281,17 @@ mod tests {
         assert_eq!(input.len(), 1, "expected one folded message, got {input:?}");
         let value = serde_json::to_value(&input[0]).expect("serialize message");
         assert_eq!(value["role"], json!("user"));
-        assert_eq!(value["content"][0]["type"], json!("input_image"));
-        assert_eq!(value["content"][1]["type"], json!("input_text"));
+        assert_eq!(value["content"][0]["type"], json!("input_text"));
+        assert!(
+            value["content"][0]["text"]
+                .as_str()
+                .expect("announcement")
+                .starts_with("[image · media:")
+        );
+        assert_eq!(value["content"][1]["type"], json!("input_image"));
+        assert_eq!(value["content"][2]["type"], json!("input_text"));
         assert_eq!(
-            value["content"][1]["text"],
+            value["content"][2]["text"],
             json!("what is in this picture?")
         );
     }
@@ -3310,9 +3331,17 @@ mod tests {
             .expect("materialize entries");
 
         let value = serde_json::to_value(&input[0]).expect("serialize message");
-        assert_eq!(value["content"][0]["type"], json!("input_file"));
-        assert_eq!(value["content"][0]["filename"], json!("offer.pdf"));
-        let file_data = value["content"][0]["file_data"]
+        assert_eq!(value["content"][0]["type"], json!("input_text"));
+        assert_eq!(
+            value["content"][0]["text"],
+            json!(format!(
+                "[document: offer.pdf · {} · application/pdf]",
+                engine::media::media_handle(&BlobRef::from_bytes(b"%PDF-1.4 fake"))
+            ))
+        );
+        assert_eq!(value["content"][1]["type"], json!("input_file"));
+        assert_eq!(value["content"][1]["filename"], json!("offer.pdf"));
+        let file_data = value["content"][1]["file_data"]
             .as_str()
             .expect("file data");
         assert!(file_data.starts_with("data:application/pdf;base64,"));
@@ -3583,8 +3612,16 @@ mod tests {
 
         let value = serde_json::to_value(&item).expect("serialize input item");
         assert_eq!(value["role"], json!("user"));
-        assert_eq!(value["content"][0]["type"], json!("input_image"));
-        let url = value["content"][0]["image_url"]
+        assert_eq!(value["content"][0]["type"], json!("input_text"));
+        assert_eq!(
+            value["content"][0]["text"],
+            json!(format!(
+                "[image: photo.png · {} · image/png]",
+                engine::media::media_handle(&entry.content.content_ref)
+            ))
+        );
+        assert_eq!(value["content"][1]["type"], json!("input_image"));
+        let url = value["content"][1]["image_url"]
             .as_str()
             .expect("image url");
         assert!(url.starts_with("data:image/png;base64,"));
@@ -3691,5 +3728,113 @@ mod tests {
                 .expect("json")
                 .contains("Updated catalog")
         );
+    }
+
+    /// A tool result followed by the media its tool produced: an image and a
+    /// PDF, both tool-sourced user-role message entries.
+    async fn tool_result_with_media(blobs: &InMemoryBlobStore) -> Vec<ContextEntry> {
+        let tool_source = ContextEntrySource::Tool {
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            batch_id: None,
+        };
+        let result_ref = blobs
+            .insert_text("[image 1 · media:x · image/png · 4 B]")
+            .await;
+        let image_ref = blobs
+            .put_bytes(vec![0x89, 0x50, 0x4e, 0x47])
+            .await
+            .expect("store image");
+        let pdf_ref = blobs
+            .put_bytes(b"%PDF-1.4 fake".to_vec())
+            .await
+            .expect("store pdf");
+        let make = |id: u64,
+                    kind: ContextEntryKind,
+                    content: engine::ContentRef,
+                    preview: Option<&str>| {
+            ContextEntry {
+                entry_id: ContextEntryId::new(id),
+                key: None,
+                kind,
+                source: tool_source.clone(),
+                content,
+                preview: preview.map(str::to_owned),
+                origin: None,
+                provenance_ref: None,
+                token_estimate: None,
+                supersedes: None,
+            }
+        };
+        vec![
+            make(
+                1,
+                ContextEntryKind::ToolResult {
+                    call_id: ToolCallId::try_new("call_1").expect("call id"),
+                    is_error: false,
+                },
+                engine::ContentRef::text(result_ref),
+                None,
+            ),
+            make(
+                2,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                engine::ContentRef {
+                    content_ref: image_ref,
+                    media_type: Some("image/png".to_owned()),
+                    provider_kind: None,
+                },
+                Some("[image]"),
+            ),
+            make(
+                3,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                engine::ContentRef {
+                    content_ref: pdf_ref,
+                    media_type: Some("application/pdf".to_owned()),
+                    provider_kind: None,
+                },
+                Some("[document: report.pdf]"),
+            ),
+        ]
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tool_media_entries_follow_the_function_output_as_user_parts() {
+        let blobs = InMemoryBlobStore::new();
+        let entries = tool_result_with_media(&blobs).await;
+        let input = materialize_input_items(&blobs, &entries)
+            .await
+            .expect("materialize");
+        assert_eq!(
+            input.len(),
+            2,
+            "function output then one user message: {input:?}"
+        );
+        let output = serde_json::to_value(&input[0]).expect("json");
+        assert_eq!(output["type"], json!("function_call_output"));
+        assert_eq!(output["call_id"], json!("call_1"));
+        let user = serde_json::to_value(&input[1]).expect("json");
+        assert_eq!(user["role"], json!("user"));
+        let parts = user["content"].as_array().expect("parts");
+        let kinds = parts
+            .iter()
+            .map(|part| part["type"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec!["input_text", "input_image", "input_text", "input_file"]
+        );
+        assert!(
+            parts[0]["text"]
+                .as_str()
+                .expect("text")
+                .starts_with("[image · media:")
+        );
+        assert_eq!(parts[3]["filename"], json!("report.pdf"));
     }
 }

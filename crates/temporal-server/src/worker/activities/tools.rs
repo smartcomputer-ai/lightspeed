@@ -328,6 +328,7 @@ async fn execute_native_mcp_call(
             visible,
             is_error,
             assets,
+            media,
         }) => {
             let mut asset_refs = Vec::with_capacity(assets.len());
             for asset in assets {
@@ -377,6 +378,25 @@ async fn execute_native_mcp_call(
             } else {
                 ToolCallStatus::Succeeded
             };
+            // Admitted media follows the tool result as ordinary user-role
+            // media entries, in the order the visible text announces them.
+            let mut model_visible_context_entries = Vec::with_capacity(1 + media.len());
+            model_visible_context_entries.push(ToolInvocationResult::tool_result_context_entry(
+                &request.call.call_id,
+                status,
+                visible_ref.clone(),
+            ));
+            for item in media {
+                let Some(blob_ref) = asset_refs.get(item.asset_index) else {
+                    continue;
+                };
+                model_visible_context_entries.push(engine::media::media_context_entry(
+                    blob_ref.clone(),
+                    &item.media_type,
+                    item.kind,
+                    item.name.as_deref(),
+                ));
+            }
             Ok(NativeMcpCallOutcome::Completed(ToolInvocationResult {
                 duration_ms: None,
                 output_bytes: Some(output_bytes),
@@ -384,13 +404,7 @@ async fn execute_native_mcp_call(
                 call_id: request.call.call_id.clone(),
                 status,
                 output_ref: Some(output_ref),
-                model_visible_context_entries: vec![
-                    ToolInvocationResult::tool_result_context_entry(
-                        &request.call.call_id,
-                        status,
-                        visible_ref.clone(),
-                    ),
-                ],
+                model_visible_context_entries,
                 error_ref: is_error.then_some(visible_ref),
                 effects: Vec::new(),
             }))

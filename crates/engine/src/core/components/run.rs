@@ -230,8 +230,31 @@ pub struct ResumeToolBatchCommand {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ToolBatchResumeOutput {
-    AwaitTool { result_ref: BlobRef },
-    JoinedWorkflowCalls,
+    AwaitTool {
+        result_ref: BlobRef,
+        /// Context the awaited results supply beyond the combined result
+        /// itself, appended after it in this order. Prepared by the runtime,
+        /// which reads the payloads; the reducer only validates and records.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        additional_context: Vec<crate::ContextEntryInput>,
+    },
+    JoinedWorkflowCalls {
+        /// Context per joined promise, appended after that promise's call
+        /// result. Joined calls complete separately, so supplements keep
+        /// their promise association.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        additional_context: Vec<PromiseContextEntries>,
+    },
+}
+
+/// Model-visible entries one resolved promise supplies beside its result,
+/// the same shape ordinary tool results carry in
+/// `model_visible_context_entries`. What they contain is the runtime's
+/// business; the reducer owns promise status, call association, and order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromiseContextEntries {
+    pub promise_id: PromiseId,
+    pub entries: Vec<crate::ContextEntryInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

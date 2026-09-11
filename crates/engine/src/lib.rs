@@ -10,6 +10,7 @@
 pub mod blob;
 pub mod core;
 pub mod emission;
+pub mod media;
 pub mod session;
 pub mod storage;
 

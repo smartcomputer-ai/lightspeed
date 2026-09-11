@@ -91,6 +91,9 @@ Lightspeed covers the table stakes of a modern agent harness. Everything below w
 
 - [x] **OpenAI and Anthropic**: support for reasoning, compaction, tools,
   files, images, OAuth, and multiple credentials
+- [x] **Media from tools**: images and PDFs returned by MCP servers, read from
+  files, or handed up by sub-agents reach the model natively and are named by
+  stable `media:` handles the model can reference in its answers
 - [x] **OpenAI-compatible providers**: OpenRouter, DeepSeek, vLLM, Ollama, and
   similar servers, each configured with its own endpoint and credential
 - [x] **Prompt caching**: automatic cache breakpoints and stable cache keys

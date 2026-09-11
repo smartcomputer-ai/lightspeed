@@ -608,30 +608,48 @@ async fn materialize_message(
                     ..Default::default()
                 });
             }
+            // Tool-produced media never fails a request: a text-only dialect
+            // drops it with a note, while run-input media keeps its rejection
+            // in `validate_dialect_capabilities`.
+            let drop_media =
+                dialect == CompletionDialect::DeepSeek && crate::blob_io::is_tool_sourced(entry);
             let content = if let Some(mime) =
                 crate::blob_io::image_media_type(entry.content.media_type.as_deref())
             {
-                let data = crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
-                oai_c::CompletionMessageContent::Parts(vec![part_with_extra(
-                    "image_url",
-                    "image_url",
-                    json!({ "url": format!("data:{mime};base64,{data}") }),
-                )])
+                if drop_media {
+                    oai_c::CompletionMessageContent::Text(crate::blob_io::text_only_omission(entry))
+                } else {
+                    let data =
+                        crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
+                    oai_c::CompletionMessageContent::Parts(vec![
+                        text_part(crate::blob_io::media_announcement(entry)),
+                        part_with_extra(
+                            "image_url",
+                            "image_url",
+                            json!({ "url": format!("data:{mime};base64,{data}") }),
+                        ),
+                    ])
+                }
             } else if let Some(document) = crate::blob_io::document_entry(
                 entry.content.media_type.as_deref(),
                 entry.preview.as_deref(),
             ) {
-                if document.is_pdf {
+                if document.is_pdf && drop_media {
+                    oai_c::CompletionMessageContent::Text(crate::blob_io::text_only_omission(entry))
+                } else if document.is_pdf {
                     let data =
                         crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
-                    oai_c::CompletionMessageContent::Parts(vec![part_with_extra(
-                        "file",
-                        "file",
-                        json!({
-                            "filename": document.name.unwrap_or_else(|| "document.pdf".to_owned()),
-                            "file_data": format!("data:{};base64,{data}", document.mime),
-                        }),
-                    )])
+                    oai_c::CompletionMessageContent::Parts(vec![
+                        text_part(crate::blob_io::media_announcement(entry)),
+                        part_with_extra(
+                            "file",
+                            "file",
+                            json!({
+                                "filename": document.name.unwrap_or_else(|| "document.pdf".to_owned()),
+                                "file_data": format!("data:{};base64,{data}", document.mime),
+                            }),
+                        ),
+                    ])
                 } else {
                     let text = read_text(blobs, &entry.content.content_ref).await?;
                     let header = document
@@ -841,6 +859,11 @@ fn validate_dialect_capabilities(
     }
 
     for entry in &request.context.entries {
+        // Tool-produced media is dropped with a note at materialization
+        // instead; only deliberate run input is rejected here.
+        if crate::blob_io::is_tool_sourced(entry) {
+            continue;
+        }
         let is_image =
             crate::blob_io::image_media_type(entry.content.media_type.as_deref()).is_some();
         let is_pdf = crate::blob_io::document_entry(
@@ -1919,12 +1942,28 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "user");
         let parts = messages[0]["content"].as_array().expect("parts");
-        assert_eq!(parts[0]["type"], "image_url");
-        assert_eq!(parts[0]["image_url"]["url"], "data:image/png;base64,AQID");
-        assert_eq!(parts[1]["type"], "file");
-        assert_eq!(parts[1]["file"]["filename"], "brief.pdf");
+        assert_eq!(parts.len(), 4, "announcement + image, announcement + file");
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(
+            parts[0]["text"],
+            format!(
+                "[image · {} · image/png]",
+                engine::media::media_handle(&BlobRef::from_bytes(&[1, 2, 3]))
+            )
+        );
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,AQID");
+        assert_eq!(parts[2]["type"], "text");
         assert!(
-            parts[1]["file"]["file_data"]
+            parts[2]["text"]
+                .as_str()
+                .expect("announcement")
+                .starts_with("[document: brief.pdf · media:")
+        );
+        assert_eq!(parts[3]["type"], "file");
+        assert_eq!(parts[3]["file"]["filename"], "brief.pdf");
+        assert!(
+            parts[3]["file"]["file_data"]
                 .as_str()
                 .expect("file data")
                 .starts_with("data:application/pdf;base64,")
@@ -2588,5 +2627,156 @@ mod tests {
                 .as_deref(),
             Some(summary.trim())
         );
+    }
+
+    /// A tool result followed by the media its tool produced: an image and a
+    /// PDF, both tool-sourced user-role message entries.
+    async fn tool_result_with_media(blobs: &InMemoryBlobStore) -> Vec<ContextEntry> {
+        let tool_source = ContextEntrySource::Tool {
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            batch_id: None,
+        };
+        let result_ref = blobs
+            .insert_text("[image 1 · media:x · image/png · 4 B]")
+            .await;
+        let image_ref = blobs
+            .put_bytes(vec![0x89, 0x50, 0x4e, 0x47])
+            .await
+            .expect("store image");
+        let pdf_ref = blobs
+            .put_bytes(b"%PDF-1.4 fake".to_vec())
+            .await
+            .expect("store pdf");
+        let make = |id: u64,
+                    kind: ContextEntryKind,
+                    content: engine::ContentRef,
+                    preview: Option<&str>| {
+            ContextEntry {
+                entry_id: ContextEntryId::new(id),
+                key: None,
+                kind,
+                source: tool_source.clone(),
+                content,
+                preview: preview.map(str::to_owned),
+                origin: None,
+                provenance_ref: None,
+                token_estimate: None,
+                supersedes: None,
+            }
+        };
+        vec![
+            make(
+                1,
+                ContextEntryKind::ToolResult {
+                    call_id: ToolCallId::try_new("call_1").expect("call id"),
+                    is_error: false,
+                },
+                engine::ContentRef::text(result_ref),
+                None,
+            ),
+            make(
+                2,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                engine::ContentRef {
+                    content_ref: image_ref,
+                    media_type: Some("image/png".to_owned()),
+                    provider_kind: None,
+                },
+                Some("[image]"),
+            ),
+            make(
+                3,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                engine::ContentRef {
+                    content_ref: pdf_ref,
+                    media_type: Some("application/pdf".to_owned()),
+                    provider_kind: None,
+                },
+                Some("[document: report.pdf]"),
+            ),
+        ]
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tool_media_entries_follow_the_tool_message_as_user_parts() {
+        let blobs = InMemoryBlobStore::new();
+        let entries = tool_result_with_media(&blobs).await;
+        let value = serde_json::to_value(
+            materialize_create_request(&blobs, &request(entries))
+                .await
+                .expect("materialize"),
+        )
+        .expect("json");
+        let messages = value["messages"].as_array().expect("messages");
+        assert_eq!(
+            messages.len(),
+            2,
+            "tool message then one user message: {messages:?}"
+        );
+        assert_eq!(messages[0]["role"], "tool");
+        assert_eq!(messages[0]["tool_call_id"], "call_1");
+        assert_eq!(messages[1]["role"], "user");
+        let parts = messages[1]["content"].as_array().expect("parts");
+        let kinds = parts
+            .iter()
+            .map(|part| part["type"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(kinds, vec!["text", "image_url", "text", "file"]);
+        assert!(
+            parts[0]["text"]
+                .as_str()
+                .expect("text")
+                .starts_with("[image · media:")
+        );
+        assert_eq!(parts[3]["file"]["filename"], "report.pdf");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn deepseek_drops_tool_media_with_a_note_but_still_rejects_run_input_media() {
+        let blobs = InMemoryBlobStore::new();
+        let mut tool_request = request(tool_result_with_media(&blobs).await);
+        tool_request.model = model_for("deepseek", "deepseek-v4-flash");
+        let value = serde_json::to_value(
+            materialize_create_request(&blobs, &tool_request)
+                .await
+                .expect("tool media never fails a text-only request"),
+        )
+        .expect("json");
+        let messages = value["messages"].as_array().expect("messages");
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        let user = serde_json::to_string(&messages[1]).expect("user");
+        assert!(
+            user.contains("omitted: this model accepts text only"),
+            "{user}"
+        );
+        assert!(!user.contains("image_url"), "{user}");
+        assert!(!user.contains("file_data"), "{user}");
+        assert!(user.contains("[image · media:"), "{user}");
+        assert!(user.contains("[document: report.pdf · media:"), "{user}");
+
+        let image_ref = blobs.put_bytes(vec![1, 2, 3]).await.expect("image");
+        let mut image = entry(
+            1,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            image_ref,
+        );
+        image.content.media_type = Some("image/png".to_owned());
+        let mut input_request = request(vec![image]);
+        input_request.model = model_for("deepseek", "deepseek-v4-flash");
+        assert!(matches!(
+            materialize_create_request(&blobs, &input_request).await,
+            Err(LlmAdapterError::InvalidProviderRequest { .. })
+        ));
     }
 }

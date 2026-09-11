@@ -270,6 +270,7 @@ pub async fn invoke_workflow_tool(
         model_visible_text: model_visible.to_string(),
         output_json: acknowledgement,
         effects: vec![effect],
+        media: Vec::new(),
     })
 }
 

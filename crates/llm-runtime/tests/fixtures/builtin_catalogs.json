@@ -193,7 +193,7 @@
           "type": "function"
         },
         {
-          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
           "name": "vfs_read_file",
           "parameters": {
             "additionalProperties": false,
@@ -603,7 +603,7 @@
           "type": "function"
         },
         {
-          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
           "name": "read_file",
           "parameters": {
             "additionalProperties": false,
@@ -1056,7 +1056,7 @@
           "type": "function"
         },
         {
-          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
           "name": "read_file",
           "parameters": {
             "additionalProperties": false,
@@ -1471,7 +1471,7 @@
           "type": "function"
         },
         {
-          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
           "name": "read_file",
           "parameters": {
             "additionalProperties": false,
@@ -2261,7 +2261,7 @@
           "name": "VfsListDir"
         },
         {
-          "description": "Reads a file from the filesystem. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2672,7 +2672,7 @@
           "name": "ListDir"
         },
         {
-          "description": "Reads a file from the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3098,7 +3098,7 @@
           "name": "ListDir"
         },
         {
-          "description": "Reads a file from the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3573,7 +3573,7 @@
           "name": "list_dir"
         },
         {
-          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -4297,7 +4297,7 @@
         },
         {
           "function": {
-            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
             "name": "vfs_read_file",
             "parameters": {
               "additionalProperties": false,
@@ -4734,7 +4734,7 @@
         },
         {
           "function": {
-            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
             "name": "read_file",
             "parameters": {
               "additionalProperties": false,
@@ -5185,7 +5185,7 @@
         },
         {
           "function": {
-            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
             "name": "read_file",
             "parameters": {
               "additionalProperties": false,
@@ -5695,7 +5695,7 @@
         },
         {
           "function": {
-            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
             "name": "read_file",
             "parameters": {
               "additionalProperties": false,

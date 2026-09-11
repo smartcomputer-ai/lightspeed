@@ -46,7 +46,9 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> ToolResult<S
         ""
     };
     let text = match (tool.operation(), tool.variant()) {
-        (BuiltinToolOperation::ReadFile, _) => "Reads a file from the filesystem.",
+        (BuiltinToolOperation::ReadFile, _) => {
+            "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference."
+        }
         (BuiltinToolOperation::WriteFile, _) => "Writes a file to the filesystem.",
         (BuiltinToolOperation::EditFile, _) => "Performs exact string replacements in a file.",
         (BuiltinToolOperation::Grep, _) => "Searches file contents with a regular expression.",
@@ -309,7 +311,9 @@ pub(super) async fn invoke_json(
             let args: ClaudeCodeReadArgs = decode_args(arguments)?;
             let fs_ctx = ctx.filesystem()?;
             let result = invoke_read_file(fs_ctx, args.try_into_read_file_args()?).await?;
+            let media = result.media_outputs();
             encode_output(&result, result.line_numbered_text.clone())
+                .map(|output| output.with_media(media))
         }
         (BuiltinToolOperation::WriteFile, _) => {
             let args: ClaudeCodeWriteArgs = decode_args(arguments)?;
