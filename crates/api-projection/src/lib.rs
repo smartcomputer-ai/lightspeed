@@ -2792,8 +2792,15 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
         },
         "agent_run" | "agent_spawn" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Agent,
-            verb: if normalized == "agent_run" { "Delegate" } else { "Spawn" }.to_owned(),
-            target: json.as_ref().and_then(|json| first_string(json, &["agent"])),
+            verb: if normalized == "agent_run" {
+                "Delegate"
+            } else {
+                "Spawn"
+            }
+            .to_owned(),
+            target: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["agent"])),
             detail: json.as_ref().and_then(|json| {
                 first_string(json, &["label"])
                     .or_else(|| first_string(json, &["input"]).map(|input| summary_line(&input)))
@@ -2809,7 +2816,10 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
             .to_owned(),
             target: json.as_ref().and_then(|json| string_list(json, "promises")),
             detail: json.as_ref().and_then(|json| {
-                let count = json.get("promises").and_then(Value::as_array).map_or(0, Vec::len);
+                let count = json
+                    .get("promises")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
                 let any = first_string(json, &["mode"]).is_some_and(|mode| mode == "any");
                 match (count, any) {
                     (0 | 1, false) => None,
@@ -2822,12 +2832,16 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
         "bot_emit" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Bot,
             verb: "Emit".to_owned(),
-            target: Some(match json.as_ref().and_then(|json| first_string(json, &["to"])) {
-                Some(to) => format!("to {to}"),
-                None => "to self".to_owned(),
-            }),
+            target: Some(
+                match json.as_ref().and_then(|json| first_string(json, &["to"])) {
+                    Some(to) => format!("to {to}"),
+                    None => "to self".to_owned(),
+                },
+            ),
             detail: json.as_ref().and_then(|json| {
-                let mut parts = first_string(json, &["kind"]).into_iter().collect::<Vec<_>>();
+                let mut parts = first_string(json, &["kind"])
+                    .into_iter()
+                    .collect::<Vec<_>>();
                 if json.get("reply").and_then(Value::as_bool) == Some(true) {
                     parts.push("reply requested".to_owned());
                 }
@@ -2840,7 +2854,9 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
         "bot_event_resolve" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Bot,
             verb: "Resolve".to_owned(),
-            target: json.as_ref().and_then(|json| first_string(json, &["outcome"])),
+            target: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["outcome"])),
             detail: json
                 .as_ref()
                 .and_then(|json| first_string(json, &["summary"]))
@@ -2888,7 +2904,9 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
         "bot_filter_test" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Bot,
             verb: "Test filter".to_owned(),
-            target: json.as_ref().and_then(|json| first_string(json, &["filter"])),
+            target: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["filter"])),
             detail: None,
         },
         "bot_brief_put" => ToolCallDisplayView {
@@ -3008,14 +3026,11 @@ fn string_list(json: &Value, key: &str) -> Option<String> {
 /// The first scalar value inside an object, as a short hint of what a
 /// generic call was about (an id, a query, a path).
 fn first_scalar_text(value: &Value) -> Option<String> {
-    value
-        .as_object()?
-        .values()
-        .find_map(|value| match value {
-            Value::String(text) if !text.trim().is_empty() => Some(summary_line(text)),
-            Value::Number(number) => Some(number.to_string()),
-            _ => None,
-        })
+    value.as_object()?.values().find_map(|value| match value {
+        Value::String(text) if !text.trim().is_empty() => Some(summary_line(text)),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    })
 }
 
 fn command_display(json: &Value) -> Option<String> {
@@ -3119,7 +3134,10 @@ mod tests {
         .expect("display");
         assert_eq!(display.summary.group, ToolCallDisplayGroup::Mcp);
         assert_eq!(display.summary.verb, "stripe");
-        assert_eq!(display.summary.target.as_deref(), Some("retrieve_subscription"));
+        assert_eq!(
+            display.summary.target.as_deref(),
+            Some("retrieve_subscription")
+        );
         assert_eq!(display.tool_name, "stripe.retrieve_subscription");
     }
 
@@ -3133,7 +3151,10 @@ mod tests {
         assert_eq!(display.group, ToolCallDisplayGroup::Agent);
         assert_eq!(display.verb, "Delegate");
         assert_eq!(display.target.as_deref(), Some("reviewer"));
-        assert_eq!(display.detail.as_deref(), Some("Review the diff on skills2."));
+        assert_eq!(
+            display.detail.as_deref(),
+            Some("Review the diff on skills2.")
+        );
 
         let display = tool_call_display(
             "agent_spawn",
@@ -3164,7 +3185,10 @@ mod tests {
         assert_eq!(display.group, ToolCallDisplayGroup::Bot);
         assert_eq!(display.verb, "Emit");
         assert_eq!(display.target.as_deref(), Some("to escalations"));
-        assert_eq!(display.detail.as_deref(), Some("bug.confirmed · reply requested"));
+        assert_eq!(
+            display.detail.as_deref(),
+            Some("bug.confirmed · reply requested")
+        );
 
         let display = tool_call_display(
             "bot_emit",
@@ -3172,7 +3196,10 @@ mod tests {
         )
         .expect("display");
         assert_eq!(display.target.as_deref(), Some("to self"));
-        assert_eq!(display.detail.as_deref(), Some("research.followup · key nightly"));
+        assert_eq!(
+            display.detail.as_deref(),
+            Some("research.followup · key nightly")
+        );
     }
 
     #[test]
@@ -3184,11 +3211,14 @@ mod tests {
         .expect("display");
         assert_eq!(display.group, ToolCallDisplayGroup::Message);
         assert_eq!(display.verb, "Send");
-        assert_eq!(display.target.as_deref(), Some("On it — checking the logs now."));
+        assert_eq!(
+            display.target.as_deref(),
+            Some("On it — checking the logs now.")
+        );
         assert_eq!(display.detail.as_deref(), Some("reply to #12"));
 
-        let display = tool_call_display("message_noop", r#"{"reason":"already answered"}"#)
-            .expect("display");
+        let display =
+            tool_call_display("message_noop", r#"{"reason":"already answered"}"#).expect("display");
         assert_eq!(display.verb, "Skip");
         assert_eq!(display.detail.as_deref(), Some("already answered"));
     }
