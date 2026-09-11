@@ -253,31 +253,40 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentSkillsFeature": {
+        "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Discovery scope resolved on the selected machine, never on the worker.",
+          "description": "Prompt loading scope resolved on the selected machine, never on the worker.",
           "properties": {
-            "additionalRoots": {
-              "default": [],
-              "description": "Additional absolute or working-directory-relative discovery roots.",
+            "roots": {
+              "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/prompts and\n.lightspeed/prompts under working directory and execution home.",
               "items": {
                 "type": "string"
               },
-              "type": "array"
-            },
-            "projectRoot": {
-              "description": "Absolute ancestor boundary. Absent scans only the working directory.",
+              "minItems": 1,
               "type": [
-                "string",
+                "array",
                 "null"
               ]
-            },
-            "workingDirectory": {
-              "description": "Absolute session working directory; absent uses the endpoint default.",
+            }
+          },
+          "type": "object"
+        },
+        "EnvironmentSkillsConfig": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Skill discovery scope resolved on the selected machine, never on the worker.",
+          "properties": {
+            "roots": {
+              "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/skills and\n.lightspeed/skills under working directory and execution home.",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
               "type": [
-                "string",
+                "array",
                 "null"
               ]
             }
@@ -294,6 +303,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "default": false,
               "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
               "type": "boolean"
+            },
+            "prompts": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentPromptsConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Independent environment prompt loading; absent disables sourced instructions."
             },
             "providers": {
               "description": "Absent means every registered provider is allowed.",
@@ -323,7 +343,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "skills": {
               "anyOf": [
                 {
-                  "$ref": "#/definitions/EnvironmentSkillsFeature"
+                  "$ref": "#/definitions/EnvironmentSkillsConfig"
                 },
                 {
                   "type": "null"
@@ -336,6 +356,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "workingDirectory": {
+              "description": "Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "type": "object"
@@ -1132,6 +1159,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "minimum": 0,
               "type": "integer"
             },
+            "workingDirectory": {
+              "description": "Absolute VFS tool working directory; absent uses /.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "workspaceLinks": {
               "description": "Catalog resources exposed in the session's workspace namespace.",
               "items": {
@@ -1517,31 +1551,40 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentSkillsFeature": {
+        "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Discovery scope resolved on the selected machine, never on the worker.",
+          "description": "Prompt loading scope resolved on the selected machine, never on the worker.",
           "properties": {
-            "additionalRoots": {
-              "default": [],
-              "description": "Additional absolute or working-directory-relative discovery roots.",
+            "roots": {
+              "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/prompts and\n.lightspeed/prompts under working directory and execution home.",
               "items": {
                 "type": "string"
               },
-              "type": "array"
-            },
-            "projectRoot": {
-              "description": "Absolute ancestor boundary. Absent scans only the working directory.",
+              "minItems": 1,
               "type": [
-                "string",
+                "array",
                 "null"
               ]
-            },
-            "workingDirectory": {
-              "description": "Absolute session working directory; absent uses the endpoint default.",
+            }
+          },
+          "type": "object"
+        },
+        "EnvironmentSkillsConfig": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Skill discovery scope resolved on the selected machine, never on the worker.",
+          "properties": {
+            "roots": {
+              "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/skills and\n.lightspeed/skills under working directory and execution home.",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
               "type": [
-                "string",
+                "array",
                 "null"
               ]
             }
@@ -1558,6 +1601,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "default": false,
               "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
               "type": "boolean"
+            },
+            "prompts": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentPromptsConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Independent environment prompt loading; absent disables sourced instructions."
             },
             "providers": {
               "description": "Absent means every registered provider is allowed.",
@@ -1587,7 +1641,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "skills": {
               "anyOf": [
                 {
-                  "$ref": "#/definitions/EnvironmentSkillsFeature"
+                  "$ref": "#/definitions/EnvironmentSkillsConfig"
                 },
                 {
                   "type": "null"
@@ -1600,6 +1654,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "workingDirectory": {
+              "description": "Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "type": "object"
@@ -2059,6 +2120,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "workingDirectory": {
+              "description": "Absolute VFS tool working directory; absent uses /.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "workspaceLinks": {
               "description": "Catalog resources exposed in the session's workspace namespace.",
@@ -3612,31 +3680,40 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentSkillsFeature": {
+        "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Discovery scope resolved on the selected machine, never on the worker.",
+          "description": "Prompt loading scope resolved on the selected machine, never on the worker.",
           "properties": {
-            "additionalRoots": {
-              "default": [],
-              "description": "Additional absolute or working-directory-relative discovery roots.",
+            "roots": {
+              "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/prompts and\n.lightspeed/prompts under working directory and execution home.",
               "items": {
                 "type": "string"
               },
-              "type": "array"
-            },
-            "projectRoot": {
-              "description": "Absolute ancestor boundary. Absent scans only the working directory.",
+              "minItems": 1,
               "type": [
-                "string",
+                "array",
                 "null"
               ]
-            },
-            "workingDirectory": {
-              "description": "Absolute session working directory; absent uses the endpoint default.",
+            }
+          },
+          "type": "object"
+        },
+        "EnvironmentSkillsConfig": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Skill discovery scope resolved on the selected machine, never on the worker.",
+          "properties": {
+            "roots": {
+              "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/skills and\n.lightspeed/skills under working directory and execution home.",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
               "type": [
-                "string",
+                "array",
                 "null"
               ]
             }
@@ -3653,6 +3730,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "default": false,
               "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
               "type": "boolean"
+            },
+            "prompts": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentPromptsConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Independent environment prompt loading; absent disables sourced instructions."
             },
             "providers": {
               "description": "Absent means every registered provider is allowed.",
@@ -3682,7 +3770,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "skills": {
               "anyOf": [
                 {
-                  "$ref": "#/definitions/EnvironmentSkillsFeature"
+                  "$ref": "#/definitions/EnvironmentSkillsConfig"
                 },
                 {
                   "type": "null"
@@ -3695,6 +3783,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "workingDirectory": {
+              "description": "Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "type": "object"
@@ -4451,6 +4546,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "workingDirectory": {
+              "description": "Absolute VFS tool working directory; absent uses /.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "workspaceLinks": {
               "description": "Catalog resources exposed in the session's workspace namespace.",
@@ -5635,31 +5737,40 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentSkillsFeature": {
+        "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Discovery scope resolved on the selected machine, never on the worker.",
+          "description": "Prompt loading scope resolved on the selected machine, never on the worker.",
           "properties": {
-            "additionalRoots": {
-              "default": [],
-              "description": "Additional absolute or working-directory-relative discovery roots.",
+            "roots": {
+              "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/prompts and\n.lightspeed/prompts under working directory and execution home.",
               "items": {
                 "type": "string"
               },
-              "type": "array"
-            },
-            "projectRoot": {
-              "description": "Absolute ancestor boundary. Absent scans only the working directory.",
+              "minItems": 1,
               "type": [
-                "string",
+                "array",
                 "null"
               ]
-            },
-            "workingDirectory": {
-              "description": "Absolute session working directory; absent uses the endpoint default.",
+            }
+          },
+          "type": "object"
+        },
+        "EnvironmentSkillsConfig": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Skill discovery scope resolved on the selected machine, never on the worker.",
+          "properties": {
+            "roots": {
+              "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/skills and\n.lightspeed/skills under working directory and execution home.",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
               "type": [
-                "string",
+                "array",
                 "null"
               ]
             }
@@ -5676,6 +5787,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "default": false,
               "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
               "type": "boolean"
+            },
+            "prompts": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentPromptsConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Independent environment prompt loading; absent disables sourced instructions."
             },
             "providers": {
               "description": "Absent means every registered provider is allowed.",
@@ -5705,7 +5827,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "skills": {
               "anyOf": [
                 {
-                  "$ref": "#/definitions/EnvironmentSkillsFeature"
+                  "$ref": "#/definitions/EnvironmentSkillsConfig"
                 },
                 {
                   "type": "null"
@@ -5718,6 +5840,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "workingDirectory": {
+              "description": "Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "type": "object"
@@ -6372,6 +6501,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "workingDirectory": {
+              "description": "Absolute VFS tool working directory; absent uses /.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "workspaceLinks": {
               "description": "Catalog resources exposed in the session's workspace namespace.",
@@ -6869,31 +7005,40 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentSkillsFeature": {
+        "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Discovery scope resolved on the selected machine, never on the worker.",
+          "description": "Prompt loading scope resolved on the selected machine, never on the worker.",
           "properties": {
-            "additionalRoots": {
-              "default": [],
-              "description": "Additional absolute or working-directory-relative discovery roots.",
+            "roots": {
+              "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/prompts and\n.lightspeed/prompts under working directory and execution home.",
               "items": {
                 "type": "string"
               },
-              "type": "array"
-            },
-            "projectRoot": {
-              "description": "Absolute ancestor boundary. Absent scans only the working directory.",
+              "minItems": 1,
               "type": [
-                "string",
+                "array",
                 "null"
               ]
-            },
-            "workingDirectory": {
-              "description": "Absolute session working directory; absent uses the endpoint default.",
+            }
+          },
+          "type": "object"
+        },
+        "EnvironmentSkillsConfig": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Skill discovery scope resolved on the selected machine, never on the worker.",
+          "properties": {
+            "roots": {
+              "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/skills and\n.lightspeed/skills under working directory and execution home.",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
               "type": [
-                "string",
+                "array",
                 "null"
               ]
             }
@@ -6910,6 +7055,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "default": false,
               "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
               "type": "boolean"
+            },
+            "prompts": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentPromptsConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Independent environment prompt loading; absent disables sourced instructions."
             },
             "providers": {
               "description": "Absent means every registered provider is allowed.",
@@ -6939,7 +7095,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "skills": {
               "anyOf": [
                 {
-                  "$ref": "#/definitions/EnvironmentSkillsFeature"
+                  "$ref": "#/definitions/EnvironmentSkillsConfig"
                 },
                 {
                   "type": "null"
@@ -6952,6 +7108,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "workingDirectory": {
+              "description": "Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "type": "object"
@@ -7606,6 +7769,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "workingDirectory": {
+              "description": "Absolute VFS tool working directory; absent uses /.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "workspaceLinks": {
               "description": "Catalog resources exposed in the session's workspace namespace.",

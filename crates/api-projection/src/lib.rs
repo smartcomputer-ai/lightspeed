@@ -2057,6 +2057,12 @@ fn features_config_to_api(
             .as_ref()
             .map(|environments| api::EnvironmentsFeature {
                 version: environments.version,
+                working_directory: environments.working_directory.clone(),
+                prompts: environments.prompts.as_ref().map(|source| {
+                    api::EnvironmentPromptsConfig {
+                        roots: source.roots.clone(),
+                    }
+                }),
                 providers: environments.providers.clone(),
                 registration_keys: environments.registration_keys.clone(),
                 selection_tools: environments.selection_tools,
@@ -2064,10 +2070,8 @@ fn features_config_to_api(
                 skills: environments
                     .skills
                     .as_ref()
-                    .map(|skills| api::EnvironmentSkillsFeature {
-                        working_directory: skills.working_directory.clone(),
-                        project_root: skills.project_root.clone(),
-                        additional_roots: skills.additional_roots.clone(),
+                    .map(|skills| api::EnvironmentSkillsConfig {
+                        roots: skills.roots.clone(),
                     }),
             }),
         mcp: features.mcp.as_ref().map(mcp_feature_to_api),
@@ -2077,6 +2081,7 @@ fn features_config_to_api(
 fn vfs_feature_to_api(vfs: &engine::VfsFeature) -> api::VfsFeature {
     api::VfsFeature {
         version: vfs.version,
+        working_directory: vfs.working_directory.clone(),
         workspace_links: vfs
             .workspace_links
             .iter()
@@ -3969,6 +3974,7 @@ mod tests {
             },
             features: engine::FeaturesConfig {
                 vfs: Some(engine::VfsFeature {
+                    working_directory: None,
                     version: engine::CURRENT_FEATURE_VERSION,
                     workspace_links: Vec::new(),
                     tools: Some(engine::VfsToolSurface::ReadOnly),
@@ -4041,6 +4047,7 @@ mod tests {
                 }),
                 features: Some(api::FeaturesConfig {
                     vfs: Some(api::VfsFeature {
+                        working_directory: None,
                         version: api::CURRENT_FEATURE_VERSION,
                         workspace_links: Vec::new(),
                         tools: Some(api::VfsToolSurface::ReadOnly),
@@ -4074,6 +4081,8 @@ mod tests {
                         version: api::CURRENT_FEATURE_VERSION,
                     }),
                     environments: Some(api::EnvironmentsFeature {
+                        working_directory: None,
+                        prompts: None,
                         version: api::CURRENT_FEATURE_VERSION,
                         providers: None,
                         registration_keys: None,

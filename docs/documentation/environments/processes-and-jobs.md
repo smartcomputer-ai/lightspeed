@@ -77,7 +77,12 @@ above. Replace the directory with the absolute path created by the agent:
 
 `argv` is an argument array. It does not interpret pipes, redirection, or other
 shell syntax by itself; use a shell explicitly when the command needs them.
-The working directory is on the environment machine.
+The working directory is on the environment machine. The session's
+`features.environments.workingDirectory` supplies the default for file tools,
+commands, jobs, and prompt/skill discovery; when unset, the endpoint's default
+is used. A per-command `cwd` overrides this base and relative overrides resolve
+against it. A shell `cd` does not persist into later tool calls. VFS has a
+separate `features.vfs.workingDirectory`, defaulting to `/`.
 
 The wait before yielding and the command's deadline are separate. In this
 example, the tool waits up to one second before returning available output

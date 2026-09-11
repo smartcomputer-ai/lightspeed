@@ -477,7 +477,7 @@ impl SessionTools {
                 (
                     match store.read_environment(&environment_id).await {
                         Ok(resource) => {
-                            self.runtime_environment_for_resource(session_id, resource)
+                            self.runtime_environment_for_resource(session_id, resource, None)
                                 .await
                         }
                         Err(error) => Err(map_environments_error(error)),
@@ -604,13 +604,17 @@ impl SessionTools {
                 .await;
             };
             let policy = supplied_environment_policy(request)?;
-            let context = JobSubmitExecutionContextV1::new(
+            let mut context = JobSubmitExecutionContextV1::new(
                 environment_id.as_str().to_owned(),
                 policy.providers.map(|ids| ids.into_iter().collect()),
                 policy
                     .registration_keys
                     .map(|ids| ids.into_iter().collect()),
             );
+            context.working_directory = request
+                .environment_policy
+                .as_ref()
+                .and_then(|policy| policy.working_directory.clone());
             Some(
                 self.blobs
                     .put_bytes(serde_json::to_vec(&context).map_err(io_error)?)
@@ -1020,7 +1024,18 @@ impl SessionTools {
             return Ok(environments);
         };
         let allowed = supplied_environment_policy(request)?;
-        if environments.environment(environment_id.as_str()).is_some() {
+        if let Some(environment) = environments.environment(environment_id.as_str()).cloned() {
+            if let Some(cwd) = request
+                .environment_policy
+                .as_ref()
+                .and_then(|policy| policy.working_directory.as_deref())
+            {
+                let environment = environment
+                    .with_working_directory(FsPath::new(cwd).map_err(io_error)?)
+                    .await
+                    .map_err(io_error)?;
+                environments.insert_environment(environment);
+            }
             return Ok(environments);
         }
         let resource = if let Some(resolver) = self.environment_resolver.as_ref() {
@@ -1074,7 +1089,14 @@ impl SessionTools {
             resource
         };
         let environment = match self
-            .runtime_environment_for_resource(&request.session_id, resource)
+            .runtime_environment_for_resource(
+                &request.session_id,
+                resource,
+                request
+                    .environment_policy
+                    .as_ref()
+                    .and_then(|policy| policy.working_directory.as_deref()),
+            )
             .await
         {
             Ok(environment) => environment,
@@ -1119,6 +1141,7 @@ impl SessionTools {
         &self,
         session_id: &SessionId,
         resource: EnvironmentRecord,
+        working_directory: Option<&str>,
     ) -> Result<RuntimeEnvironment, CoreAgentIoError> {
         let gateway = self
             .environment_gateway
@@ -1151,16 +1174,34 @@ impl SessionTools {
                 response.protocol_version
             )));
         }
-        let cwd = response
-            .default_cwd
-            .as_deref()
-            .map(FsPath::new)
-            .transpose()
-            .map_err(|error| io_error(format!("invalid environment data default cwd: {error}")))?;
         client
             .initialized(&InitializedParams {})
             .await
             .map_err(map_environment_client_error)?;
+        let cwd = if response.capabilities.filesystem_read {
+            match crate::environment_sources::working_directory(
+                &mut client,
+                working_directory,
+                response.default_cwd.as_deref(),
+            )
+            .await
+            {
+                Ok(cwd) => cwd,
+                Err(error) => {
+                    let _ = client.close().await;
+                    return Err(io_error(error));
+                }
+            }
+        } else {
+            let cwd = working_directory
+                .or(response.default_cwd.as_deref())
+                .ok_or_else(|| io_error("environment has no working directory"))?;
+            tools::environment::sources::absolute(std::path::Path::new("/"), cwd)
+                .map_err(io_error)?
+                .to_string_lossy()
+                .into_owned()
+        };
+        let cwd = Some(FsPath::new(cwd).map_err(io_error)?);
 
         let mut remote_connection = RemoteEnvironmentConnection::new(client, response.capabilities);
         if let Some(cwd) = cwd {
@@ -1180,11 +1221,12 @@ impl SessionTools {
         )
     }
 
-    fn runtime_for_domains(
+    async fn runtime_for_domains(
         &self,
         links: Vec<ResolvedWorkspaceLink>,
         environments: &SessionEnvironmentManager,
         active_environment_id: Option<&EnvironmentId>,
+        vfs_working_directory: Option<&str>,
     ) -> Result<InlineToolRuntime, CoreAgentIoError> {
         let vfs = if links.is_empty() {
             None
@@ -1196,7 +1238,15 @@ impl SessionTools {
             )
             .map_err(io_error)?
             .with_blob_graph(self.blob_graph.clone());
-            let cwd = linked_vfs_cwd(fs.links())?;
+            let cwd = FsPath::new(vfs_working_directory.unwrap_or("/")).map_err(io_error)?;
+            let metadata = tools::fs::FileSystem::get_metadata(&fs, &cwd)
+                .await
+                .map_err(io_error)?;
+            if !metadata.is_directory {
+                return Err(io_error(format!(
+                    "VFS working directory is not a directory: {cwd}"
+                )));
+            }
             Some(FsToolContext::new(Arc::new(fs), self.blobs.clone()).with_cwd(cwd))
         };
         let environment =
@@ -1487,11 +1537,14 @@ impl CoreAgentTools for SessionTools {
             SessionEnvironmentManager::new(self.blobs.clone())
         };
         let outcome = async {
-            let runtime = self.runtime_for_domains(
-                links,
-                &environments,
-                request.active_environment_id.as_ref(),
-            )?;
+            let runtime = self
+                .runtime_for_domains(
+                    links,
+                    &environments,
+                    request.active_environment_id.as_ref(),
+                    request.vfs_working_directory.as_deref(),
+                )
+                .await?;
 
             let mut results = Vec::with_capacity(request.calls.len());
             for call in &request.calls {
@@ -1707,11 +1760,14 @@ impl SessionTools {
             Vec::new()
         };
         let outcome = async {
-            let runtime = self.runtime_for_domains(
-                links,
-                &environments,
-                batch_request.active_environment_id.as_ref(),
-            )?;
+            let runtime = self
+                .runtime_for_domains(
+                    links,
+                    &environments,
+                    batch_request.active_environment_id.as_ref(),
+                    batch_request.vfs_working_directory.as_deref(),
+                )
+                .await?;
             runtime
                 .invoke_call(&call)
                 .await
@@ -1869,15 +1925,6 @@ fn per_call_batch_rule_violation(
         );
     }
     None
-}
-
-fn linked_vfs_cwd(links: &[ResolvedWorkspaceLink]) -> Result<FsPath, CoreAgentIoError> {
-    let cwd = if links.iter().any(|link| link.path.as_str() == "/workspace") {
-        "/workspace"
-    } else {
-        "/"
-    };
-    FsPath::new(cwd).map_err(io_error)
 }
 
 async fn failed_result(
@@ -2051,6 +2098,7 @@ mod tests {
         siblings: &[(&str, &[u8])],
     ) -> engine::ToolInvocationCallRequest {
         engine::ToolInvocationCallRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-a"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
@@ -2394,6 +2442,7 @@ mod tests {
             remote_mcp: None,
         });
         let request = ToolInvocationBatchRequest {
+            vfs_working_directory: None,
             session_id,
             run_id: RunId::new(9),
             turn_id: TurnId::new(1),
@@ -2560,7 +2609,8 @@ mod tests {
             promise_control: None,
             remote_mcp: None,
         };
-        let request = ToolInvocationBatchRequest {
+        let mut request = ToolInvocationBatchRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-job-start"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
@@ -2575,6 +2625,11 @@ mod tests {
             workspace_links: Vec::new(),
             calls: vec![call.clone()],
         };
+        request
+            .environment_policy
+            .as_mut()
+            .unwrap()
+            .working_directory = Some("/project".into());
         let tools = SessionTools::new(blobs.clone(), catalog);
 
         let first = tools
@@ -2605,6 +2660,7 @@ mod tests {
         )
         .expect("decode execution context");
         assert_eq!(context.environment_id, "environment-original");
+        assert_eq!(context.working_directory.as_deref(), Some("/project"));
         assert_eq!(
             context.allowed_provider_ids,
             Some(vec!["provider-a".to_owned(), "provider-b".to_owned()])
@@ -2619,6 +2675,7 @@ mod tests {
 
         let missing_active = tools
             .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: None,
                 session_id: SessionId::new("session-job-start"),
                 run_id: RunId::new(2),
                 turn_id: TurnId::new(1),
@@ -2712,6 +2769,7 @@ mod tests {
             .await
             .expect("put agent arguments");
         ToolInvocationBatchRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-parent"),
             run_id: RunId::new(7),
             turn_id: TurnId::new(2),
@@ -3189,6 +3247,7 @@ mod tests {
                         Arc::new(RecordingProcessExecutor::default()),
                     );
                     let mut context = environment.tool_context().clone();
+                    context.process_cwd = Some(FsPath::new(root.path().to_string_lossy()).unwrap());
                     context.transfer = Some(Arc::new(LocalTransfer(fs)));
                     let environment =
                         RuntimeEnvironment::from_resource(environment.resource().clone(), context);
@@ -3495,6 +3554,7 @@ mod tests {
             .await
             .expect("list arguments");
         let request = engine::ToolInvocationCallRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-per-call-list"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
@@ -3569,6 +3629,7 @@ mod tests {
             .await
             .expect("read_file arguments");
         let request = engine::ToolInvocationCallRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-per-call-not-ready"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
@@ -3697,6 +3758,7 @@ mod tests {
             .await
             .expect("await arguments");
         let request = engine::ToolInvocationCallRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-per-call-await"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
@@ -3749,6 +3811,7 @@ mod tests {
             .await
             .expect("list arguments");
         let request = ToolInvocationBatchRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-environment-list"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
@@ -3825,6 +3888,32 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn vfs_relative_paths_use_only_the_configured_directory() {
+        for (cwd, succeeds) in [(None, false), (Some("/workspace"), true)] {
+            let (blobs, tools, session_id, links) = session_tools_with_readme_link().await;
+            let mut request = per_call_request("vfs_read_file", br#"{"path":"README.md"}"#, &[]);
+            request.session_id = session_id;
+            request.workspace_links = links;
+            request.vfs_working_directory = cwd.map(String::from);
+            request.call.arguments_ref = blobs
+                .put_bytes(br#"{"path":"README.md"}"#.to_vec())
+                .await
+                .unwrap();
+            let result = tools.invoke_call(request).await.unwrap();
+            assert_eq!(result.status == ToolCallStatus::Succeeded, succeeds);
+            if succeeds {
+                assert!(
+                    blobs
+                        .read_text(result.output_ref.as_ref().unwrap())
+                        .await
+                        .unwrap()
+                        .contains("hello")
+                );
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn session_tools_read_vfs_workspace_link() {
         let (blobs, tools, session_id, workspace_links) = session_tools_with_readme_link().await;
         let arguments_ref = blobs
@@ -3834,6 +3923,7 @@ mod tests {
 
         let result = tools
             .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: Some("/workspace".into()),
                 session_id,
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
@@ -3877,6 +3967,7 @@ mod tests {
 
         let result = tools
             .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: Some("/workspace".into()),
                 session_id,
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
@@ -3933,6 +4024,7 @@ mod tests {
 
         let result = tools
             .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: Some("/workspace".into()),
                 session_id,
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
@@ -4068,6 +4160,7 @@ mod tests {
 
         let result = tools
             .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: None,
                 session_id: parent,
                 run_id: RunId::new(9),
                 turn_id: TurnId::new(1),
@@ -4172,6 +4265,7 @@ mod tests {
 
         let result = tools
             .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: None,
                 session_id: parent,
                 run_id: RunId::new(9),
                 turn_id: TurnId::new(1),
@@ -4222,6 +4316,7 @@ mod tests {
 
         let result = tools
             .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: None,
                 session_id: parent,
                 run_id: RunId::new(9),
                 turn_id: TurnId::new(1),
@@ -4277,6 +4372,7 @@ mod tests {
 
         let result = tools
             .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: None,
                 session_id: parent,
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
@@ -4350,6 +4446,7 @@ mod tests {
 
         let result = tools
             .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: None,
                 session_id: SessionId::new("session_sleep"),
                 run_id: RunId::new(9),
                 turn_id: TurnId::new(1),
@@ -4434,6 +4531,7 @@ mod tests {
 
         let result = tools
             .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: None,
                 session_id: SessionId::new("session_1"),
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
@@ -4479,6 +4577,7 @@ mod tests {
 
         let result = tools
             .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: None,
                 session_id: SessionId::new("session_1"),
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),

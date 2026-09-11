@@ -273,6 +273,9 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
     const feature = record(sourceFeatures[name]);
     const next: RecordValue = {};
 
+    if (name === "vfs" || name === "environments") {
+      if (string(feature.workingDirectory)) next.workingDirectory = feature.workingDirectory;
+    }
     if (name === "vfs") {
       if (["readOnly", "edit"].includes(string(feature.tools))) next.tools = feature.tools;
       if (Array.isArray(feature.workspaceLinks) && feature.workspaceLinks.length) {
@@ -332,7 +335,12 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
       if (providers.length) next.providers = providers;
       if (feature.selectionTools === true) next.selectionTools = true;
       if (feature.jobs === true) next.jobs = true;
-      if ("skills" in feature) next.skills = record(feature.skills);
+      for (const key of ["skills", "prompts"] as const) {
+        if (feature[key] != null) {
+          const source = record(feature[key]);
+          next[key] = source.roots == null ? {} : { roots: stringList(source.roots) };
+        }
+      }
     }
     if (name === "mcp") {
       const servers = Array.isArray(feature.servers)
@@ -399,10 +407,15 @@ function configError(config: SessionConfig | undefined, pinnedApiKind?: string):
       return `${label} roots must be absolute paths inside workspace links.`;
     }
   }
-  const environmentSkills = record(record(features.environments).skills);
-  for (const key of ["workingDirectory", "projectRoot"] as const) {
-    const path = string(environmentSkills[key]);
-    if (path && !path.startsWith("/")) return "Environment skill working directory and project root must be absolute paths.";
+  const vfsCwd = string(vfs.workingDirectory);
+  if (vfsCwd && (!isCanonicalAbsolutePath(vfsCwd) || (vfsCwd !== "/" && !workspaceLinksFromConfig(config).some((link) => link.path === "/" || vfsCwd === link.path || vfsCwd.startsWith(`${link.path}/`))))) {
+    return "VFS working directory must be / or an absolute path inside a workspace link.";
+  }
+  const environment = record(features.environments);
+  if (string(environment.workingDirectory) && !string(environment.workingDirectory).startsWith("/")) return "Environment working directory must be absolute.";
+  for (const key of ["skills", "prompts"] as const) {
+    const roots = record(environment[key]).roots;
+    if (roots != null && !stringList(roots).length) return "Environment source root overrides must not be empty; clear the override to use defaults.";
   }
   return null;
 }
@@ -1224,6 +1237,7 @@ function VfsFields({
 
   return (
     <div className="grid gap-5">
+      <WorkingDirectoryField feature={feature} patch={patch} />
       <div className="grid gap-4 sm:grid-cols-2">
         <Field className="sm:col-span-2">
           <FieldLabel>File tools</FieldLabel>
@@ -1603,18 +1617,39 @@ function profileLabel(profile: ProfileOption | undefined, profileId: string): st
   return profile?.displayName || profileId;
 }
 
-function SourceDiscoveryFields({ source, feature, patch }: {
-  source: "vfs" | "vfs-prompts" | "environment";
+function WorkingDirectoryField({ environment, feature, patch }: {
+  environment?: boolean;
   feature: RecordValue;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
   const id = useId();
-  const environment = source === "environment";
-  const prompts = source === "vfs-prompts";
+  return <Field>
+    <FieldLabel htmlFor={id}>Working directory</FieldLabel>
+    <Input id={id} aria-label={`${environment ? "Environment" : "VFS"} working directory`}
+      className="font-mono" value={string(feature.workingDirectory)} placeholder={environment ? "Environment default" : "/"}
+      onChange={(event) => patch((next) => {
+        if (event.target.value) next.workingDirectory = event.target.value;
+        else delete next.workingDirectory;
+      })} />
+    <FieldDescription>{environment
+      ? "Absolute machine directory for file tools, commands, jobs, and discovery. Empty uses the environment default."
+      : "Absolute linked VFS directory for relative file paths. Empty uses /. Source discovery still searches every workspace link."}</FieldDescription>
+  </Field>;
+}
+
+function SourceDiscoveryFields({ source, feature, patch }: {
+  source: "vfs" | "vfs-prompts" | "environment" | "environment-prompts";
+  feature: RecordValue;
+  patch: (fn: (feature: RecordValue) => void) => void;
+}) {
+  const id = useId();
+  const environment = source.startsWith("environment");
+  const prompts = source.endsWith("prompts");
   const configKey = prompts ? "prompts" : "skills";
   const enabled = feature[configKey] != null;
   const skills = record(feature[configKey]);
-  const switchLabel = prompts ? "VFS prompt loading" : `${environment ? "Environment" : "VFS"} skill discovery`;
+  const domain = environment ? "Environment" : "VFS";
+  const switchLabel = `${domain} ${prompts ? "prompt loading" : "skill discovery"}`;
   const update = (key: string, value: unknown) => patch((next) => {
     const settings = { ...record(next[configKey]) };
     if (value === undefined) delete settings[key]; else settings[key] = value;
@@ -1626,7 +1661,7 @@ function SourceDiscoveryFields({ source, feature, patch }: {
         <div className="grid gap-1">
           <Label htmlFor={id}>{prompts ? "Prompt loading" : "Skill discovery"}</Label>
           <p className="text-xs text-muted-foreground">
-            {environment ? "Discover project skills and skills in .agents/skills and .lightspeed/skills under the environment user’s home directory." : prompts ? "Automatically load VFS prompt files as instructions." : "Advertise VFS skills for the agent to read when relevant."}
+            {prompts ? `Automatically load ${domain} prompt files as instructions.` : `Advertise ${domain} skills for the agent to read when relevant.`}
           </p>
         </div>
         <Switch id={id} aria-label={switchLabel}
@@ -1637,50 +1672,23 @@ function SourceDiscoveryFields({ source, feature, patch }: {
           })}
         />
       </div>
-      {enabled && (environment ? (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field>
-            <FieldLabel htmlFor={`${id}-working`}>Working directory</FieldLabel>
-            <Input id={`${id}-working`} className="font-mono" value={string(skills.workingDirectory)}
-              placeholder="Environment default"
-              onChange={(e) => update("workingDirectory", e.target.value || undefined)} />
-            <FieldDescription>Optional absolute path. Empty uses the environment’s default working directory.</FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`${id}-project`}>Project root</FieldLabel>
-            <Input id={`${id}-project`} className="font-mono" value={string(skills.projectRoot)}
-              placeholder="/workspace/project"
-              onChange={(e) => update("projectRoot", e.target.value || undefined)} />
-            <FieldDescription>Optional absolute ancestor of the working directory. Searches .agents/skills, .lightspeed/skills, .claude/skills, and .codex/skills in project directories up to this boundary.</FieldDescription>
-          </Field>
-          <Field className="sm:col-span-2">
-            <FieldLabel htmlFor={`${id}-additional`}>Additional skill roots</FieldLabel>
-            <Input id={`${id}-additional`} className="font-mono" value={commaList(skills.additionalRoots)}
-              placeholder="/opt/team-skills, ./skills"
-              onChange={(e) => {
-                const roots = listFromInput(e.target.value);
-                update("additionalRoots", roots.length ? roots : undefined);
-              }} />
-            <FieldDescription>Comma-separated paths, absolute or relative to the working directory. These add to the standard project and home skill directories; they do not replace them.</FieldDescription>
-          </Field>
-        </div>
-      ) : (
+      {enabled && (
         <Field>
-          <FieldLabel htmlFor={`${id}-roots`}>{prompts ? "VFS prompt roots" : "VFS skill roots"}</FieldLabel>
+          <FieldLabel htmlFor={`${id}-roots`}>{domain} {prompts ? "prompt" : "skill"} roots</FieldLabel>
           <Input id={`${id}-roots`} className="font-mono" value={commaList(skills.roots)}
-            placeholder={prompts ? "Default prompt directories" : "Default skill directories"}
+            placeholder="Default directories"
             onChange={(e) => {
               const roots = listFromInput(e.target.value);
               update("roots", roots.length ? roots : undefined);
             }} />
           <FieldDescription>
-            {prompts
-              ? "Empty searches .agents/prompts and .lightspeed/prompts beneath each workspace link."
-              : "Empty searches .agents/skills and .lightspeed/skills beneath each workspace link."}
-            {" Overrides are comma-separated absolute paths inside workspace links and replace the defaults."}
+            {`Empty searches .agents/${configKey} and .lightspeed/${configKey} ${environment ? "under the working directory and execution user’s home" : "beneath each workspace link"}. `}
+            {environment
+              ? "Comma-separated overrides replace all defaults, including home. Paths may be absolute or relative to the working directory."
+              : "Comma-separated overrides replace all defaults and must be absolute paths inside workspace links."}
           </FieldDescription>
         </Field>
-      ))}
+      )}
     </div>
   );
 }
@@ -1707,6 +1715,7 @@ function EnvironmentFields({
   );
   return (
     <div className="grid gap-4">
+      <WorkingDirectoryField environment feature={feature} patch={patch} />
       <Field>
         <FieldLabel>Allowed providers</FieldLabel>
         <Combobox
@@ -1794,6 +1803,7 @@ function EnvironmentFields({
           })}
         />
       </div>
+      <SourceDiscoveryFields source="environment-prompts" feature={feature} patch={patch} />
       <SourceDiscoveryFields source="environment" feature={feature} patch={patch} />
     </div>
   );

@@ -1716,6 +1716,138 @@ fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
 }
 
 #[test]
+fn environment_prompt_switch_removal_replays_without_mutating_vfs() {
+    fn append(
+        state: &mut CoreAgentState,
+        log: &mut Vec<CoreAgentEntry>,
+        command: CoreAgentCommand,
+    ) {
+        for proposal in engine::admit_command(state, command, 1).unwrap() {
+            let entry = CoreAgentEntry {
+                position: SessionPosition {
+                    seq: EventSeq::new(log.len() as u64 + 1),
+                },
+                observed_at_ms: 1,
+                joins: proposal.joins,
+                event: proposal.event,
+            };
+            engine::apply_event(state, &entry).unwrap();
+            log.push(entry);
+        }
+    }
+    let mut state = CoreAgentState::new();
+    let mut log = Vec::new();
+    let mut config = agent_session_args_with_close_on_terminal(false).session_config;
+    config.features.environments = Some(engine::EnvironmentsFeature {
+        prompts: Some(Default::default()),
+        ..Default::default()
+    });
+    append(
+        &mut state,
+        &mut log,
+        CoreAgentCommand::OpenSession { config },
+    );
+    append(
+        &mut state,
+        &mut log,
+        CoreAgentCommand::SetActiveEnvironment {
+            environment_id: engine::EnvironmentId::new("first"),
+        },
+    );
+    let vfs_key = ContextEntryKey::new("instructions.100.prompts.test");
+    let env_key = ContextEntryKey::new("instructions.110.environment");
+    for (key, origin) in [
+        (vfs_key.clone(), None),
+        (
+            env_key.clone(),
+            Some("runtime.environment:first".to_owned()),
+        ),
+    ] {
+        append(
+            &mut state,
+            &mut log,
+            CoreAgentCommand::UpsertContext {
+                expected_revision: None,
+                key,
+                entry: ContextEntryInput {
+                    origin,
+                    kind: ContextEntryKind::Instructions,
+                    content: engine::ContentRef::text(BlobRef::from_bytes(b"menu")),
+                    preview: None,
+                    provenance_ref: None,
+                    token_estimate: None,
+                },
+            },
+        );
+    }
+    let vfs = engine::current_context_entry(&state, &vfs_key)
+        .unwrap()
+        .clone();
+    let mut disabled = state.clone();
+    disabled
+        .lifecycle
+        .config
+        .as_mut()
+        .unwrap()
+        .features
+        .environments
+        .as_mut()
+        .unwrap()
+        .prompts = None;
+    assert!(drive::invalid_environment_prompt_command(&disabled).is_some());
+    assert_eq!(
+        engine::current_context_entry(&disabled, &vfs_key),
+        Some(&vfs)
+    );
+    disabled
+        .lifecycle
+        .config
+        .as_mut()
+        .unwrap()
+        .features
+        .environments
+        .as_mut()
+        .unwrap()
+        .prompts = Some(Default::default());
+    disabled.lifecycle.config.as_mut().unwrap().features.vfs = None;
+    assert!(drive::invalid_environment_prompt_command(&disabled).is_none());
+
+    assert!(drive::invalid_environment_prompt_command(&state).is_none());
+    assert!(
+        admissions::should_refresh_runtime_projection_before_admitting(
+            &state,
+            &request_input_run("idle")
+        )
+    );
+    append(&mut state, &mut log, request_input_run("queued"));
+    assert!(
+        !admissions::should_refresh_runtime_projection_before_admitting(
+            &state,
+            &request_input_run("already-queued")
+        )
+    );
+    // The same boundary handles API selection and recorded selection tool effects.
+    append(
+        &mut state,
+        &mut log,
+        CoreAgentCommand::SetActiveEnvironment {
+            environment_id: engine::EnvironmentId::new("second"),
+        },
+    );
+    let removal = drive::invalid_environment_prompt_command(&state).unwrap();
+    assert!(matches!(&removal, CoreAgentCommand::RemoveContext { key, .. } if key == &env_key));
+    assert!(!admissions::should_refresh_runtime_projection_before_admitting(&state, &removal));
+    append(&mut state, &mut log, removal);
+    assert!(engine::current_context_entry(&state, &env_key).is_none());
+    assert_eq!(engine::current_context_entry(&state, &vfs_key), Some(&vfs));
+    let mut replayed = CoreAgentState::new();
+    for entry in &log {
+        engine::apply_event(&mut replayed, entry).unwrap();
+    }
+    assert_eq!(state, replayed);
+}
+
+#[test]
 fn catalog_discovery_is_never_scheduled_for_continuation_or_tool_controls() {
     let mut state = CoreAgentState::new();
     state.lifecycle.status = CoreAgentStatus::Open;

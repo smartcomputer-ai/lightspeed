@@ -42,6 +42,26 @@ impl RuntimeEnvironment {
         self
     }
 
+    pub async fn with_working_directory(
+        mut self,
+        cwd: tools::fs::FsPath,
+    ) -> Result<Self, tools::fs::FsError> {
+        if let Some(filesystem) = &mut self.tool_context.filesystem {
+            let metadata = filesystem.fs.get_metadata(&cwd).await?;
+            if !metadata.is_directory {
+                return Err(tools::fs::FsError::InvalidInput {
+                    message: format!("working directory is not a directory: {cwd}"),
+                });
+            }
+            filesystem.fs_cwd = Some(cwd.clone());
+        }
+        self.tool_context.process_cwd = Some(cwd.clone());
+        if let Some(connection) = self.remote_connection.take() {
+            self.remote_connection = Some(connection.with_cwd(cwd));
+        }
+        Ok(self)
+    }
+
     pub async fn close(&self) {
         if let Some(connection) = &self.remote_connection {
             let _ = connection.close().await;
@@ -197,5 +217,66 @@ mod tests {
 
         let environment = RuntimeEnvironment::from_resource(resource(), context);
         assert!(environment.tool_context().filesystem.is_none());
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn directory_override_aligns_files_and_processes_without_mutating_the_template() {
+        use tools::fs::{CreateDirectoryOptions, FileSystem};
+        let fs = InMemoryFileSystem::full_access();
+        fs.create_directory(
+            &FsPath::new("/project").unwrap(),
+            CreateDirectoryOptions::recursive(),
+        )
+        .await
+        .unwrap();
+        fs.write_file(
+            &FsPath::new("/project/note.txt").unwrap(),
+            b"project file".to_vec(),
+        )
+        .await
+        .unwrap();
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let context = EnvironmentToolContext::new(None, blobs.clone())
+            .with_filesystem(FsToolContext::new(Arc::new(fs), blobs));
+        let original = RuntimeEnvironment::from_resource(resource(), context);
+        let configured = original
+            .clone()
+            .with_working_directory(FsPath::new("/project").unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            configured
+                .tool_context()
+                .process_cwd
+                .as_ref()
+                .unwrap()
+                .as_str(),
+            "/project"
+        );
+        assert_eq!(
+            configured
+                .tool_context()
+                .filesystem
+                .as_ref()
+                .unwrap()
+                .fs_cwd
+                .as_ref()
+                .unwrap()
+                .as_str(),
+            "/project"
+        );
+        assert!(original.tool_context().process_cwd.is_none());
+        assert!(
+            original
+                .clone()
+                .with_working_directory(FsPath::new("/missing").unwrap())
+                .await
+                .is_err()
+        );
+        assert!(
+            original
+                .with_working_directory(FsPath::new("/project/note.txt").unwrap())
+                .await
+                .is_err()
+        );
     }
 }

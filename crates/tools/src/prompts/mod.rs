@@ -1,6 +1,7 @@
 //! Prompt instruction discovery and materialization.
 
 pub mod assembler;
+pub mod environment;
 pub mod model;
 pub mod vfs;
 

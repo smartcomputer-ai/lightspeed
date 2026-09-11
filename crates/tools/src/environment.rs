@@ -15,6 +15,7 @@ pub mod control;
 pub mod jobs;
 pub mod process;
 pub mod projection;
+pub mod sources;
 pub mod tools;
 
 #[derive(Clone)]

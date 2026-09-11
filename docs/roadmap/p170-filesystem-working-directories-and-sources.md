@@ -1,6 +1,6 @@
 # P170 — Working directories and prompt/skill sources
 
-Status: proposed, 2026-09-11. Agreed design; implementation pending.
+Status: implemented, 2026-09-11.
 
 Give VFS and environments independent session working directories, and align
 prompt loading and skill discovery across both domains. This builds on
@@ -104,3 +104,36 @@ fall back to another domain; report source unavailability.
 - Cover defaults, overrides excluding home, explicit Claude/Codex paths,
   independent grants, relative tool paths, command overrides, invalid paths,
   environment switching, idle refresh, revocation, and deterministic replay.
+
+## Implementation and validation
+
+Implemented in engine/API configuration, runtime directory resolution, durable job
+execution context, environment source scanning, idle prompt publication and
+workflow cleanup, and the shared profile/new-session/existing-session editor.
+API schemas, TypeScript clients, Configurator tools, and editor reference data
+are regenerated. CLI import help and user documentation describe the new shape.
+Obsolete nested environment skill scope fields are rejected by the public API.
+EnvironmentPromptsConfig and EnvironmentSkillsConfig are separate public and
+engine types, matching VFS; only internal root resolution is shared so the
+capabilities can evolve independently.
+
+Directory and source tests cover conventional roots, full replacement (including
+home), explicit Codex paths, relative reads, invalid directories, prompt ordering,
+incomplete scans, bounded unavailable discovery without waking, source revocation,
+and environment-switch cleanup with deterministic replay. Durable jobs retain
+the session directory in their execution context; per-command overrides remain
+local to the command. No database migration or live service reset is required.
+
+Validation includes workspace Rust compilation with tests, component unit suites,
+API schema fixtures, frontend type checks, consumer tests, and production builds.
+Generated consumers reproduce byte-for-byte. The aggregate npm check's
+`git diff --exit-code` guard reports the intended uncommitted generated changes;
+its remaining typecheck, consumer-test, and build steps were run separately.
+The scoped Rust suites passed 1,010 tests (one prerequisite-dependent test
+ignored); consumer tests passed 246 tests, and all 29 focused editor tests passed.
+After local-environment authorization, 14 live tests passed, serialized against
+PostgreSQL, Temporal, and MinIO: environment provider lifecycle/power (2),
+registration/reconnection (1), profiles (2), hosted VFS transfers (1), and
+scripted-model session lifecycle/context/checkpoint tests (8). The four
+provider-specific model tests were excluded. Prompt/skill source semantics
+remain covered by the focused filesystem, schema, editor, and replay tests above.

@@ -2062,6 +2062,10 @@ export interface EnvironmentsFeature {
    */
   jobs?: boolean;
   /**
+   * Independent environment prompt loading; absent disables sourced instructions.
+   */
+  prompts?: EnvironmentPromptsConfig | null;
+  /**
    * Absent means every registered provider is allowed.
    */
   providers?: string[] | null;
@@ -2082,28 +2086,46 @@ export interface EnvironmentsFeature {
   /**
    * Independent environment skill discovery. Absent disables discovery.
    */
-  skills?: EnvironmentSkillsFeature | null;
+  skills?: EnvironmentSkillsConfig | null;
   version?: number;
-}
-/**
- * Discovery scope resolved on the selected machine, never on the worker.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentSkillsFeature".
- */
-export interface EnvironmentSkillsFeature {
   /**
-   * Additional absolute or working-directory-relative discovery roots.
-   */
-  additionalRoots?: string[];
-  /**
-   * Absolute ancestor boundary. Absent scans only the working directory.
-   */
-  projectRoot?: string | null;
-  /**
-   * Absolute session working directory; absent uses the endpoint default.
+   * Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
    */
   workingDirectory?: string | null;
+}
+/**
+ * Prompt loading scope resolved on the selected machine, never on the worker.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentPromptsConfig".
+ */
+export interface EnvironmentPromptsConfig {
+  /**
+   * Optional source directories, absolute or relative to the environment
+   * working directory. Explicit nonempty lists replace all defaults,
+   * including home roots. Defaults are .agents/prompts and
+   * .lightspeed/prompts under working directory and execution home.
+   *
+   * @minItems 1
+   */
+  roots?: [string, ...string[]] | null;
+}
+/**
+ * Skill discovery scope resolved on the selected machine, never on the worker.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentSkillsConfig".
+ */
+export interface EnvironmentSkillsConfig {
+  /**
+   * Optional source directories, absolute or relative to the environment
+   * working directory. Explicit nonempty lists replace all defaults,
+   * including home roots. Defaults are .agents/skills and
+   * .lightspeed/skills under working directory and execution home.
+   *
+   * @minItems 1
+   */
+  roots?: [string, ...string[]] | null;
 }
 /**
  * Grants remote MCP tools by declaring linked servers from the universe MCP
@@ -2206,6 +2228,10 @@ export interface VfsFeature {
    */
   tools?: VfsToolSurface | null;
   version?: number;
+  /**
+   * Absolute VFS tool working directory; absent uses /.
+   */
+  workingDirectory?: string | null;
   /**
    * Catalog resources exposed in the session's workspace namespace.
    */

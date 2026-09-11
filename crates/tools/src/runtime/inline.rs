@@ -615,6 +615,7 @@ mod tests {
 
     fn batch_request(call: ToolInvocationRequest) -> ToolInvocationBatchRequest {
         ToolInvocationBatchRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-a"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
@@ -879,6 +880,7 @@ mod tests {
         let result = CoreAgentTools::invoke_batch(
             &runtime,
             ToolInvocationBatchRequest {
+                vfs_working_directory: None,
                 session_id: SessionId::new("session-a"),
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),

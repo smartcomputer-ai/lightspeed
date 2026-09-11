@@ -83,7 +83,14 @@ Each enables its configuration block (`features.vfs.skills` or
 workspace links. Optional root overrides replace the defaults. Clearing an
 override restores defaults; switching off disables that source. File tools and
 links alone enable neither source. Environment skill discovery is configured
-independently under `features.environments.skills`.
+independently under `features.environments.skills`; environment prompts use
+`features.environments.prompts` with the same enablement and override rules.
+
+Each domain has a **Working directory** setting: `features.vfs.workingDirectory`
+(default `/`) and `features.environments.workingDirectory` (default supplied by
+the selected machine). Configure `/workspace` explicitly if that is the desired
+VFS base. Environment file tools, commands, jobs, and discovery share the machine
+base; a per-command `cwd` override does not change the session setting.
 
 Apply the same reasoning to delegated work. A parent that can call a powerful
 child profile can ask that child to use its capabilities. The child's setup

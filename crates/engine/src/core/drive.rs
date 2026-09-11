@@ -878,6 +878,12 @@ pub fn next_tool_batch_request(
         turn_id: batch.turn_id,
         batch_id: batch.batch_id,
         promise_id_base: batch.promise_id_base,
+        vfs_working_directory: state
+            .lifecycle
+            .config
+            .as_ref()
+            .and_then(|config| config.features.vfs.as_ref())
+            .and_then(|vfs| vfs.working_directory.clone()),
         workspace_links: state
             .lifecycle
             .config
@@ -7624,6 +7630,7 @@ mod tests {
             },
         );
         let request = ToolInvocationBatchRequest {
+            vfs_working_directory: None,
             session_id: SessionId::new("session-a"),
             run_id: RunId::new(4),
             turn_id: TurnId::new(1),

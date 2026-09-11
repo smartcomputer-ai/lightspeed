@@ -417,6 +417,9 @@ pub struct FeaturesConfig {
 pub struct VfsFeature {
     #[serde(default = "default_feature_version")]
     pub version: u32,
+    /// Absolute VFS tool working directory; absent uses /.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
     /// Catalog resources exposed in the session's workspace namespace.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspace_links: Vec<WorkspaceLink>,
@@ -585,6 +588,9 @@ pub struct TimersFeature {
 pub struct EnvironmentsFeature {
     #[serde(default = "default_feature_version")]
     pub version: u32,
+    /// Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
     /// Absent means every registered provider is allowed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub providers: Option<Vec<EnvironmentProviderId>>,
@@ -605,24 +611,38 @@ pub struct EnvironmentsFeature {
     /// active, ready environment with matching job capabilities.
     #[serde(default)]
     pub jobs: bool,
+    /// Independent environment prompt loading; absent disables sourced instructions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<EnvironmentPromptsConfig>,
     /// Independent environment skill discovery. Absent disables discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skills: Option<EnvironmentSkillsFeature>,
+    pub skills: Option<EnvironmentSkillsConfig>,
 }
 
-/// Discovery scope resolved on the selected machine, never on the worker.
+/// Prompt loading scope resolved on the selected machine, never on the worker.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct EnvironmentSkillsFeature {
-    /// Absolute session working directory; absent uses the endpoint default.
+pub struct EnvironmentPromptsConfig {
+    /// Optional source directories, absolute or relative to the environment
+    /// working directory. Explicit nonempty lists replace all defaults,
+    /// including home roots. Defaults are .agents/prompts and
+    /// .lightspeed/prompts under working directory and execution home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub working_directory: Option<String>,
-    /// Absolute ancestor boundary. Absent scans only the working directory.
+    #[schemars(length(min = 1))]
+    pub roots: Option<Vec<String>>,
+}
+
+/// Skill discovery scope resolved on the selected machine, never on the worker.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EnvironmentSkillsConfig {
+    /// Optional source directories, absolute or relative to the environment
+    /// working directory. Explicit nonempty lists replace all defaults,
+    /// including home roots. Defaults are .agents/skills and
+    /// .lightspeed/skills under working directory and execution home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_root: Option<String>,
-    /// Additional absolute or working-directory-relative discovery roots.
-    #[serde(default)]
-    pub additional_roots: Vec<String>,
+    #[schemars(length(min = 1))]
+    pub roots: Option<Vec<String>>,
 }
 
 /// Grants remote MCP tools by declaring linked servers from the universe MCP

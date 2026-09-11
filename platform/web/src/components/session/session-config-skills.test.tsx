@@ -36,32 +36,31 @@ async function toggle(name: string) {
   await act(async () => button!.click());
 }
 async function input(label: string, value: string) {
-  const fieldLabel = Array.from(container.querySelectorAll("label")).find((item) => item.textContent === label)!;
-  const field = document.getElementById(fieldLabel.htmlFor) as HTMLInputElement;
+  const fieldLabel = Array.from(container.querySelectorAll("label")).find((item) => item.textContent === label);
+  const field = (container.querySelector(`[aria-label="${label}"]`) ?? (fieldLabel && document.getElementById(fieldLabel.htmlFor))) as HTMLInputElement;
   expect(field).not.toBeNull();
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, value);
     field.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
-it("enables defaults, edits environment scope, and disables without changing other grants", async () => {
+it("shares the environment working directory while source overrides remain independent", async () => {
   await setup({ features: { environments: { jobs: true }, vfs: { tools: "edit" } } });
-  await toggle("Environment skill discovery");
-  expect(current).toMatchObject({ features: { environments: { skills: {}, jobs: true } } });
-  expect(error).toBeNull();
-  await input("Working directory", "relative");
+  await input("Environment working directory", "relative");
   expect(error).toContain("absolute");
-  await input("Working directory", "/project/src");
-  await input("Project root", "/project");
-  await input("Additional skill roots", "/team, ./skills");
-  expect(current).toMatchObject({ features: { environments: { skills: {
-    workingDirectory: "/project/src", projectRoot: "/project", additionalRoots: ["/team", "./skills"],
-  } } } });
-  expect(error).toBeNull();
-  await input("Working directory", "");
-  expect(current).not.toHaveProperty("features.environments.skills.workingDirectory");
+  await input("Environment working directory", "/project");
   await toggle("Environment skill discovery");
-  expect(current).toEqual({ features: { environments: { jobs: true }, vfs: { tools: "edit" } } });
+  await toggle("Environment prompt loading");
+  expect(error).toBeNull();
+  await input("Environment skill roots", "./skills, /team/skills");
+  await input("Environment prompt roots", "./prompts");
+  expect(current).toMatchObject({ features: { environments: { workingDirectory: "/project", jobs: true, skills: { roots: ["./skills", "/team/skills"] }, prompts: { roots: ["./prompts"] } } } });
+  await input("Environment skill roots", "");
+  expect(current).toHaveProperty("features.environments.skills", {});
+  await toggle("Environment skill discovery");
+  expect(current).not.toHaveProperty("features.environments.skills");
+  expect(current).toHaveProperty("features.environments.prompts.roots", ["./prompts"]);
+  expect(current).toHaveProperty("features.environments.workingDirectory", "/project");
 });
 it.each([
   ["skills", "VFS skill discovery", "VFS skill roots"],
@@ -93,4 +92,15 @@ it("allows both VFS sources to be enabled without links", async () => {
   await toggle("VFS prompt loading");
   expect(error).toBeNull();
   expect(current).toEqual({ features: { vfs: { skills: {}, prompts: {} } } });
+});
+
+it("uses explicit VFS directory settings without inferring /workspace", async () => {
+  await setup({features:{vfs:{workspaceLinks:[{path:"/workspace",access:"readOnly",target:{type:"workspace",workspaceId:"workspace_1"}}]}}});
+  expect(current).not.toHaveProperty("features.vfs.workingDirectory");
+  await input("VFS working directory", "/outside");
+  expect(error).toContain("workspace link");
+  await input("VFS working directory", "/workspace");
+  expect(error).toBeNull();
+  await input("VFS working directory", "");
+  expect(current).not.toHaveProperty("features.vfs.workingDirectory");
 });

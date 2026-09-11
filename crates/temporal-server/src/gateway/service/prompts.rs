@@ -38,6 +38,9 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         state: &engine::CoreAgentState,
     ) -> Result<(), AgentApiError> {
+        if state.runs.active.is_some() || !state.runs.queued.is_empty() {
+            return Ok(());
+        }
         let desired = self
             .prompt_instruction_source_map(session_id, state)
             .await?;
@@ -45,6 +48,30 @@ impl GatewayAgentApi {
             session_id,
             state,
             tools::prompts::PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX,
+            desired,
+        )
+        .await?;
+        let loaded = self.load_session_state(session_id).await?;
+        let resolver =
+            crate::environment_resolver::EnvironmentResolver::from_pg_store(self.store.clone());
+        let desired = crate::environment_prompts::refresh(
+            self.store.as_ref(),
+            Some(&resolver),
+            Some(&self.environment_gateway),
+            loaded
+                .state
+                .lifecycle
+                .config
+                .as_ref()
+                .and_then(|config| config.features.environments.as_ref()),
+            loaded.state.environment.active_environment_id.as_ref(),
+        )
+        .await
+        .map_err(|e| AgentApiError::internal(e.to_string()))?;
+        self.reconcile_managed_instructions(
+            session_id,
+            &loaded.state,
+            tools::prompts::environment::ENVIRONMENT_PROMPT_CONTEXT_KEY,
             desired,
         )
         .await?;

@@ -152,6 +152,7 @@ fn features_from_api(
     Ok(engine::FeaturesConfig {
         vfs: features.vfs.map(|vfs| engine::VfsFeature {
             version: vfs.version,
+            working_directory: vfs.working_directory,
             workspace_links: vfs
                 .workspace_links
                 .into_iter()
@@ -217,16 +218,20 @@ fn features_from_api(
             .environments
             .map(|environments| engine::EnvironmentsFeature {
                 version: environments.version,
+                working_directory: environments.working_directory,
+                prompts: environments
+                    .prompts
+                    .map(|source| engine::EnvironmentPromptsConfig {
+                        roots: source.roots,
+                    }),
                 providers: environments.providers,
                 registration_keys: environments.registration_keys,
                 selection_tools: environments.selection_tools,
                 jobs: environments.jobs,
                 skills: environments
                     .skills
-                    .map(|skills| engine::EnvironmentSkillsFeature {
-                        working_directory: skills.working_directory,
-                        project_root: skills.project_root,
-                        additional_roots: skills.additional_roots,
+                    .map(|skills| engine::EnvironmentSkillsConfig {
+                        roots: skills.roots,
                     }),
             }),
         mcp: features.mcp.map(|mcp| engine::McpFeature {

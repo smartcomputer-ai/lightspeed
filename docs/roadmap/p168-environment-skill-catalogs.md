@@ -427,20 +427,19 @@ Progress:
 
 ### Implementation notes
 
-- `features.environments.skills` independently configures the session discovery
-  working directory, project ancestry boundary, and additional roots. The
-  endpoint handshake supplies its execution-user home directory; conventional
-  `.agents/skills` and `.lightspeed/skills` roots are resolved there. Project
-  directories additionally include `.claude/skills` and `.codex/skills`. Home
-  compatibility roots require explicit additional roots, including when home
-  is itself the working directory or project boundary.
+- [Working directories and sources](p170-filesystem-working-directories-and-sources.md)
+  replaces the original nested skill scope. Both environment prompts and skills
+  now take optional root overrides; their shared directory lives on the
+  environment feature. Defaults search only `.agents` and `.lightspeed` under
+  working directory and execution home, with no ancestor search. Overrides
+  replace all defaults, including home; Claude/Codex roots require explicit paths.
 - Gateway and workflow idle refreshes share one environment discovery adapter
   and the existing immutable catalog publisher. Conditional observations use a
   bounded process-local cache scoped by universe, session, environment, query,
   connection, and environment grants; cache loss simply causes a complete scan.
-  Semantic snapshots remain durable context provenance. Failed scans retain
-  only the same environment's last observation as stale; revoked access drops
-  its advertised paths. Inspection does not request power changes.
+  Semantic snapshots remain durable context provenance. Failed scans publish
+  unavailability diagnostics without retaining paths from an older scope;
+  revoked access drops advertised paths. Inspection does not request power changes.
 - Generic scans now report canonical paths, support opt-in confined symlink
   traversal, distinguish missing roots from inspection failures, and enforce
   aggregate quotas. Transfer operations keep their existing secure backend and

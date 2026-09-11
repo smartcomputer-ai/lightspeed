@@ -105,6 +105,8 @@ async fn run_profile_provision_live_client(
             model: Some(model_to_api(&model)),
             features: Some(api::FeaturesConfig {
                 environments: Some(api::EnvironmentsFeature {
+                    working_directory: None,
+                    prompts: None,
                     version: api::CURRENT_FEATURE_VERSION,
                     providers: None,
                     registration_keys: None,

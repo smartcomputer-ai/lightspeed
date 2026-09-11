@@ -34,7 +34,8 @@ pub(super) async fn admit_and_append_command(
     correlation_token: Option<String>,
 ) -> anyhow::Result<CommandAdmissionResult> {
     let submission_id = command_submission_id(&command);
-    if environment_catalog_publication_is_obsolete(drive.state(), &command)
+    if environment_prompt_publication_is_obsolete(drive.state(), &command)
+        || environment_catalog_publication_is_obsolete(drive.state(), &command)
         || vfs_skill_catalog_publication_is_obsolete(drive.state(), &command)
     {
         let rejection = engine::CommandRejection::new(
@@ -348,6 +349,9 @@ pub(super) async fn append_events(
     })?;
     // Invalidation uses only recorded source identity. It performs no discovery,
     // including when selection changed in a tool result during an active run.
+    if let Some(command) = invalid_environment_prompt_command(drive.state()) {
+        Box::pin(append_command(ctx, drive, command)).await?;
+    }
     if let Some(command) = invalid_environment_catalog_command(drive.state()) {
         Box::pin(append_command(ctx, drive, command)).await?;
     }
@@ -581,6 +585,72 @@ pub(super) fn vfs_skill_catalog_publication_is_obsolete(
         && (state.runs.active.is_some()
             || !state.runs.queued.is_empty()
             || !vfs_skill_discovery_enabled(state))
+}
+
+const ENVIRONMENT_PROMPT_KEY: &str = "instructions.110.environment";
+
+pub(super) fn invalid_environment_prompt_command(
+    state: &CoreAgentState,
+) -> Option<CoreAgentCommand> {
+    let key = ContextEntryKey::new(ENVIRONMENT_PROMPT_KEY);
+    let entry = engine::current_context_entry(state, &key)?;
+    let source = entry
+        .origin
+        .as_deref()?
+        .strip_prefix("runtime.environment:")?;
+    let enabled = state
+        .lifecycle
+        .config
+        .as_ref()
+        .and_then(|config| config.features.environments.as_ref())
+        .is_some_and(|feature| feature.prompts.is_some());
+    (state.lifecycle.status == CoreAgentStatus::Open
+        && (!enabled
+            || state
+                .environment
+                .active_environment_id
+                .as_ref()
+                .map(|id| id.as_str())
+                != Some(source)))
+    .then_some(CoreAgentCommand::RemoveContext {
+        expected_revision: None,
+        key,
+    })
+}
+
+fn environment_prompt_publication_is_obsolete(
+    state: &CoreAgentState,
+    command: &CoreAgentCommand,
+) -> bool {
+    let CoreAgentCommand::ReplaceContextPrefix { entries, .. } = command else {
+        return false;
+    };
+    let Some(entry) = entries.get(&ContextEntryKey::new(ENVIRONMENT_PROMPT_KEY)) else {
+        return false;
+    };
+    let Some(source) = entry
+        .origin
+        .as_deref()
+        .and_then(|origin| origin.strip_prefix("runtime.environment:"))
+    else {
+        return false;
+    };
+    let enabled = state
+        .lifecycle
+        .config
+        .as_ref()
+        .and_then(|config| config.features.environments.as_ref())
+        .is_some_and(|feature| feature.prompts.is_some());
+    !enabled
+        || state
+            .environment
+            .active_environment_id
+            .as_ref()
+            .map(|id| id.as_str())
+            != Some(source)
+        || ((state.runs.active.is_some() || !state.runs.queued.is_empty())
+            && engine::current_context_entry(state, &ContextEntryKey::new(ENVIRONMENT_PROMPT_KEY))
+                .is_none_or(|current| current.content != entry.content))
 }
 
 pub(super) fn invalid_environment_catalog_command(

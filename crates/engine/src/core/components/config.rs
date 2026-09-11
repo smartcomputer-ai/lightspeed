@@ -155,12 +155,15 @@ impl FeaturesConfig {
 /// session-visible namespace and the VFS catalog is surfaced to the session.
 /// The sub-blocks grant the agent tool
 /// surface and prompt/skill sourcing independently — `{}` grants a VFS with
-/// no tools and no sourcing. Sourcing from linked environments is a later,
-/// environment-specific concern and does not live here.
+/// no tools and no sourcing. Environment sources belong to the independent
+/// environment capability.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VfsFeature {
     #[serde(default = "default_feature_version")]
     pub version: u32,
+    /// Absolute VFS tool working directory; absent uses /.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
     /// Catalog resources exposed in the session's workspace namespace.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspace_links: Vec<WorkspaceLink>,
@@ -188,6 +191,7 @@ impl Default for VfsFeature {
         Self {
             version: CURRENT_FEATURE_VERSION,
             workspace_links: Vec::new(),
+            working_directory: None,
             tools: None,
             prompts: None,
             skills: None,
@@ -404,6 +408,9 @@ impl Default for TimersFeature {
 pub struct EnvironmentsFeature {
     #[serde(default = "default_feature_version")]
     pub version: u32,
+    /// Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub providers: Option<Vec<String>>,
     /// Registration keys whose registered environments the session may use;
@@ -418,9 +425,12 @@ pub struct EnvironmentsFeature {
     /// execution remains gated by active environment capabilities.
     #[serde(default)]
     pub jobs: bool,
+    /// Independent environment prompt loading; absent disables sourced instructions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<EnvironmentPromptsConfig>,
     /// Independent environment skill discovery. Absent disables discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skills: Option<EnvironmentSkillsFeature>,
+    pub skills: Option<EnvironmentSkillsConfig>,
 }
 
 impl Default for EnvironmentsFeature {
@@ -428,6 +438,8 @@ impl Default for EnvironmentsFeature {
         Self {
             version: CURRENT_FEATURE_VERSION,
             providers: None,
+            working_directory: None,
+            prompts: None,
             registration_keys: None,
             selection_tools: false,
             jobs: false,
@@ -436,18 +448,26 @@ impl Default for EnvironmentsFeature {
     }
 }
 
-/// Discovery scope resolved on the selected machine, never on the worker.
+/// Prompt loading scope resolved on the selected machine, never on the worker.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnvironmentSkillsFeature {
-    /// Absolute session working directory; absent uses the endpoint default.
+pub struct EnvironmentPromptsConfig {
+    /// Optional source directories, absolute or relative to the environment
+    /// working directory. Explicit nonempty lists replace all defaults,
+    /// including home roots. Defaults are .agents/prompts and
+    /// .lightspeed/prompts under working directory and execution home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub working_directory: Option<String>,
-    /// Absolute ancestor boundary. Absent scans only the working directory.
+    pub roots: Option<Vec<String>>,
+}
+
+/// Skill discovery scope resolved on the selected machine, never on the worker.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentSkillsConfig {
+    /// Optional source directories, absolute or relative to the environment
+    /// working directory. Explicit nonempty lists replace all defaults,
+    /// including home roots. Defaults are .agents/skills and
+    /// .lightspeed/skills under working directory and execution home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_root: Option<String>,
-    /// Additional absolute or working-directory-relative discovery roots.
-    #[serde(default)]
-    pub additional_roots: Vec<String>,
+    pub roots: Option<Vec<String>>,
 }
 
 /// Grants remote MCP tools by declaring linked servers from the universe MCP
@@ -618,6 +638,15 @@ fn validate_features(
     if let Some(vfs) = &features.vfs {
         validate_feature_version("vfs", vfs.version)?;
         let link_paths = validate_workspace_links(&vfs.workspace_links)?;
+        if let Some(cwd) = &vfs.working_directory {
+            if cwd != "/" {
+                validate_source_roots(
+                    "vfs working directory",
+                    Some(std::slice::from_ref(cwd)),
+                    &link_paths,
+                )?;
+            }
+        }
         if let Some(prompts) = &vfs.prompts {
             validate_source_roots("vfs prompts", prompts.roots.as_deref(), &link_paths)?;
         }
@@ -638,6 +667,36 @@ fn validate_features(
     }
     if let Some(environments) = &features.environments {
         validate_feature_version("environments", environments.version)?;
+        if let Some(cwd) = &environments.working_directory {
+            if !cwd.starts_with('/') || cwd.contains('\0') {
+                return Err(DomainError::InvariantViolation(
+                    "environment working directory must be absolute".into(),
+                ));
+            }
+        }
+        for roots in [
+            environments
+                .skills
+                .as_ref()
+                .and_then(|source| source.roots.as_deref()),
+            environments
+                .prompts
+                .as_ref()
+                .and_then(|source| source.roots.as_deref()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if roots.is_empty()
+                || roots
+                    .iter()
+                    .any(|root| root.trim().is_empty() || root.contains('\0'))
+            {
+                return Err(DomainError::InvariantViolation(
+                    "environment source root overrides must be nonempty paths".into(),
+                ));
+            }
+        }
     }
     if let Some(mcp) = &features.mcp {
         validate_feature_version("mcp", mcp.version)?;
@@ -1212,6 +1271,44 @@ mod tests {
     }
 
     #[test]
+    fn domain_working_directories_and_source_overrides_validate_independently() {
+        let mut config = config(ProviderApiKind::OpenAiResponses, None);
+        config.features.environments = Some(EnvironmentsFeature {
+            working_directory: Some("/project".into()),
+            prompts: Some(Default::default()),
+            skills: Some(EnvironmentSkillsConfig {
+                roots: Some(vec!["./custom".into()]),
+            }),
+            ..Default::default()
+        });
+        config.features.vfs = Some(VfsFeature {
+            working_directory: Some("/".into()),
+            ..Default::default()
+        });
+        config.validate().unwrap();
+        config
+            .features
+            .environments
+            .as_mut()
+            .unwrap()
+            .working_directory = Some("relative".into());
+        assert!(config.validate().is_err());
+        config
+            .features
+            .environments
+            .as_mut()
+            .unwrap()
+            .working_directory = None;
+        config.features.environments.as_mut().unwrap().prompts = Some(EnvironmentPromptsConfig {
+            roots: Some(vec![]),
+        });
+        assert!(config.validate().is_err());
+        config.features.environments.as_mut().unwrap().prompts = None;
+        config.features.vfs.as_mut().unwrap().working_directory = Some("/unlinked".into());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
     fn empty_vfs_source_blocks_enable_defaults_without_links() {
         let mut config = config(ProviderApiKind::OpenAiResponses, None);
         config.features.vfs = Some(VfsFeature {
@@ -1250,7 +1347,7 @@ mod tests {
     fn vfs_skills_require_linked_roots_and_are_independent_of_environment_skills() {
         let mut config = config(ProviderApiKind::OpenAiResponses, None);
         config.features.environments = Some(EnvironmentsFeature {
-            skills: Some(EnvironmentSkillsFeature::default()),
+            skills: Some(EnvironmentSkillsConfig::default()),
             ..Default::default()
         });
         config.features.vfs = Some(VfsFeature {

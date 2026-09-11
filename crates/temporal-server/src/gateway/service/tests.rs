@@ -1366,6 +1366,8 @@ fn environment_tool_subgrants_are_default_off_and_map_explicit_opt_in() {
         api::SessionConfig {
             features: Some(api::FeaturesConfig {
                 environments: Some(api::EnvironmentsFeature {
+                    working_directory: None,
+                    prompts: None,
                     version: api::CURRENT_FEATURE_VERSION,
                     providers: None,
                     registration_keys: None,
@@ -1490,6 +1492,7 @@ fn vfs_feature_grant_maps_tool_surfaces() {
             api::SessionConfig {
                 features: Some(api::FeaturesConfig {
                     vfs: Some(api::VfsFeature {
+                        working_directory: None,
                         version: api::CURRENT_FEATURE_VERSION,
                         workspace_links: Vec::new(),
                         tools: Some(api_surface),
@@ -1515,6 +1518,7 @@ fn vfs_feature_grant_maps_tool_surfaces() {
         api::SessionConfig {
             features: Some(api::FeaturesConfig {
                 vfs: Some(api::VfsFeature {
+                    working_directory: None,
                     version: api::CURRENT_FEATURE_VERSION,
                     workspace_links: Vec::new(),
                     tools: None,

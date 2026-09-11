@@ -324,6 +324,7 @@ mod tests {
             state.tools(),
             ToolInvokeBatchActivityRequest {
                 request: ToolInvocationBatchRequest {
+                    vfs_working_directory: None,
                     session_id: SessionId::new("session-test"),
                     run_id: RunId::new(1),
                     turn_id: TurnId::new(1),

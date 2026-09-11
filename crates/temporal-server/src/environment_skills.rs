@@ -56,15 +56,6 @@ pub(crate) async fn refresh(
             ENVIRONMENT_SKILL_CATALOG_CONTEXT_KEY,
         ));
     };
-    let previous = match current.and_then(|entry| entry.provenance_ref.as_ref()) {
-        Some(reference) => {
-            serde_json::from_slice::<EnvironmentSkillCatalog>(&blobs.read_bytes(reference).await?)
-                .ok()
-                .filter(|c| c.environment_id == environment_id.as_str())
-        }
-        None => None,
-    };
-    let mut retain_previous = true;
     let attempt = async {
         let resolver = resolver.ok_or("environment discovery resolver unavailable")?;
         let gateway = gateway.ok_or("environment gateway unavailable")?;
@@ -75,10 +66,7 @@ pub(crate) async fn refresh(
         let environment = resolver
             .read_allowed(environment_id, &policy)
             .await
-            .map_err(|e| {
-                retain_previous = false;
-                e.to_string()
-            })?;
+            .map_err(|e| e.to_string())?;
         if environment.status != environments::EnvironmentStatus::Ready
             || environment.desired_power != environments::PowerState::Running
         {
@@ -101,9 +89,6 @@ pub(crate) async fn refresh(
                 })
                 .await
                 .map_err(|e| e.to_string())?;
-            if !initialized.capabilities.filesystem_read {
-                retain_previous = false;
-            }
             if initialized.protocol_version != CURRENT_PROTOCOL_VERSION
                 || !initialized.capabilities.filesystem_scan
                 || !initialized.capabilities.filesystem_read
@@ -114,9 +99,15 @@ pub(crate) async fn refresh(
                 .initialized(&InitializedParams {})
                 .await
                 .map_err(|e| e.to_string())?;
+            let cwd = crate::environment_sources::working_directory(
+                &mut client,
+                feature.working_directory.as_deref(),
+                initialized.default_cwd.as_deref(),
+            )
+            .await?;
             let mut query = environment_skill_scan_query(
                 config,
-                initialized.default_cwd.as_deref(),
+                Some(&cwd),
                 initialized.home_directory.as_deref(),
             )?;
             let cache_key = serde_json::to_string(&(
@@ -171,12 +162,10 @@ pub(crate) async fn refresh(
         Ok(Ok(catalog)) => catalog,
         failure => {
             tracing::debug!(?failure, %environment_id, "environment skill discovery unavailable");
-            let mut catalog = previous
-                .filter(|_| retain_previous)
-                .unwrap_or_else(|| EnvironmentSkillCatalog::unavailable(environment_id.as_str()));
-            if catalog.availability != EnvironmentSkillAvailability::Unavailable {
-                catalog.availability = EnvironmentSkillAvailability::Stale;
-            }
+            let mut catalog = EnvironmentSkillCatalog::unavailable(environment_id.as_str());
+            catalog.warnings.push(format!(
+                "Environment skill discovery unavailable: {failure:?}"
+            ));
             catalog
         }
     };

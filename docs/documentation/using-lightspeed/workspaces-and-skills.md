@@ -228,44 +228,44 @@ separate identities with no cross-domain merging, deduplication, or fallback.
 
 ## Discover skills installed on a machine
 
-In the profile editor, new-session form, or session settings, enable
-**Skill discovery** under **Environments**. Leave the fields empty to use
-environment defaults, or set **Working directory**, **Project root**, and
-**Additional skill roots**. The switch is independent of VFS discovery.
-
-The equivalent session or profile configuration is:
+In the profile editor, new-session form, or session settings, set **Working
+directory** directly under **Environments**, then enable **Skill discovery** or
+**Prompt loading** independently. The directory is shared by file tools,
+commands, jobs, and discovery; empty uses the selected endpoint's default.
 
 ```json
 {
   "features": {
     "environments": {
-      "skills": {
-        "workingDirectory": "/workspace/project/src",
-        "projectRoot": "/workspace/project",
-        "additionalRoots": ["/opt/team-skills"]
-      }
+      "workingDirectory": "/workspace/project",
+      "skills": {},
+      "prompts": { "roots": ["./team-prompts"] }
     }
   }
 }
 ```
 
-An empty `skills: {}` uses the selected endpoint's default working directory.
-Omitting `skills` disables environment discovery. `workingDirectory` and
-`projectRoot` must be absolute machine paths. Without `projectRoot`, only the
-working directory is searched for project roots; with it, each ancestor through
-that boundary is included. A shell command's temporary `cd` does not change
-this scope. Additional roots may be absolute or relative to `workingDirectory`.
+Empty source blocks search `.agents/skills` and `.lightspeed/skills`, or
+`.agents/prompts` and `.lightspeed/prompts`, beneath the effective working
+directory and execution user's home. No ancestors, `.claude`, or `.codex`
+directories are searched automatically. Optional `roots` lists replace **all**
+defaults, including home. These paths name actual source directories and can
+be absolute or relative to the working directory. Users may explicitly include
+Claude/Codex directories as overrides. Empty override lists are invalid;
+clearing the editor field restores defaults. Omitting a source block disables it.
 
-Discovery checks `.agents/skills/`, `.lightspeed/skills/`, `.claude/skills/`, and
-`.codex/skills/` beneath the project directories. In the execution user’s home
-reported by the endpoint, only `.agents/skills/` and `.lightspeed/skills/` are
-searched automatically, even when home is the working directory or project
-boundary. Home `.claude/skills/` and `.codex/skills/` require explicit additional
-roots. This supports ordinary installer output and manually
-copied directories. Directory symlinks may point to canonical installations
-inside the endpoint's filesystem access scope. Aliases to one canonical skill
-directory collapse within that environment; independent copies and equal names
-remain separate entries.
+Environment prompt files use the same `instructions.md` and `instructions.d/*.md`
+convention as VFS prompts. They load as instructions under the separate
+`instructions.110.environment` source. Its provenance report identifies the
+environment, file paths, and availability. Failed scans replace that source with
+an unavailable diagnostic rather than silently retaining old instructions.
+Disabling loading or switching environments removes only the corresponding
+runtime-owned environment instructions and catalog. Discovery never wakes a
+machine. No new scan occurs during a run or after an individual command.
+
+Directory symlinks may point to canonical installations inside the endpoint's
+filesystem access scope. Aliases to one canonical skill directory collapse;
+independent copies and equal names remain separate entries.
 
 The environment catalog has the stable context key
 `runtime.catalog.skills.environment`; VFS retains `runtime.catalog.skills.vfs`.
@@ -295,9 +295,8 @@ visited entries, depth 8, 64 KiB per document, 2 MiB of inspected content, and a
 2-second local scan budget. Network discovery is bounded to four seconds.
 Missing roots are successful empty observations; inaccessible roots, dangling
 links, loops, or limits make the source incomplete. A failed/incomplete refresh
-retains the last catalog for that same environment as stale; it never publishes
-a partial list as a complete replacement. Scan diagnostics appear in runtime
-debug logs. A changed body without changed catalog metadata causes no context
+publishes an unavailable catalog with diagnostics instead of retaining paths
+from an older scope or presenting a partial list as complete. A changed body without changed catalog metadata causes no context
 update. Changed metadata appends the usual bounded catalog successor.
 
 ## Update files and handle concurrent edits

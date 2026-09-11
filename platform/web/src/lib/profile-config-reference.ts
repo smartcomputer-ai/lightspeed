@@ -17,6 +17,11 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
     "environments": {
       // Grants the advanced durable-job tool surface. The workflow binding is installed for the session when granted; invocations still require an active, ready environment with matching job capabilities.
       "jobs": true | false,
+      // Independent environment prompt loading; absent disables sourced instructions.
+      "prompts": {
+        // Optional source directories, absolute or relative to the environment working directory. Explicit nonempty lists replace all defaults, including home roots. Defaults are .agents/prompts and .lightspeed/prompts under working directory and execution home.
+        "roots": ["string"],
+      },
       // Absent means every registered provider is allowed.
       "providers": ["string"],
       // Registration keys whose registered environments the session may list and activate; absent means every key. Independent of \`providers\`: each list scopes its own environment source, and external environments pass only when neither list is set.
@@ -25,14 +30,12 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
       "selectionTools": true | false,
       // Independent environment skill discovery. Absent disables discovery.
       "skills": {
-        // Additional absolute or working-directory-relative discovery roots.
-        "additionalRoots": ["string"],
-        // Absolute ancestor boundary. Absent scans only the working directory.
-        "projectRoot": "string",
-        // Absolute session working directory; absent uses the endpoint default.
-        "workingDirectory": "string",
+        // Optional source directories, absolute or relative to the environment working directory. Explicit nonempty lists replace all defaults, including home roots. Defaults are .agents/skills and .lightspeed/skills under working directory and execution home.
+        "roots": ["string"],
       },
       "version": 0,
+      // Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
+      "workingDirectory": "string",
     },
     // Grants remote MCP tools by declaring linked servers from the universe MCP catalog; must link at least one server, with unique server ids.
     "mcp": {
@@ -79,6 +82,8 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
       // Agent-facing filesystem tool surface; absent = no fs tools. Per-path writability is defined by each workspace link's own access. With the environments feature granted, \`readOnly\` also exposes \`vfs_materialize\`; \`edit\` additionally exposes \`vfs_capture\`. Prompt/skill sourcing alone does not grant transfer tools.
       "tools": "readOnly" | "edit",
       "version": 0,
+      // Absolute VFS tool working directory; absent uses /.
+      "workingDirectory": "string",
       // Catalog resources exposed in the session's workspace namespace.
       "workspaceLinks": [{
         // (required when this object is present)

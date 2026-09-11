@@ -1564,6 +1564,7 @@ fn dev_features(settings: &ChatDraftSettings) -> FeaturesConfig {
         );
     FeaturesConfig {
         vfs: Some(VfsFeature {
+            working_directory: None,
             version: api::CURRENT_FEATURE_VERSION,
             workspace_links: Vec::new(),
             tools: vfs_tools,
