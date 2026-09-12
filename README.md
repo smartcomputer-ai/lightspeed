@@ -8,9 +8,9 @@
 
 <p align="center"><strong>Run thousands of agents. Efficient, durable, auditable.</strong></p>
 
-Lightspeed is open-source infrastructure for running long-lived agent fleets as durable workflows.
+Lightspeed is open-source infrastructure for running managed agent fleets as durable workflows. 
 
-Agents survive restarts, can run for months, and stay cheap when idle. When they
+"Managed agents" is an emerging pattern that separates the core agent loops from the VM or sandbox they use. Agents survive restarts, can run for months, and stay cheap when idle. When they
 need an operating system, they borrow a real machine for as long as the task
 requires.
 
@@ -22,7 +22,7 @@ requires.
 
 Lightspeed's Rust core runs on [Temporal](https://temporal.io/) today and stores
 production data in Postgres with optional S3. The frontend is TypeScript and
-React. Support for other durable workflow engines is planned.
+React.
 
 ## Why Lightspeed?
 
@@ -119,9 +119,7 @@ Lightspeed covers the table stakes of a modern agent harness. Everything below w
   or OAuth; Lightspeed handles tool discovery and approvals
 - [x] **Sub-agents**: delegate work to supervised child agents with configurable
   profiles and limits
-- [x] **Agent profiles**: reusable session setups, shared across clients and sub-agents;
-  the session workflow prepares configuration, tools, and context before publishing
-  the complete change atomically, and finishes setup before admitting new work
+- [x] **Agent profiles**: reusable session setups, shared across clients and sub-agents
 
 **Bots & channels**
 
