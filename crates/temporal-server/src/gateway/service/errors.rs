@@ -5,6 +5,9 @@ pub(super) fn is_not_found(error: &AgentApiError) -> bool {
 }
 
 pub(super) fn map_admission_failure_to_api_error(failure: &AgentAdmissionFailure) -> AgentApiError {
+    if let Some(error) = &failure.preparation_error {
+        return error.clone();
+    }
     match failure.kind {
         AgentAdmissionFailureKind::RejectedCommand
             if failure.rejection.as_ref().is_some_and(|rejection| {

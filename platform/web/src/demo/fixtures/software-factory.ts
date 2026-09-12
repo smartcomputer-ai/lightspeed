@@ -110,7 +110,7 @@ const PLAN_PATH = "/specs/LIN-1421-plan.md";
 /// Deliberately realistic correlation data for exercising the sessions UI
 /// with the long identifiers produced by external evaluation harnesses.
 const EVALUATION_METADATA = {
-  agent: "lightspeed-software-factory-agent-with-provisioned-incus-environment",
+  agent: "lightspeed-software-factory-agent-with-existing-incus-environment",
   campaign: "terminal-bench-lightspeed-rerun-hosted-20260904-113000-software-factory",
   harborContextId: "802d0778-f22c-4a1e-ab4d-3da8486ab4d8",
   job: "software-factory-regression-benchmark-linux-amd64-production-candidate",
@@ -324,7 +324,7 @@ const PLANNER_INSTRUCTIONS = [
 ].join("\n");
 
 const IMPLEMENTER_INSTRUCTIONS = [
-  "You implement one task of a plan in a fresh sandbox with acme-web checked out on main.",
+  "You implement one task of a plan in the selected sandbox with acme-web checked out on main.",
   "",
   "Read the plan and the spec it links first. Use repo-explorer to find what exists before writing, and test-writer for the tests; keep the change to the files the task names. Run the affected tests before opening the pull request; name the branch after the task id and put the issue key in the PR title. Tell pr-reviewer with bot_emit (kind pr.opened, reply requested) as soon as the PR exists.",
   "",
@@ -420,14 +420,8 @@ const IMPLEMENTER_CONFIG: Record<string, unknown> = {
 };
 
 const IMPLEMENTER_ENVIRONMENT: ProfileEnvironment = {
-  type: "provision",
-  providerId: INCUS_PROVIDER_ID,
-  templateId: "dev-small-v1",
-  retention: "closeWithSession",
-  displayName: "implementer sandbox",
-  idlePolicy: { pauseAfterMs: 15 * MINUTE_MS, stopAfterMs: 2 * HOUR_MS },
-  metadata: { repo: "acme/acme-web", checkout: "main" },
-  credentials: [{ envName: "GITHUB_TOKEN", source: { type: "authGrant", grantId: GRANT.github } }],
+  type: "existing",
+  environmentId: ENV.taskC,
 };
 
 const EXPLORER_CONFIG: Record<string, unknown> = {
@@ -531,7 +525,7 @@ function seedProfiles(universe: UniverseState): void {
     profile({
       profileId: PROFILE.implementer,
       displayName: "Implementer",
-      description: "Builds one task per session in a fresh Incus sandbox, delegating exploration and tests to sub-agents, and opens the pull request.",
+      description: "Builds one task per session in an independently managed Incus sandbox, delegating exploration and tests to sub-agents, and opens the pull request.",
       instructions: IMPLEMENTER_INSTRUCTIONS,
       config: IMPLEMENTER_CONFIG,
       metadata: IMPLEMENTER_PROFILE.metadata,
@@ -1215,15 +1209,14 @@ const POWER_STATES: Environment["desiredPower"][] = ["running", "paused", "stopp
 interface SandboxInit {
   id: string;
   displayName: string;
-  session: string;
   createdAtMs: number;
-  /// Closed with its session at this time; open (ready) when absent.
+  /// Explicitly closed at this time; open (ready) when absent.
   closedAtMs?: number;
 }
 
-/// A task sandbox the implementer profile provisioned for one session.
+/// An independently managed sandbox selected by task sessions.
 function sandbox(init: SandboxInit): Environment {
-  const requestId = `req-${hex(init.session, 12)}`;
+  const requestId = `req-${hex(init.id, 12)}`;
   const updatedAtMs = init.closedAtMs ?? init.createdAtMs + 3 * MINUTE_MS;
   return {
     environmentId: init.id,
@@ -1242,7 +1235,6 @@ function sandbox(init: SandboxInit): Environment {
       createdAtMs: init.createdAtMs,
       updatedAtMs,
     },
-    originSession: { sessionId: init.session, profileId: PROFILE.implementer, closeWithSession: true },
     publicIngressEnabled: false,
     metadata: { repo: "acme/acme-web", checkout: "main", issue: ISSUE },
     createdAtMs: init.createdAtMs,
@@ -1347,15 +1339,14 @@ function seedEnvironments(universe: UniverseState): void {
       createdAtMs: ago(33 * DAY_MS + 2 * HOUR_MS),
       updatedAtMs: ago(33 * DAY_MS),
     },
-    originSession: { sessionId: SESSION.specsSpike, profileId: PROFILE.explorer, closeWithSession: true },
     publicIngressEnabled: false,
     metadata: { repo: "acme/acme-web", checkout: "main" },
     createdAtMs: ago(33 * DAY_MS + 2 * HOUR_MS),
     updatedAtMs: ago(33 * DAY_MS),
   });
-  universe.environments.set(ENV.taskA, sandbox({ id: ENV.taskA, displayName: "implementer sandbox · lin-1421-a", session: SESSION.taskA, createdAtMs: p(2.1), closedAtMs: p(4.9) }));
-  universe.environments.set(ENV.taskB, sandbox({ id: ENV.taskB, displayName: "implementer sandbox · lin-1421-b", session: SESSION.taskB, createdAtMs: p(2.1), closedAtMs: p(12.4) }));
-  universe.environments.set(ENV.taskC, sandbox({ id: ENV.taskC, displayName: "implementer sandbox · lin-1421-c", session: SESSION.taskC, createdAtMs: p(2.1) }));
+  universe.environments.set(ENV.taskA, sandbox({ id: ENV.taskA, displayName: "implementer sandbox · lin-1421-a", createdAtMs: p(2.1), closedAtMs: p(4.9) }));
+  universe.environments.set(ENV.taskB, sandbox({ id: ENV.taskB, displayName: "implementer sandbox · lin-1421-b", createdAtMs: p(2.1), closedAtMs: p(12.4) }));
+  universe.environments.set(ENV.taskC, sandbox({ id: ENV.taskC, displayName: "implementer sandbox · lin-1421-c", createdAtMs: p(2.1) }));
   universe.environmentCredentials.push(
     {
       environmentId: ENV.ci,
@@ -2790,7 +2781,7 @@ function seedImplementer(store: DemoStore, universe: UniverseState): void {
   const record = bot(universe, {
     botId: BOT.implementer,
     displayName: "Implementer",
-    description: "Builds one task per thread in a fresh sandbox with repo-explorer and test-writer sub-agents, opens the PR, and tells pr-reviewer.",
+    description: "Builds one task per thread in the selected sandbox with repo-explorer and test-writer sub-agents, opens the PR, and tells pr-reviewer.",
     profileId: PROFILE.implementer,
     brief: [
       "You are Implementer for the acme-web feature pipeline. Each task.ready from planner is one thread and one sandbox.",
@@ -4397,7 +4388,7 @@ function defaultReply(turn: number): DemoTurn {
   if (turn === 1) {
     return {
       text: [
-        "Happy to help. I'm working in a fresh sandbox with acme-web checked out, with file and process tools, GitHub access through the App installation, sub-agents, and the specs workspace. Three concrete things I can do right now:",
+        "Happy to help. I'm working in the selected sandbox with acme-web checked out, with file and process tools, GitHub access through the App installation, sub-agents, and the specs workspace. Three concrete things I can do right now:",
         "",
         "1. **Build a feature the way the pipeline does** — read the spec, delegate exploration, write, test, open the PR.",
         "2. **Review a pull request** — read the diff, run the affected tests, post one clear verdict (#493 is waiting).",

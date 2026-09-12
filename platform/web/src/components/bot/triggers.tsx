@@ -718,7 +718,6 @@ export function mintPairingCode(length = 12): string {
 export type BotEnvStatus =
   | { kind: "unknown" }
   | { kind: "none" }
-  | { kind: "provision" }
   | { kind: "existing"; environmentId: string };
 
 /** A paused trigger says why: the breaker, a failed poll, a one-shot that fired, or an operator. */
@@ -2479,9 +2478,7 @@ export function TriggerKindPicker({
         disabledReason={
           env.kind === "none"
             ? "The bot has no environment yet."
-            : env.kind === "provision"
-              ? "The bot gets a fresh environment per session; command polls need a lasting one."
-              : env.kind === "unknown"
+            : env.kind === "unknown"
                 ? "Checking the bot's environment…"
                 : undefined
         }

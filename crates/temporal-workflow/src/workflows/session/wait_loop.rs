@@ -9,7 +9,9 @@ pub(super) async fn wait_for_workflow_work(ctx: &mut WorkflowContext<AgentSessio
     }
 
     let Some(deadline_ms) = nearest_workflow_wake_ms(ctx) else {
-        ctx.wait_condition(workflow_state_has_immediate_work).await;
+        let wait = ctx.wait_condition(workflow_state_has_immediate_work);
+        pin_mut!(wait);
+        wait.await;
         return;
     };
     if deadline_ms <= now {
@@ -43,7 +45,8 @@ fn workflow_has_immediate_work(ctx: &WorkflowContext<AgentSessionWorkflow>, now:
 }
 
 pub(super) fn workflow_state_has_immediate_work(state: &AgentSessionWorkflow) -> bool {
-    !state.pending_admissions.is_empty()
+    (!state.ready && state.setup_requested)
+        || admissions::has_admissible_admissions(state)
         || !state.pending_tool_batch_resumes.is_empty()
         || session_state::has_due_emissions(state)
         || !state.pending_source_resolutions.is_empty()
@@ -59,13 +62,15 @@ pub(super) fn workflow_state_needs_core_drive(ctx: &WorkflowContext<AgentSession
 }
 
 pub(super) fn workflow_state_needs_core_drive_for_state(state: &AgentSessionWorkflow) -> bool {
-    !state.core_state.runs.queued.is_empty()
-        || state.core_state.context.pending_compaction
-        || state.core_state.runs.active.as_ref().is_some_and(|run| {
-            awaits::parked_tool_batch(&state.core_state).is_none()
-                && !(run.status == engine::RunStatus::Parked
-                    && run.pending_approvals().next().is_some())
-        })
+    state.ready
+        && (!state.pending_toolsets.is_empty()
+            || !state.core_state.runs.queued.is_empty()
+            || state.core_state.context.pending_compaction
+            || state.core_state.runs.active.as_ref().is_some_and(|run| {
+                awaits::parked_tool_batch(&state.core_state).is_none()
+                    && !(run.status == engine::RunStatus::Parked
+                        && run.pending_approvals().next().is_some())
+            }))
 }
 
 fn nearest_workflow_wake_ms(ctx: &WorkflowContext<AgentSessionWorkflow>) -> Option<u64> {
@@ -120,7 +125,10 @@ pub(super) fn history_rollover_due(
 /// Confirmed starts and issued execution cancellations may be retried safely
 /// because their workflow execution identities are stable.
 pub(super) fn workflow_state_allows_continue_as_new(state: &AgentSessionWorkflow) -> bool {
-    state.pending_admissions.is_empty()
+    state.ready
+        && state.run_preparation.is_none()
+        && state.pending_toolsets.is_empty()
+        && state.pending_admissions.is_empty()
         && state.pending_tool_batch_resumes.is_empty()
         && state.pending_emissions.is_empty()
         && state.pending_source_resolutions.is_empty()
@@ -136,6 +144,8 @@ pub(super) fn workflow_state_should_complete(ctx: &WorkflowContext<AgentSessionW
 pub(super) fn workflow_state_is_closed_and_quiescent(state: &AgentSessionWorkflow) -> bool {
     state.initialized
         && state.core_state.lifecycle.status == CoreAgentStatus::Closed
+        && state.run_preparation.is_none()
+        && state.pending_toolsets.is_empty()
         && state.pending_admissions.is_empty()
         && state.pending_tool_batch_resumes.is_empty()
         && state.pending_emissions.is_empty()

@@ -163,96 +163,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentCredentialSourceView": {
-          "oneOf": [
-            {
-              "properties": {
-                "grantId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "authGrant",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "grantId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "providerId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "authProviderCredential",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "providerId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "secretId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "directSecret",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "secretId"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "EnvironmentIdlePolicyView": {
-          "description": "Staged idle policy. Thresholds are milliseconds of daemon-reported idle\ntime and must be non-decreasing in the order pause, suspend, stop, close.\nStages whose power state the provider does not support are skipped.",
-          "properties": {
-            "closeAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "pauseAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "stopAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "suspendAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            }
-          },
-          "type": "object"
-        },
         "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
@@ -545,7 +455,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "How the session obtains its active environment when this profile is\napplied: activate an existing universe environment, or provision a\nfresh one for this session. Absence leaves the session's current\nactive environment unchanged."
+              "description": "How the session obtains its active environment when this profile is\napplied: select an existing environment or inherit the parent's\nselection. Absence leaves the session's current\nactive environment unchanged."
             },
             "instructions": {
               "anyOf": [
@@ -705,104 +615,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "type"
               ],
               "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Provision one environment for the session from the universe's enabled\nbinding for `providerId`, then activate it. The provision request id\nis derived from the session id, so retries and repeated applies\nconverge on the same environment.",
-              "properties": {
-                "credentials": {
-                  "description": "Credentials bound to the environment right after it is\nprovisioned before activation: references to universe\ngrants/providers/secrets, never values. They become ordinary\nenvironment credential bindings; the profile is the initial set,\nnot a live sync. Not available for `existing` environments.",
-                  "items": {
-                    "$ref": "#/definitions/ProfileEnvironmentCredential"
-                  },
-                  "type": "array"
-                },
-                "displayName": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "idlePolicy": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/EnvironmentIdlePolicyView"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Optional staged idle policy for the provisioned environment.\nStages the provider cannot realize are skipped."
-                },
-                "metadata": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
-                },
-                "providerId": {
-                  "type": "string"
-                },
-                "retention": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ProfileEnvironmentRetention"
-                    }
-                  ],
-                  "default": "closeWithSession"
-                },
-                "templateId": {
-                  "description": "Immutable provider template-version identity.",
-                  "type": "string"
-                },
-                "type": {
-                  "const": "provision",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "providerId",
-                "templateId"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "ProfileEnvironmentCredential": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "description": "One environment credential binding requested by a profile: the same shape\nas `environments/credentials/bind`.",
-          "properties": {
-            "envName": {
-              "description": "Environment variable name (`[A-Za-z_][A-Za-z0-9_]{0,127}`).",
-              "type": "string"
-            },
-            "source": {
-              "$ref": "#/definitions/EnvironmentCredentialSourceView"
-            }
-          },
-          "required": [
-            "envName",
-            "source"
-          ],
-          "type": "object"
-        },
-        "ProfileEnvironmentRetention": {
-          "description": "What happens to a profile-provisioned environment when its originating\nsession closes.",
-          "oneOf": [
-            {
-              "const": "closeWithSession",
-              "description": "Close the environment when the session that provisioned it closes.",
-              "type": "string"
-            },
-            {
-              "const": "retain",
-              "description": "Leave the environment open; the universe owns its cleanup.",
-              "type": "string"
             }
           ]
         },
@@ -3638,96 +3450,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentCredentialSourceView": {
-          "oneOf": [
-            {
-              "properties": {
-                "grantId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "authGrant",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "grantId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "providerId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "authProviderCredential",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "providerId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "secretId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "directSecret",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "secretId"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "EnvironmentIdlePolicyView": {
-          "description": "Staged idle policy. Thresholds are milliseconds of daemon-reported idle\ntime and must be non-decreasing in the order pause, suspend, stop, close.\nStages whose power state the provider does not support are skipped.",
-          "properties": {
-            "closeAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "pauseAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "stopAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "suspendAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            }
-          },
-          "type": "object"
-        },
         "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
@@ -4020,7 +3742,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "How the session obtains its active environment when this profile is\napplied: activate an existing universe environment, or provision a\nfresh one for this session. Absence leaves the session's current\nactive environment unchanged."
+              "description": "How the session obtains its active environment when this profile is\napplied: select an existing environment or inherit the parent's\nselection. Absence leaves the session's current\nactive environment unchanged."
             },
             "instructions": {
               "anyOf": [
@@ -4180,104 +3902,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "type"
               ],
               "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Provision one environment for the session from the universe's enabled\nbinding for `providerId`, then activate it. The provision request id\nis derived from the session id, so retries and repeated applies\nconverge on the same environment.",
-              "properties": {
-                "credentials": {
-                  "description": "Credentials bound to the environment right after it is\nprovisioned before activation: references to universe\ngrants/providers/secrets, never values. They become ordinary\nenvironment credential bindings; the profile is the initial set,\nnot a live sync. Not available for `existing` environments.",
-                  "items": {
-                    "$ref": "#/definitions/ProfileEnvironmentCredential"
-                  },
-                  "type": "array"
-                },
-                "displayName": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "idlePolicy": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/EnvironmentIdlePolicyView"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Optional staged idle policy for the provisioned environment.\nStages the provider cannot realize are skipped."
-                },
-                "metadata": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
-                },
-                "providerId": {
-                  "type": "string"
-                },
-                "retention": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ProfileEnvironmentRetention"
-                    }
-                  ],
-                  "default": "closeWithSession"
-                },
-                "templateId": {
-                  "description": "Immutable provider template-version identity.",
-                  "type": "string"
-                },
-                "type": {
-                  "const": "provision",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "providerId",
-                "templateId"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "ProfileEnvironmentCredential": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "description": "One environment credential binding requested by a profile: the same shape\nas `environments/credentials/bind`.",
-          "properties": {
-            "envName": {
-              "description": "Environment variable name (`[A-Za-z_][A-Za-z0-9_]{0,127}`).",
-              "type": "string"
-            },
-            "source": {
-              "$ref": "#/definitions/EnvironmentCredentialSourceView"
-            }
-          },
-          "required": [
-            "envName",
-            "source"
-          ],
-          "type": "object"
-        },
-        "ProfileEnvironmentRetention": {
-          "description": "What happens to a profile-provisioned environment when its originating\nsession closes.",
-          "oneOf": [
-            {
-              "const": "closeWithSession",
-              "description": "Close the environment when the session that provisioned it closes.",
-              "type": "string"
-            },
-            {
-              "const": "retain",
-              "description": "Leave the environment open; the universe owns its cleanup.",
-              "type": "string"
             }
           ]
         },
@@ -5119,13 +4743,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "description": "Only environments carrying every listed metadata pair (AND\nsemantics); the same filter `session/list` accepts.",
           "type": "object"
         },
-        "originSessionId": {
-          "description": "Only environments a profile provisioned for this session.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "providerId": {
           "type": [
             "string",
@@ -5598,7 +5215,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "How the session obtains its active environment when this profile is\napplied: activate an existing universe environment, or provision a\nfresh one for this session. Absence leaves the session's current\nactive environment unchanged."
+              "description": "How the session obtains its active environment when this profile is\napplied: select an existing environment or inherit the parent's\nselection. Absence leaves the session's current\nactive environment unchanged."
             },
             "instructions": {
               "anyOf": [
@@ -5714,96 +5331,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 {
                   "type": "null"
                 }
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "EnvironmentCredentialSourceView": {
-          "oneOf": [
-            {
-              "properties": {
-                "grantId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "authGrant",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "grantId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "providerId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "authProviderCredential",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "providerId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "secretId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "directSecret",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "secretId"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "EnvironmentIdlePolicyView": {
-          "description": "Staged idle policy. Thresholds are milliseconds of daemon-reported idle\ntime and must be non-decreasing in the order pause, suspend, stop, close.\nStages whose power state the provider does not support are skipped.",
-          "properties": {
-            "closeAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "pauseAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "stopAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "suspendAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
               ]
             }
           },
@@ -6195,104 +5722,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "type"
               ],
               "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Provision one environment for the session from the universe's enabled\nbinding for `providerId`, then activate it. The provision request id\nis derived from the session id, so retries and repeated applies\nconverge on the same environment.",
-              "properties": {
-                "credentials": {
-                  "description": "Credentials bound to the environment right after it is\nprovisioned before activation: references to universe\ngrants/providers/secrets, never values. They become ordinary\nenvironment credential bindings; the profile is the initial set,\nnot a live sync. Not available for `existing` environments.",
-                  "items": {
-                    "$ref": "#/definitions/ProfileEnvironmentCredential"
-                  },
-                  "type": "array"
-                },
-                "displayName": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "idlePolicy": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/EnvironmentIdlePolicyView"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Optional staged idle policy for the provisioned environment.\nStages the provider cannot realize are skipped."
-                },
-                "metadata": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
-                },
-                "providerId": {
-                  "type": "string"
-                },
-                "retention": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ProfileEnvironmentRetention"
-                    }
-                  ],
-                  "default": "closeWithSession"
-                },
-                "templateId": {
-                  "description": "Immutable provider template-version identity.",
-                  "type": "string"
-                },
-                "type": {
-                  "const": "provision",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "providerId",
-                "templateId"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "ProfileEnvironmentCredential": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "description": "One environment credential binding requested by a profile: the same shape\nas `environments/credentials/bind`.",
-          "properties": {
-            "envName": {
-              "description": "Environment variable name (`[A-Za-z_][A-Za-z0-9_]{0,127}`).",
-              "type": "string"
-            },
-            "source": {
-              "$ref": "#/definitions/EnvironmentCredentialSourceView"
-            }
-          },
-          "required": [
-            "envName",
-            "source"
-          ],
-          "type": "object"
-        },
-        "ProfileEnvironmentRetention": {
-          "description": "What happens to a profile-provisioned environment when its originating\nsession closes.",
-          "oneOf": [
-            {
-              "const": "closeWithSession",
-              "description": "Close the environment when the session that provisioned it closes.",
-              "type": "string"
-            },
-            {
-              "const": "retain",
-              "description": "Leave the environment open; the universe owns its cleanup.",
-              "type": "string"
             }
           ]
         },
@@ -6890,7 +6319,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "How the session obtains its active environment when this profile is\napplied: activate an existing universe environment, or provision a\nfresh one for this session. Absence leaves the session's current\nactive environment unchanged."
+              "description": "How the session obtains its active environment when this profile is\napplied: select an existing environment or inherit the parent's\nselection. Absence leaves the session's current\nactive environment unchanged."
             },
             "instructions": {
               "anyOf": [
@@ -7006,96 +6435,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 {
                   "type": "null"
                 }
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "EnvironmentCredentialSourceView": {
-          "oneOf": [
-            {
-              "properties": {
-                "grantId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "authGrant",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "grantId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "providerId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "authProviderCredential",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "providerId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "secretId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "directSecret",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "secretId"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "EnvironmentIdlePolicyView": {
-          "description": "Staged idle policy. Thresholds are milliseconds of daemon-reported idle\ntime and must be non-decreasing in the order pause, suspend, stop, close.\nStages whose power state the provider does not support are skipped.",
-          "properties": {
-            "closeAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "pauseAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "stopAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "suspendAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
               ]
             }
           },
@@ -7487,104 +6826,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "type"
               ],
               "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Provision one environment for the session from the universe's enabled\nbinding for `providerId`, then activate it. The provision request id\nis derived from the session id, so retries and repeated applies\nconverge on the same environment.",
-              "properties": {
-                "credentials": {
-                  "description": "Credentials bound to the environment right after it is\nprovisioned before activation: references to universe\ngrants/providers/secrets, never values. They become ordinary\nenvironment credential bindings; the profile is the initial set,\nnot a live sync. Not available for `existing` environments.",
-                  "items": {
-                    "$ref": "#/definitions/ProfileEnvironmentCredential"
-                  },
-                  "type": "array"
-                },
-                "displayName": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "idlePolicy": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/EnvironmentIdlePolicyView"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Optional staged idle policy for the provisioned environment.\nStages the provider cannot realize are skipped."
-                },
-                "metadata": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
-                },
-                "providerId": {
-                  "type": "string"
-                },
-                "retention": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ProfileEnvironmentRetention"
-                    }
-                  ],
-                  "default": "closeWithSession"
-                },
-                "templateId": {
-                  "description": "Immutable provider template-version identity.",
-                  "type": "string"
-                },
-                "type": {
-                  "const": "provision",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "providerId",
-                "templateId"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "ProfileEnvironmentCredential": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "description": "One environment credential binding requested by a profile: the same shape\nas `environments/credentials/bind`.",
-          "properties": {
-            "envName": {
-              "description": "Environment variable name (`[A-Za-z_][A-Za-z0-9_]{0,127}`).",
-              "type": "string"
-            },
-            "source": {
-              "$ref": "#/definitions/EnvironmentCredentialSourceView"
-            }
-          },
-          "required": [
-            "envName",
-            "source"
-          ],
-          "type": "object"
-        },
-        "ProfileEnvironmentRetention": {
-          "description": "What happens to a profile-provisioned environment when its originating\nsession closes.",
-          "oneOf": [
-            {
-              "const": "closeWithSession",
-              "description": "Close the environment when the session that provisioned it closes.",
-              "type": "string"
-            },
-            {
-              "const": "retain",
-              "description": "Leave the environment open; the universe owns its cleanup.",
-              "type": "string"
             }
           ]
         },

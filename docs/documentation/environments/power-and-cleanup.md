@@ -33,9 +33,9 @@ For a disposable test VM from [Incus VMs](incus-vms.md), save any needed output,
 then expand its **Details** and choose **Pause**. Wait for the observed status
 to become paused. **Resume** requests running again.
 
-You can also leave it paused and ask a session using it to run `pwd`. Selecting
-or using a sleeping provisioned environment with power support requests a
-wake-up. The session's environment-dependent tool waits for readiness before
+You can also leave it paused and ask a session using it to run `pwd`. Using
+a sleeping provisioned environment with power support requests a wake-up;
+selecting it leaves its power state unchanged. The environment-dependent tool waits for readiness before
 executing. Ordinary model conversation and VFS work do not need that machine
 to wake.
 
@@ -143,26 +143,11 @@ with the application's availability needs; see
 
 ## Choose who owns cleanup
 
-An environment created directly through **New environment** has a lifetime
-managed independently of sessions. Closing a session that selected it does
-not close the machine. Its idle policy and explicit environment operations
-still apply.
-
-A profile provision defaults to **Close with the session**. Its origin record
-identifies the session responsible for that cleanup, and closing that session
-requests closure of the environment. This remains true when another session
-selects the same machine. Selecting it as **existing** elsewhere adds access
-without removing its original cleanup policy.
-
-For a shared bot machine, use an independently created environment or provision
-with **Retain after the session closes**. Retention transfers cleanup
-responsibility to the universe; it does not keep the machine immune from an
-idle close policy or an explicit close action.
-
-Profile credentials and retention initialize the fresh environment. Reapplying
-an edited profile does not turn the old machine into a fresh provision. Inspect
-and manage existing resources directly rather than relying on profile edits
-to rebuild them.
+Every environment has a lifetime managed independently of sessions. Create
+machines through **New environment**, configure their credentials and idle
+policy on the Environments page, and close them explicitly when finished.
+Closing or deleting a session or bot never closes its selected environment.
+Profiles only select an existing environment or inherit a parent's selection.
 
 Session-owned job promises are canceled when the session closes. Standalone
 API jobs have no session promise, and ordinary remote processes may outlive
@@ -226,7 +211,7 @@ in [Bring your own compute](bring-your-own-compute.md).
 | The VM never pauses | Check the idle policy, tracked running work, and calls from other sessions. |
 | A paused VM never reaches its later stop threshold | Later stages do not escalate while powered down. Choose a single stage or perform the later action explicitly. |
 | An application goes offline despite receiving traffic | App traffic does not reset daemon idle time or wake the VM. Review its power policy. |
-| Closing one session removes another session's machine | Check the environment's originating session and close-with-session retention. Shared selection did not change that ownership. |
+| An environment disappears while a session uses it | Inspect its idle close policy, explicit close requests, and provider lifecycle. Session closure never closes the environment. |
 | A borrowed machine cannot resume through Lightspeed | Restart its daemon or machine directly; it has no provider power control. |
 | A provisioned environment remains closing | Inspect provider reachability and deletion errors. A recorded close request does not prove the VM was removed. |
 

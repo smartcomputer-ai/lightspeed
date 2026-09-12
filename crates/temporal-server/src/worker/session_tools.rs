@@ -956,14 +956,7 @@ impl SessionTools {
                         .await;
                     }
                 };
-                let (environment, ready) = match resolver
-                    .activatable(
-                        &environment_id,
-                        &allowed,
-                        i64::try_from(now_unix_ms()?).map_err(io_error)?,
-                    )
-                    .await
-                {
+                let environment = match resolver.selectable(&environment_id, &allowed).await {
                     Ok(environment) => environment,
                     Err(error) => {
                         return failed_result(
@@ -974,6 +967,7 @@ impl SessionTools {
                         .await;
                     }
                 };
+                let ready = environment.status == environments::EnvironmentStatus::Ready;
                 let output = serde_json::json!({
                     "environment_id": environment.environment_id.as_str(),
                     "active": true,
@@ -984,7 +978,7 @@ impl SessionTools {
                     format!("Active environment set to {}.", environment.environment_id)
                 } else {
                     format!(
-                        "Active environment set to {} (still {}; environment tools wait until it is ready).",
+                        "Active environment set to {} (currently {}; availability is checked when an environment tool uses it).",
                         environment.environment_id,
                         format!("{:?}", environment.status).to_lowercase()
                     )
@@ -1831,7 +1825,7 @@ impl SessionTools {
 
 impl SessionTools {
     /// Poll the registry (and probe the route) until the environment is
-    /// selectable, terminally unusable, or `deadline` passes. `heartbeat` is
+    /// ready for use, terminally unusable, or `deadline` passes. `heartbeat` is
     /// invoked on every poll so the hosting activity stays alive.
     pub async fn await_environment_ready(
         &self,
@@ -1862,7 +1856,7 @@ impl SessionTools {
         loop {
             heartbeat();
             let now = i64::try_from(now_unix_ms().unwrap_or_default()).unwrap_or(i64::MAX);
-            match resolver.selectable(&environment_id, &allowed, now).await {
+            match resolver.ready_for_use(&environment_id, &allowed, now).await {
                 Ok(_) => return Outcome::Ready,
                 Err(crate::environment_resolver::EnvironmentResolveError::NotReady {
                     status,
@@ -3317,7 +3311,6 @@ mod tests {
             },
             public_ingress_enabled: false,
             public_endpoint: None,
-            origin_session: None,
             metadata: BTreeMap::new(),
             last_seen_at_ms: None,
             created_at_ms: 1,
@@ -3591,7 +3584,7 @@ mod tests {
                 template_id: EnvironmentTemplateId::new("test-template"),
                 display_name: None,
                 metadata: BTreeMap::new(),
-                origin_session: None,
+
                 idle_policy: None,
                 created_at_ms: observed_at_ms.saturating_sub(1),
             })
@@ -3782,7 +3775,7 @@ mod tests {
                 template_id: EnvironmentTemplateId::new("test-template"),
                 display_name: None,
                 metadata: BTreeMap::new(),
-                origin_session: None,
+
                 idle_policy: None,
                 created_at_ms: 10,
             })

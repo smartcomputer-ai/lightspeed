@@ -75,6 +75,8 @@ pub enum CoreAgentCommand {
     CompactContext,
     RequestRun(RunRequestCommand),
     RequestRunSteering {
+        #[serde(default = "legacy_untargeted_steering_run_id")]
+        run_id: RunId,
         input: Vec<ContextEntryInput>,
     },
     /// Cancel one run owned by this session. Queued runs are dequeued as
@@ -121,4 +123,10 @@ pub enum CoreAgentCommand {
         #[serde(default)]
         force: bool,
     },
+}
+
+// Older workflow signals did not carry a steering target. Zero never names an
+// admitted run; only historical workflow replay may resolve this sentinel.
+fn legacy_untargeted_steering_run_id() -> RunId {
+    RunId::new(0)
 }

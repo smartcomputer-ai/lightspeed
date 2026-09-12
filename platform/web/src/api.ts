@@ -10,7 +10,6 @@ import type {
   EnvironmentTemplateView,
   EnvironmentView,
   ProfileEnvironment as ProfileEnvironmentView,
-  ProfileEnvironmentCredential as ProfileEnvironmentCredentialView,
   ProfileSessionRetention as ProfileSessionRetentionView,
   SessionEnvironmentOverride as SessionEnvironmentOverrideView,
   SessionEventView,
@@ -156,7 +155,6 @@ export interface ProfileSummary {
 }
 
 export type ProfileEnvironment = ProfileEnvironmentView;
-export type ProfileEnvironmentCredential = ProfileEnvironmentCredentialView;
 export type ProfileSessionRetention = ProfileSessionRetentionView;
 export type SessionEnvironmentOverride = SessionEnvironmentOverrideView;
 

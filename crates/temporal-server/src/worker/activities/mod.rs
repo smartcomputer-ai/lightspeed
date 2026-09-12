@@ -190,6 +190,14 @@ mod tests {
     #[test]
     fn activity_names_match_workflow_definitions() {
         assert_eq!(
+            WorkerActivities::prepare_session_toolset.name(),
+            temporal_workflow::WorkflowActivities::prepare_session_toolset.name()
+        );
+        assert_eq!(
+            WorkerActivities::prepare_session_profile.name(),
+            temporal_workflow::WorkflowActivities::prepare_session_profile.name()
+        );
+        assert_eq!(
             WorkerActivities::create_or_load_session.name(),
             temporal_workflow::WorkflowActivities::create_or_load_session.name()
         );
@@ -591,6 +599,39 @@ impl WorkerActivities {
         tools::prepare_promise_controls(state.tools().blobs.as_ref(), request.request).await
     }
 
+    #[activity(name = "WorkflowActivities::prepare_session_toolset")]
+    pub async fn prepare_session_toolset(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        request: temporal_workflow::SessionToolsetRequest,
+    ) -> Result<
+        Result<temporal_workflow::SessionToolsetPreparation, api::AgentApiError>,
+        ActivityError,
+    > {
+        let state = self.state_for(&ctx).await?;
+        let service = preparation_service(&state, &ctx)?;
+        if request.validate_configuration {
+            if let Err(error) = service.validate_configuration(&request.source.config).await {
+                return preparation_activity_result(Err(error));
+            }
+        }
+        preparation_activity_result(service.prepare_toolset(request.source).await)
+    }
+
+    #[activity(name = "WorkflowActivities::prepare_session_profile")]
+    pub async fn prepare_session_profile(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        request: temporal_workflow::SessionProfilePreparationRequest,
+    ) -> Result<
+        Result<temporal_workflow::SessionProfilePreparation, api::AgentApiError>,
+        ActivityError,
+    > {
+        let state = self.state_for(&ctx).await?;
+        let service = preparation_service(&state, &ctx)?;
+        preparation_activity_result(service.prepare_profile(request).await)
+    }
+
     #[activity(name = ACTIVITY_RUNTIME_PROJECTION_REFRESH)]
     pub async fn runtime_projection_refresh(
         self: Arc<Self>,
@@ -712,4 +753,33 @@ impl WorkerActivities {
         let state = self.state_for_universe(request.universe_id).await?;
         subagents::close(state.subagents(), request).await
     }
+}
+
+fn preparation_activity_result<T>(
+    result: Result<T, api::AgentApiError>,
+) -> Result<Result<T, api::AgentApiError>, ActivityError> {
+    match result {
+        Err(error) if error.kind == api::AgentApiErrorKind::Internal => {
+            Err(common::activity_error(error))
+        }
+        other => Ok(other),
+    }
+}
+
+fn preparation_service(
+    state: &ActivityState,
+    ctx: &ActivityContext,
+) -> Result<crate::gateway::service::session_preparation::SessionPreparationService, ActivityError>
+{
+    let store = state.preparation_store.clone().ok_or_else(|| {
+        common::activity_error(anyhow::anyhow!(
+            "session preparation store is not configured"
+        ))
+    })?;
+    Ok(
+        crate::gateway::service::session_preparation::SessionPreparationService {
+            store,
+            task_queue: ctx.info().task_queue.clone(),
+        },
+    )
 }

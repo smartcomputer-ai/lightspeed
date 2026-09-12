@@ -1,5 +1,7 @@
 # P125: Profile-Provisioned Environments
 
+> Superseded: profile provisioning and session-bound environment cleanup were removed by [workflow-owned session preparation](../p172-workflow-owned-toolset-reconciliation.md). Environments now have independent lifecycles. The material below records the former design.
+
 **Status**
 
 - Proposed and implemented 2026-08-16 (all slices; live-validated against

@@ -5,6 +5,12 @@ The session selects one environment at a time, while the environment remains
 a resource in the universe. Several sessions can select the same machine;
 selection does not reserve it or create a private copy.
 
+Selection checks that the environment exists, is allowed by the session's grants,
+and is not failed, closing, or closed. It does not connect to the machine or change
+its power state. Sleeping, offline, and starting environments can be selected;
+tools check readiness and request wake-up where supported when they use it.
+Selecting the same environment again rechecks its current registry state.
+
 This guide starts with a machine that already appears under **Environments**.
 Use [Bring your own compute](bring-your-own-compute.md) to connect one you
 control, or [Incus VMs](incus-vms.md) to configure provider-managed machines.
@@ -113,54 +119,29 @@ borrowed machine. An ephemeral registration closes after its disconnect
 grace period; once closed, that identity cannot return and the profile's
 saved selection becomes unavailable.
 
-## Provision a machine per session
+## Create an independent machine
 
-A profile can request its own environment when a session starts. The universe
-must have an enabled provider binding and an available template first. In the
-profile's **Session environment** settings:
+Use **Environments → New environment**. Select a **Template**, enter a
+**Display name**, configure an idle policy if needed, and choose **Provision**.
+The button appears when the universe has a non-deprecated template from an
+enabled binding. Configure [credentials](credentials.md) on the environment,
+then select it in a session or profile.
 
-1. Choose **Mode → Provision a new environment for the session**.
-2. Select **Provider** and **Template**. The template identifies an immutable
-   provider version, including its machine setup.
-3. Choose **Retention → Close with the session** for a task-specific machine,
-   or **Retain after the session closes** when its files must stay available
-   afterward.
-4. Optionally set a display name, an idle policy, and
-   [environment credentials](credentials.md).
-5. Save the profile and create a new session from it.
+The environment can be selected while it is provisioning or booting. Tools
+wait for readiness before dispatching. If provisioning fails, inspect the
+provider and explicitly create or select a replacement. Session creation and
+profile application never allocate machines.
 
-The environment can be selected while it is still provisioning or booting.
-When an environment-dependent tool reaches it before it is ready, the runtime
-waits for readiness and then dispatches the tool. Inspect the environment's
-status if that wait takes longer than expected; a failed provision needs
-attention at the provider.
-
-Provisioning is tied to the session identity. Retrying creation or reapplying
-the profile finds the same environment instead of allocating another one.
-Changing the profile template or credentials does not rebuild or resynchronize
-that existing machine. If its environment has closed or failed, explicitly
-create and select a replacement, or start a new session.
-
-**Close with the session** is the default. The environment can still be
-selected by another session, but that does not transfer or extend its cleanup
-policy. Closing its originating session can remove the machine another
-session is using. Choose a separately managed existing environment for a
-shared lifetime, and read [Power and cleanup](power-and-cleanup.md) before
-retaining machines beyond their original tasks.
-
-You can create that separate resource directly through **Environments → New
-environment**. Select a **Template**, enter a **Display name**, configure any
-idle policy, and choose **Provision**. The button appears only when the
-universe has a non-deprecated template from an enabled binding. The created
-environment has no originating session that automatically owns its closure.
+Environments remain available when sessions close or are deleted. Manage
+cleanup through explicit environment operations and idle policies; see
+[Power and cleanup](power-and-cleanup.md).
 
 ## Use environments with bots and sub-agents
 
 For a bot whose Main conversation, routed threads, and chat conversations
 should use one machine, select the same **existing** environment in its
-profile. Provisioning in the profile instead creates a machine for each
-session that uses that intent. Resetting a conversation can therefore close
-its old machine and provision another for its successor.
+profile. Resetting a conversation leaves that environment intact for the
+successor and other sessions using it.
 
 A child profile can choose **Inherit the parent's active environment
 (sub-agents only)**. The child shares the parent's selected machine without
@@ -168,8 +149,8 @@ copying it and does not close it as its own resource. The parent must have an
 active environment, and the child's grants must allow access to it. Using
 this mode for a standalone session is rejected.
 
-The child can also select a different existing machine or provision one of
-its own. Its VFS links remain independent of all these choices. See
+The child can also select a different existing machine. Create any new machine
+through the environment API first. Its VFS links remain independent of these choices. See
 [Sub-agents and federation](../using-lightspeed/subagents-and-federation.md)
 for the rest of the child-profile boundary.
 

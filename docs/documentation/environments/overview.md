@@ -57,7 +57,7 @@ at a time, and its environment file and process tools operate there. Enable
 the **Environments** capability and select an **Active environment** in the
 session setup, or configure the environment in the profile used to start it.
 
-A profile can select an existing environment or request a provisioned one.
+A profile can select an existing environment or inherit a parent’s selection.
 For a provisioned environment, the runtime can wait for readiness before
 executing an environment-dependent tool call. The session does not need to
 guess how long provisioning takes.
@@ -106,12 +106,10 @@ A persistent registered environment becomes offline while its daemon is away
 and reconnects under the same identity. Ephemeral registration closes the
 environment after its configured disconnect grace period.
 
-Closing a session ordinarily leaves a shared environment available. A
-profile-provisioned environment can instead use `closeWithSession` retention,
-which is the default for that provisioning mode. That policy closes the
-environment with its originating session even if another session has selected
-it. Choose an existing shared environment when its lifetime should be managed
-independently of individual sessions.
+Closing or deleting a session leaves its environment available. Environments
+are created, credentialed, powered, and closed independently. Profiles can
+select existing environments or inherit a parent's selection; they do not
+provision machines or attach cleanup to a session's lifetime.
 
 Closing a registered or external environment removes its availability in
 Lightspeed; it does not delete or shut down your computer. Closing a provisioned

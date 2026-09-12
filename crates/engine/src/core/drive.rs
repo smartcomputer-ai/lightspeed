@@ -2194,7 +2194,13 @@ mod tests {
         let mut input = user_input(BlobRef::from_bytes(b"automated steering"));
         input[0].origin = Some("event".into());
         let action = drive
-            .admit_command(CoreAgentCommand::RequestRunSteering { input }, 23)
+            .admit_command(
+                CoreAgentCommand::RequestRunSteering {
+                    run_id: crate::RunId::new(1),
+                    input,
+                },
+                23,
+            )
             .unwrap();
         log.extend(commit_action(&mut drive, action));
         let action = drive.next_action(24, 64).unwrap();
@@ -4588,6 +4594,64 @@ mod tests {
     /// context revision and the runtime re-derives it from state); it then
     /// lands before the next turn, in admission order.
     #[test]
+    fn steering_rejects_a_previous_run_target_and_replays_the_matching_target() {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("steering-target"),
+            CoreAgentState::new(),
+            None,
+        );
+        open_session(&mut drive);
+        request_run(&mut drive, BlobRef::from_bytes(b"first"));
+        let first = drive_until_generate(&mut drive).run_id;
+        let cancel = drive
+            .admit_command(CoreAgentCommand::ForceCancelRun { run_id: first }, 40)
+            .unwrap();
+        commit_action(&mut drive, cancel);
+        request_run(&mut drive, BlobRef::from_bytes(b"second"));
+        let second = drive_until_generate(&mut drive).run_id;
+        assert_ne!(first, second);
+        let checkpoint = drive.state().clone();
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::RequestRunSteering {
+                    run_id: first,
+                    input: user_input(BlobRef::from_bytes(b"stale")),
+                },
+                50,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, CoreAgentDriveError::Command(CommandError::Rejected(rejection))
+            if rejection.kind == crate::CommandRejectionKind::UnknownReference)
+        );
+        assert_eq!(drive.state(), &checkpoint);
+        let valid = drive
+            .admit_command(
+                CoreAgentCommand::RequestRunSteering {
+                    run_id: second,
+                    input: user_input(BlobRef::from_bytes(b"current")),
+                },
+                51,
+            )
+            .unwrap();
+        let entries = commit_action(&mut drive, valid);
+        let mut replayed = checkpoint;
+        for entry in entries {
+            let stored = CoreAgentCodec.encode_entry(&entry).unwrap();
+            crate::apply_event(
+                &mut replayed,
+                &CoreAgentCodec.decode_entry(&stored).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(&replayed, drive.state());
+        assert_eq!(
+            drive.state().runs.active.as_ref().unwrap().steering.len(),
+            1
+        );
+    }
+
+    #[test]
     fn steering_materializes_after_in_flight_turn_completes() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
@@ -4600,6 +4664,7 @@ mod tests {
         let steering_one = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    run_id: crate::RunId::new(1),
                     input: user_input(BlobRef::from_bytes(b"steering one")),
                 },
                 30,
@@ -4609,6 +4674,7 @@ mod tests {
         let steering_two = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    run_id: crate::RunId::new(1),
                     input: user_input(BlobRef::from_bytes(b"steering two")),
                 },
                 31,
@@ -4688,6 +4754,7 @@ mod tests {
         let steering = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    run_id: crate::RunId::new(1),
                     input: user_input(BlobRef::from_bytes(b"steer while parked")),
                 },
                 91,
@@ -4746,6 +4813,7 @@ mod tests {
         let error = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    run_id: crate::RunId::new(1),
                     input: user_input(BlobRef::from_bytes(b"too late")),
                 },
                 31,
@@ -4958,6 +5026,7 @@ mod tests {
         let steering = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    run_id: crate::RunId::new(1),
                     input: user_input(BlobRef::from_bytes(b"late steering")),
                 },
                 30,

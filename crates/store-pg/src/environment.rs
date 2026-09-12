@@ -5,16 +5,15 @@ use environments::{
     AdoptEnvironment, BeginCloseEnvironment, CreateEnvironment, CreateExternalEnvironment,
     CreateRegisteredEnvironment, EnvironmentCredentialRecord, EnvironmentCredentialSource,
     EnvironmentCredentialStore, EnvironmentDaemonId, EnvironmentId, EnvironmentIncarnationId,
-    EnvironmentIncarnationRecord, EnvironmentOriginSession, EnvironmentProviderBindingId,
-    EnvironmentProviderBindingRecord, EnvironmentProviderBindingStatus,
-    EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderRecord,
-    EnvironmentProviderStore, EnvironmentProvisionRequestId, EnvironmentRecord,
-    EnvironmentRegistrationKeyId, EnvironmentRegistryError, EnvironmentSource, EnvironmentStatus,
-    EnvironmentStore, EnvironmentTemplateId, FailEnvironmentLifecycle, FinishCloseEnvironment,
-    ListEnvironmentCredentials, ListEnvironmentProviders, ListEnvironments,
+    EnvironmentIncarnationRecord, EnvironmentProviderBindingId, EnvironmentProviderBindingRecord,
+    EnvironmentProviderBindingStatus, EnvironmentProviderBindingStore, EnvironmentProviderId,
+    EnvironmentProviderRecord, EnvironmentProviderStore, EnvironmentProvisionRequestId,
+    EnvironmentRecord, EnvironmentRegistrationKeyId, EnvironmentRegistryError, EnvironmentSource,
+    EnvironmentStatus, EnvironmentStore, EnvironmentTemplateId, FailEnvironmentLifecycle,
+    FinishCloseEnvironment, ListEnvironmentCredentials, ListEnvironmentProviders, ListEnvironments,
     ObserveProvisionedEnvironment, ObserveRegisteredEnvironment, PowerState,
     PutEnvironmentCredential, PutEnvironmentProvider, PutEnvironmentProviderBinding,
-    RegisteredConnectionObservation, RegisteredIdentityMode, SessionId, SetEnvironmentIdlePolicy,
+    RegisteredConnectionObservation, RegisteredIdentityMode, SetEnvironmentIdlePolicy,
     SetEnvironmentIngress, SetEnvironmentPower,
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -37,7 +36,6 @@ const ENVIRONMENT_COLUMNS: &str = r#"
     e.registration_key_id, e.daemon_id, e.daemon_public_key, e.identity_mode, e.last_seen_at_ms,
     e.display_name, e.status, e.desired_power, e.idle_policy_json,
     e.public_ingress_enabled, e.public_endpoint, e.metadata_json,
-    e.origin_session_id, e.origin_profile_id, e.origin_close_with_session,
     e.created_at_ms, e.updated_at_ms,
     i.incarnation_id, i.provision_request_id, i.provider_target_id,
     i.template_id, i.adoption_source_target, i.power_states_json,
@@ -346,9 +344,8 @@ impl EnvironmentStore for PgStore {
             INSERT INTO environments (
                 universe_id, environment_id, request_id, source_kind, provider_id, binding_id,
                 display_name, status, current_incarnation_id, metadata_json,
-                origin_session_id, origin_profile_id, origin_close_with_session,
                 idle_policy_json, created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,'provisioned',$4,$5,$6,'provisioning',$7,$8,$9,$10,$11,$12,$13,$13)
+            ) VALUES ($1,$2,$3,'provisioned',$4,$5,$6,'provisioning',$7,$8,$9,$10,$10)
         "#,
         )
         .bind(self.config.universe_id)
@@ -362,24 +359,6 @@ impl EnvironmentStore for PgStore {
             "encode environment metadata",
             &request.metadata,
         )?)
-        .bind(
-            request
-                .origin_session
-                .as_ref()
-                .map(|origin| origin.session_id.as_str().to_owned()),
-        )
-        .bind(
-            request
-                .origin_session
-                .as_ref()
-                .and_then(|origin| origin.profile_id.clone()),
-        )
-        .bind(
-            request
-                .origin_session
-                .as_ref()
-                .is_some_and(|origin| origin.close_with_session),
-        )
         .bind(
             request
                 .idle_policy
@@ -546,7 +525,6 @@ impl EnvironmentStore for PgStore {
             },
             public_ingress_enabled: false,
             public_endpoint: None,
-            origin_session: None,
             metadata: request.metadata.clone(),
             last_seen_at_ms: None,
             created_at_ms: request.created_at_ms,
@@ -853,10 +831,6 @@ impl EnvironmentStore for PgStore {
             query.push_str(&format!(" AND e.status = ${next}"));
             next += 1;
         }
-        if request.origin_session_id.is_some() {
-            query.push_str(&format!(" AND e.origin_session_id = ${next}"));
-            next += 1;
-        }
         if request.registration_key_id.is_some() {
             query.push_str(&format!(" AND e.registration_key_id = ${next}"));
             next += 1;
@@ -875,9 +849,6 @@ impl EnvironmentStore for PgStore {
         }
         if let Some(status) = request.status {
             sql = sql.bind(environment_status_to_str(status));
-        }
-        if let Some(session_id) = request.origin_session_id {
-            sql = sql.bind(session_id.as_str().to_owned());
         }
         if let Some(id) = request.registration_key_id {
             sql = sql.bind(id.to_string());
@@ -903,20 +874,6 @@ impl EnvironmentStore for PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list environments needing reconcile", error))?;
-        rows.iter().map(environment_from_row).collect()
-    }
-
-    async fn list_environments_closing_with_session(
-        &self,
-    ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
-        let query = format!(
-            "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1 AND e.origin_close_with_session = true AND e.status NOT IN ('closing','closed') ORDER BY e.updated_at_ms, e.environment_id"
-        );
-        let rows = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| sql_error("list environments closing with session", error))?;
         rows.iter().map(environment_from_row).collect()
     }
 
@@ -1305,7 +1262,6 @@ fn environment_from_row(
         public_endpoint: row
             .try_get("public_endpoint")
             .map_err(|e| sql_error("decode public endpoint", e))?,
-        origin_session: origin_session_from_row(row)?,
         metadata: json_column(row, "metadata_json")?,
         last_seen_at_ms: row
             .try_get("last_seen_at_ms")
@@ -1322,27 +1278,6 @@ pub(crate) fn identity_mode_from_str(
 ) -> Result<RegisteredIdentityMode, EnvironmentRegistryError> {
     RegisteredIdentityMode::parse(value)
         .ok_or_else(|| store_message(format!("unknown identity mode: {value}")))
-}
-
-fn origin_session_from_row(
-    row: &sqlx::postgres::PgRow,
-) -> Result<Option<EnvironmentOriginSession>, EnvironmentRegistryError> {
-    let session_id: Option<String> = row
-        .try_get("origin_session_id")
-        .map_err(|e| sql_error("decode origin session id", e))?;
-    let Some(session_id) = session_id else {
-        return Ok(None);
-    };
-    Ok(Some(EnvironmentOriginSession {
-        session_id: SessionId::try_new(session_id)
-            .map_err(|e| store_message(format!("decode origin session id: {e}")))?,
-        profile_id: row
-            .try_get("origin_profile_id")
-            .map_err(|e| sql_error("decode origin profile id", e))?,
-        close_with_session: row
-            .try_get("origin_close_with_session")
-            .map_err(|e| sql_error("decode origin close-with-session", e))?,
-    }))
 }
 
 fn credential_from_row(

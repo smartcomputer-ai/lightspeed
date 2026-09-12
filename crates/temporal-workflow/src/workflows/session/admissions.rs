@@ -1,15 +1,5 @@
 use super::*;
 
-pub(super) async fn process_admissions(
-    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
-    args: &AgentSessionArgs,
-    admissions: Vec<AgentAdmission>,
-) -> anyhow::Result<DriveOutcome> {
-    let mut drive = drive_from_state(ctx)?;
-    admit_admissions(ctx, &mut drive, admissions).await?;
-    drive_until_idle(ctx, args, &mut drive).await
-}
-
 /// Admit a batch of client admissions against the live drive, appending the
 /// resulting events. Used by the outer loop and from inside
 /// the drive loop at every action boundary and while an activity is in
@@ -17,34 +7,176 @@ pub(super) async fn process_admissions(
 pub(super) async fn admit_admissions(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
-    admissions: Vec<AgentAdmission>,
+    admissions: Vec<SessionAdmission>,
 ) -> anyhow::Result<()> {
-    for admission in admissions {
+    let mut admissions = admissions.into_iter();
+    while let Some(admission) = admissions.next() {
+        let mut observed_tools = None;
+        let admission = match admission {
+            SessionAdmission::Operation(request) => {
+                preparation::process_operation(ctx, drive, request).await?;
+                continue;
+            }
+            SessionAdmission::Core(admission) => admission,
+            SessionAdmission::PreparedRun { admission, result } => {
+                match result {
+                    Ok(prepared) => observed_tools = Some(prepared),
+                    Err(error) => {
+                        record_admission_failure(
+                            ctx,
+                            preparation::failure(
+                                &admission.command,
+                                admission.correlation_token,
+                                error,
+                            ),
+                        );
+                        continue;
+                    }
+                }
+                admission
+            }
+        };
         let correlation_token = admission.correlation_token.clone();
         let mut command = admission.command;
-        if command_needs_input_preprocessing(&command) {
+        if ctx.is_replaying() {
+            if let CoreAgentCommand::RequestRunSteering { run_id, .. } = &mut command {
+                if run_id.as_u64() == 0 {
+                    if let Some(active) = drive.state().runs.active.as_ref() {
+                        *run_id = active.run_id;
+                    }
+                }
+            }
+        }
+        let workflow_preparation = ctx.patched(preparation::PREPARATION_PATCH);
+        if workflow_preparation
+            && let CoreAgentCommand::ReplaceSessionConfig {
+                config,
+                expected_revision,
+            } = &command
+        {
+            if let Err(error) = preparation::execute_operation(
+                ctx,
+                drive,
+                crate::SessionOperation::Configure {
+                    config: config.clone(),
+                    expected_revision: *expected_revision,
+                },
+            )
+            .await?
+            {
+                record_admission_failure(
+                    ctx,
+                    preparation::failure(&command, correlation_token, error),
+                );
+            }
+            continue;
+        }
+        if observed_tools.is_none() && command_needs_input_preprocessing(&command) {
             let session_id = drive.session_id().clone();
             match preprocess_input_entries(ctx, session_id, command).await? {
-                RunInputPreprocessResult::Succeeded { command: rewritten } => {
-                    command = *rewritten;
-                }
+                RunInputPreprocessResult::Succeeded { command: rewritten } => command = *rewritten,
                 RunInputPreprocessResult::Failed { failure } => {
                     record_admission_failure(
                         ctx,
-                        failure.with_correlation_token(correlation_token.clone()),
+                        failure.with_correlation_token(correlation_token),
                     );
                     continue;
                 }
             }
         }
-        if should_refresh_runtime_projection_before_admitting(drive.state(), &command) {
-            refresh_runtime_projection_before_run(ctx, &mut *drive).await?;
-        }
-        match admit_and_append_command(ctx, drive, command, correlation_token).await? {
-            CommandAdmissionResult::Accepted => {}
-            CommandAdmissionResult::Rejected(failure) => {
-                record_admission_failure(ctx, failure);
+        let mut deferred_tools = None;
+        if workflow_preparation
+            && drive.state().lifecycle.status == CoreAgentStatus::Open
+            && matches!(command, CoreAgentCommand::RequestRun(_))
+            && !preparation::known_submission(drive.state(), &command)
+        {
+            if !ctx.state(|state| state.ready) {
+                let error = ctx
+                    .state(|state| state.setup_error.clone())
+                    .unwrap_or_else(|| {
+                        api::AgentApiError::rejected("session setup has not completed")
+                    });
+                record_admission_failure(
+                    ctx,
+                    preparation::failure(&command, correlation_token, error),
+                );
+                continue;
             }
+            let Some(prepared) = observed_tools else {
+                preparation::begin_run_preparation(
+                    ctx,
+                    drive,
+                    AgentAdmission {
+                        command,
+                        correlation_token,
+                    },
+                );
+                let remaining = admissions.collect::<Vec<_>>();
+                ctx.state_mut(|state| {
+                    state.pending_admissions.splice(0..0, remaining);
+                });
+                break;
+            };
+            let result = async {
+                if !preparation::preparation_matches(
+                    &prepared,
+                    drive.state(),
+                    ctx.state(|state| state.universe_id).unwrap(),
+                ) {
+                    return Err(api::AgentApiError::conflict(
+                        "configuration changed during tool preparation",
+                    ));
+                }
+                if turn_in_flight(drive.state()) {
+                    deferred_tools = Some(prepared);
+                } else {
+                    preparation::publish_tools(ctx, drive, prepared).await?;
+                }
+                if should_refresh_runtime_projection_before_admitting(drive.state(), &command) {
+                    refresh_runtime_projection_before_run(ctx, drive)
+                        .await
+                        .map_err(|e| api::AgentApiError::internal(e.to_string()))?;
+                }
+                Ok::<(), api::AgentApiError>(())
+            }
+            .await;
+            if let Err(error) = result {
+                record_admission_failure(
+                    ctx,
+                    preparation::failure(&command, correlation_token, error),
+                );
+                continue;
+            }
+        }
+        if !workflow_preparation
+            && should_refresh_runtime_projection_before_admitting(drive.state(), &command)
+        {
+            refresh_runtime_projection_before_run(ctx, drive).await?;
+        }
+        let prepared_admission = AgentAdmission {
+            command: command.clone(),
+            correlation_token: correlation_token.clone(),
+        };
+        match admit_and_append_command(ctx, drive, command, correlation_token).await? {
+            CommandAdmissionResult::Accepted => {
+                if let Some(prepared) = deferred_tools {
+                    let run_id = drive
+                        .state()
+                        .runs
+                        .queued
+                        .last()
+                        .expect("accepted queued run")
+                        .run_id;
+                    ctx.state_mut(|state| {
+                        state.pending_toolsets.push(preparation::PendingToolset {
+                            prepared,
+                            run_id,
+                            admission: prepared_admission,
+                        })
+                    });
+                }
+            }
+            CommandAdmissionResult::Rejected(failure) => record_admission_failure(ctx, failure),
         }
     }
     Ok(())
@@ -71,12 +203,19 @@ pub(super) async fn drain_pending_admissions(
     }
     let turn_in_flight = turn_in_flight(drive.state());
     let admissions = ctx.state_mut(|state| {
+        if state.run_preparation.is_some() {
+            let (now, later) = std::mem::take(&mut state.pending_admissions)
+                .into_iter()
+                .partition(preparation::admission_can_pass_preparation);
+            state.pending_admissions = later;
+            return now;
+        }
         if !turn_in_flight {
             return std::mem::take(&mut state.pending_admissions);
         }
         let (now, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.pending_admissions)
             .into_iter()
-            .partition(|admission| admissible_during_turn(&admission.command));
+            .partition(|admission| admission.admissible_during_turn());
         state.pending_admissions = later;
         now
     });
@@ -92,16 +231,22 @@ pub(super) fn has_admissible_admissions(state: &AgentSessionWorkflow) -> bool {
     if state.core_state.context.pending_compaction {
         return false;
     }
+    if state.run_preparation.is_some() {
+        return state
+            .pending_admissions
+            .iter()
+            .any(preparation::admission_can_pass_preparation);
+    }
     if !turn_in_flight(&state.core_state) {
         return !state.pending_admissions.is_empty();
     }
     state
         .pending_admissions
         .iter()
-        .any(|admission| admissible_during_turn(&admission.command))
+        .any(|admission| admission.admissible_during_turn())
 }
 
-fn turn_in_flight(state: &CoreAgentState) -> bool {
+pub(super) fn turn_in_flight(state: &CoreAgentState) -> bool {
     state
         .runs
         .active
@@ -111,7 +256,7 @@ fn turn_in_flight(state: &CoreAgentState) -> bool {
 
 /// Commands that do not move the config/context/toolset revisions an
 /// in-flight turn was planned against.
-fn admissible_during_turn(command: &CoreAgentCommand) -> bool {
+pub(super) fn admissible_during_turn(command: &CoreAgentCommand) -> bool {
     matches!(
         command,
         CoreAgentCommand::CancelRun { .. }
@@ -256,6 +401,7 @@ pub(super) fn preprocess_failure_to_admission_failure(
     failure: PreprocessRunInputFailure,
 ) -> AgentAdmissionFailure {
     AgentAdmissionFailure {
+        preparation_error: None,
         submission_id,
         correlation_token: None,
         kind: match failure.kind {
@@ -295,56 +441,13 @@ pub(super) fn should_refresh_runtime_projection_before_admitting(
         && state.runs.queued.is_empty()
 }
 
-async fn refresh_runtime_projection_before_run(
+pub(super) async fn refresh_runtime_projection_before_run(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
 ) -> anyhow::Result<()> {
-    let vfs = drive
-        .state()
-        .lifecycle
-        .config
-        .as_ref()
-        .and_then(|config| config.features.vfs.as_ref());
-    let vfs_catalog_enabled = vfs.is_some();
-    let vfs_prompts_enabled = vfs.is_some_and(|vfs| vfs.prompts.is_some());
-    let vfs_prompt_roots = vfs
-        .and_then(|vfs| vfs.prompts.as_ref())
-        .and_then(|prompts| prompts.roots.clone());
-    let vfs_skills = vfs.and_then(|vfs| vfs.skills.clone());
-    let result = ctx
-        .start_activity(
-            WorkflowActivities::runtime_projection_refresh,
-            RuntimeProjectionRefreshActivityRequest {
-                environments: drive
-                    .state()
-                    .lifecycle
-                    .config
-                    .as_ref()
-                    .and_then(|config| config.features.environments.clone()),
-                active_environment_id: drive.state().environment.active_environment_id.clone(),
-                session_id: drive.session_id().clone(),
-                workspace_links: vfs
-                    .map(|vfs| vfs.workspace_links.clone())
-                    .unwrap_or_default(),
-                vfs_catalog_enabled,
-                vfs_prompts_enabled,
-                vfs_prompt_roots,
-                active_instruction_inputs: active_instruction_inputs(drive.state()),
-                vfs_skills,
-                active_catalogs: engine::current_catalog_inputs(drive.state()),
-                subagents: drive
-                    .state()
-                    .lifecycle
-                    .config
-                    .as_ref()
-                    .and_then(|config| config.features.subagents.clone()),
-            },
-            activity_options(),
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-
-    for command in result.commands {
+    let request = runtime_projection_request(drive.session_id(), drive.state());
+    let commands = prepare_runtime_projection(ctx, drive, request).await?;
+    for command in commands {
         match admit_and_append_command(ctx, drive, command, None).await? {
             CommandAdmissionResult::Accepted => {}
             CommandAdmissionResult::Rejected(failure) => {
@@ -355,7 +458,73 @@ async fn refresh_runtime_projection_before_run(
     Ok(())
 }
 
-fn active_instruction_inputs(
+pub(super) fn runtime_projection_request(
+    session_id: &SessionId,
+    state: &CoreAgentState,
+) -> RuntimeProjectionRefreshActivityRequest {
+    let vfs = state
+        .lifecycle
+        .config
+        .as_ref()
+        .and_then(|config| config.features.vfs.as_ref());
+    let vfs_catalog_enabled = vfs.is_some();
+    let vfs_prompts_enabled = vfs.is_some_and(|vfs| vfs.prompts.is_some());
+    let vfs_prompt_roots = vfs
+        .and_then(|vfs| vfs.prompts.as_ref())
+        .and_then(|prompts| prompts.roots.clone());
+    let vfs_skills = vfs.and_then(|vfs| vfs.skills.clone());
+    RuntimeProjectionRefreshActivityRequest {
+        environments: state
+            .lifecycle
+            .config
+            .as_ref()
+            .and_then(|config| config.features.environments.clone()),
+        active_environment_id: state.environment.active_environment_id.clone(),
+        session_id: session_id.clone(),
+        workspace_links: vfs
+            .map(|vfs| vfs.workspace_links.clone())
+            .unwrap_or_default(),
+        vfs_catalog_enabled,
+        vfs_prompts_enabled,
+        vfs_prompt_roots,
+        active_instruction_inputs: active_instruction_inputs(state),
+        vfs_skills,
+        active_catalogs: engine::current_catalog_inputs(state),
+        subagents: state
+            .lifecycle
+            .config
+            .as_ref()
+            .and_then(|config| config.features.subagents.clone()),
+    }
+}
+
+pub(super) async fn prepare_runtime_projection(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    drive: &mut CoreAgentDrive,
+    request: RuntimeProjectionRefreshActivityRequest,
+) -> anyhow::Result<Vec<CoreAgentCommand>> {
+    let workflow_preparation = ctx.patched(preparation::PREPARATION_PATCH);
+    let activity_ctx = ctx.clone();
+    let activity = activity_ctx.start_activity(
+        WorkflowActivities::runtime_projection_refresh,
+        request,
+        if workflow_preparation {
+            preparation::activity_options()
+        } else {
+            activity_options()
+        },
+    );
+    let result = if workflow_preparation {
+        preparation::await_activity(ctx, drive, activity).await?
+    } else {
+        activity.await
+    }
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    Ok(result.commands)
+}
+
+pub(super) fn active_instruction_inputs(
     state: &CoreAgentState,
 ) -> BTreeMap<ContextEntryKey, ContextEntryInput> {
     state

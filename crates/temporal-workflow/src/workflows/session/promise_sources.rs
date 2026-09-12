@@ -364,7 +364,7 @@ fn queue_resolution(
                 return;
             }
         };
-        state.pending_admissions.push(AgentAdmission {
+        state.queue_admission(AgentAdmission {
             command: CoreAgentCommand::ResolvePromise {
                 promise_id,
                 resolution,

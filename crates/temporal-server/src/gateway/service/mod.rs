@@ -1,36 +1,30 @@
 //! `api` gateway for the Temporal-backed agent workflow.
 
 mod api_config;
-mod auth_api;
+pub(crate) mod auth_api;
 mod blobs;
 mod bots_api;
 mod catalogs;
 pub(crate) mod channels_api;
 mod common;
-mod environment_credentials;
-mod environment_lifecycle;
-mod environment_power;
-mod environment_projection;
-pub(crate) mod environment_providers;
-mod environment_registration;
+pub(crate) use crate::environment_service::environment_lifecycle;
+pub(crate) use crate::environment_service::environment_power;
+pub(crate) use crate::environment_service::environment_providers;
 mod environments;
 mod errors;
 mod event_history;
 mod github_api;
 mod input;
-mod instructions;
 mod mcp_api;
 pub(crate) mod mcp_discovery;
 mod models_api;
 mod oauth_api;
 mod parse;
 mod profiles;
-mod prompts;
-mod provider_controllers;
+pub(crate) use crate::environment_service::provider_controllers;
 mod session_jobs;
-mod session_toolset;
+pub(crate) mod session_preparation;
 mod skills;
-mod subagents_api;
 mod vfs_api;
 mod workflow;
 
@@ -48,7 +42,7 @@ use common::now_ms;
 pub use environment_lifecycle::ReconcileFailureLog;
 use environment_lifecycle::parse_registry_environment_id;
 pub use environment_power::PowerReaperStats;
-use environment_providers::{map_environments_error, parse_environment_provider_id};
+use environment_providers::map_environments_error;
 use environments::{activate_environment_command, deactivate_environment_command};
 use errors::*;
 use github_api::{
@@ -67,9 +61,7 @@ use oauth_api::{
     parse_oauth_client_id,
 };
 use parse::*;
-use provider_controllers::{
-    ProviderControllerConnector, WebSocketProviderControllerConnector, finish_provider_controller,
-};
+use provider_controllers::{ProviderControllerConnector, WebSocketProviderControllerConnector};
 #[cfg(test)]
 use skills::skill_list_response;
 #[cfg(test)]
@@ -119,17 +111,14 @@ use temporalio_client::{
 use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use tools::{
     builtin::{BuiltinTool, BuiltinToolOperation},
-    catalog::{SKILL_CATALOG_CONTEXT_KEY, SUBAGENT_CATALOG_CONTEXT_KEY, VFS_CATALOG_CONTEXT_KEY},
+    catalog::SKILL_CATALOG_CONTEXT_KEY,
     environment::jobs::{
         JOB_RUN_DEADLINE_AFTER_MS, JOB_RUN_WORKFLOW_SEMANTIC_TYPE, JOB_RUN_WORKFLOW_TOOL_ID,
         JOB_SUBMIT_WORKFLOW_SEMANTIC_TYPE, JOB_SUBMIT_WORKFLOW_TOOL_ID,
     },
-    skills::{
-        SkillCatalogSnapshot, SkillLocation, configured_vfs_skill_root_specs,
-        resolve_linked_vfs_skill_roots,
-    },
+    skills::{SkillCatalogSnapshot, SkillLocation},
     toolset::{
-        RegisteredToolset, ToolsetConfig, enable_concurrency_for_workflow_tools, register_toolset,
+        ToolsetConfig, enable_concurrency_for_workflow_tools, register_toolset,
         register_workflow_tools,
     },
     web::search::WebSearchToolConfig,
@@ -873,55 +862,11 @@ impl GatewayAgentApi {
         include_environment_tools: bool,
         include_job_read_tool: bool,
     ) -> ToolsetConfig {
-        let features = &session_config.features;
-        let mut config = ToolsetConfig::empty();
-        config.environment_read = features.environments.is_some();
-        config.environment_selection = features
-            .environments
-            .as_ref()
-            .is_some_and(|environments| environments.selection_tools);
-        config.builtin = match features.vfs.as_ref().and_then(|vfs| vfs.tools) {
-            None => tools::toolset::BuiltinToolsetConfig::disabled(),
-            Some(engine::VfsToolSurface::ReadOnly) => tools::toolset::BuiltinToolsetConfig {
-                vfs: tools::toolset::FilesystemToolsetConfig::read_only(),
-                ..tools::toolset::BuiltinToolsetConfig::disabled()
-            },
-            Some(engine::VfsToolSurface::Edit) => tools::toolset::BuiltinToolsetConfig::workspace(),
-        };
-        if let Some(web) = features.web.as_ref() {
-            if let Some(search) = &web.search {
-                config.web.search = Some(WebSearchToolConfig::new(
-                    search.allowed_domains.clone().unwrap_or_default(),
-                    search.blocked_domains.clone(),
-                ));
-            }
-            if web.fetch.is_some() {
-                config.web.fetch = true;
-            }
-        }
-        if features.timers.is_some() || features.subagents.is_some() {
-            // Joining spawned sub-agents depends on the base concurrency
-            // tools, so the subagents grant implies them; the timers grant
-            // adds nothing extra today beyond the same surface.
-            config.concurrency = tools::concurrency::ConcurrencyToolsetConfig::timer();
-        }
-        if include_environment_tools && let Some(environment) = &features.environments {
-            config.builtin.environment.filesystem = match environment.tools {
-                None => tools::toolset::FilesystemToolsetConfig::disabled(),
-                Some(engine::EnvironmentToolSurface::ReadOnly) => {
-                    tools::toolset::FilesystemToolsetConfig::read_only()
-                }
-                Some(engine::EnvironmentToolSurface::Edit) => {
-                    tools::toolset::FilesystemToolsetConfig::workspace_edit()
-                }
-            };
-            config.builtin.environment.run_process = environment.commands;
-            config.builtin.environment.continue_process = environment.commands;
-        }
-        if include_job_read_tool {
-            config.builtin.environment.job_read = true;
-        }
-        config
+        session_preparation::SessionPreparationService::session_toolset_config(
+            session_config,
+            include_environment_tools,
+            include_job_read_tool,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -937,6 +882,7 @@ impl GatewayAgentApi {
         auto_reject_approvals: bool,
     ) -> AgentSessionArgs {
         AgentSessionArgs {
+            setup: None,
             universe_id: self.universe_id(),
             session_id,
             display_name,
@@ -1094,21 +1040,6 @@ impl GatewayAgentApi {
                 "session is not open: {session_id}"
             )));
         }
-        // MCP server records are universe-owned mutable policy. Reconcile the
-        // linked records before every new run so exposure and allowlist edits
-        // do not remain pinned to the session's previous materialization. A
-        // tool patch cannot move the revision of a request already in flight,
-        // so signal it first and let the workflow apply it at the next turn
-        // boundary before the subsequently queued run uses the toolset.
-        let turn_in_flight = loaded
-            .state
-            .runs
-            .active
-            .as_ref()
-            .is_some_and(|run| run.active_turn_id.is_some());
-        let _ = self
-            .configure_session_toolset(&session_id, &loaded, !turn_in_flight)
-            .await?;
         let status_before_signal = self.query_status_optional(&session_id).await?;
         let baseline_admission_failures = status_before_signal
             .as_ref()
@@ -1190,7 +1121,7 @@ impl GatewayAgentApi {
                     let session = self.session_mutation_view_by_id(&session_id).await?;
                     return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
                 }
-                Ok(loaded) => {
+                Ok(loaded) if loaded.state.lifecycle.status == CoreAgentStatus::Open => {
                     if let Some(workflow_tools) = workflow_tools.as_ref() {
                         validate_managed_session_retry(
                             &loaded.state,
@@ -1198,9 +1129,40 @@ impl GatewayAgentApi {
                             workflow_tools,
                         )?;
                     }
+                    self.retry_session_setup(&session_id).await?;
+                    self.wait_for_open_session(&session_id).await?;
+                    let session = self.session_mutation_view_by_id(&session_id).await?;
+                    return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
                 }
+                Ok(_) => {}
                 Err(error) if is_not_found(&error) => {}
                 Err(error) => return Err(error),
+            }
+        }
+        // Temporal may have accepted creation before the session row exists.
+        // Recover that original intent before resolving a mutable named profile.
+        if client_supplied_id {
+            match self
+                .workflow_handle(&session_id)
+                .describe(WorkflowDescribeOptions::default())
+                .await
+            {
+                Ok(description) if description.status() == WorkflowExecutionStatus::Running => {
+                    self.retry_session_setup(&session_id).await?;
+                    self.wait_for_open_session(&session_id).await?;
+                    let loaded = self.load_session_state(&session_id).await?;
+                    if let Some(workflow_tools) = workflow_tools.as_ref() {
+                        validate_managed_session_retry(
+                            &loaded.state,
+                            self.universe_id(),
+                            workflow_tools,
+                        )?;
+                    }
+                    let session = self.session_mutation_view_by_id(&session_id).await?;
+                    return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
+                }
+                Ok(_) | Err(WorkflowInteractionError::NotFound(_)) => {}
+                Err(error) => return Err(map_workflow_interaction_error(error)),
             }
         }
         let mut resolved_profile = match profile {
@@ -1220,28 +1182,23 @@ impl GatewayAgentApi {
             })
             .map_err(profiles::map_profile_error)?;
             if let Some(profile) = resolved_profile.as_mut() {
-                profile.document.environment = environment;
+                profile.environment = environment;
             } else if environment.is_some() {
-                resolved_profile = Some(profiles::ResolvedAgentProfile {
-                    profile_id: None,
-                    document: ProfileDocument {
-                        environment,
-                        ..Default::default()
-                    },
+                resolved_profile = Some(ProfileDocument {
+                    environment,
+                    ..Default::default()
                 });
             }
         }
         let effective_metadata = profiles::merge_profile_start_metadata(
-            resolved_profile
-                .as_ref()
-                .map(|profile| &profile.document.metadata),
+            resolved_profile.as_ref().map(|profile| &profile.metadata),
             metadata,
         );
         validate_caller_metadata(&effective_metadata)?;
         let effective_delete_after_close_ms = profiles::merge_profile_start_retention(
             resolved_profile
                 .as_ref()
-                .and_then(|profile| profile.document.retention.as_ref())
+                .and_then(|profile| profile.retention.as_ref())
                 .map(|retention| retention.delete_after_close_ms),
             delete_after_close_ms,
         );
@@ -1249,45 +1206,16 @@ impl GatewayAgentApi {
         let start_config = self.merge_profile_start_config(
             resolved_profile
                 .as_ref()
-                .and_then(|profile| profile.document.config.clone()),
+                .and_then(|profile| profile.config.clone()),
             config,
         );
         let session_config = self.session_config_for_start(start_config).await?;
-        if let Some(ProfileEnvironment::Provision {
-            provider_id,
-            credentials,
-            ..
-        }) = resolved_profile
-            .as_ref()
-            .and_then(|profile| profile.document.environment.as_ref())
-        {
-            // Fail the common misconfigurations before a session or a VM
-            // exists: the universe needs an enabled binding for the provider,
-            // the requested credentials must resolve here, and the effective
-            // config must let the session use it.
-            self.resolve_profile_provision_binding(provider_id).await?;
-            self.validate_profile_environment_credentials(credentials)
-                .await?;
-            let feature = session_config.features.environments.as_ref().ok_or_else(|| {
-                AgentApiError::rejected(
-                    "profile provisions an environment but the effective session config does not grant features.environments",
-                )
-            })?;
-            if feature
-                .providers
-                .as_ref()
-                .is_some_and(|providers| !providers.iter().any(|id| id == provider_id))
-            {
-                return Err(AgentApiError::rejected(format!(
-                    "profile provisions from environment provider {provider_id}, which features.environments.providers does not allow"
-                )));
-            }
-        }
+
         if let Some(workflow_tools) = workflow_tools.as_ref() {
             self.validate_managed_session_materialization(&session_config, workflow_tools)
                 .await?;
         }
-        let args = self.workflow_args(
+        let mut args = self.workflow_args(
             session_id.clone(),
             display_name,
             effective_metadata,
@@ -1297,6 +1225,10 @@ impl GatewayAgentApi {
             close_on_terminal,
             auto_reject_approvals,
         );
+        args.setup = resolved_profile
+            .as_ref()
+            .map(|profile| self.profile_intent(profile, false))
+            .transpose()?;
         self.refresh_input_blob_grace(&args).await?;
         let started = self
             .client
@@ -1328,6 +1260,7 @@ impl GatewayAgentApi {
                     let session = self.session_mutation_view_by_id(&session_id).await?;
                     return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
                 }
+                self.retry_session_setup(&session_id).await?;
                 self.wait_for_open_session(&session_id).await?;
                 let session = self.session_mutation_view_by_id(&session_id).await?;
                 return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
@@ -1339,291 +1272,8 @@ impl GatewayAgentApi {
         if let Some(workflow_tools) = workflow_tools.as_ref() {
             validate_managed_session_retry(&loaded.state, self.universe_id(), workflow_tools)?;
         }
-        let _ = self
-            .configure_session_toolset(&session_id, &loaded, true)
-            .await?;
-        if let Some(profile) = resolved_profile {
-            self.apply_profile_document(&session_id, &profile, false, None, None)
-                .await?;
-        }
-        self.load_session_state_with_current_run_context(&session_id)
-            .await?;
         let session = self.session_mutation_view_by_id(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionStartResponse { session }))
-    }
-
-    async fn core_environment_job_workflow_tool_declarations(
-        &self,
-    ) -> Result<Vec<WorkflowToolDeclaration>, AgentApiError> {
-        let recipe_bytes = serde_json::to_vec(&temporal_workflow::WorkflowToolRecipeV1 {
-            workflow_type: "EnvironmentJobWorkflow".to_owned(),
-            task_queue: self.task_queue.clone(),
-        })
-        .map_err(|error| {
-            AgentApiError::internal(format!(
-                "encode core environment-job workflow recipe: {error}"
-            ))
-        })?;
-        let recipe_fingerprint = temporal_workflow::workflow_tool_recipe_fingerprint(&recipe_bytes);
-        let recipe_ref = self
-            .store
-            .put_bytes(recipe_bytes)
-            .await
-            .map_err(map_blob_store_error)?;
-
-        let definitions = [
-            (
-                BuiltinToolOperation::JobSubmit,
-                JOB_SUBMIT_WORKFLOW_TOOL_ID,
-                JOB_SUBMIT_WORKFLOW_SEMANTIC_TYPE,
-                WorkflowToolCompletion::Promises {
-                    reply_schema_ref: None,
-                    deadline_after_ms: None,
-                    max_promises: engine::MAX_COMPLETION_PROMISES,
-                    key_source: WorkflowToolCompletionKeySource::ArrayItemField {
-                        pointer: "/jobs".to_owned(),
-                        field: "job_id".to_owned(),
-                    },
-                },
-            ),
-            (
-                BuiltinToolOperation::JobRun,
-                JOB_RUN_WORKFLOW_TOOL_ID,
-                JOB_RUN_WORKFLOW_SEMANTIC_TYPE,
-                WorkflowToolCompletion::Joined {
-                    reply_schema_ref: None,
-                    deadline_after_ms: JOB_RUN_DEADLINE_AFTER_MS,
-                },
-            ),
-        ];
-        let mut declarations = Vec::with_capacity(definitions.len());
-        for (operation, tool_id, semantic_type, completion) in definitions {
-            let builtin = BuiltinTool::environment_canonical(operation);
-            let tool = tools::definitions::register(
-                builtin.logical_id(),
-                tools::definitions::BuiltinSettings {
-                    presentation: tools::toolset::BuiltinToolPresentation::Canonical,
-                    unscoped_paths: true,
-                    ..Default::default()
-                },
-                builtin.parallelism(),
-                builtin.execution_spec(),
-            );
-            declarations.push(WorkflowToolDeclaration::new(
-                WorkflowToolDefinition {
-                    tool_id: WorkflowToolId::new(tool_id),
-                    revision: 1,
-                    semantic_type: semantic_type.to_owned(),
-                    tool,
-                },
-                WorkflowToolTarget::Start {
-                    start: WorkflowStartRef {
-                        recipe_format: temporal_workflow::WORKFLOW_TOOL_RECIPE_FORMAT_V1,
-                        revision: 1,
-                        recipe_ref: recipe_ref.clone(),
-                        recipe_fingerprint: recipe_fingerprint.clone(),
-                    },
-                },
-                completion,
-            ));
-        }
-        Ok(declarations)
-    }
-
-    async fn core_subagent_workflow_tool_declarations(
-        &self,
-    ) -> Result<Vec<WorkflowToolDeclaration>, AgentApiError> {
-        let recipe_bytes = serde_json::to_vec(&temporal_workflow::WorkflowToolRecipeV1 {
-            workflow_type: tools::subagents::SUBAGENT_WORKFLOW_TYPE.to_owned(),
-            task_queue: self.task_queue.clone(),
-        })
-        .map_err(|error| {
-            AgentApiError::internal(format!("encode core subagent workflow recipe: {error}"))
-        })?;
-        let recipe_fingerprint = temporal_workflow::workflow_tool_recipe_fingerprint(&recipe_bytes);
-        let recipe_ref = self
-            .store
-            .put_bytes(recipe_bytes)
-            .await
-            .map_err(map_blob_store_error)?;
-        // The binding carries the hard ceiling; the grant's `deadlineMs` is
-        // pinned per call and enforced inside the execution, so the
-        // immutable binding never has to change with the grant.
-        let definitions = [
-            (
-                tools::subagents::SubagentToolKind::Run,
-                WorkflowToolCompletion::Joined {
-                    reply_schema_ref: None,
-                    deadline_after_ms: engine::SUBAGENT_DEADLINE_CEILING_MS,
-                },
-            ),
-            (
-                tools::subagents::SubagentToolKind::Spawn,
-                WorkflowToolCompletion::Promises {
-                    reply_schema_ref: None,
-                    deadline_after_ms: Some(engine::SUBAGENT_DEADLINE_CEILING_MS),
-                    max_promises: 1,
-                    key_source: WorkflowToolCompletionKeySource::Reply,
-                },
-            ),
-        ];
-        let mut declarations = Vec::with_capacity(definitions.len());
-        for (kind, completion) in definitions {
-            let tool = tools::definitions::register(
-                match kind {
-                    tools::subagents::SubagentToolKind::Run => "subagent.run",
-                    tools::subagents::SubagentToolKind::Spawn => "subagent.spawn",
-                },
-                Default::default(),
-                engine::ToolParallelism::ParallelSafe,
-                Default::default(),
-            );
-            declarations.push(WorkflowToolDeclaration::new(
-                WorkflowToolDefinition {
-                    tool_id: WorkflowToolId::new(kind.workflow_tool_id()),
-                    revision: 1,
-                    semantic_type: kind.semantic_type().to_owned(),
-                    tool,
-                },
-                WorkflowToolTarget::Start {
-                    start: WorkflowStartRef {
-                        recipe_format: temporal_workflow::WORKFLOW_TOOL_RECIPE_FORMAT_V1,
-                        revision: 1,
-                        recipe_ref: recipe_ref.clone(),
-                        recipe_fingerprint: recipe_fingerprint.clone(),
-                    },
-                },
-                completion,
-            ));
-        }
-        Ok(declarations)
-    }
-
-    async fn ensure_core_subagent_workflow_tools(
-        &self,
-        session_id: &SessionId,
-        state: &engine::CoreAgentState,
-    ) -> Result<(), AgentApiError> {
-        if has_all_core_subagent_bindings(state) {
-            return Ok(());
-        }
-        let baseline_failures = self
-            .query_status_optional(session_id)
-            .await?
-            .map(|status| status.admission_failures.len())
-            .unwrap_or(0);
-        let declarations = self.core_subagent_workflow_tool_declarations().await?;
-        for declaration in declarations {
-            if state
-                .workflow_tools
-                .bindings
-                .contains_key(&declaration.definition.tool_id)
-            {
-                continue;
-            }
-            self.submit_core_command(
-                session_id,
-                CoreAgentCommand::AdmitSystemWorkflowTool {
-                    session_universe_id: self.universe_id(),
-                    declaration,
-                },
-            )
-            .await?;
-        }
-        self.wait_for_core_subagent_bindings(session_id, baseline_failures)
-            .await
-    }
-
-    async fn wait_for_core_subagent_bindings(
-        &self,
-        session_id: &SessionId,
-        baseline_failures: usize,
-    ) -> Result<(), AgentApiError> {
-        let started = Instant::now();
-        loop {
-            if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(format!(
-                    "timed out waiting for core subagent workflow tool admission: {session_id}"
-                )));
-            }
-            if let Some(status) = self.query_status_optional(session_id).await? {
-                if status.admission_failures.len() > baseline_failures
-                    && let Some(failure) = status.admission_failures.last()
-                {
-                    return Err(map_admission_failure_to_api_error(failure));
-                }
-                if let Some(error) = status.last_error {
-                    return Err(AgentApiError::internal(format!(
-                        "agent workflow reported error: {error}"
-                    )));
-                }
-            }
-            let loaded = self.load_session_state(session_id).await?;
-            if has_all_core_subagent_bindings(&loaded.state) {
-                return Ok(());
-            }
-            tokio::time::sleep(self.poll_interval).await;
-        }
-    }
-
-    async fn ensure_core_environment_job_workflow_tools(
-        &self,
-        session_id: &SessionId,
-        state: &engine::CoreAgentState,
-    ) -> Result<(), AgentApiError> {
-        if has_all_core_environment_job_bindings(state) {
-            return Ok(());
-        }
-        let baseline_failures = self
-            .query_status_optional(session_id)
-            .await?
-            .map(|status| status.admission_failures.len())
-            .unwrap_or(0);
-        let declarations = self
-            .core_environment_job_workflow_tool_declarations()
-            .await?;
-        for declaration in declarations {
-            if state
-                .workflow_tools
-                .bindings
-                .contains_key(&declaration.definition.tool_id)
-            {
-                continue;
-            }
-            self.submit_core_command(
-                session_id,
-                CoreAgentCommand::AdmitSystemWorkflowTool {
-                    session_universe_id: self.universe_id(),
-                    declaration,
-                },
-            )
-            .await?;
-        }
-        let started = Instant::now();
-        loop {
-            if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(format!(
-                    "timed out waiting for core environment-job workflow tool admission: {session_id}"
-                )));
-            }
-            if let Some(status) = self.query_status_optional(session_id).await? {
-                if status.admission_failures.len() > baseline_failures
-                    && let Some(failure) = status.admission_failures.last()
-                {
-                    return Err(map_admission_failure_to_api_error(failure));
-                }
-                if let Some(error) = status.last_error {
-                    return Err(AgentApiError::internal(format!(
-                        "agent workflow reported error: {error}"
-                    )));
-                }
-            }
-            let loaded = self.load_session_state(session_id).await?;
-            if has_all_core_environment_job_bindings(&loaded.state) {
-                return Ok(());
-            }
-            tokio::time::sleep(self.poll_interval).await;
-        }
     }
 
     fn validate_managed_session_declaration(
@@ -2295,20 +1945,6 @@ fn is_core_subagent_binding(binding: &engine::WorkflowToolBinding) -> bool {
     tools::subagents::is_subagent_workflow_tool_id(binding.definition.tool_id.as_str())
 }
 
-fn has_all_core_subagent_bindings(state: &engine::CoreAgentState) -> bool {
-    [
-        tools::subagents::AGENT_RUN_WORKFLOW_TOOL_ID,
-        tools::subagents::AGENT_SPAWN_WORKFLOW_TOOL_ID,
-    ]
-    .into_iter()
-    .all(|tool_id| {
-        state
-            .workflow_tools
-            .bindings
-            .contains_key(&WorkflowToolId::new(tool_id))
-    })
-}
-
 fn validate_subagent_deadline_for_existing_bindings(
     state: &engine::CoreAgentState,
     features: &engine::FeaturesConfig,
@@ -2349,17 +1985,6 @@ fn validate_subagent_deadline_for_existing_bindings(
         )));
     }
     Ok(())
-}
-
-fn has_all_core_environment_job_bindings(state: &engine::CoreAgentState) -> bool {
-    [JOB_SUBMIT_WORKFLOW_TOOL_ID, JOB_RUN_WORKFLOW_TOOL_ID]
-        .into_iter()
-        .all(|tool_id| {
-            state
-                .workflow_tools
-                .bindings
-                .contains_key(&WorkflowToolId::new(tool_id))
-        })
 }
 
 #[async_trait]
@@ -2792,9 +2417,6 @@ impl AgentApiService for GatewayAgentApi {
                 "session config can only change while no run is active or queued",
             ));
         }
-        let current_config = loaded.state.lifecycle.config.as_ref().ok_or_else(|| {
-            AgentApiError::invalid_request(format!("session is missing config: {session_id}"))
-        })?;
         if let Some(expected) = params.expected_config_revision {
             let actual = loaded.state.lifecycle.config_revision;
             if expected != actual {
@@ -2814,46 +2436,14 @@ impl AgentApiService for GatewayAgentApi {
             .await?;
         self.validate_subagent_agents(&config.features).await?;
         validate_subagent_deadline_for_existing_bindings(&loaded.state, &config.features)?;
-        if &config == current_config {
-            // The config event is an idempotent no-op, but derived tools and
-            // managed context may still need repair or reflect newer
-            // universe-owned registry records.
-            let _ = self
-                .configure_session_toolset(&session_id, &loaded, true)
-                .await?;
-            self.load_session_state_with_current_run_context(&session_id)
-                .await?;
-            return Ok(AgentApiOutcome::new(SessionConfigPutResponse {
-                session: self.session_mutation_view_by_id(&session_id).await?,
-            }));
-        }
-        let baseline_failures = self
-            .query_status_optional(&session_id)
-            .await?
-            .map(|status| status.admission_failures.len())
-            .unwrap_or(0);
-        let target_revision = loaded
-            .state
-            .lifecycle
-            .config_revision
-            .checked_add(1)
-            .ok_or_else(|| AgentApiError::internal("config revision exhausted"))?;
-        self.submit_core_command(
+        self.prepare_session_operation(
             &session_id,
-            CoreAgentCommand::ReplaceSessionConfig {
-                expected_revision: Some(loaded.state.lifecycle.config_revision),
+            temporal_workflow::SessionOperation::Configure {
                 config,
+                expected_revision: Some(loaded.state.lifecycle.config_revision),
             },
         )
         .await?;
-        self.wait_for_config_revision(&session_id, target_revision, baseline_failures)
-            .await?;
-        let loaded = self.load_session_state(&session_id).await?;
-        let _ = self
-            .configure_session_toolset(&session_id, &loaded, true)
-            .await?;
-        self.load_session_state_with_current_run_context(&session_id)
-            .await?;
         let session = self.session_mutation_view_by_id(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionConfigPutResponse { session }))
     }
@@ -3096,7 +2686,6 @@ impl AgentApiService for GatewayAgentApi {
                 .await?;
             self.wait_for_closed_session(&session_id).await?;
             let session = self.session_mutation_view_by_id(&session_id).await?;
-            self.close_session_owned_environments(&session_id).await;
             return Ok(AgentApiOutcome::new(SessionCloseResponse { session }));
         }
 
@@ -3108,7 +2697,6 @@ impl AgentApiService for GatewayAgentApi {
                 .await
                 .is_ok();
             if signalled && self.wait_for_closed_session(&session_id).await.is_ok() {
-                self.close_session_owned_environments(&session_id).await;
                 let session = self.session_mutation_view_by_id(&session_id).await?;
                 return Ok(AgentApiOutcome::new(SessionCloseResponse { session }));
             }
@@ -3125,7 +2713,6 @@ impl AgentApiService for GatewayAgentApi {
         // run status are projections of the log, so this alone recovers the
         // row; the expected-head CAS protects against a concurrent writer.
         self.force_close_session_in_store(&session_id).await?;
-        self.close_session_owned_environments(&session_id).await;
         let session = self.session_mutation_view_by_id(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
     }
@@ -3824,7 +3411,10 @@ impl AgentApiService for GatewayAgentApi {
         self.signal_submit_admissions(
             &session_id,
             vec![AgentAdmission {
-                command: CoreAgentCommand::RequestRunSteering { input },
+                command: CoreAgentCommand::RequestRunSteering {
+                    run_id: requested_run_id,
+                    input,
+                },
                 correlation_token: Some(correlation_token.clone()),
             }],
         )
@@ -4973,4 +4563,198 @@ mod tests;
 /// the multi-universe HTTP edge serves it without resolving a universe.
 pub(crate) fn cimd_document_for(public_base_url: &str) -> serde_json::Value {
     oauth_api::cimd_document(public_base_url)
+}
+
+impl GatewayAgentApi {
+    pub(crate) fn environment_service(&self) -> crate::environment_service::EnvironmentService {
+        crate::environment_service::EnvironmentService {
+            store: self.store.clone(),
+            environment_gateway: self.environment_gateway.clone(),
+            provider_controller_connector: self.provider_controller_connector.clone(),
+        }
+    }
+    pub(super) async fn put_environment_ingress_record(
+        &self,
+        params: EnvironmentIngressPutParams,
+    ) -> Result<EnvironmentIngressPutResponse, AgentApiError> {
+        self.environment_service()
+            .put_environment_ingress_record(params)
+            .await
+    }
+
+    pub(super) async fn create_external_environment_record(
+        &self,
+        params: EnvironmentExternalCreateParams,
+    ) -> Result<EnvironmentExternalCreateResponse, AgentApiError> {
+        self.environment_service()
+            .create_external_environment_record(params)
+            .await
+    }
+
+    pub(super) async fn create_environment_record(
+        &self,
+        params: EnvironmentCreateParams,
+    ) -> Result<EnvironmentCreateResponse, AgentApiError> {
+        self.environment_service()
+            .create_environment_record(params)
+            .await
+    }
+
+    pub(super) async fn put_environment_power_record(
+        &self,
+        params: EnvironmentPowerPutParams,
+    ) -> Result<EnvironmentPowerPutResponse, AgentApiError> {
+        self.environment_service()
+            .put_environment_power_record(params)
+            .await
+    }
+
+    pub(super) async fn put_environment_idle_policy_record(
+        &self,
+        params: EnvironmentIdlePolicyPutParams,
+    ) -> Result<EnvironmentIdlePolicyPutResponse, AgentApiError> {
+        self.environment_service()
+            .put_environment_idle_policy_record(params)
+            .await
+    }
+
+    pub(super) async fn read_environment_record(
+        &self,
+        params: EnvironmentReadParams,
+    ) -> Result<EnvironmentReadResponse, AgentApiError> {
+        self.environment_service()
+            .read_environment_record(params)
+            .await
+    }
+
+    pub(super) async fn list_environment_records(
+        &self,
+        params: EnvironmentListParams,
+    ) -> Result<EnvironmentListResponse, AgentApiError> {
+        self.environment_service()
+            .list_environment_records(params)
+            .await
+    }
+
+    pub(super) async fn close_environment_record(
+        &self,
+        params: EnvironmentCloseParams,
+    ) -> Result<EnvironmentCloseResponse, AgentApiError> {
+        self.environment_service()
+            .close_environment_record(params)
+            .await
+    }
+
+    pub async fn reconcile_environments_once(&self) -> Result<usize, AgentApiError> {
+        self.environment_service()
+            .reconcile_environments_once()
+            .await
+    }
+
+    pub async fn reap_idle_environments_once(&self) -> Result<PowerReaperStats, AgentApiError> {
+        self.environment_service()
+            .reap_idle_environments_once()
+            .await
+    }
+
+    pub(super) async fn create_environment_registration_key_record(
+        &self,
+        params: EnvironmentRegistrationKeyCreateParams,
+    ) -> Result<EnvironmentRegistrationKeyCreateResponse, AgentApiError> {
+        self.environment_service()
+            .create_environment_registration_key_record(params)
+            .await
+    }
+
+    pub(super) async fn read_environment_registration_key_record(
+        &self,
+        params: EnvironmentRegistrationKeyReadParams,
+    ) -> Result<EnvironmentRegistrationKeyReadResponse, AgentApiError> {
+        self.environment_service()
+            .read_environment_registration_key_record(params)
+            .await
+    }
+
+    pub(super) async fn list_environment_registration_key_records(
+        &self,
+        _params: EnvironmentRegistrationKeyListParams,
+    ) -> Result<EnvironmentRegistrationKeyListResponse, AgentApiError> {
+        self.environment_service()
+            .list_environment_registration_key_records(_params)
+            .await
+    }
+
+    pub(super) async fn revoke_environment_registration_key_record(
+        &self,
+        params: EnvironmentRegistrationKeyRevokeParams,
+    ) -> Result<EnvironmentRegistrationKeyRevokeResponse, AgentApiError> {
+        self.environment_service()
+            .revoke_environment_registration_key_record(params)
+            .await
+    }
+
+    pub(super) async fn list_environment_provider_binding_records(
+        &self,
+        _params: EnvironmentProviderBindingListParams,
+    ) -> Result<EnvironmentProviderBindingListResponse, AgentApiError> {
+        self.environment_service()
+            .list_environment_provider_binding_records(_params)
+            .await
+    }
+
+    pub(super) async fn read_environment_provider_binding_record(
+        &self,
+        params: EnvironmentProviderBindingReadParams,
+    ) -> Result<EnvironmentProviderBindingReadResponse, AgentApiError> {
+        self.environment_service()
+            .read_environment_provider_binding_record(params)
+            .await
+    }
+
+    pub(super) async fn list_environment_template_records(
+        &self,
+        params: EnvironmentTemplateListParams,
+    ) -> Result<EnvironmentTemplateListResponse, AgentApiError> {
+        self.environment_service()
+            .list_environment_template_records(params)
+            .await
+    }
+
+    pub(super) async fn read_environment_template_record(
+        &self,
+        params: EnvironmentTemplateReadParams,
+    ) -> Result<EnvironmentTemplateReadResponse, AgentApiError> {
+        self.environment_service()
+            .read_environment_template_record(params)
+            .await
+    }
+}
+
+impl GatewayAgentApi {
+    pub(super) async fn bind_environment_credential_record(
+        &self,
+        params: EnvironmentCredentialBindParams,
+    ) -> Result<EnvironmentCredentialBindResponse, AgentApiError> {
+        self.environment_service()
+            .bind_environment_credential_record(params)
+            .await
+    }
+
+    pub(super) async fn list_environment_credential_records(
+        &self,
+        params: EnvironmentCredentialListParams,
+    ) -> Result<EnvironmentCredentialListResponse, AgentApiError> {
+        self.environment_service()
+            .list_environment_credential_records(params)
+            .await
+    }
+
+    pub(super) async fn unbind_environment_credential_record(
+        &self,
+        params: EnvironmentCredentialUnbindParams,
+    ) -> Result<EnvironmentCredentialUnbindResponse, AgentApiError> {
+        self.environment_service()
+            .unbind_environment_credential_record(params)
+            .await
+    }
 }

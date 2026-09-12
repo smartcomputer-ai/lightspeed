@@ -83,7 +83,7 @@ pub(crate) trait ProviderControllerConnector: Send + Sync {
 }
 
 #[derive(Default)]
-pub(super) struct WebSocketProviderControllerConnector {
+pub(crate) struct WebSocketProviderControllerConnector {
     fake_backend: Arc<tokio::sync::Mutex<FakeBackend>>,
 }
 
@@ -476,7 +476,7 @@ where
 /// Finish one scoped provider-controller operation and close its transport on
 /// both success and failure. A close error does not replace the operation's
 /// result: controller calls are already complete when this runs.
-pub(super) async fn finish_provider_controller<T>(
+pub(crate) async fn finish_provider_controller<T>(
     mut controller: Box<dyn ProviderController>,
     result: Result<T, AgentApiError>,
 ) -> Result<T, AgentApiError> {
@@ -484,7 +484,7 @@ pub(super) async fn finish_provider_controller<T>(
     result
 }
 
-pub(super) fn map_environment_client_error(error: EnvironmentClientError) -> AgentApiError {
+pub(crate) fn map_environment_client_error(error: EnvironmentClientError) -> AgentApiError {
     match error {
         EnvironmentClientError::Protocol(error) => {
             AgentApiError::rejected(format!("provider controller error: {}", error.message))

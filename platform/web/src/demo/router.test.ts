@@ -328,7 +328,7 @@ describe("demo router", () => {
     expect(withoutEnvironment.json as SessionView).toMatchObject({
       activeEnvironmentId: null,
       metadata: {
-        agent: "lightspeed-software-factory-agent-with-provisioned-incus-environment",
+        agent: "lightspeed-software-factory-agent-with-existing-incus-environment",
         campaign: "explicit-campaign",
         profileRole: "parallel-task-implementation-and-pull-request-authoring",
       },
@@ -343,6 +343,26 @@ describe("demo router", () => {
       activeEnvironmentId: existing!.environmentId,
       metadata: { campaign: expect.stringContaining("terminal-bench-lightspeed") },
     });
+  });
+
+  it("session start, close, and deletion leave environments independently managed", async () => {
+    const { call } = await boot();
+    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const before = (await call("GET", `${base}/environments`)).json as Environment[];
+    const existing = before.find((environment) => environment.status === "ready")!;
+    expect(existing).toBeDefined();
+    const created = await call("POST", `${base}/sessions`, {
+      profile: { kind: "named", profileId: "implementer" },
+      environment: { type: "existing", environmentId: existing.environmentId },
+    });
+    expect(created.status).toBe(200);
+    const session = created.json as SessionView;
+    expect(((await call("GET", `${base}/environments`)).json as Environment[]).map((env) => env.environmentId))
+      .toEqual(before.map((env) => env.environmentId));
+    expect((await call("POST", `${base}/sessions/${session.id}/close`, { force: true })).status).toBe(200);
+    expect((await call("DELETE", `${base}/sessions/${session.id}`)).status).toBe(200);
+    const after = (await call("GET", `${base}/environments`)).json as Environment[];
+    expect(after.find((env) => env.environmentId === existing.environmentId)).toEqual(existing);
   });
 
   it("sets and clears session-tree retention through the web routes", async () => {

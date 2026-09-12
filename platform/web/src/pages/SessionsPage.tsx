@@ -1254,9 +1254,9 @@ function InlineSetupEditor({
               embedded
               value={value.environment}
               environments={environments}
-              bindings={options.environmentBindings}
-              templates={options.environmentTemplates}
-              secrets={options.secrets}
+
+
+
               onChange={(environment) => change((next) => {
                 if (environment) next.environment = environment;
                 else delete next.environment;

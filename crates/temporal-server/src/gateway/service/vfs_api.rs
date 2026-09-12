@@ -26,27 +26,6 @@ impl GatewayAgentApi {
         Ok(())
     }
 
-    pub(super) async fn resolve_session_workspace_links(
-        &self,
-        state: &engine::CoreAgentState,
-    ) -> Result<Vec<vfs::ResolvedWorkspaceLink>, AgentApiError> {
-        let declarations = state
-            .lifecycle
-            .config
-            .as_ref()
-            .and_then(|config| config.features.vfs.as_ref())
-            .map(|vfs| vfs.workspace_links.as_slice())
-            .unwrap_or_default();
-        if declarations.is_empty() {
-            return Ok(Vec::new());
-        }
-        let blobs: Arc<dyn BlobStore> = self.store.clone();
-        let workspace_store: Arc<dyn VfsWorkspaceStore> = self.store.clone();
-        vfs::resolve_workspace_links(blobs, workspace_store, declarations)
-            .await
-            .map_err(map_vfs_catalog_error)
-    }
-
     pub(super) async fn create_vfs_workspace_record(
         &self,
         params: VfsWorkspaceCreateParams,

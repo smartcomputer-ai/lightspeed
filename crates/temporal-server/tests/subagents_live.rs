@@ -1214,7 +1214,19 @@ async fn run_agent_run_inherit_environment_live_client(
     })
     .await?;
 
-    // Parent: provisions its own environment and may run the child.
+    let independent_environment = api
+        .create_environment(api::EnvironmentCreateParams {
+            request_id: format!("inherit-env-{suffix}"),
+            binding_id: binding_id.clone(),
+            template_id: "rust-v1".into(),
+            display_name: None,
+            metadata: BTreeMap::new(),
+            idle_policy: None,
+        })
+        .await?
+        .result
+        .environment;
+    // Parent selects an independently created environment and may run the child.
     api.start_session(SessionStartParams {
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
@@ -1237,14 +1249,8 @@ async fn run_agent_run_inherit_environment_live_client(
                         ..SessionConfig::default()
                     }),
                     instructions: None,
-                    environment: Some(api::ProfileEnvironment::Provision {
-                        provider_id: provider_id.clone(),
-                        template_id: "rust-v1".to_owned(),
-                        display_name: None,
-                        metadata: BTreeMap::new(),
-                        retention: api::ProfileEnvironmentRetention::CloseWithSession,
-                        idle_policy: None,
-                        credentials: Vec::new(),
+                    environment: Some(api::ProfileEnvironment::Existing {
+                        environment_id: independent_environment.environment_id.clone(),
                     }),
                     retention: None,
                 },
@@ -1331,6 +1337,10 @@ async fn run_agent_run_inherit_environment_live_client(
     let mut all = vec![session_id];
     all.extend(children.iter().map(|child| child.session_id.clone()));
     cleanup_subagent_test(&client, api.as_ref(), child_profile_id, &all).await;
+    api.close_environment(api::EnvironmentCloseParams {
+        environment_id: independent_environment.environment_id,
+    })
+    .await?;
     Ok(())
 }
 

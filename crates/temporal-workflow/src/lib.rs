@@ -3,8 +3,10 @@
 mod activities;
 mod config;
 mod rehydrate;
+mod session_preparation;
 mod temporal_helpers;
 mod types;
+pub use session_preparation::*;
 pub mod workflow_contract;
 mod workflows;
 

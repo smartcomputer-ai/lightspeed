@@ -8,3 +8,6 @@ api = { path = "../api" }
 async-trait = "0.1"
 environment-protocol = { path = "../environment-protocol" }
 thiserror = "1"
+
+[dev-dependencies]
+serde_json = "1"

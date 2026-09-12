@@ -19,6 +19,7 @@ impl RolloverReason {
 pub(super) struct RolloverBlockers {
     pub awaiting_safe_checkpoint: bool,
     pub pending_admissions: usize,
+    pub pending_preparations: usize,
     pub pending_tool_batch_resumes: usize,
     pub pending_emissions: usize,
     pub pending_source_resolutions: usize,
@@ -32,6 +33,9 @@ impl RolloverBlockers {
         Self {
             awaiting_safe_checkpoint,
             pending_admissions: state.pending_admissions.len(),
+            pending_preparations: usize::from(state.run_preparation.is_some())
+                + state.pending_toolsets.len()
+                + usize::from(!state.ready),
             pending_tool_batch_resumes: state.pending_tool_batch_resumes.len(),
             pending_emissions: state.pending_emissions.len(),
             pending_source_resolutions: state.pending_source_resolutions.len(),
@@ -44,6 +48,7 @@ impl RolloverBlockers {
     fn is_empty(self) -> bool {
         !self.awaiting_safe_checkpoint
             && self.pending_admissions == 0
+            && self.pending_preparations == 0
             && self.pending_tool_batch_resumes == 0
             && self.pending_emissions == 0
             && self.pending_source_resolutions == 0
@@ -115,6 +120,7 @@ pub(super) fn observe_rollover_delay(
         history_threshold = rollover_threshold(args),
         awaiting_safe_checkpoint = blockers.awaiting_safe_checkpoint,
         pending_admissions = blockers.pending_admissions,
+        pending_preparations = blockers.pending_preparations,
         pending_tool_batch_resumes = blockers.pending_tool_batch_resumes,
         pending_emissions = blockers.pending_emissions,
         pending_source_resolutions = blockers.pending_source_resolutions,
@@ -275,7 +281,7 @@ mod tests {
     #[test]
     fn rollover_blockers_report_transient_workflow_state() {
         let mut state = AgentSessionWorkflow::default();
-        state.pending_admissions.push(AgentAdmission {
+        state.queue_admission(AgentAdmission {
             command: CoreAgentCommand::CloseSession { force: false },
             correlation_token: None,
         });

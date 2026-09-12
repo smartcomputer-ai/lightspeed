@@ -22,7 +22,7 @@ export function idlePolicyIsMonotone(value: IdlePolicy | undefined): boolean {
 /// Idle policy: minutes of daemon-reported idle time per stage. Empty
 /// stages are omitted; stages the provider cannot realize are skipped at
 /// runtime. A powered-down environment wakes when a session uses it. Shared
-/// by the profile editor (provisioned-per-session environments), the
+/// by the
 /// environment create dialog, and the per-environment idle-policy editor.
 export function IdlePolicyFields({
   value,

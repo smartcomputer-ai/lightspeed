@@ -123,9 +123,6 @@ describe("setup summaries", () => {
   });
   it("names the environment", () => {
     expect(environmentSummary(undefined)).toBe("No environment");
-    expect(environmentSummary({ type: "provision", providerId: "incus", templateId: "t", retention: "closeWithSession" })).toBe(
-      "A fresh environment per session",
-    );
     expect(environmentSummary({ type: "existing", environmentId: "env-1" })).toBe("env-1");
   });
 });

@@ -115,7 +115,7 @@ pub(super) fn map_auth_broker_error(error: auth::AuthBrokerError) -> AgentApiErr
     }
 }
 
-pub(super) fn map_auth_error(error: auth::AuthRegistryError) -> AgentApiError {
+pub(crate) fn map_auth_error(error: auth::AuthRegistryError) -> AgentApiError {
     match error {
         auth::AuthRegistryError::GrantAlreadyExists { grant_id } => {
             AgentApiError::conflict(format!("auth grant already exists: {grant_id}"))

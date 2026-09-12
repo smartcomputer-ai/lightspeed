@@ -393,9 +393,15 @@ pub fn admit_command(
             ));
             Ok(proposals)
         }
-        CoreAgentCommand::RequestRunSteering { input } => {
+        CoreAgentCommand::RequestRunSteering { run_id, input } => {
             require_open(state)?;
             let active_run = active_run_for_command(state)?;
+            if active_run.run_id != run_id {
+                return reject(
+                    CommandRejectionKind::UnknownReference,
+                    format!("steering target run {run_id} is no longer active"),
+                );
+            }
             crate::core::components::context::validate_steering_input_entries(&input)
                 .map_err(command_rejection_from_domain)?;
             let next_steering_id = state

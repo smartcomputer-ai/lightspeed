@@ -1,4 +1,5 @@
 use super::*;
+use crate::gateway::service::auth_api::map_auth_error;
 
 use ::environments::{
     EnvironmentCredentialRecord, EnvironmentCredentialSource, EnvironmentCredentialStore,
@@ -6,8 +7,8 @@ use ::environments::{
 };
 use auth::{AuthGrantId, AuthGrantStatus, AuthProviderId, AuthProviderStatus, SecretId};
 
-impl GatewayAgentApi {
-    pub(super) async fn bind_environment_credential_record(
+impl EnvironmentService {
+    pub(crate) async fn bind_environment_credential_record(
         &self,
         params: EnvironmentCredentialBindParams,
     ) -> Result<EnvironmentCredentialBindResponse, AgentApiError> {
@@ -30,7 +31,7 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn list_environment_credential_records(
+    pub(crate) async fn list_environment_credential_records(
         &self,
         params: EnvironmentCredentialListParams,
     ) -> Result<EnvironmentCredentialListResponse, AgentApiError> {
@@ -49,7 +50,7 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn unbind_environment_credential_record(
+    pub(crate) async fn unbind_environment_credential_record(
         &self,
         params: EnvironmentCredentialUnbindParams,
     ) -> Result<EnvironmentCredentialUnbindResponse, AgentApiError> {
@@ -67,7 +68,7 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn credential_source_from_api(
+    pub(crate) async fn credential_source_from_api(
         &self,
         source: EnvironmentCredentialSourceView,
     ) -> Result<EnvironmentCredentialSource, AgentApiError> {
@@ -119,7 +120,7 @@ impl GatewayAgentApi {
     }
 }
 
-pub(super) fn environment_credential_view(
+pub(crate) fn environment_credential_view(
     record: EnvironmentCredentialRecord,
 ) -> EnvironmentCredentialView {
     EnvironmentCredentialView {
@@ -151,7 +152,7 @@ fn credential_source_view(source: EnvironmentCredentialSource) -> EnvironmentCre
     }
 }
 
-pub(super) fn validate_credential_env_name(value: &str) -> Result<(), AgentApiError> {
+pub(crate) fn validate_credential_env_name(value: &str) -> Result<(), AgentApiError> {
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
         return Err(AgentApiError::invalid_request(

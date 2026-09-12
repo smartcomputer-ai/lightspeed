@@ -17,7 +17,7 @@ use ::environments::{
 /// that held its control connection stopped without recording the
 /// disconnect. Three missed heartbeats leaves room for one slow pong.
 pub(crate) const REGISTERED_STALE_AFTER_MS: i64 =
-    3 * super::super::registration::HEARTBEAT_INTERVAL.as_millis() as i64;
+    3 * crate::gateway::registration::HEARTBEAT_INTERVAL.as_millis() as i64;
 
 /// What the reconciler does with one open registered environment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,8 +59,8 @@ use super::{
     environment_providers::{identity_mode_view, registry_identity_mode},
 };
 
-impl GatewayAgentApi {
-    pub(super) async fn create_environment_registration_key_record(
+impl EnvironmentService {
+    pub(crate) async fn create_environment_registration_key_record(
         &self,
         params: EnvironmentRegistrationKeyCreateParams,
     ) -> Result<EnvironmentRegistrationKeyCreateResponse, AgentApiError> {
@@ -99,7 +99,7 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn read_environment_registration_key_record(
+    pub(crate) async fn read_environment_registration_key_record(
         &self,
         params: EnvironmentRegistrationKeyReadParams,
     ) -> Result<EnvironmentRegistrationKeyReadResponse, AgentApiError> {
@@ -115,7 +115,7 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn list_environment_registration_key_records(
+    pub(crate) async fn list_environment_registration_key_records(
         &self,
         _params: EnvironmentRegistrationKeyListParams,
     ) -> Result<EnvironmentRegistrationKeyListResponse, AgentApiError> {
@@ -130,7 +130,7 @@ impl GatewayAgentApi {
         Ok(EnvironmentRegistrationKeyListResponse { registration_keys })
     }
 
-    pub(super) async fn revoke_environment_registration_key_record(
+    pub(crate) async fn revoke_environment_registration_key_record(
         &self,
         params: EnvironmentRegistrationKeyRevokeParams,
     ) -> Result<EnvironmentRegistrationKeyRevokeResponse, AgentApiError> {
@@ -364,7 +364,6 @@ mod tests {
             },
             public_ingress_enabled: false,
             public_endpoint: None,
-            origin_session: None,
             metadata: BTreeMap::new(),
             last_seen_at_ms,
             created_at_ms: 0,

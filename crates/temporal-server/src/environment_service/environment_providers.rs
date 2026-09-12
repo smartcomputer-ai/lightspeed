@@ -9,8 +9,8 @@ use environment_protocol::control::targets::{
     EnvironmentTemplate, ListTemplatesParams, ProviderBindingContext,
 };
 
-impl GatewayAgentApi {
-    pub(super) async fn list_environment_provider_binding_records(
+impl EnvironmentService {
+    pub(crate) async fn list_environment_provider_binding_records(
         &self,
         _params: EnvironmentProviderBindingListParams,
     ) -> Result<EnvironmentProviderBindingListResponse, AgentApiError> {
@@ -28,7 +28,7 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn read_environment_provider_binding_record(
+    pub(crate) async fn read_environment_provider_binding_record(
         &self,
         params: EnvironmentProviderBindingReadParams,
     ) -> Result<EnvironmentProviderBindingReadResponse, AgentApiError> {
@@ -45,7 +45,7 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn list_environment_template_records(
+    pub(crate) async fn list_environment_template_records(
         &self,
         params: EnvironmentTemplateListParams,
     ) -> Result<EnvironmentTemplateListResponse, AgentApiError> {
@@ -100,7 +100,7 @@ impl GatewayAgentApi {
         Ok(EnvironmentTemplateListResponse { templates })
     }
 
-    pub(super) async fn read_environment_template_record(
+    pub(crate) async fn read_environment_template_record(
         &self,
         params: EnvironmentTemplateReadParams,
     ) -> Result<EnvironmentTemplateReadResponse, AgentApiError> {
@@ -120,7 +120,7 @@ impl GatewayAgentApi {
         Ok(EnvironmentTemplateReadResponse { template })
     }
 
-    pub(super) async fn read_environment_provider(
+    pub(crate) async fn read_environment_provider(
         &self,
         provider_id: &EnvironmentProviderId,
     ) -> Result<EnvironmentProviderRecord, AgentApiError> {
@@ -130,21 +130,21 @@ impl GatewayAgentApi {
     }
 }
 
-pub(super) fn binding_context(record: &EnvironmentProviderBindingRecord) -> ProviderBindingContext {
+pub(crate) fn binding_context(record: &EnvironmentProviderBindingRecord) -> ProviderBindingContext {
     ProviderBindingContext {
         universe_id: record.universe_id.to_string(),
         binding_id: record.binding_id.to_string(),
     }
 }
 
-pub(super) fn parse_environment_provider_id(
+pub(crate) fn parse_environment_provider_id(
     value: String,
 ) -> Result<EnvironmentProviderId, AgentApiError> {
     EnvironmentProviderId::try_new(value)
         .map_err(|error| AgentApiError::invalid_request(format!("invalid provider id: {error}")))
 }
 
-pub(super) fn parse_environment_provider_binding_id(
+pub(crate) fn parse_environment_provider_binding_id(
     value: String,
 ) -> Result<EnvironmentProviderBindingId, AgentApiError> {
     EnvironmentProviderBindingId::try_new(value).map_err(|error| {
@@ -173,7 +173,7 @@ pub(crate) fn environment_provider_binding_view(
     }
 }
 
-pub(super) fn environment_template_view(
+pub(crate) fn environment_template_view(
     binding: &EnvironmentProviderBindingRecord,
     template: &EnvironmentTemplate,
 ) -> EnvironmentTemplateView {
@@ -240,16 +240,6 @@ pub(crate) fn environment_view(record: &EnvironmentRecord) -> EnvironmentView {
         status: lifecycle_status_view(record.status),
         desired_power: power_state_view(record.desired_power),
         idle_policy: record.idle_policy.as_ref().map(idle_policy_view),
-        origin_session: record.origin_session.as_ref().map(|origin| {
-            api::EnvironmentOriginSessionView {
-                session_id: origin.session_id.as_str().to_owned(),
-                profile_id: origin
-                    .profile_id
-                    .as_deref()
-                    .and_then(|id| api::ProfileId::try_new(id).ok()),
-                close_with_session: origin.close_with_session,
-            }
-        }),
         incarnation: EnvironmentIncarnationView {
             incarnation_id: record.incarnation.incarnation_id.to_string(),
             provision_request_id: record
@@ -312,7 +302,7 @@ pub(crate) fn registry_identity_mode(
     }
 }
 
-pub(super) fn power_state_view(value: ::environments::PowerState) -> EnvironmentPowerStateView {
+pub(crate) fn power_state_view(value: ::environments::PowerState) -> EnvironmentPowerStateView {
     match value {
         ::environments::PowerState::Running => EnvironmentPowerStateView::Running,
         ::environments::PowerState::Paused => EnvironmentPowerStateView::Paused,
@@ -321,7 +311,7 @@ pub(super) fn power_state_view(value: ::environments::PowerState) -> Environment
     }
 }
 
-pub(super) fn registry_power_state(value: EnvironmentPowerStateView) -> ::environments::PowerState {
+pub(crate) fn registry_power_state(value: EnvironmentPowerStateView) -> ::environments::PowerState {
     match value {
         EnvironmentPowerStateView::Running => ::environments::PowerState::Running,
         EnvironmentPowerStateView::Paused => ::environments::PowerState::Paused,
@@ -330,7 +320,7 @@ pub(super) fn registry_power_state(value: EnvironmentPowerStateView) -> ::enviro
     }
 }
 
-pub(super) fn idle_policy_view(
+pub(crate) fn idle_policy_view(
     value: &::environments::EnvironmentIdlePolicy,
 ) -> EnvironmentIdlePolicyView {
     EnvironmentIdlePolicyView {
@@ -341,7 +331,7 @@ pub(super) fn idle_policy_view(
     }
 }
 
-pub(super) fn registry_idle_policy(
+pub(crate) fn registry_idle_policy(
     value: &EnvironmentIdlePolicyView,
 ) -> ::environments::EnvironmentIdlePolicy {
     ::environments::EnvironmentIdlePolicy {
@@ -367,7 +357,7 @@ fn lifecycle_status_view(value: EnvironmentStatus) -> EnvironmentLifecycleStatus
     }
 }
 
-pub(super) fn registry_lifecycle_status(
+pub(crate) fn registry_lifecycle_status(
     value: EnvironmentLifecycleStatusView,
 ) -> EnvironmentStatus {
     match value {

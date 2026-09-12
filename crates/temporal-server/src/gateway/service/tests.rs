@@ -1,7 +1,7 @@
 use api::BlobPutItem;
 
 use super::*;
-use crate::gateway::service::prompts::active_prompt_context_entries;
+use tools::prompts::active_prompt_instruction_entries as active_prompt_context_entries;
 use tools::skills::SkillLocation;
 use vfs::VfsPath;
 
@@ -525,8 +525,7 @@ fn declared_mcp_link_materializes_remote_tool() {
     let tool = mcp_api::mcp_tool_from_config_link(&link, &record, None)
         .expect("materialize MCP tool from config link");
     let desired = BTreeMap::from([(tool.name.clone(), tool)]);
-    let patch =
-        super::session_toolset::toolset_reconcile_patch(&active, empty_resolved_toolset(), desired);
+    let patch = temporal_workflow::session_toolset_patch(&active, &desired);
     let tools = patch.apply_to(&active).expect("apply MCP patch");
 
     let tool = tools.get(&tool_name).expect("MCP tool");
@@ -754,13 +753,9 @@ fn two_server_ids_can_share_an_endpoint_with_distinct_credentials() {
         (personal_tool.name.clone(), personal_tool),
     ]);
 
-    let tools = super::session_toolset::toolset_reconcile_patch(
-        &BTreeMap::new(),
-        empty_resolved_toolset(),
-        desired,
-    )
-    .apply_to(&BTreeMap::new())
-    .expect("both identities may coexist when their server labels differ");
+    let tools = temporal_workflow::session_toolset_patch(&BTreeMap::new(), &desired)
+        .apply_to(&BTreeMap::new())
+        .expect("both identities may coexist when their server labels differ");
     assert_eq!(tools.len(), 2);
 }
 
@@ -789,154 +784,6 @@ fn mcp_link_requires_grant_for_required_auth_server() {
         .expect_err("missing grant must be rejected for required auth");
 
     assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
-}
-
-#[test]
-fn toolset_reconcile_patch_preserves_declared_remote_mcp_tools() {
-    let remote_tool_name = ToolName::new("mcp_crm");
-    let old_tool_name = ToolName::new("old_tool");
-    let new_tool_name = ToolName::new("new_tool");
-    let active = BTreeMap::from([
-        (
-            remote_tool_name.clone(),
-            test_remote_mcp_tool(remote_tool_name.clone()),
-        ),
-        (
-            old_tool_name.clone(),
-            test_function_tool(old_tool_name.clone()),
-        ),
-    ]);
-    let toolset = RegisteredToolset {
-        tools: BTreeMap::from([(
-            new_tool_name.clone(),
-            test_function_tool(new_tool_name.clone()),
-        )]),
-    };
-    let desired_mcp = BTreeMap::from([(
-        remote_tool_name.clone(),
-        test_remote_mcp_tool(remote_tool_name.clone()),
-    )]);
-
-    let patch = super::session_toolset::toolset_reconcile_patch(&active, toolset, desired_mcp);
-    let tools = patch.apply_to(&active).expect("apply reconcile patch");
-
-    assert!(tools.contains_key(&remote_tool_name));
-    assert!(!tools.contains_key(&old_tool_name));
-    assert!(tools.contains_key(&new_tool_name));
-}
-
-#[test]
-fn toolset_reconcile_patch_removes_undeclared_remote_mcp_tools() {
-    let remote_tool_name = ToolName::new("mcp_crm");
-    let active = BTreeMap::from([(
-        remote_tool_name.clone(),
-        test_remote_mcp_tool(remote_tool_name.clone()),
-    )]);
-
-    let patch = super::session_toolset::toolset_reconcile_patch(
-        &active,
-        empty_resolved_toolset(),
-        BTreeMap::new(),
-    );
-    let tools = patch.apply_to(&active).expect("apply reconcile patch");
-
-    assert!(!tools.contains_key(&remote_tool_name));
-}
-
-#[test]
-fn toolset_reconcile_patch_tracks_every_mcp_policy_transition() {
-    let remote_tool_name = ToolName::new("mcp_crm");
-    let find_tool_name = ToolName::new("mcp_find_tools");
-    let call_tool_name = ToolName::new("mcp_call");
-
-    let mut inject_all = test_remote_mcp_tool(remote_tool_name.clone());
-    let engine::ToolKind::RemoteMcp(spec) = &mut inject_all.kind else {
-        unreachable!("test helper must produce a remote MCP tool");
-    };
-    spec.execution = engine::RemoteMcpExecution::Native;
-    let mut active = BTreeMap::from([(remote_tool_name.clone(), inject_all)]);
-
-    let mut search_selected = test_remote_mcp_tool(remote_tool_name.clone());
-    let engine::ToolKind::RemoteMcp(spec) = &mut search_selected.kind else {
-        unreachable!("test helper must produce a remote MCP tool");
-    };
-    spec.record_revision = 2;
-    spec.execution = engine::RemoteMcpExecution::Native;
-    spec.exposure = engine::RemoteMcpExposure::Search;
-    spec.allowed_tools = Some(vec!["lookup_customer".to_owned()]);
-    let desired = BTreeMap::from([
-        (remote_tool_name.clone(), search_selected),
-        (
-            find_tool_name.clone(),
-            test_function_tool(find_tool_name.clone()),
-        ),
-        (
-            call_tool_name.clone(),
-            test_function_tool(call_tool_name.clone()),
-        ),
-    ]);
-    active =
-        super::session_toolset::toolset_reconcile_patch(&active, empty_resolved_toolset(), desired)
-            .apply_to(&active)
-            .expect("switch inject-all to search-selected");
-    assert!(active.contains_key(&find_tool_name));
-    assert!(active.contains_key(&call_tool_name));
-    let engine::ToolKind::RemoteMcp(spec) = &active[&remote_tool_name].kind else {
-        panic!("expected remote MCP tool");
-    };
-    assert_eq!(spec.exposure, engine::RemoteMcpExposure::Search);
-    assert_eq!(spec.allowed_tools, Some(vec!["lookup_customer".to_owned()]));
-
-    let mut search_other_selection = active[&remote_tool_name].clone();
-    let engine::ToolKind::RemoteMcp(spec) = &mut search_other_selection.kind else {
-        unreachable!("expected remote MCP tool");
-    };
-    spec.record_revision = 3;
-    spec.allowed_tools = Some(vec!["create_customer".to_owned()]);
-    let desired = BTreeMap::from([
-        (remote_tool_name.clone(), search_other_selection),
-        (find_tool_name.clone(), active[&find_tool_name].clone()),
-        (call_tool_name.clone(), active[&call_tool_name].clone()),
-    ]);
-    active =
-        super::session_toolset::toolset_reconcile_patch(&active, empty_resolved_toolset(), desired)
-            .apply_to(&active)
-            .expect("change selected search tools");
-    let engine::ToolKind::RemoteMcp(spec) = &active[&remote_tool_name].kind else {
-        panic!("expected remote MCP tool");
-    };
-    assert_eq!(spec.allowed_tools, Some(vec!["create_customer".to_owned()]));
-
-    let mut inject_selected = active[&remote_tool_name].clone();
-    let engine::ToolKind::RemoteMcp(spec) = &mut inject_selected.kind else {
-        unreachable!("expected remote MCP tool");
-    };
-    spec.record_revision = 4;
-    spec.exposure = engine::RemoteMcpExposure::Inject;
-    let desired = BTreeMap::from([(remote_tool_name.clone(), inject_selected)]);
-    active =
-        super::session_toolset::toolset_reconcile_patch(&active, empty_resolved_toolset(), desired)
-            .apply_to(&active)
-            .expect("switch search to inject-selected");
-    assert!(!active.contains_key(&find_tool_name));
-    assert!(!active.contains_key(&call_tool_name));
-
-    let mut inject_all = active[&remote_tool_name].clone();
-    let engine::ToolKind::RemoteMcp(spec) = &mut inject_all.kind else {
-        unreachable!("expected remote MCP tool");
-    };
-    spec.record_revision = 5;
-    spec.allowed_tools = None;
-    let desired = BTreeMap::from([(remote_tool_name.clone(), inject_all)]);
-    active =
-        super::session_toolset::toolset_reconcile_patch(&active, empty_resolved_toolset(), desired)
-            .apply_to(&active)
-            .expect("switch inject-selected to inject-all");
-    let engine::ToolKind::RemoteMcp(spec) = &active[&remote_tool_name].kind else {
-        panic!("expected remote MCP tool");
-    };
-    assert_eq!(spec.exposure, engine::RemoteMcpExposure::Inject);
-    assert_eq!(spec.allowed_tools, None);
 }
 
 #[test]
@@ -2199,6 +2046,7 @@ async fn vfs_snapshot_commit_rejects_missing_file_blob_refs() {
 
 fn failure(kind: AgentAdmissionFailureKind) -> AgentAdmissionFailure {
     AgentAdmissionFailure {
+        preparation_error: None,
         submission_id: Some(SubmissionId::new("submit_test")),
         correlation_token: None,
         kind,
@@ -2288,50 +2136,6 @@ fn test_mcp_server_put(server_id: &str, status: mcp::McpServerStatus) -> mcp::Pu
         auth_grant_id: None,
         status,
         now_ms: 1,
-    }
-}
-
-fn empty_resolved_toolset() -> RegisteredToolset {
-    RegisteredToolset {
-        tools: BTreeMap::new(),
-    }
-}
-
-fn test_remote_mcp_tool(tool_name: ToolName) -> engine::ToolSpec {
-    engine::ToolSpec {
-        name: tool_name,
-        execution: Default::default(),
-        kind: engine::ToolKind::RemoteMcp(engine::RemoteMcpToolSpec {
-            server_id: "crm".to_owned(),
-            record_revision: 1,
-            server_label: "crm".to_owned(),
-            server_url: "https://crm.example.com/mcp".to_owned(),
-            description_ref: None,
-            allowed_tools: None,
-            execution: engine::RemoteMcpExecution::Provider,
-            exposure: engine::RemoteMcpExposure::Inject,
-            approval: engine::RemoteMcpApprovalPolicy::Never,
-            defer_loading: None,
-            auth_ref: None,
-            auth_required: false,
-            allow_private_network: false,
-        }),
-        parallelism: engine::ToolParallelism::ParallelSafe,
-    }
-}
-
-fn test_function_tool(tool_name: ToolName) -> engine::ToolSpec {
-    engine::ToolSpec {
-        name: tool_name,
-        execution: Default::default(),
-        kind: engine::ToolKind::Function(engine::FunctionToolSpec {
-            description_ref: None,
-            input_schema_ref: BlobRef::from_bytes(b"schema"),
-            output_schema_ref: None,
-            strict: Some(true),
-            provider_options_ref: None,
-        }),
-        parallelism: engine::ToolParallelism::Exclusive,
     }
 }
 

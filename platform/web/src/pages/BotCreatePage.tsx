@@ -235,9 +235,7 @@ function Wizard({
       ? { kind: "unknown" }
       : environment?.type === "existing"
         ? { kind: "existing", environmentId: environment.environmentId }
-        : environment?.type === "provision"
-          ? { kind: "provision" }
-          : { kind: "none" };
+        : { kind: "none" };
 
   const applyTemplate = (template: BotTemplate) => {
     setTemplateId(template.id);
@@ -694,10 +692,10 @@ function Wizard({
                             embedded
                             value={environment}
                             environments={environments.data}
-                            bindings={options.environmentBindings}
-                            templates={options.environmentTemplates}
-                            secrets={options.secrets}
-                            description="Choose an existing environment shared by this bot's sessions, or provision a fresh one for each session."
+
+
+
+                            description="Choose an existing environment shared by this bot's sessions. Manage its lifecycle on the Environments page."
                             onChange={setEnvironment}
                           />
                           {environments.data?.length === 0 && (

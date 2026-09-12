@@ -2,10 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import {
   api,
   type EnvironmentProviderBinding,
-  type EnvironmentTemplate,
   type ModelListResponse,
   type ProfileSummary,
-  type SecretsInventory,
 } from "@/api";
 import type {
   McpServerOption,
@@ -44,30 +42,13 @@ export function useSessionConfigEditorOptions(universeId: string, enabled = true
       ),
     enabled,
   });
-  const environmentTemplates = useQuery({
-    queryKey: ["environment-templates", universeId],
-    queryFn: () =>
-      api<EnvironmentTemplate[]>(
-        "GET",
-        `/api/v1/universes/${universeId}/environment-templates`,
-      ),
-    enabled,
-  });
-  const secrets = useQuery({
-    queryKey: ["secrets", universeId],
-    queryFn: () => api<SecretsInventory>("GET", `/api/v1/universes/${universeId}/secrets`),
-    enabled,
-  });
   return {
-    secrets: secrets.data,
     mcpServers: servers.data,
     workspaces: workspaces.data,
     workspacesLoading: workspaces.isLoading,
     models: models.data?.models,
     profiles: profiles.data,
     environmentProviders: environmentProviderOptions(environmentProviders.data ?? []),
-    environmentBindings: environmentProviders.data,
-    environmentTemplates: environmentTemplates.data,
   };
 }
 

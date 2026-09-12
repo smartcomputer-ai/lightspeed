@@ -119,7 +119,9 @@ Lightspeed covers the table stakes of a modern agent harness. Everything below w
   or OAuth; Lightspeed handles tool discovery and approvals
 - [x] **Sub-agents**: delegate work to supervised child agents with configurable
   profiles and limits
-- [x] **Agent profiles**: reusable session setups, shared across clients and sub-agents
+- [x] **Agent profiles**: reusable session setups, shared across clients and sub-agents;
+  the session workflow prepares configuration, tools, and context before publishing
+  the complete change atomically, and finishes setup before admitting new work
 
 **Bots & channels**
 
@@ -145,7 +147,8 @@ Lightspeed covers the table stakes of a modern agent harness. Everything below w
 **Borrowed compute**
 
 - [x] **Dedicated VMs**: attach an existing machine or provision one through the
-  included Incus provider
+  included Incus provider; environment lifecycles remain independent of sessions.
+  Session selection checks registry access without waking or connecting to the machine
 - [x] **Bring your own compute**: start `lightspeed-envd` anywhere with a
   registration key and it dials in and registers itself, so NATed VMs,
   Kubernetes pods, and benchmark sandboxes need no inbound address

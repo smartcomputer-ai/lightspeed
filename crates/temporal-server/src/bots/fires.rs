@@ -690,7 +690,7 @@ async fn fetch_http_payload(
 
 /// The environment an exec poll without an explicit `environmentId` runs
 /// in: the `existing` environment of the bot's profile. A profile with
-/// another intent (none, per-session provision, inherit) cannot run such a
+/// another intent (none or inherit) cannot run such a
 /// poll — a configuration error, not a transient failure.
 async fn resolve_bot_profile_environment(
     api: &GatewayAgentApi,

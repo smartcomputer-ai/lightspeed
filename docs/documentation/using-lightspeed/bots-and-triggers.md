@@ -146,8 +146,8 @@ next poll produces an event.
 An execution poll needs an existing, lasting execution environment and a
 command that prints JSON to stdout. The UI enables **Run a command** when the
 profile selects an existing environment. Enter one argument per line in the
-command form. It cannot rely on a new machine that would only be provisioned
-when the event starts a session. Leaving **Environment** blank is appropriate only when the
+command form. Create and configure the machine independently before enabling
+the trigger. Leaving **Environment** blank is appropriate only when the
 profile already selects an existing machine.
 
 Changing a poll specification resets its cursor and establishes a new
@@ -225,10 +225,9 @@ schedules, and refuses new work while keeping the bot and its history.
 Deleting additionally removes the bot record, triggers, events, and
 conversations, and makes its ID available again.
 
-Profiles and shared existing environments remain independent resources.
-Environments provisioned for a session follow their `closeWithSession`
-policy when that session closes. Closing a bot therefore does not imply that
-every machine is retained or that every machine is removed.
+Profiles and environments remain independent resources. Closing or deleting a
+bot or any of its sessions leaves its environments intact. Manage machine
+cleanup through environment operations and idle policies.
 
 ## If an event does not produce the expected work
 

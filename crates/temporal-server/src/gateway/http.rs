@@ -527,7 +527,11 @@ pub async fn serve_gateway_with_client_store(
         let universe_id = reconciler_api.universe_id();
         loop {
             interval.tick().await;
-            match reconciler_api.reconcile_environment_lifecycle_once().await {
+            match reconciler_api
+                .environment_service()
+                .reconcile_environment_lifecycle_once()
+                .await
+            {
                 Ok(_) => failures.succeeded(universe_id),
                 Err(error) => failures.failed(universe_id, &error),
             }
@@ -540,7 +544,11 @@ pub async fn serve_gateway_with_client_store(
         let universe_id = power_api.universe_id();
         loop {
             interval.tick().await;
-            match power_api.reconcile_idle_power_once().await {
+            match power_api
+                .environment_service()
+                .reconcile_idle_power_once()
+                .await
+            {
                 Ok(_) => failures.succeeded(universe_id),
                 Err(error) => failures.failed(universe_id, &error),
             }

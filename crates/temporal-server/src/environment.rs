@@ -179,7 +179,6 @@ mod tests {
             },
             public_ingress_enabled: false,
             public_endpoint: None,
-            origin_session: None,
             metadata: BTreeMap::from([("fsRoot".to_owned(), "/sandbox".to_owned())]),
             last_seen_at_ms: None,
             created_at_ms: 1,
