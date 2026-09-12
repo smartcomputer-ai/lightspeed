@@ -3,8 +3,9 @@
 **Status:** Implemented, including atomic preparation publication, 2026-09-12.
 Covers workflow-owned session setup,
 profile/configuration application, tool and context reconciliation, targeted
-steering, and removal of session-bound environment provisioning. Non-live
-validation is complete; live suites remain opt-in.
+steering, and removal of session-bound environment provisioning. Unit and live
+validation are complete, including credentialed provider calls and full-budget
+timeout recovery; live suites remain opt-in.
 
 ## Problem
 
@@ -200,6 +201,32 @@ handled in the planned audio refactor.
 
 ## Validation and rollout
 
+### Live validation, 2026-09-12
+
+With the local services and credentialed tests explicitly authorized, applied
+schema migration 10 and ran all ordinary Temporal live suites serially. All
+67 tests passed, including OpenAI Responses/Completions and Anthropic tool calls,
+profile setup/application, cancellation/steering/queueing, workflow rollover,
+MCP/OAuth, sub-agents, workflow tools, tenancy, bots, channels, preprocessing,
+environment registration/power, and hosted VFS transfers. The registered-envd
+transfer fixture now enables environment skills and prompts together and verifies
+both reach the model. The environment-power fixture's obsolete wake-on-selection
+assertion was corrected; selection remains paused and actual job use requests wake-up.
+
+All 37 PostgreSQL live tests also passed: the migration ledger, session lifecycle,
+and store suites cover atomic event appends, profile records, environment and
+credential persistence, CAS, and independent environment lifecycles.
+
+The first profile-list attempt encountered an old provisioning profile in the
+shared development universe. Subsequent session tests used a fresh test universe,
+preserving existing development records. The upgrade requirement below records
+this incompatibility. The full-budget timeout-recovery test also passed, running
+alone for 1,267 seconds: Temporal retried the stalled activity, exhausted its
+21-minute budget, failed the run, and completed the next run on the same session
+workflow execution. Total: 105 passing live tests (68 runtime, 37 storage).
+
+### Earlier validation and deployment requirements
+
 - Shared environment discovery: 331 server unit tests passed (one ignored),
   along with `cargo check -p temporal-server --all-targets`.
   Regression coverage verifies one connection/initialization/directory check for
@@ -213,7 +240,10 @@ histories. Close existing sessions with the old runtime, stop old workers, apply
 schema migration 10, and deploy matching runtime and clients before creating new
 sessions. Retain stored sessions for historical reads and retain environment
 resources; no database wipe is required. Restarting workers alone still replays
-old histories and is not a migration strategy.
+old histories and is not a migration strategy. Remove or convert saved profiles
+that still contain the removed `environment.type: provision` variant before
+reading/listing profiles with the new runtime; schema migration 10 removes the
+session-origin columns but does not rewrite stored profile documents.
 
 Preparation patch gates, legacy continuation readiness/receipt defaults, and
 untargeted steering replay have been removed. Existing running histories and
