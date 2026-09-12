@@ -323,7 +323,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn environment_skills_idle_discovery_reuses_observations_and_never_wakes() {
+    async fn environment_discovery_shares_connection_preserves_freshness_and_never_wakes() {
         use engine::{
             CoreAgentCommand,
             storage::{BlobStore, InMemoryBlobStore},
@@ -344,86 +344,123 @@ mod tests {
             format!("http://{}", listener.local_addr().unwrap()),
             "test",
         );
+        let connections = Arc::new(AtomicUsize::new(0));
+        let initializations = Arc::new(AtomicUsize::new(0));
+        let metadata_reads = Arc::new(AtomicUsize::new(0));
+        let stall_skills = Arc::new(AtomicBool::new(false));
         let scans = Arc::new(AtomicUsize::new(0));
         let unchanged = Arc::new(AtomicUsize::new(0));
         let supported = Arc::new(AtomicBool::new(true));
         let stall = Arc::new(AtomicBool::new(false));
         let task = {
+            let connections = connections.clone();
+            let initializations = initializations.clone();
+            let metadata_reads = metadata_reads.clone();
+            let stall_skills = stall_skills.clone();
             let scans = scans.clone();
             let unchanged = unchanged.clone();
             let supported = supported.clone();
             let stall = stall.clone();
             let root = root.clone();
             tokio::spawn(async move {
+                let mut clients = tokio::task::JoinSet::new();
                 loop {
                     let (socket, _) = listener.accept().await.unwrap();
-                    let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
-                    while let Some(Ok(message)) = socket.next().await {
-                        let Ok(text) = message.to_text() else {
-                            continue;
-                        };
-                        let Ok(request) = serde_json::from_str::<serde_json::Value>(text) else {
-                            continue;
-                        };
-                        let Some(id) = request.get("id") else {
-                            continue;
-                        };
-                        if stall.load(Ordering::SeqCst) {
-                            std::future::pending::<()>().await;
-                        }
-                        let result = match request["method"].as_str().unwrap() {
-                            "initialize" => {
-                                serde_json::json!({ "protocolVersion": environment_protocol::shared::CURRENT_PROTOCOL_VERSION, "connectionId": "test", "capabilities": {"filesystemRead": true, "filesystemScan": supported.load(Ordering::SeqCst)}, "defaultCwd": root, "homeDirectory": root, "implementation": {"name": "test", "version": "1"} })
-                            }
-                            "fs/getMetadata" => {
-                                let fs = environment_daemon::filesystem::LocalFileSystem::new(
-                                    root.clone(),
-                                    root.clone(),
-                                    false,
-                                );
-                                serde_json::to_value(
-                                    fs.get_metadata(
-                                        serde_json::from_value(request["params"].clone()).unwrap(),
-                                    )
-                                    .await
-                                    .unwrap(),
-                                )
-                                .unwrap()
-                            }
-                            "fs/scan" => {
-                                scans.fetch_add(1, Ordering::SeqCst);
-                                let fs = environment_daemon::filesystem::LocalFileSystem::new(
-                                    root.clone(),
-                                    root.clone(),
-                                    false,
-                                );
-                                let result = fs
-                                    .scan(
-                                        serde_json::from_value(request["params"].clone()).unwrap(),
-                                    )
-                                    .await
-                                    .unwrap();
-                                if result.unchanged {
-                                    unchanged.fetch_add(1, Ordering::SeqCst);
-                                }
-                                serde_json::to_value(result).unwrap()
-                            }
-                            other => panic!("unexpected discovery RPC: {other}"),
-                        };
-                        if socket
-                            .send(tokio_tungstenite::tungstenite::Message::Text(
-                                serde_json::json!({"jsonrpc":"2.0", "id":id, "result":result})
-                                    .to_string()
-                                    .into(),
-                            ))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
+                    connections.fetch_add(1, Ordering::SeqCst);
+                    while let Some(result) = clients.try_join_next() {
+                        result.unwrap();
                     }
+                    let initializations = initializations.clone();
+                    let metadata_reads = metadata_reads.clone();
+                    let stall_skills = stall_skills.clone();
+                    let scans = scans.clone();
+                    let unchanged = unchanged.clone();
+                    let supported = supported.clone();
+                    let stall = stall.clone();
+                    let root = root.clone();
+                    clients.spawn(async move {
+                        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+                        while let Some(Ok(message)) = socket.next().await {
+                            let Ok(text) = message.to_text() else {
+                                continue;
+                            };
+                            let Ok(request) = serde_json::from_str::<serde_json::Value>(text) else {
+                                continue;
+                            };
+                            let Some(id) = request.get("id") else {
+                                continue;
+                            };
+                            if stall.load(Ordering::SeqCst) {
+                                std::future::pending::<()>().await;
+                            }
+                            let result = match request["method"].as_str().unwrap() {
+                                "initialize" => {
+                                    initializations.fetch_add(1, Ordering::SeqCst);
+                                    serde_json::json!({ "protocolVersion": environment_protocol::shared::CURRENT_PROTOCOL_VERSION, "connectionId": "test", "capabilities": {"filesystemRead": true, "filesystemScan": supported.load(Ordering::SeqCst)}, "defaultCwd": root, "homeDirectory": root, "implementation": {"name": "test", "version": "1"} })
+                                }
+                                "fs/getMetadata" => {
+                                    metadata_reads.fetch_add(1, Ordering::SeqCst);
+                                    let fs = environment_daemon::filesystem::LocalFileSystem::new(
+                                        root.clone(),
+                                        root.clone(),
+                                        false,
+                                    );
+                                    serde_json::to_value(
+                                        fs.get_metadata(
+                                            serde_json::from_value(request["params"].clone()).unwrap(),
+                                        )
+                                        .await
+                                        .unwrap(),
+                                    )
+                                    .unwrap()
+                                }
+                                "fs/scan" => {
+                                    scans.fetch_add(1, Ordering::SeqCst);
+                                    if stall_skills.load(Ordering::SeqCst)
+                                        && request["params"]["includePatterns"].as_array().unwrap().iter().any(|p| p == "SKILL.md") {
+                                        std::future::pending::<()>().await;
+                                    }
+                                    let fs = environment_daemon::filesystem::LocalFileSystem::new(
+                                        root.clone(),
+                                        root.clone(),
+                                        false,
+                                    );
+                                    let result = fs
+                                        .scan(
+                                            serde_json::from_value(request["params"].clone()).unwrap(),
+                                        )
+                                        .await
+                                        .unwrap();
+                                    if result.unchanged {
+                                        unchanged.fetch_add(1, Ordering::SeqCst);
+                                    }
+                                    serde_json::to_value(result).unwrap()
+                                }
+                                other => panic!("unexpected discovery RPC: {other}"),
+                            };
+                            if socket
+                                .send(tokio_tungstenite::tungstenite::Message::Text(
+                                    serde_json::json!({"jsonrpc":"2.0", "id":id, "result":result})
+                                        .to_string()
+                                        .into(),
+                                ))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    });
                 }
             })
+        };
+        let counts = || {
+            (
+                connections.load(Ordering::SeqCst),
+                initializations.load(Ordering::SeqCst),
+                metadata_reads.load(Ordering::SeqCst),
+                scans.load(Ordering::SeqCst),
+            )
         };
         let blobs = InMemoryBlobStore::new();
         let session_id = engine::SessionId::new(uuid::Uuid::new_v4().to_string());
@@ -431,8 +468,8 @@ mod tests {
             skills: Some(Default::default()),
             ..Default::default()
         };
-        let refresh = |current| {
-            crate::environment_skills::refresh(
+        let refresh = async |current| {
+            crate::environment_sources::refresh(
                 &blobs,
                 Some(&resolver),
                 Some(&gateway),
@@ -441,6 +478,8 @@ mod tests {
                 Some(&environment_id),
                 current,
             )
+            .await
+            .map(|publication| publication.skill_command)
         };
         let entry = |command| match command {
             Some(CoreAgentCommand::UpsertContext { entry, .. }) => entry,
@@ -488,6 +527,113 @@ mod tests {
         std::fs::write(&skill_path, doc.replace("Review code.", "Review changes.")).unwrap();
         let edited = entry(refresh(Some(&available)).await.unwrap());
         assert_ne!(edited.content, available.content);
+        // Both sources share setup, but retain their own scans and observe every edit.
+        let mut both = feature.clone();
+        both.prompts = Some(Default::default());
+        std::fs::create_dir_all(root.join(".agents/prompts")).unwrap();
+        let prompt_path = root.join(".agents/prompts/instructions.md");
+        let prompt_key = engine::ContextEntryKey::new(
+            tools::prompts::environment::ENVIRONMENT_PROMPT_CONTEXT_KEY,
+        );
+        let refresh_sources = async |config, current| {
+            crate::environment_sources::refresh(
+                &blobs,
+                Some(&resolver),
+                Some(&gateway),
+                &session_id,
+                Some(config),
+                Some(&environment_id),
+                current,
+            )
+            .await
+            .unwrap()
+        };
+        for text in ["First instructions", "Updated instructions"] {
+            std::fs::write(&prompt_path, text).unwrap();
+            let before = counts();
+            let result = refresh_sources(&both, Some(&edited)).await;
+            assert!(result.skill_command.is_none());
+            assert_eq!(
+                counts(),
+                (before.0 + 1, before.1 + 1, before.2 + 1, before.3 + 2)
+            );
+            assert_eq!(
+                blobs
+                    .read_bytes(&result.prompt_entries[&prompt_key].content.content_ref)
+                    .await
+                    .unwrap(),
+                text.as_bytes()
+            );
+        }
+        let before = counts();
+        let prompts_only = engine::EnvironmentsFeature {
+            prompts: Some(Default::default()),
+            ..Default::default()
+        };
+        let result = refresh_sources(&prompts_only, None).await;
+        assert!(result.skill_command.is_none());
+        assert!(result.prompt_entries.contains_key(&prompt_key));
+        assert_eq!(
+            counts(),
+            (before.0 + 1, before.1 + 1, before.2 + 1, before.3 + 1)
+        );
+
+        let before = counts();
+        let disabled_feature = engine::EnvironmentsFeature::default();
+        let disabled = refresh_sources(&disabled_feature, None).await;
+        assert!(disabled.skill_command.is_none());
+        assert!(disabled.prompt_entries.is_empty());
+        let mut controller_owned = edited.clone();
+        controller_owned.origin = Some("controller".into());
+        assert!(
+            refresh_sources(&feature, Some(&controller_owned))
+                .await
+                .skill_command
+                .is_none()
+        );
+        assert_eq!(
+            counts(),
+            before,
+            "disabled and controller-owned sources need no connection"
+        );
+        let result = refresh_sources(&both, Some(&controller_owned)).await;
+        assert!(result.skill_command.is_none());
+        assert!(result.prompt_entries.contains_key(&prompt_key));
+        assert_eq!(
+            counts(),
+            (before.0 + 1, before.1 + 1, before.2 + 1, before.3 + 1)
+        );
+
+        // A timed-out skill RPC must not poison the prompt scan with an unread response.
+        stall_skills.store(true, Ordering::SeqCst);
+        let before = counts();
+        let result = refresh_sources(&both, Some(&edited)).await;
+        let failed_skills = entry(result.skill_command);
+        let failed_catalog: EnvironmentSkillCatalog = serde_json::from_slice(
+            &blobs
+                .read_bytes(failed_skills.provenance_ref.as_ref().unwrap())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            failed_catalog.availability,
+            EnvironmentSkillAvailability::Unavailable
+        );
+        assert!(failed_catalog.skills.is_empty());
+        assert_eq!(
+            blobs
+                .read_bytes(&result.prompt_entries[&prompt_key].content.content_ref)
+                .await
+                .unwrap(),
+            b"Updated instructions"
+        );
+        assert_eq!(
+            counts(),
+            (before.0 + 2, before.1 + 2, before.2 + 2, before.3 + 2)
+        );
+        stall_skills.store(false, Ordering::SeqCst);
+
         // An incomplete scan reports unavailable and removes obsolete catalog paths.
         std::fs::write(&skill_path, vec![b'x'; 65537]).unwrap();
         let stale = entry(refresh(Some(&edited)).await.unwrap());
@@ -504,6 +650,44 @@ mod tests {
         );
         assert!(catalog.skills.is_empty());
         assert!(refresh(Some(&stale)).await.unwrap().is_none());
+        let result = refresh_sources(&both, Some(&edited)).await;
+        assert!(result.skill_command.is_some());
+        assert_eq!(
+            blobs
+                .read_bytes(&result.prompt_entries[&prompt_key].content.content_ref)
+                .await
+                .unwrap(),
+            b"Updated instructions"
+        );
+        std::fs::write(&skill_path, doc).unwrap();
+        std::fs::write(&prompt_path, vec![b'x'; 65537]).unwrap();
+        let result = refresh_sources(&both, Some(&stale)).await;
+        let recovered = entry(result.skill_command);
+        let recovered_catalog: EnvironmentSkillCatalog = serde_json::from_slice(
+            &blobs
+                .read_bytes(recovered.provenance_ref.as_ref().unwrap())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            recovered_catalog.availability,
+            EnvironmentSkillAvailability::Available
+        );
+        let prompt_report: tools::prompts::environment::EnvironmentPromptReport =
+            serde_json::from_slice(
+                &blobs
+                    .read_bytes(
+                        result.prompt_entries[&prompt_key]
+                            .provenance_ref
+                            .as_ref()
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(!prompt_report.available);
         // Missing fs/scan is explicit unavailable discovery, with no RPC fallback.
         supported.store(false, Ordering::SeqCst);
         let before = scans.load(Ordering::SeqCst);
@@ -526,7 +710,7 @@ mod tests {
             EnvironmentSkillAvailability::Available
         );
         // Deselection removes only this catalog key.
-        let cleared = crate::environment_skills::refresh(
+        let cleared = crate::environment_sources::refresh(
             &blobs,
             Some(&resolver),
             Some(&gateway),
@@ -538,12 +722,12 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            matches!(cleared, Some(CoreAgentCommand::RemoveContext { key, .. }) if key.as_str() == "runtime.catalog.skills.environment")
+            matches!(cleared.skill_command, Some(CoreAgentCommand::RemoveContext { key, .. }) if key.as_str() == "runtime.catalog.skills.environment")
         );
         let mut denied = feature.clone();
         denied.providers = Some(vec!["not-granted".into()]);
         let denied_entry = entry(
-            crate::environment_skills::refresh(
+            crate::environment_sources::refresh(
                 &blobs,
                 Some(&resolver),
                 Some(&gateway),
@@ -553,7 +737,8 @@ mod tests {
                 Some(&available),
             )
             .await
-            .unwrap(),
+            .unwrap()
+            .skill_command,
         );
         let denied_catalog: EnvironmentSkillCatalog = serde_json::from_slice(
             &blobs

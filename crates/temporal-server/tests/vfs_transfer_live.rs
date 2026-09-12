@@ -320,6 +320,13 @@ async fn run_case(
         };
     }
     if mode == "sourcing" {
+        let skills = root.join(".agents/skills/review");
+        std::fs::create_dir_all(&skills)?;
+        std::fs::write(
+            skills.join("SKILL.md"),
+            "---\nname: review\ndescription: Review the live fixture.\n---\nReview the files.",
+        )?;
+        features["environments"]["skills"] = json!({"roots":[".agents/skills"]});
         features["environments"]["workingDirectory"] = json!(root);
         features["environments"]["prompts"] = json!({"roots":[".agents/prompts"]});
     }
@@ -493,10 +500,18 @@ impl CoreAgentLlm for TransferLlm {
         if mode == "sourcing" {
             let mut vfs_prompts = Vec::new();
             let mut environment_prompts = Vec::new();
+            let mut environment_skills = Vec::new();
             for entry in &request.request.context.entries {
                 let key = entry.key.as_ref().map(|key| key.as_str()).unwrap_or("");
                 if key.starts_with("instructions.100.prompts") {
                     vfs_prompts.push(
+                        self.blobs
+                            .read_text(&entry.content.content_ref)
+                            .await
+                            .unwrap(),
+                    );
+                } else if key == "runtime.catalog.skills.environment" {
+                    environment_skills.push(
                         self.blobs
                             .read_text(&entry.content.content_ref)
                             .await
@@ -511,6 +526,12 @@ impl CoreAgentLlm for TransferLlm {
                     );
                 }
             }
+            assert_eq!(
+                environment_skills.len(),
+                1,
+                "environment skills and prompts must both reach the model"
+            );
+            assert!(environment_skills[0].contains("Review the live fixture."));
             assert_eq!(vfs_prompts, vec!["VFS first", "VFS second", "VFS last"]);
             assert_eq!(
                 environment_prompts,

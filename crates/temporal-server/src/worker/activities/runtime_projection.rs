@@ -51,7 +51,7 @@ pub(super) async fn refresh_runtime_projection(
         .active_catalogs
         .get(&ContextEntryKey::new(SUBAGENT_CATALOG_CONTEXT_KEY));
     let mut commands = Vec::new();
-    if let Some(command) = crate::environment_skills::refresh(
+    let environment_sources = crate::environment_sources::refresh(
         deps.blobs.as_ref(),
         deps.environment_resolver.as_ref(),
         deps.environment_gateway.as_ref(),
@@ -63,8 +63,8 @@ pub(super) async fn refresh_runtime_projection(
         )),
     )
     .await
-    .map_err(activity_error)?
-    {
+    .map_err(activity_error)?;
+    if let Some(command) = environment_sources.skill_command {
         commands.push(command);
     }
 
@@ -142,20 +142,11 @@ pub(super) async fn refresh_runtime_projection(
     } else {
         Default::default()
     };
-    let environment_prompts = crate::environment_prompts::refresh(
-        deps.blobs.as_ref(),
-        deps.environment_resolver.as_ref(),
-        deps.environment_gateway.as_ref(),
-        request.environments.as_ref(),
-        request.active_environment_id.as_ref(),
-    )
-    .await
-    .map_err(activity_error)?;
     let mut active_instructions = request.active_instruction_inputs.clone();
     active_instructions.remove(&ContextEntryKey::new(
         tools::prompts::environment::ENVIRONMENT_PROMPT_CONTEXT_KEY,
     ));
-    active_instructions.extend(environment_prompts);
+    active_instructions.extend(environment_sources.prompt_entries);
     let desired_instructions =
         replace_prompt_instruction_source(active_instructions, prompt_entries, deps.blobs.as_ref())
             .await

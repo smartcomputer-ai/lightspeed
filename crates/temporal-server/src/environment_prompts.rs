@@ -1,50 +1,46 @@
 //! Idle-boundary environment prompt refresh, independent of VFS instruction ownership.
-use crate::{
-    environment_gateway::EnvironmentGatewayClientConfig, environment_resolver::EnvironmentResolver,
-};
+use crate::environment_sources::{Discovery, PhaseTimer};
 use engine::{
-    ContextEntryInput, ContextEntryKey, EnvironmentId, EnvironmentsFeature,
+    ContextEntryInput, ContextEntryKey,
     storage::{BlobStore, BlobStoreError},
 };
 use std::{collections::BTreeMap, time::Duration};
 
 pub(crate) async fn refresh(
     blobs: &dyn BlobStore,
-    resolver: Option<&EnvironmentResolver>,
-    gateway: Option<&EnvironmentGatewayClientConfig>,
-    feature: Option<&EnvironmentsFeature>,
-    id: Option<&EnvironmentId>,
+    discovery: &mut Discovery<'_>,
 ) -> Result<BTreeMap<ContextEntryKey, ContextEntryInput>, BlobStoreError> {
-    let Some((feature, source, id)) =
-        feature.and_then(|feature| Some((feature, feature.prompts.as_ref()?, id?)))
+    let Some((source, id)) = discovery
+        .feature
+        .and_then(|feature| Some((feature.prompts.as_ref()?, discovery.environment_id?)))
     else {
         return Ok(BTreeMap::new());
     };
     let attempt = async {
-        let (mut client, initialized, cwd) = crate::environment_sources::connect(
-            resolver.ok_or("environment resolver unavailable")?,
-            gateway.ok_or("environment gateway unavailable")?,
-            feature,
-            id,
-        )
-        .await?;
-        let result = async {
-            let query = tools::environment::sources::scan_query(
-                source.roots.as_deref(),
-                &cwd,
-                initialized.home_directory.as_deref(),
-                "prompts",
-            )?;
-            let scan = client.scan(&query).await.map_err(|e| e.to_string())?;
-            tools::prompts::environment::assemble(&scan)
-        }
-        .await;
-        let _ = client.close().await;
-        result
+        let connection = discovery.connection().await?;
+        let query = tools::environment::sources::scan_query(
+            source.roots.as_deref(),
+            &connection.cwd,
+            connection.initialized.home_directory.as_deref(),
+            "prompts",
+        )?;
+        let scan = {
+            let _timer = PhaseTimer::new("prompts_scan");
+            connection
+                .client
+                .scan(&query)
+                .await
+                .map_err(|e| e.to_string())?
+        };
+        tools::prompts::environment::assemble(&scan)
     };
     let observation = tokio::time::timeout(Duration::from_secs(4), attempt)
         .await
         .unwrap_or_else(|_| Err("environment prompt discovery timed out".into()));
+    if observation.is_err() {
+        discovery.discard_connection();
+    }
+    let _timer = PhaseTimer::new("prompts_publication");
     tools::prompts::environment::publication(blobs, id.as_str(), observation).await
 }
 
@@ -52,6 +48,7 @@ pub(crate) async fn refresh(
 mod tests {
     use super::*;
     use engine::storage::{BlobStore, InMemoryBlobStore};
+    use engine::{EnvironmentId, EnvironmentsFeature, SessionId};
     use tools::prompts::environment::{
         ENVIRONMENT_PROMPT_CONTEXT_KEY, EnvironmentPromptReport, assemble, publication,
     };
@@ -143,15 +140,18 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            refresh(
+            crate::environment_sources::refresh(
                 &blobs,
                 None,
                 None,
+                &SessionId::new("session"),
                 Some(&feature),
-                Some(&EnvironmentId::new("machine"))
+                Some(&EnvironmentId::new("machine")),
+                None,
             )
             .await
             .unwrap()
+            .prompt_entries
             .is_empty()
         );
     }

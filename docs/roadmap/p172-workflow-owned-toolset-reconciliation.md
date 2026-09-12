@@ -167,6 +167,18 @@ probes a data route; readiness and wake-on-use remain on actual-use paths.
   and component checks. Credentialed live tests require separately confirmed
   safe local services and are not part of the default validation run.
 
+## Environment discovery latency
+
+Environment skill and prompt discovery are consolidated inside the runtime
+projection activity. Both sources share one registry access check, connection, handshake,
+and working-directory validation per refresh, retaining their separate scoped scans,
+freshness checks, publication semantics, and bounded attempts. A failed
+or timed-out connection is discarded before discovering the other source. Discovery remains
+read-only and never wakes an environment. Server-side phase timings cover
+registry lookup, connection, initialization, directory validation, scans,
+publication, and total discovery. No daemon or protocol changes, cross-run
+connection pool, TTL, or filesystem watcher are needed.
+
 ## Implementation progress
 
 - [x] Expand the design and acceptance criteria before implementation.
@@ -181,11 +193,20 @@ probes a data route; readiness and wake-on-use remain on actual-use paths.
   unused profile wrapper, and move reconciliation tests beside the shared diff.
 - [x] Separate registry-only selection from use-time readiness and wake-up.
 - [x] Prepare the complete profile/configuration candidate before atomic publication.
+- [x] Share environment discovery setup across skills and instructions and record phase timings.
 
 Audio preprocessing is intentionally unchanged; its admission behavior will be
 handled in the planned audio refactor.
 
 ## Validation and rollout
+
+- Shared environment discovery: 331 server unit tests passed (one ignored),
+  along with `cargo check -p temporal-server --all-targets`.
+  Regression coverage verifies one connection/initialization/directory check for
+  two scans, fresh edits, disabled and controller-owned sources, unchanged skill
+  observations, independent failure publication, and reconnection after a scan
+  timeout. Real-environment latency has not been benchmarked; phase timings
+  expose the remaining cost without changing envd or the protocol.
 
 This is a coordinated breaking deployment requiring fresh sessions and workflow
 histories. Close existing sessions with the old runtime, stop old workers, apply
