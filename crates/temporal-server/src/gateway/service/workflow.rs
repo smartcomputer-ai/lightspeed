@@ -238,14 +238,7 @@ impl GatewayAgentApi {
                 if outcomes.contains_key(key) {
                     continue;
                 }
-                if let Some(active) = loaded
-                    .state
-                    .context
-                    .entries
-                    .iter()
-                    .find(|entry| entry.key.as_ref() == Some(key))
-                    .filter(|entry| active_context_entry_matches_input(entry, input))
-                {
+                if let Some(active) = matching_current_context_entry(&loaded.state, key, input) {
                     outcomes.insert(
                         key.clone(),
                         ContextAppendWaitOutcome::Applied {
@@ -762,4 +755,68 @@ pub(super) fn session_bootstrap_failed_error(
     AgentApiError::session_bootstrap_failed(format!(
         "agent session {session_id} failed to start (bootstrap): {detail}"
     ))
+}
+
+/// Catalog history retains older entries under the same key. Only the current
+/// entry can acknowledge an update; matching a historical version is insufficient.
+fn matching_current_context_entry<'a>(
+    state: &'a engine::CoreAgentState,
+    key: &ContextEntryKey,
+    input: &ContextEntryInput,
+) -> Option<&'a ContextEntry> {
+    engine::current_context_entry(state, key)
+        .filter(|entry| active_context_entry_matches_input(entry, input))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_update_acknowledges_current_catalog_with_retained_history() {
+        let key =
+            ContextEntryKey::new(tools::skills::environment::ENVIRONMENT_SKILL_CATALOG_CONTEXT_KEY);
+        let mut state = engine::CoreAgentState::new();
+        for (id, text) in [(1, "old skills"), (2, "updated skills")] {
+            state.context.entries.push(ContextEntry {
+                entry_id: engine::ContextEntryId::new(id),
+                key: Some(key.clone()),
+                kind: ContextEntryKind::Catalog {
+                    title: "Environment skills".into(),
+                },
+                source: engine::ContextEntrySource::ContextEdit,
+                content: engine::ContentRef {
+                    content_ref: BlobRef::from_bytes(text.as_bytes()),
+                    media_type: Some("text/markdown".into()),
+                    provider_kind: None,
+                },
+                preview: Some("Environment skills".into()),
+                origin: Some("runtime.environment:test".into()),
+                provenance_ref: None,
+                token_estimate: None,
+                supersedes: (id == 2).then(|| engine::ContextEntryId::new(1)),
+            });
+        }
+        let old = active_entry_input(&state.context.entries[0]);
+        let current = active_entry_input(&state.context.entries[1]);
+
+        assert_eq!(
+            matching_current_context_entry(&state, &key, &current)
+                .expect("the committed update must be acknowledged despite retained history")
+                .entry_id,
+            engine::ContextEntryId::new(2),
+        );
+        assert!(
+            matching_current_context_entry(&state, &key, &old).is_none(),
+            "a superseded version must not acknowledge an update"
+        );
+        assert!(
+            matching_current_context_entry(
+                &state,
+                &ContextEntryKey::new("runtime.catalog.missing"),
+                &current,
+            )
+            .is_none()
+        );
+    }
 }
