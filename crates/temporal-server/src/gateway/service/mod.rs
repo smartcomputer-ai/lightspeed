@@ -1050,9 +1050,10 @@ impl GatewayAgentApi {
         let session_id = SessionId::try_new(session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
-        let loaded = self
-            .load_session_state_with_current_run_context(&session_id)
-            .await?;
+        // The workflow refreshes prompts and catalogs immediately before idle
+        // run admission. Scanning here too duplicates environment roundtrips
+        // and cannot replace the authoritative refresh at that boundary.
+        let loaded = self.load_session_state(&session_id).await?;
         let notify_on_terminal = run_terminal_notify_intents(
             loaded.state.workflow_tools.lifecycle_controller.as_ref(),
             notify_on_terminal,

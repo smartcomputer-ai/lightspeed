@@ -82,11 +82,13 @@ for the resolution rules.
 
 ## Assemble a turn from recorded inputs
 
-Before an idle session admits new run work, the runtime can refresh the
-material derived from its linked workspaces. That includes prompt sources,
-the VFS skill catalog, and the sub-agent menu. This refresh occurs when no run
-is active or already queued; it is not an unconditional refresh before each
-previously queued task.
+Before an idle session admits new run work, the session workflow refreshes
+material derived from its linked workspaces and selected environment. That
+includes enabled prompt sources, skill catalogs, and the sub-agent menu. The
+gateway submits the run without first repeating this discovery. Session setup,
+configuration changes, and explicit skill reads retain their own refresh paths.
+The admission refresh occurs when no run is active or already queued; it is not
+an unconditional refresh before each previously queued task.
 
 Prompt discovery reads conventional locations such as `.lightspeed/prompts`
 and `.agents/prompts` in linked VFS workspaces. It assembles direct `.md` and
@@ -100,8 +102,9 @@ Selecting a skill submits ordinary run input or steering that asks the model
 to read its document. Skill reads and inserted skill text use ordinary
 conversation retention and compaction. The current catalog remains retained,
 but skill bodies have no dedicated scope, expiry, or protected context state.
-Environment files do not participate in this automatic prompt and skill
-discovery.
+When environment prompt or skill discovery is enabled, the runtime also reads
+its configured sources from the selected environment. Environment and VFS
+sources retain separate ownership.
 
 Once the refreshed inputs are admitted, the turn freezes the context revision
 it uses. Instructions are ordered first by key; other entries follow their

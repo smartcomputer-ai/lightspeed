@@ -1608,6 +1608,14 @@ fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
             environment_id: engine::EnvironmentId::new("first"),
         },
     );
+    // The gateway can submit the first run before any skill catalog exists.
+    assert!(state.context.entries.is_empty());
+    assert!(
+        admissions::should_refresh_runtime_projection_before_admitting(
+            &state,
+            &request_input_run("without-gateway-discovery"),
+        )
+    );
     let vfs_key = ContextEntryKey::new("runtime.catalog.skills.vfs");
     let env_key = ContextEntryKey::new("runtime.catalog.skills.environment");
     for (key, origin) in [
@@ -1677,6 +1685,8 @@ fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
     disabled.lifecycle.config.as_mut().unwrap().features.vfs = None;
     assert!(drive::invalid_environment_catalog_command(&disabled).is_none());
 
+    // A run submitted without gateway discovery must refresh even when the
+    // previously published catalog is still valid: its source may have changed.
     assert!(drive::invalid_environment_catalog_command(&state).is_none());
     assert!(
         admissions::should_refresh_runtime_projection_before_admitting(
@@ -1754,6 +1764,14 @@ fn environment_prompt_switch_removal_replays_without_mutating_vfs() {
         CoreAgentCommand::SetActiveEnvironment {
             environment_id: engine::EnvironmentId::new("first"),
         },
+    );
+    // Prompt discovery also runs when the gateway has not published instructions.
+    assert!(state.context.entries.is_empty());
+    assert!(
+        admissions::should_refresh_runtime_projection_before_admitting(
+            &state,
+            &request_input_run("without-gateway-discovery"),
+        )
     );
     let vfs_key = ContextEntryKey::new("instructions.100.prompts.test");
     let env_key = ContextEntryKey::new("instructions.110.environment");
