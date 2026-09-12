@@ -75,6 +75,7 @@ pub enum CoreAgentCommand {
     CompactContext,
     RequestRun(RunRequestCommand),
     RequestRunSteering {
+        run_id: RunId,
         input: Vec<ContextEntryInput>,
     },
     /// Cancel one run owned by this session. Queued runs are dequeued as
@@ -121,4 +122,27 @@ pub enum CoreAgentCommand {
         #[serde(default)]
         force: bool,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steering_requires_an_explicit_run_target() {
+        let command = CoreAgentCommand::RequestRunSteering {
+            run_id: RunId::new(7),
+            input: Vec::new(),
+        };
+        let mut wire = serde_json::to_value(&command).unwrap();
+        assert_eq!(
+            serde_json::from_value::<CoreAgentCommand>(wire.clone()).unwrap(),
+            command
+        );
+        wire["request_run_steering"]
+            .as_object_mut()
+            .unwrap()
+            .remove("run_id");
+        assert!(serde_json::from_value::<CoreAgentCommand>(wire).is_err());
+    }
 }

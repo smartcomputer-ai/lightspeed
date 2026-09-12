@@ -175,6 +175,22 @@ impl WorkflowActivities {
         unimplemented!("workflow activity definition only")
     }
 
+    #[activity(name = "WorkflowActivities::prepare_session_toolset")]
+    pub async fn prepare_session_toolset(
+        _ctx: ActivityContext,
+        _request: crate::SessionToolsetRequest,
+    ) -> Result<Result<crate::SessionToolsetPreparation, api::AgentApiError>, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = "WorkflowActivities::prepare_session_profile")]
+    pub async fn prepare_session_profile(
+        _ctx: ActivityContext,
+        _request: crate::SessionProfilePreparationRequest,
+    ) -> Result<Result<crate::SessionProfilePreparation, api::AgentApiError>, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
     #[activity(name = ACTIVITY_RUNTIME_PROJECTION_REFRESH)]
     pub async fn runtime_projection_refresh(
         _ctx: ActivityContext,

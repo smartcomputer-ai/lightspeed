@@ -13,11 +13,11 @@ fn pending_admissions_are_fifo() {
 
     let pending = std::mem::take(&mut workflow.pending_admissions);
     assert_eq!(
-        pending[0].command.submission_id_for_test(),
+        pending[0].core().unwrap().command.submission_id_for_test(),
         Some(SubmissionId::new("submit_1"))
     );
     assert_eq!(
-        pending[1].command.submission_id_for_test(),
+        pending[1].core().unwrap().command.submission_id_for_test(),
         Some(SubmissionId::new("submit_2"))
     );
 }
@@ -27,6 +27,7 @@ fn admission_failure_status_does_not_poison_later_admission() {
     let mut workflow = AgentSessionWorkflow::default();
     let rejection = engine::CommandRejection::context_revision_conflict(3, 4);
     workflow.admission_failures.push(AgentAdmissionFailure {
+        preparation_error: None,
         submission_id: Some(SubmissionId::new("submit_rejected")),
         correlation_token: Some("admit_test".to_owned()),
         kind: AgentAdmissionFailureKind::RejectedCommand,
@@ -369,6 +370,7 @@ fn legacy_step_limit_decodes_but_is_never_serialized() {
 fn continuation_state_round_trips_admission_failure_correlation() {
     let rejection = engine::CommandRejection::context_revision_conflict(3, 4);
     let continuation = AgentSessionContinuationState::v1(vec![AgentAdmissionFailure {
+        preparation_error: None,
         submission_id: Some(SubmissionId::new("submit_rejected")),
         correlation_token: Some("admit_test".to_owned()),
         kind: AgentAdmissionFailureKind::RejectedCommand,
@@ -420,6 +422,7 @@ fn admission(command: CoreAgentCommand) -> AgentAdmission {
 
 fn agent_session_args_with_close_on_terminal(close_on_terminal: bool) -> AgentSessionArgs {
     AgentSessionArgs {
+        setup: None,
         metadata: Default::default(),
         universe_id: test_universe(),
         session_id: SessionId::new("session_test"),
@@ -543,7 +546,11 @@ fn pending_promise_cancellation(promise_id: &str) -> PendingPromiseCancellation 
 }
 
 fn workflow_with_parked_tool_batch(spec: engine::AwaitSpec) -> AgentSessionWorkflow {
-    let mut workflow = AgentSessionWorkflow::default();
+    let mut workflow = AgentSessionWorkflow {
+        ready: true,
+        setup_requested: false,
+        ..Default::default()
+    };
     let run_id = RunId::new(1);
     let turn_id = TurnId::new(1);
     let batch_id = ToolBatchId::new(1);
@@ -1493,7 +1500,10 @@ fn promise_source_polls_rehydrate_from_pending_poll_sources() {
 
 #[test]
 fn continue_as_new_is_blocked_by_non_reconstructible_workflow_state() {
-    let mut workflow = AgentSessionWorkflow::default();
+    let mut workflow = AgentSessionWorkflow {
+        ready: true,
+        ..Default::default()
+    };
     assert!(wait_loop::workflow_state_allows_continue_as_new(&workflow));
 
     workflow.queue_admission(admission(request_input_run("submit_1")));
@@ -2027,4 +2037,44 @@ fn vfs_skill_revocation_is_source_scoped_and_replays() {
     ));
     append(&mut state, &mut log, command);
     assert!(drive::invalid_vfs_skill_catalog_command(&state).is_none());
+}
+
+#[test]
+fn accepted_submission_skips_new_policy_observations_even_after_config_is_removed() {
+    let mut workflow =
+        workflow_with_parked_tool_batch(await_spec(&["promise_1"], engine::AwaitMode::All, None));
+    workflow
+        .core_state
+        .runs
+        .active
+        .as_mut()
+        .unwrap()
+        .submission_id = Some(SubmissionId::new("accepted"));
+    workflow.core_state.lifecycle.config = None;
+    assert!(preparation::known_submission(
+        &workflow.core_state,
+        &request_input_run("accepted")
+    ));
+    assert!(!preparation::known_submission(
+        &workflow.core_state,
+        &request_input_run("new")
+    ));
+}
+
+#[test]
+fn continuations_require_explicit_preparation_state() {
+    for ready in [false, true] {
+        let mut current = AgentSessionContinuationState::v1(Vec::new());
+        current.ready = ready;
+        let wire = serde_json::to_value(&current).unwrap();
+        assert_eq!(
+            serde_json::from_value::<AgentSessionContinuationState>(wire.clone()).unwrap(),
+            current
+        );
+        for field in ["ready", "operation_outcomes"] {
+            let mut incomplete = wire.clone();
+            incomplete.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<AgentSessionContinuationState>(incomplete).is_err());
+        }
+    }
 }

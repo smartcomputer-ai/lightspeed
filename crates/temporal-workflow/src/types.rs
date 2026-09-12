@@ -28,6 +28,8 @@ pub struct AgentSessionArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delete_after_close_ms: Option<u64>,
     pub session_config: SessionConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<crate::SessionProfileIntent>,
     /// Present only for the trusted managed-session creation path. The
     /// declaration is validated against `universe_id` and recorded as an
     /// immutable creation fact on the first append.
@@ -56,6 +58,8 @@ pub struct AgentSessionArgs {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSessionContinuationState {
     pub version: u32,
+    pub ready: bool,
+    pub operation_outcomes: crate::SessionOperationReceipts,
     #[serde(default)]
     pub admission_failures: Vec<AgentAdmissionFailure>,
 }
@@ -66,6 +70,8 @@ impl AgentSessionContinuationState {
     pub fn v1(admission_failures: Vec<AgentAdmissionFailure>) -> Self {
         Self {
             version: Self::VERSION,
+            ready: false,
+            operation_outcomes: crate::SessionOperationReceipts::default(),
             admission_failures,
         }
     }
@@ -112,6 +118,9 @@ pub struct AgentAdmission {
 pub struct AgentSessionStatus {
     pub session_id: String,
     pub initialized: bool,
+    pub ready: bool,
+    #[serde(default)]
+    pub setup_error: Option<api::AgentApiError>,
     pub pending_admissions: usize,
     #[serde(default)]
     pub pending_tool_batch_resumes: usize,
@@ -133,6 +142,8 @@ pub struct AgentSessionStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentAdmissionFailure {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation_error: Option<api::AgentApiError>,
     pub submission_id: Option<SubmissionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_token: Option<String>,

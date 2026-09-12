@@ -1126,7 +1126,10 @@ async fn run_admission_failure_live_client(
             vec![AgentAdmission {
                 // No run is active, so admission rejects this command; the
                 // session must keep serving later admissions regardless.
-                command: CoreAgentCommand::RequestRunSteering { input: Vec::new() },
+                command: CoreAgentCommand::RequestRunSteering {
+                    run_id: engine::RunId::new(1),
+                    input: Vec::new(),
+                },
                 correlation_token: None,
             }],
             WorkflowSignalOptions::default(),

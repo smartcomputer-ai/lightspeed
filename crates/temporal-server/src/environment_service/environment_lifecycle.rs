@@ -23,7 +23,7 @@ use environment_protocol::control::targets::{
 /// Map a provider target observation to the logical lifecycle status. A
 /// passive provider reports Ready only after its private envd is reachable;
 /// no provider presence has to register separately.
-pub(super) fn lifecycle_status_from_target(status: ProviderTargetStatus) -> EnvironmentStatus {
+pub(crate) fn lifecycle_status_from_target(status: ProviderTargetStatus) -> EnvironmentStatus {
     match status {
         ProviderTargetStatus::Ready => EnvironmentStatus::Ready,
         ProviderTargetStatus::Creating | ProviderTargetStatus::Starting => {
@@ -39,8 +39,8 @@ pub(super) fn lifecycle_status_from_target(status: ProviderTargetStatus) -> Envi
     }
 }
 
-impl GatewayAgentApi {
-    pub(super) async fn put_environment_ingress_record(
+impl EnvironmentService {
+    pub(crate) async fn put_environment_ingress_record(
         &self,
         params: EnvironmentIngressPutParams,
     ) -> Result<EnvironmentIngressPutResponse, AgentApiError> {
@@ -142,7 +142,7 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn create_external_environment_record(
+    pub(crate) async fn create_external_environment_record(
         &self,
         params: EnvironmentExternalCreateParams,
     ) -> Result<EnvironmentExternalCreateResponse, AgentApiError> {
@@ -169,25 +169,20 @@ impl GatewayAgentApi {
             environment: environment_view(&environment),
         })
     }
-    pub(super) async fn create_environment_record(
+    pub(crate) async fn create_environment_record(
         &self,
         params: EnvironmentCreateParams,
     ) -> Result<EnvironmentCreateResponse, AgentApiError> {
-        let environment = self
-            .create_environment_record_with_origin(params, None)
-            .await?;
+        let environment = self.accept_environment_create(params).await?;
         Ok(EnvironmentCreateResponse {
             environment: environment_view(&environment),
         })
     }
 
-    /// Shared acceptance boundary for `environments/create` and
-    /// profile-provisioned environments. Provider I/O is deliberately left to
-    /// the independently restartable reconciler.
-    pub(super) async fn create_environment_record_with_origin(
+    /// Accept environment creation; provider I/O belongs to the reconciler.
+    pub(crate) async fn accept_environment_create(
         &self,
         params: EnvironmentCreateParams,
-        origin_session: Option<::environments::EnvironmentOriginSession>,
     ) -> Result<EnvironmentRecord, AgentApiError> {
         let request_id =
             EnvironmentProvisionRequestId::try_new(params.request_id).map_err(|error| {
@@ -211,7 +206,6 @@ impl GatewayAgentApi {
                 template_id,
                 display_name: params.display_name,
                 metadata: validated_caller_metadata(params.metadata)?,
-                origin_session,
                 idle_policy,
                 created_at_ms: now_ms()?,
             },
@@ -223,7 +217,7 @@ impl GatewayAgentApi {
     /// `environments/power/put`: record power intent. Provider support is
     /// checked against the states observed on the current incarnation; the
     /// reconciler converges asynchronously.
-    pub(super) async fn put_environment_power_record(
+    pub(crate) async fn put_environment_power_record(
         &self,
         params: EnvironmentPowerPutParams,
     ) -> Result<EnvironmentPowerPutResponse, AgentApiError> {
@@ -279,7 +273,7 @@ impl GatewayAgentApi {
 
     /// `environments/idle-policy/put`: replace or clear the staged idle
     /// policy of a provisioned environment.
-    pub(super) async fn put_environment_idle_policy_record(
+    pub(crate) async fn put_environment_idle_policy_record(
         &self,
         params: EnvironmentIdlePolicyPutParams,
     ) -> Result<EnvironmentIdlePolicyPutResponse, AgentApiError> {
@@ -303,7 +297,7 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn read_environment_record(
+    pub(crate) async fn read_environment_record(
         &self,
         params: EnvironmentReadParams,
     ) -> Result<EnvironmentReadResponse, AgentApiError> {
@@ -316,7 +310,7 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn list_environment_records(
+    pub(crate) async fn list_environment_records(
         &self,
         params: EnvironmentListParams,
     ) -> Result<EnvironmentListResponse, AgentApiError> {
@@ -333,16 +327,6 @@ impl GatewayAgentApi {
                     .map(parse_environment_provider_binding_id)
                     .transpose()?,
                 status: params.status.map(registry_lifecycle_status),
-                origin_session_id: params
-                    .origin_session_id
-                    .map(|id| {
-                        engine::SessionId::try_new(id).map_err(|error| {
-                            AgentApiError::invalid_request(format!(
-                                "invalid origin session id: {error}"
-                            ))
-                        })
-                    })
-                    .transpose()?,
                 registration_key_id: params
                     .registration_key_id
                     .map(parse_registration_key_id)
@@ -356,7 +340,7 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn close_environment_record(
+    pub(crate) async fn close_environment_record(
         &self,
         params: EnvironmentCloseParams,
     ) -> Result<EnvironmentCloseResponse, AgentApiError> {
@@ -375,91 +359,6 @@ impl GatewayAgentApi {
         })
     }
 
-    /// Close every open profile-provisioned environment whose origin session
-    /// asked for close-with-session and is now closed (or gone). Idempotent
-    /// and restart-safe: this is the backstop behind the eager close in
-    /// `session/close` and covers sessions closed from inside the workflow.
-    pub(crate) async fn reconcile_close_with_session_once(&self) -> Result<usize, AgentApiError> {
-        let candidates =
-            EnvironmentStore::list_environments_closing_with_session(self.store.as_ref())
-                .await
-                .map_err(map_environments_error)?;
-        let mut changed = 0;
-        for environment in candidates {
-            let Some(origin) = environment.origin_session.as_ref() else {
-                continue;
-            };
-            let session_closed = match self.store.load_session(&origin.session_id).await {
-                Ok(Some(record)) => {
-                    record.lifecycle_status == engine::storage::SessionLifecycleStatus::Closed
-                }
-                // A deleted session cannot come back; its environment goes too.
-                Ok(None) => true,
-                Err(error) => return Err(map_session_store_error(error)),
-            };
-            if !session_closed {
-                continue;
-            }
-            match EnvironmentStore::begin_close_environment(
-                self.store.as_ref(),
-                BeginCloseEnvironment {
-                    environment_id: environment.environment_id.clone(),
-                    updated_at_ms: now_ms()?,
-                },
-            )
-            .await
-            {
-                Ok(_) => changed += 1,
-                // Already closing/closed by someone else: converged.
-                Err(::environments::EnvironmentRegistryError::InvalidInput { .. }) => {}
-                Err(error) => return Err(map_environments_error(error)),
-            }
-        }
-        Ok(changed)
-    }
-
-    /// Eagerly request close for the environments a profile provisioned for
-    /// this session with `closeWithSession`. Best effort: the reconciler
-    /// sweep converges the rest.
-    pub(super) async fn close_session_owned_environments(&self, session_id: &SessionId) {
-        let Ok(environments) = EnvironmentStore::list_environments(
-            self.store.as_ref(),
-            ListEnvironments {
-                metadata: Default::default(),
-                origin_session_id: Some(session_id.clone()),
-                ..ListEnvironments::default()
-            },
-        )
-        .await
-        else {
-            return;
-        };
-        for environment in environments {
-            let close = environment
-                .origin_session
-                .as_ref()
-                .is_some_and(|origin| origin.close_with_session)
-                && !matches!(
-                    environment.status,
-                    EnvironmentStatus::Closing | EnvironmentStatus::Closed
-                );
-            if !close {
-                continue;
-            }
-            let Ok(updated_at_ms) = now_ms() else {
-                return;
-            };
-            let _ = EnvironmentStore::begin_close_environment(
-                self.store.as_ref(),
-                BeginCloseEnvironment {
-                    environment_id: environment.environment_id.clone(),
-                    updated_at_ms,
-                },
-            )
-            .await;
-        }
-    }
-
     /// Public entry point for one reconciliation pass; used by acceptance
     /// tests that drive the reconciler deterministically instead of running
     /// the background loop.
@@ -473,8 +372,7 @@ impl GatewayAgentApi {
     pub(crate) async fn reconcile_environment_lifecycle_once(
         &self,
     ) -> Result<usize, AgentApiError> {
-        let mut changed = self.reconcile_close_with_session_once().await?;
-        changed += self.reconcile_registered_once().await?;
+        let mut changed = self.reconcile_registered_once().await?;
         let environments =
             EnvironmentStore::list_environments_needing_reconcile(self.store.as_ref())
                 .await
@@ -801,12 +699,12 @@ impl ReconcileFailureLog {
     }
 }
 
-pub(super) fn parse_registry_environment_id(value: String) -> Result<EnvironmentId, AgentApiError> {
+pub(crate) fn parse_registry_environment_id(value: String) -> Result<EnvironmentId, AgentApiError> {
     EnvironmentId::try_new(value)
         .map_err(|error| AgentApiError::invalid_request(format!("invalid environment id: {error}")))
 }
 
-pub(super) fn parse_registration_key_id(
+pub(crate) fn parse_registration_key_id(
     value: String,
 ) -> Result<::environments::EnvironmentRegistrationKeyId, AgentApiError> {
     ::environments::EnvironmentRegistrationKeyId::try_new(value).map_err(|error| {
@@ -814,11 +712,11 @@ pub(super) fn parse_registration_key_id(
     })
 }
 
-pub(super) fn allocate_environment_id() -> EnvironmentId {
+pub(crate) fn allocate_environment_id() -> EnvironmentId {
     EnvironmentId::new(format!("environment_{}", uuid::Uuid::new_v4().simple()))
 }
 
-pub(super) fn allocate_incarnation_id() -> EnvironmentIncarnationId {
+pub(crate) fn allocate_incarnation_id() -> EnvironmentIncarnationId {
     EnvironmentIncarnationId::new(format!("incarnation_{}", uuid::Uuid::new_v4().simple()))
 }
 

@@ -21,7 +21,6 @@ import {
 } from "../engine";
 import { sessionSummary, type DemoStore, type SessionRecord, type UniverseState } from "../store";
 import { badRequest, conflict, intQuery, notFound, readBody, universeFor } from "./common";
-import { closeEnvironment, provisionEnvironment } from "./environments";
 
 /// What a session start consumes from a profile, whichever source it came
 /// from. `profileId` is null for inline profiles.
@@ -107,7 +106,7 @@ export function sessionRoutes(store: DemoStore): Hono {
     }
     const config = sessionConfig(profile.config);
     const sessionId = store.nextId("session");
-    const resolved = resolveEnvironment(store, universe, profile, sessionId, config);
+    const resolved = resolveEnvironment(universe, profile);
     if ("error" in resolved) return conflict(c, `engine conflict: ${resolved.error}`);
     const session = newSession(store, universe, {
       id: sessionId,
@@ -171,17 +170,15 @@ export function sessionRoutes(store: DemoStore): Hono {
   });
 
   /// Closing keeps history; `force` cancels active and queued work first.
-  /// Environments a profile provisioned for this session go with it.
+  /// Environment lifecycles are independent.
   app.post("/:id/sessions/:sessionId/close", async (c) => {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
-    const { universe, session } = found;
+    const { session } = found;
     const body = await readBody<{ force?: boolean }>(c);
-    const wasClosed = session.view.status === "closed";
     if (!closeSession(session, body.force === true)) {
       return conflict(c, "engine conflict: session has active work; close with force to cancel it");
     }
-    if (!wasClosed) closeOriginEnvironments(universe, session.view.id);
     return c.json(session.view);
   });
 
@@ -479,76 +476,17 @@ function instructionText(store: DemoStore, instructions: ProfileInstructions | n
   return instructions.type === "text" ? instructions.text : store.readText(instructions.blobRef);
 }
 
-/// `existing` activates a universe environment; `provision` creates one
-/// keyed by the session id so a retried start finds it again. Provisioning
-/// needs the feature grant and an enabled binding for the provider, as the
-/// engine checks before it touches a provider.
+/// Profiles select resources whose lifecycle is managed independently.
 function resolveEnvironment(
-  store: DemoStore,
   universe: UniverseState,
   profile: ResolvedProfile,
-  sessionId: string,
-  config: Record<string, unknown>,
 ): { environmentId: string | null } | { error: string } {
   const intent = profile.environment;
   if (!intent || intent.type === "inherit") return { environmentId: null };
-  if (intent.type === "existing") {
-    const environment = universe.environments.get(intent.environmentId);
-    if (!environment) return { error: `environment not found: ${intent.environmentId}` };
-    if (!usable(environment)) {
-      return { error: `environment is ${environment.status}: ${intent.environmentId}` };
-    }
-    return { environmentId: intent.environmentId };
-  }
-  if (!grantsEnvironments(config)) {
-    return {
-      error:
-        "profile provisions an environment but the effective session config does not grant features.environments",
-    };
-  }
-  const binding = universe.providerBindings.find(
-    (candidate) => candidate.providerId === intent.providerId,
-  );
-  if (!binding) {
-    return {
-      error: `profile provisions from environment provider ${intent.providerId}, but this universe has no binding for it`,
-    };
-  }
-  if (binding.status !== "enabled") {
-    return {
-      error: `profile provisions from environment provider ${intent.providerId}, but binding ${binding.bindingId} is disabled`,
-    };
-  }
-  const result = provisionEnvironment(store, universe, {
-    requestId: `session:${sessionId}`,
-    bindingId: binding.bindingId,
-    templateId: intent.templateId,
-    displayName:
-      intent.displayName ??
-      (profile.profileId ? `${profile.profileId} · ${sessionId}` : `session ${sessionId}`),
-    idlePolicy: intent.idlePolicy ?? null,
-    metadata: intent.metadata ?? {},
-    originSession: {
-      sessionId,
-      ...(profile.profileId ? { profileId: profile.profileId } : {}),
-      closeWithSession: (intent.retention ?? "closeWithSession") === "closeWithSession",
-    },
-  });
-  if ("error" in result) return { error: result.error };
-  return { environmentId: result.environment.environmentId };
-}
-
-/// The reconciler's sweep, done eagerly: environments a profile provisioned
-/// for this session with `closeWithSession` close when it does.
-function closeOriginEnvironments(universe: UniverseState, sessionId: string): void {
-  for (const environment of universe.environments.values()) {
-    if (
-      environment.originSession?.sessionId === sessionId &&
-      environment.originSession.closeWithSession
-    ) {
-      closeEnvironment(universe, environment.environmentId);
-    }
-  }
+  const environment = universe.environments.get(intent.environmentId);
+  if (!environment) return { error: `environment not found: ${intent.environmentId}` };
+  if (!usable(environment)) return { error: `environment is ${environment.status}: ${intent.environmentId}` };
+  return { environmentId: intent.environmentId };
 }
 
 /// Provisioning and booting are valid activation targets; a terminal or

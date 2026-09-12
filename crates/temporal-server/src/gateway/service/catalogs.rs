@@ -1,50 +1,5 @@
 use super::*;
 
-impl GatewayAgentApi {
-    pub(super) async fn apply_catalog_refresh_commands(
-        &self,
-        session_id: &SessionId,
-        commands: Vec<CoreAgentCommand>,
-    ) -> Result<(), AgentApiError> {
-        let expected = commands
-            .iter()
-            .filter_map(|command| match command {
-                CoreAgentCommand::UpsertContext { key, entry, .. } => {
-                    Some((key.clone(), entry.clone()))
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let removed = commands
-            .iter()
-            .filter_map(|command| match command {
-                CoreAgentCommand::RemoveContext { key, .. } => Some(key.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let mut correlations = BTreeMap::new();
-        for command in commands {
-            correlations.extend(
-                self.submit_correlated_context_commands(session_id, vec![command])
-                    .await?,
-            );
-        }
-        if !expected.is_empty() {
-            self.wait_for_context_entries_applied(session_id, &expected, &correlations)
-                .await?;
-        }
-        if !removed.is_empty() {
-            let (_, outcomes) = self
-                .wait_for_context_keys_removed(session_id, &removed, &correlations)
-                .await?;
-            if let Some(failure) = outcomes.into_values().flatten().next() {
-                return Err(map_admission_failure_to_api_error(&failure));
-            }
-        }
-        Ok(())
-    }
-}
-
 /// Public context edits cannot write or remove runtime-owned slots.
 pub(super) fn parse_client_context_key(value: String) -> Result<ContextEntryKey, AgentApiError> {
     let key = ContextEntryKey::try_new(value)
@@ -62,6 +17,7 @@ pub(super) fn parse_client_context_key(value: String) -> Result<ContextEntryKey,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tools::catalog::{SUBAGENT_CATALOG_CONTEXT_KEY, VFS_CATALOG_CONTEXT_KEY};
 
     #[test]
     fn client_context_keys_reserve_runtime_namespaces() {

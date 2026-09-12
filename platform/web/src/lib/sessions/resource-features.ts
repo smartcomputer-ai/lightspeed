@@ -19,10 +19,10 @@ export function resourceFeatureDisableReasons(
 }
 
 /// True when the profile document names an environment intent (`existing`
-/// or `provision`); absence leaves a session's selection unchanged.
+/// or `inherit`); absence leaves a session's selection unchanged.
 export function hasProfileEnvironment(document: Record<string, unknown>): boolean {
   const environment = record(document.environment);
-  return environment.type === "existing" || environment.type === "provision" || environment.type === "inherit";
+  return environment.type === "existing" || environment.type === "inherit";
 }
 
 export function hasSessionFeature(config: unknown, name: ResourceFeature): boolean {
@@ -38,9 +38,7 @@ export function setupResourceFeatureError(setup: unknown): string | null {
   if (environment.type === "existing" && !environment.environmentId) {
     return "Select an existing environment or clear the environment mode.";
   }
-  if (environment.type === "provision" && (!environment.providerId || !environment.templateId)) {
-    return "Provisioning needs a provider and a template.";
-  }
+
   return null;
 }
 

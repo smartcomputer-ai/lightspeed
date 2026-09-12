@@ -2416,7 +2416,7 @@
               "type": "null"
             }
           ],
-          "description": "How the session obtains its active environment when this profile is\napplied: activate an existing universe environment, or provision a\nfresh one for this session. Absence leaves the session's current\nactive environment unchanged."
+          "description": "How the session obtains its active environment when this profile is\napplied: select an existing environment or inherit the parent's\nselection. Absence leaves the session's current\nactive environment unchanged."
         },
         "instructions": {
           "anyOf": [
@@ -2500,7 +2500,7 @@
               "type": "null"
             }
           ],
-          "description": "How the session obtains its active environment when this profile is\napplied: activate an existing universe environment, or provision a\nfresh one for this session. Absence leaves the session's current\nactive environment unchanged."
+          "description": "How the session obtains its active environment when this profile is\napplied: select an existing environment or inherit the parent's\nselection. Absence leaves the session's current\nactive environment unchanged."
         },
         "instructions": {
           "anyOf": [
@@ -8449,13 +8449,6 @@
           "description": "Only environments carrying every listed metadata pair (AND\nsemantics); the same filter `session/list` accepts.",
           "type": "object"
         },
-        "originSessionId": {
-          "description": "Only environments a profile provisioned for this session.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "providerId": {
           "type": [
             "string",
@@ -8492,32 +8485,6 @@
           "type": "array"
         }
       },
-      "type": "object"
-    },
-    "EnvironmentOriginSessionView": {
-      "properties": {
-        "closeWithSession": {
-          "description": "When true, Lightspeed closes the environment once the session closes.",
-          "type": "boolean"
-        },
-        "profileId": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ProfileId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "sessionId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sessionId",
-        "closeWithSession"
-      ],
       "type": "object"
     },
     "EnvironmentPowerPutParams": {
@@ -9167,17 +9134,6 @@
           },
           "type": "object"
         },
-        "originSession": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/EnvironmentOriginSessionView"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Present when a profile provisioned this environment for a session.\nProvenance and an optional close trigger, not ownership: the\nenvironment remains an ordinary universe resource."
-        },
         "publicEndpoint": {
           "type": [
             "string",
@@ -9612,7 +9568,7 @@
               "type": "null"
             }
           ],
-          "description": "How the session obtains its active environment when this profile is\napplied: activate an existing universe environment, or provision a\nfresh one for this session. Absence leaves the session's current\nactive environment unchanged."
+          "description": "How the session obtains its active environment when this profile is\napplied: select an existing environment or inherit the parent's\nselection. Absence leaves the session's current\nactive environment unchanged."
         },
         "instructions": {
           "anyOf": [
@@ -12055,7 +12011,6 @@
           "default": {
             "activeEnvironmentChanged": false,
             "configChanged": false,
-            "environmentProvisioned": false,
             "instructionsChanged": false
           }
         },
@@ -12074,11 +12029,6 @@
           "type": "boolean"
         },
         "configChanged": {
-          "type": "boolean"
-        },
-        "environmentProvisioned": {
-          "default": false,
-          "description": "True when this apply created a new environment for the session.",
           "type": "boolean"
         },
         "instructionsChanged": {
@@ -12170,100 +12120,6 @@
             "type"
           ],
           "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Provision one environment for the session from the universe's enabled\nbinding for `providerId`, then activate it. The provision request id\nis derived from the session id, so retries and repeated applies\nconverge on the same environment.",
-          "properties": {
-            "credentials": {
-              "description": "Credentials bound to the environment right after it is\nprovisioned before activation: references to universe\ngrants/providers/secrets, never values. They become ordinary\nenvironment credential bindings; the profile is the initial set,\nnot a live sync. Not available for `existing` environments.",
-              "items": {
-                "$ref": "#/definitions/ProfileEnvironmentCredential"
-              },
-              "type": "array"
-            },
-            "displayName": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "idlePolicy": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/EnvironmentIdlePolicyView"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Optional staged idle policy for the provisioned environment.\nStages the provider cannot realize are skipped."
-            },
-            "metadata": {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
-            },
-            "providerId": {
-              "type": "string"
-            },
-            "retention": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ProfileEnvironmentRetention"
-                }
-              ],
-              "default": "closeWithSession"
-            },
-            "templateId": {
-              "description": "Immutable provider template-version identity.",
-              "type": "string"
-            },
-            "type": {
-              "const": "provision",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "providerId",
-            "templateId"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "ProfileEnvironmentCredential": {
-      "additionalProperties": false,
-      "description": "One environment credential binding requested by a profile: the same shape\nas `environments/credentials/bind`.",
-      "properties": {
-        "envName": {
-          "description": "Environment variable name (`[A-Za-z_][A-Za-z0-9_]{0,127}`).",
-          "type": "string"
-        },
-        "source": {
-          "$ref": "#/definitions/EnvironmentCredentialSourceView"
-        }
-      },
-      "required": [
-        "envName",
-        "source"
-      ],
-      "type": "object"
-    },
-    "ProfileEnvironmentRetention": {
-      "description": "What happens to a profile-provisioned environment when its originating\nsession closes.",
-      "oneOf": [
-        {
-          "const": "closeWithSession",
-          "description": "Close the environment when the session that provisioned it closes.",
-          "type": "string"
-        },
-        {
-          "const": "retain",
-          "description": "Leave the environment open; the universe owns its cleanup.",
-          "type": "string"
         }
       ]
     },

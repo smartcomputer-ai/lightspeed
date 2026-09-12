@@ -12,6 +12,7 @@ pub mod environment;
 pub mod environment_gateway;
 mod environment_prompts;
 pub(crate) mod environment_resolver;
+pub(crate) mod environment_service;
 mod environment_skills;
 mod environment_sources;
 pub mod gateway;

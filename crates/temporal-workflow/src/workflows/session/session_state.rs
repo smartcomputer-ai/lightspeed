@@ -2,7 +2,8 @@ use super::*;
 
 impl AgentSessionWorkflow {
     pub fn queue_admission(&mut self, admission: AgentAdmission) {
-        self.pending_admissions.push(admission);
+        self.pending_admissions
+            .push(SessionAdmission::Core(admission));
     }
 
     /// Inbound push delivery converges on ordinary promise resolution
@@ -179,7 +180,10 @@ impl AgentSessionWorkflow {
                 .map(ToString::to_string)
                 .unwrap_or_default(),
             initialized: self.initialized,
-            pending_admissions: self.pending_admissions.len(),
+            ready: self.ready,
+            setup_error: self.setup_error.clone(),
+            pending_admissions: self.pending_admissions.len()
+                + usize::from(self.run_preparation.is_some()),
             pending_tool_batch_resumes: self.pending_tool_batch_resumes.len(),
             active_waits: usize::from(awaits::parked_tool_batch(&self.core_state).is_some())
                 + self.promise_source_polls.len(),

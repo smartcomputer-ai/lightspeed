@@ -41,7 +41,6 @@ export interface ProvisionParams {
   displayName?: string | null;
   idlePolicy?: unknown;
   metadata?: Record<string, unknown>;
-  originSession?: { sessionId: string; profileId?: string; closeWithSession: boolean } | null;
 }
 
 /// Pending simulated transitions per environment. A newer intent (close, a
@@ -124,8 +123,6 @@ function findByRequestId(universe: UniverseState, requestId: string): Environmen
 /// `environments/create` semantics: the request id dedupes inside the
 /// universe, the binding must be enabled, and the record is accepted before
 /// any provider work. An unknown template fails asynchronously, the way a
-/// provider would reject it. `originSession` is set only by session start
-/// on behalf of a `provision` profile.
 export function provisionEnvironment(
   store: DemoStore,
   universe: UniverseState,
@@ -164,7 +161,6 @@ export function provisionEnvironment(
       updatedAtMs: now,
     },
     publicIngressEnabled: false,
-    ...(params.originSession ? { originSession: params.originSession } : {}),
     metadata: stringMetadata(params.metadata),
     createdAtMs: now,
     updatedAtMs: now,
@@ -298,14 +294,12 @@ export function environmentRoutes(store: DemoStore): Hono {
     const providerId = c.req.query("providerId");
     const bindingId = c.req.query("bindingId");
     const status = c.req.query("status");
-    const originSessionId = c.req.query("originSessionId");
     const registrationKeyId = c.req.query("registrationKeyId");
     const environments = [...universe.environments.values()].filter((environment) => {
       const source = environment.source;
       return (!providerId || (source.type === "provisioned" && source.providerId === providerId))
         && (!bindingId || (source.type === "provisioned" && source.bindingId === bindingId))
         && (!status || environment.status === status)
-        && (!originSessionId || environment.originSession?.sessionId === originSessionId)
         && (!registrationKeyId
           || (source.type === "registered" && source.registrationKeyId === registrationKeyId));
     });

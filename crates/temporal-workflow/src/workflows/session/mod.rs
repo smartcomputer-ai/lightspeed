@@ -7,7 +7,10 @@ mod control;
 mod drive;
 mod errors;
 mod observability;
+mod preparation;
+mod preparation_candidate;
 mod promise_sources;
+use preparation::SessionAdmission;
 mod session_state;
 #[cfg(test)]
 mod tests;
@@ -51,7 +54,6 @@ use crate::{
 };
 
 use activity_calls::{call_context_compact, call_llm_generate, call_tool_prepare_promise_controls};
-use admissions::process_admissions;
 use bootstrap::initialize;
 use clock::workflow_time_ms;
 use drive::{
@@ -70,7 +72,13 @@ pub struct AgentSessionWorkflow {
     initialized: bool,
     core_state: CoreAgentState,
     head: Option<SessionPosition>,
-    pending_admissions: Vec<AgentAdmission>,
+    pending_admissions: Vec<SessionAdmission>,
+    ready: bool,
+    setup_requested: bool,
+    setup_error: Option<api::AgentApiError>,
+    operation_outcomes: crate::SessionOperationReceipts,
+    pending_toolsets: Vec<preparation::PendingToolset>,
+    run_preparation: Option<preparation::PendingRunPreparation>,
     pending_tool_batch_resumes: Vec<PendingToolBatchResume>,
     pending_emissions: Vec<PendingEmission>,
     pending_source_resolutions: Vec<PendingSourceResolution>,
@@ -97,6 +105,12 @@ impl Default for AgentSessionWorkflow {
             core_state: CoreAgentState::new(),
             head: None,
             pending_admissions: Vec::new(),
+            ready: false,
+            setup_requested: true,
+            setup_error: None,
+            operation_outcomes: crate::SessionOperationReceipts::default(),
+            pending_toolsets: Vec::new(),
+            run_preparation: None,
             pending_tool_batch_resumes: Vec::new(),
             pending_emissions: Vec::new(),
             pending_source_resolutions: Vec::new(),
@@ -128,102 +142,100 @@ impl AgentSessionWorkflow {
             return Err(anyhow::anyhow!("{error}").into());
         }
 
-        loop {
-            if workflow_state_should_complete(ctx) {
-                return Ok(());
-            }
-            reconcile_cancelling_watchdog(ctx);
-            promise_sources::reconcile_polls(ctx);
-            wait_for_workflow_work(ctx).await;
-            if let Err(error) = flush_pending_emissions(ctx).await {
-                record_error(ctx, &error, "pending_emission");
-                return Err(anyhow::anyhow!("{error}").into());
-            }
-            if let Err(error) = promise_sources::process_pending_source_resolutions(ctx).await {
-                record_error(ctx, &error, "promise_source_resolution");
-                return Err(anyhow::anyhow!("{error}").into());
-            }
-            if let Err(error) = workflow_starts::process_pending_starts(ctx).await {
-                record_error(ctx, &error, "workflow_start");
-                return Err(anyhow::anyhow!("{error}").into());
-            }
-            if let Err(error) = promise_sources::flush_pending_promise_cancellations(ctx).await {
-                record_error(ctx, &error, "promise_cancellation");
-                return Err(anyhow::anyhow!("{error}").into());
-            }
-            if let Err(error) = workflow_starts::process_execution_cancels(ctx).await {
-                record_error(ctx, &error, "workflow_execution_cancel");
-                return Err(anyhow::anyhow!("{error}").into());
-            }
-            match process_cancelling_watchdog(ctx, &args).await {
-                Ok(DriveOutcome::ContinueAsNew) => {
-                    return observability::request_continue_as_new(ctx, &args);
+        let preparation_ctx = ctx.clone();
+        let preparation = preparation::run_preparation_loop(preparation_ctx).fuse();
+        let session = async {
+            loop {
+                preparation::prepare_initial_session(ctx, &args).await?;
+                if workflow_state_should_complete(ctx) {
+                    return Ok(());
                 }
-                Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
-                Err(error) => {
-                    record_error(ctx, &error, "cancellation_watchdog");
+                reconcile_cancelling_watchdog(ctx);
+                promise_sources::reconcile_polls(ctx);
+                wait_for_workflow_work(ctx).await;
+                if let Err(error) = flush_pending_emissions(ctx).await {
+                    record_error(ctx, &error, "pending_emission");
                     return Err(anyhow::anyhow!("{error}").into());
                 }
-            }
-            if let Err(error) = awaits::process_satisfied_await(ctx).await {
-                record_error(ctx, &error, "await_resolution");
-                return Err(anyhow::anyhow!("{error}").into());
-            }
-            promise_sources::process_due_promise_deadlines(ctx);
-            if let Err(error) = promise_sources::process_due(ctx).await {
-                record_error(ctx, &error, "promise_source_poll");
-                return Err(anyhow::anyhow!("{error}").into());
-            }
-            match process_pending_tool_batch_resumes(ctx, &args).await {
-                Ok(DriveOutcome::ContinueAsNew) => {
-                    return observability::request_continue_as_new(ctx, &args);
-                }
-                Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
-                Err(error) => {
-                    record_error(ctx, &error, "tool_batch_resume");
+                if let Err(error) = promise_sources::process_pending_source_resolutions(ctx).await {
+                    record_error(ctx, &error, "promise_source_resolution");
                     return Err(anyhow::anyhow!("{error}").into());
                 }
-            }
-            let admissions = ctx.state_mut(|state| std::mem::take(&mut state.pending_admissions));
-            if !admissions.is_empty() {
-                match process_admissions(ctx, &args, admissions).await {
+                if let Err(error) = workflow_starts::process_pending_starts(ctx).await {
+                    record_error(ctx, &error, "workflow_start");
+                    return Err(anyhow::anyhow!("{error}").into());
+                }
+                if let Err(error) = promise_sources::flush_pending_promise_cancellations(ctx).await
+                {
+                    record_error(ctx, &error, "promise_cancellation");
+                    return Err(anyhow::anyhow!("{error}").into());
+                }
+                if let Err(error) = workflow_starts::process_execution_cancels(ctx).await {
+                    record_error(ctx, &error, "workflow_execution_cancel");
+                    return Err(anyhow::anyhow!("{error}").into());
+                }
+                match process_cancelling_watchdog(ctx, &args).await {
                     Ok(DriveOutcome::ContinueAsNew) => {
                         return observability::request_continue_as_new(ctx, &args);
                     }
                     Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
                     Err(error) => {
-                        record_error(ctx, &error, "admission");
+                        record_error(ctx, &error, "cancellation_watchdog");
                         return Err(anyhow::anyhow!("{error}").into());
                     }
                 }
-            }
-            if wait_loop::workflow_state_needs_core_drive(ctx) {
-                let mut drive = match drive_from_state(ctx) {
-                    Ok(drive) => drive,
-                    Err(error) => {
-                        record_error(ctx, &error, "drive_rehydrate");
-                        return Err(anyhow::anyhow!("{error}").into());
-                    }
-                };
-                match drive_until_idle(ctx, &args, &mut drive).await {
+                if let Err(error) = awaits::process_satisfied_await(ctx).await {
+                    record_error(ctx, &error, "await_resolution");
+                    return Err(anyhow::anyhow!("{error}").into());
+                }
+                promise_sources::process_due_promise_deadlines(ctx);
+                if let Err(error) = promise_sources::process_due(ctx).await {
+                    record_error(ctx, &error, "promise_source_poll");
+                    return Err(anyhow::anyhow!("{error}").into());
+                }
+                match process_pending_tool_batch_resumes(ctx, &args).await {
                     Ok(DriveOutcome::ContinueAsNew) => {
                         return observability::request_continue_as_new(ctx, &args);
                     }
                     Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
                     Err(error) => {
-                        record_error(ctx, &error, "core_drive");
+                        record_error(ctx, &error, "tool_batch_resume");
                         return Err(anyhow::anyhow!("{error}").into());
                     }
                 }
+                let mut admission_drive = drive_from_state(ctx)?;
+                admissions::drain_pending_admissions(ctx, &mut admission_drive).await?;
+                if wait_loop::workflow_state_needs_core_drive(ctx) {
+                    let mut drive = match drive_from_state(ctx) {
+                        Ok(drive) => drive,
+                        Err(error) => {
+                            record_error(ctx, &error, "drive_rehydrate");
+                            return Err(anyhow::anyhow!("{error}").into());
+                        }
+                    };
+                    match drive_until_idle(ctx, &args, &mut drive).await {
+                        Ok(DriveOutcome::ContinueAsNew) => {
+                            return observability::request_continue_as_new(ctx, &args);
+                        }
+                        Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
+                        Err(error) => {
+                            record_error(ctx, &error, "core_drive");
+                            return Err(anyhow::anyhow!("{error}").into());
+                        }
+                    }
+                }
+                if workflow_state_should_complete(ctx) {
+                    return Ok(());
+                }
+                if can_continue_as_new(ctx, &args) {
+                    return observability::request_continue_as_new(ctx, &args);
+                }
+                observability::observe_rollover_delay(ctx, &args);
             }
-            if workflow_state_should_complete(ctx) {
-                return Ok(());
-            }
-            if can_continue_as_new(ctx, &args) {
-                return observability::request_continue_as_new(ctx, &args);
-            }
-            observability::observe_rollover_delay(ctx, &args);
         }
+        .fuse();
+        pin_mut!(session, preparation);
+        futures::select_biased! { result = session => result, _ = preparation => unreachable!() }
     }
 
     /// Queues a batch of admissions atomically: entries in one signal are
@@ -237,6 +249,35 @@ impl AgentSessionWorkflow {
     ) {
         for admission in admissions {
             self.queue_admission(admission);
+        }
+    }
+
+    #[signal(name = "prepare_session")]
+    pub fn prepare_session(
+        &mut self,
+        _ctx: &mut SyncWorkflowContext<Self>,
+        request: crate::SessionOperationRequest,
+    ) {
+        self.pending_admissions
+            .push(SessionAdmission::Operation(request));
+    }
+
+    #[signal(name = "retry_setup")]
+    pub fn retry_setup(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {
+        if !self.ready {
+            self.setup_error = None;
+            self.setup_requested = true;
+        }
+    }
+
+    #[query(name = "operation_outcome")]
+    pub fn operation_outcome(
+        &self,
+        _ctx: &WorkflowContextView,
+        receipt: crate::SessionOperationReceipt,
+    ) -> crate::SessionOperationStatus {
+        crate::SessionOperationStatus {
+            outcome: self.operation_outcomes.lookup(&receipt),
         }
     }
 
@@ -271,8 +312,11 @@ fn continuation_args(
 ) -> AgentSessionArgs {
     let mut next = args.clone();
     next.legacy_max_steps_per_input = None;
-    next.continuation_state = Some(
-        ctx.state(|state| AgentSessionContinuationState::v1(state.admission_failures.clone())),
-    );
+    next.continuation_state = Some(ctx.state(|state| {
+        let mut continuation = AgentSessionContinuationState::v1(state.admission_failures.clone());
+        continuation.ready = state.ready;
+        continuation.operation_outcomes = state.operation_outcomes.clone();
+        continuation
+    }));
     next
 }

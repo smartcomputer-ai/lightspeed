@@ -43,6 +43,7 @@ pub(super) async fn admit_and_append_command(
             "skill catalog observation no longer matches an idle configured source",
         );
         return Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
+            preparation_error: None,
             submission_id,
             correlation_token,
             kind: AgentAdmissionFailureKind::RejectedCommand,
@@ -55,6 +56,7 @@ pub(super) async fn admit_and_append_command(
         Err(CoreAgentDriveError::Command(CommandError::Rejected(rejection))) => {
             let message = rejection.to_string();
             return Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
+                preparation_error: None,
                 submission_id,
                 correlation_token,
                 kind: AgentAdmissionFailureKind::RejectedCommand,
@@ -118,8 +120,15 @@ pub(super) async fn drive_until_idle(
     if let Some(outcome) = history_boundary_outcome(ctx, args) {
         return Ok(outcome);
     }
+    if drive.state().lifecycle.status == CoreAgentStatus::Closed {
+        ctx.state_mut(preparation::abandon_pending_run);
+    }
+    preparation::publish_pending_tools(ctx, drive).await?;
     let mut action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
     loop {
+        if preparation::publish_pending_tools(ctx, drive).await? {
+            action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
+        }
         // Client admissions (cancel, steer, queue, context edits) land
         // at every action boundary against the live drive, and the plan is
         // recomputed so a cancel stops the next turn/batch from starting and
@@ -262,6 +271,11 @@ fn history_boundary_outcome(
         // the marker and active-run rollover becomes eligible.
         return None;
     }
+    // Pending preparation may need the current turn to finish before it can
+    // publish. Let the driver reach that boundary instead of yielding forever.
+    if ctx.state(|state| state.run_preparation.is_some() || !state.pending_toolsets.is_empty()) {
+        return None;
+    }
     history_boundary_outcome_for(
         wait_loop::history_rollover_due(ctx, args),
         ctx.state(wait_loop::workflow_state_allows_continue_as_new),
@@ -345,6 +359,10 @@ pub(super) async fn append_events(
         state.head = appended.head;
         state.execution_has_rollover_checkpoint = true;
         state.last_error = None;
+        if state.core_state.lifecycle.status == CoreAgentStatus::Closed {
+            preparation::abandon_pending_run(state);
+            state.pending_toolsets.clear();
+        }
         Ok(())
     })?;
     // Invalidation uses only recorded source identity. It performs no discovery,
@@ -410,7 +428,7 @@ async fn queue_detached_promise_followups(
         // ordinary run; the submission id is derived from the promise so a
         // replayed follow-up is a no-op.
         ctx.state_mut(|state| {
-            state.pending_admissions.push(AgentAdmission {
+            state.queue_admission(AgentAdmission {
                 command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
                     notify_on_terminal: Vec::new(),
                     submission_id: Some(submission_id),
@@ -618,7 +636,7 @@ pub(super) fn invalid_environment_prompt_command(
     })
 }
 
-fn environment_prompt_publication_is_obsolete(
+pub(super) fn environment_prompt_publication_is_obsolete(
     state: &CoreAgentState,
     command: &CoreAgentCommand,
 ) -> bool {

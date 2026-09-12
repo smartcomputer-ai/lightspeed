@@ -350,15 +350,7 @@ function EnvironmentCard({
               {source.type === "provisioned" && <Detail label="Provider" value={source.providerId} mono />}
               {environment.incarnation.templateId && <Detail label="Template" value={environment.incarnation.templateId} mono />}
               {environment.incarnation.providerTargetId && <Detail label="Target" value={environment.incarnation.providerTargetId} mono />}
-              {environment.originSession && (
-                <Detail
-                  label="Provisioned for session"
-                  value={`${environment.originSession.sessionId}${
-                    environment.originSession.profileId ? ` (profile ${environment.originSession.profileId})` : ""
-                  } · ${environment.originSession.closeWithSession ? "closes with session" : "retained"}`}
-                  mono
-                />
-              )}
+
               {source.type === "provisioned" && (
                 <Detail
                   label="Power"

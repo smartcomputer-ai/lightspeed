@@ -101,9 +101,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "channels",
         sql: include_str!("../migrations/009_channels.sql"),
     },
+    EmbeddedMigration {
+        version: 10,
+        name: "independent_environment_lifecycle",
+        sql: include_str!("../migrations/010_independent_environment_lifecycle.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 9;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 10;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

@@ -21,10 +21,8 @@ impl GatewayAgentApi {
             feature.registration_keys.clone(),
         );
         crate::environment_resolver::EnvironmentResolver::from_pg_store(self.store.clone())
-            .with_gateway(self.environment_gateway.clone())
-            .activatable(environment_id, &policy, now_ms()?)
+            .selectable(environment_id, &policy)
             .await
-            .map(|(environment, _ready)| environment)
             .map_err(map_environment_resolve_error)
     }
 

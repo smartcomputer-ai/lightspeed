@@ -129,51 +129,16 @@ impl GatewayAgentApi {
                     "timed out waiting for agent session to open: {session_id}"
                 )));
             }
-            if let Some(status) = self.query_status_optional(session_id).await?
-                && let Some(error) = status.last_error
-            {
-                return Err(AgentApiError::internal(format!(
-                    "agent workflow reported error: {error}"
-                )));
-            }
-            match self.project_session_by_id(session_id).await {
-                Ok(session) if session.config.is_some() => return Ok(session),
-                Ok(_) => {}
-                Err(error) if is_not_found(&error) => {}
-                Err(error) => return Err(error),
-            }
-            tokio::time::sleep(self.poll_interval).await;
-        }
-    }
-
-    pub(super) async fn wait_for_config_revision(
-        &self,
-        session_id: &SessionId,
-        target_revision: u64,
-        baseline_failures: usize,
-    ) -> Result<SessionView, AgentApiError> {
-        let started = Instant::now();
-        loop {
-            if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(format!(
-                    "timed out waiting for agent session config update: {session_id}"
-                )));
-            }
             if let Some(status) = self.query_status_optional(session_id).await? {
-                if status.admission_failures.len() > baseline_failures
-                    && let Some(failure) = status.admission_failures.last()
-                {
-                    return Err(map_admission_failure_to_api_error(failure));
+                if let Some(error) = status.setup_error {
+                    return Err(error);
                 }
                 if let Some(error) = status.last_error {
-                    return Err(AgentApiError::internal(format!(
-                        "agent workflow reported error: {error}"
-                    )));
+                    return Err(AgentApiError::internal(error));
                 }
-            }
-            let session = self.project_session_by_id(session_id).await?;
-            if session.config_revision >= target_revision {
-                return Ok(session);
+                if status.ready {
+                    return self.project_session_by_id(session_id).await;
+                }
             }
             tokio::time::sleep(self.poll_interval).await;
         }
@@ -182,22 +147,6 @@ impl GatewayAgentApi {
     /// Waits for exact context entries to commit; any per-entry admission
     /// failure is escalated to a call-level typed error. Built on the same
     /// wait loop as `session/context/append`.
-    pub(super) async fn wait_for_context_entries_applied(
-        &self,
-        session_id: &SessionId,
-        expected: &[(ContextEntryKey, ContextEntryInput)],
-        correlations: &BTreeMap<String, ContextEntryKey>,
-    ) -> Result<u64, AgentApiError> {
-        let (context_revision, outcomes) = self
-            .wait_for_context_append_outcomes(session_id, expected, correlations)
-            .await?;
-        for outcome in outcomes.values() {
-            if let ContextAppendWaitOutcome::Failed { failure } = outcome {
-                return Err(map_admission_failure_to_api_error(failure));
-            }
-        }
-        Ok(context_revision)
-    }
 
     pub(super) async fn wait_for_context_append_outcomes(
         &self,
@@ -818,5 +767,77 @@ mod tests {
             )
             .is_none()
         );
+    }
+}
+
+impl GatewayAgentApi {
+    pub(super) async fn retry_session_setup(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(), AgentApiError> {
+        self.workflow_handle(session_id)
+            .signal(
+                AgentSessionWorkflow::retry_setup,
+                (),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .map_err(map_workflow_interaction_error)
+    }
+
+    pub(super) async fn prepare_session_operation(
+        &self,
+        session_id: &SessionId,
+        operation: temporal_workflow::SessionOperation,
+    ) -> Result<api::ProfileApplySummary, AgentApiError> {
+        let request = temporal_workflow::SessionOperationRequest {
+            operation_id: format!("prepare_{}", uuid::Uuid::new_v4().simple()),
+            submitted_at_ms: u64::try_from(now_ms()?)
+                .map_err(|error| AgentApiError::internal(error.to_string()))?,
+            operation,
+        };
+        let receipt = request
+            .receipt()
+            .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        self.refresh_input_blob_grace(&request).await?;
+        self.workflow_handle(session_id)
+            .signal(
+                AgentSessionWorkflow::prepare_session,
+                request.clone(),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .map_err(map_workflow_interaction_error)?;
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(format!(
+                    "timed out waiting for session preparation: {}",
+                    request.operation_id
+                )));
+            }
+            let outcome = self
+                .workflow_handle(session_id)
+                .query(
+                    AgentSessionWorkflow::operation_outcome,
+                    receipt.clone(),
+                    WorkflowQueryOptions::default(),
+                )
+                .await
+                .map_err(map_workflow_query_error)?
+                .outcome?;
+            if let Some(outcome) = outcome {
+                return outcome.result;
+            }
+            if let Some(status) = self.query_status_optional(session_id).await? {
+                if let Some(error) = status.setup_error {
+                    return Err(error);
+                }
+                if let Some(error) = status.last_error {
+                    return Err(AgentApiError::internal(error));
+                }
+            }
+            tokio::time::sleep(self.poll_interval).await;
+        }
     }
 }

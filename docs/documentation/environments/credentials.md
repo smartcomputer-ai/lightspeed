@@ -75,26 +75,13 @@ into every machine. Binding that variable to a machine does not select or
 authenticate the model used by the Lightspeed session. See
 [Models and credentials](../using-lightspeed/models-and-credentials.md).
 
-## Supply credentials when a profile provisions a machine
+## Share credentials through an environment
 
-In a profile's **Environments** settings, select **Provision a new environment
-for the session** and choose its provider and template. Under **Environment
-credentials**, choose **Add credential**, then set **Environment variable
-name** and **Credential source**. Save the profile.
-
-When the profile creates a fresh environment, Lightspeed binds those sources
-before activating it. They become ordinary environment bindings that you can
-inspect and change in the Environments page. The profile supplies an initial
-set, not a live synchronization rule.
-
-Editing or reapplying the profile does not rewrite bindings on its existing
-machine. For **Activate an existing environment** or **Inherit the parent's
-active environment**, configure the environment's bindings directly. Those
-modes do not carry a separate credential set for each session.
-
-This is especially relevant to bots: different conversations using one
-existing machine receive the same bindings. Provision separate environments
-when those conversations need different credential access.
+Configure credential bindings directly on the Environments page. Profiles may
+select an existing environment or inherit a parent's selection, but they do
+not create machines or initialize credentials. Sessions using the same machine
+receive the same environment bindings. Create separate environments when work
+requires different credential access.
 
 ## Understand resolution and renewal
 
@@ -226,7 +213,7 @@ checks like the one above rather than printing credentials into the transcript.
 | The variable is absent | Check the target environment and exact name, then start a new process rather than continuing one already running. |
 | Submission reports an environment-variable collision | Remove the bound name from explicit command or job `env`. |
 | Credential resolution fails before execution | Check that the referenced source is active, unexpired, and suitable for the requested audience. |
-| A profile change did not rotate the machine's token | Profile credentials are applied only to a fresh provision. Change the existing environment binding. |
+| A profile change did not rotate the machine's token | Profiles do not manage credentials. Change the environment binding directly. |
 | A queued job uses an old token | Its values were resolved at admission. Submit new work after updating the binding. |
 | An imported subscription stopped working | Reimport a current credential and update its binding; the static imported record is not refreshed by core. |
 | Unassigning did not remove an on-disk login | A program or bootstrap wrote a separate copy. Manage that file and any running processes explicitly. |

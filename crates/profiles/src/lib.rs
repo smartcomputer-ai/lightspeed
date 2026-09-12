@@ -193,113 +193,7 @@ fn validate_profile_environment(environment: &ProfileEnvironment) -> Result<(), 
             validate_nonempty_string("environment.environmentId", environment_id)
         }
         ProfileEnvironment::Inherit {} => Ok(()),
-        ProfileEnvironment::Provision {
-            provider_id,
-            template_id,
-            display_name,
-            metadata,
-            retention: _,
-            idle_policy,
-            credentials,
-        } => {
-            validate_nonempty_string("environment.providerId", provider_id)?;
-            validate_nonempty_string("environment.templateId", template_id)?;
-            validate_nonempty_optional("environment.displayName", display_name.as_deref())?;
-            for (key, value) in metadata {
-                validate_nonempty_string("environment.metadata key", key)?;
-                validate_nonempty_string("environment.metadata value", value)?;
-            }
-            if let Some(policy) = idle_policy {
-                validate_idle_policy(policy)?;
-            }
-            validate_profile_environment_credentials(credentials)?;
-            Ok(())
-        }
     }
-}
-
-/// Credential bindings a profile requests for its provisioned environment:
-/// valid, unique env names and non-empty source ids. Whether the referenced
-/// grant/provider/secret exists is checked by the applier in the universe.
-fn validate_profile_environment_credentials(
-    credentials: &[api::ProfileEnvironmentCredential],
-) -> Result<(), ProfileError> {
-    let mut seen = std::collections::BTreeSet::new();
-    for credential in credentials {
-        if !is_valid_env_name(&credential.env_name) {
-            return Err(ProfileError::InvalidInput {
-                message: format!(
-                    "environment.credentials[].envName {:?} is not a valid environment variable name",
-                    credential.env_name
-                ),
-            });
-        }
-        if !seen.insert(credential.env_name.as_str()) {
-            return Err(ProfileError::InvalidInput {
-                message: format!(
-                    "environment.credentials[].envName {} is bound more than once",
-                    credential.env_name
-                ),
-            });
-        }
-        let source_id = match &credential.source {
-            api::EnvironmentCredentialSourceView::AuthGrant { grant_id } => grant_id.as_str(),
-            api::EnvironmentCredentialSourceView::AuthProviderCredential { provider_id } => {
-                provider_id.as_str()
-            }
-            api::EnvironmentCredentialSourceView::DirectSecret { secret_id } => secret_id.as_str(),
-        };
-        validate_nonempty_string("environment.credentials[].source", source_id)?;
-    }
-    Ok(())
-}
-
-fn is_valid_env_name(value: &str) -> bool {
-    let mut chars = value.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    (first.is_ascii_alphabetic() || first == '_')
-        && value.len() <= 128
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// Idle-policy shape rules shared with `environments/create`: every stage
-/// positive and non-decreasing in the order pause, suspend, stop, close.
-fn validate_idle_policy(policy: &api::EnvironmentIdlePolicyView) -> Result<(), ProfileError> {
-    let stages = [
-        ("pauseAfterMs", policy.pause_after_ms),
-        ("suspendAfterMs", policy.suspend_after_ms),
-        ("stopAfterMs", policy.stop_after_ms),
-        ("closeAfterMs", policy.close_after_ms),
-    ];
-    let mut previous: Option<(&str, u64)> = None;
-    let mut any = false;
-    for (name, threshold) in stages {
-        let Some(threshold) = threshold else {
-            continue;
-        };
-        any = true;
-        if threshold == 0 {
-            return Err(ProfileError::InvalidInput {
-                message: format!("environment.idlePolicy.{name} must be positive"),
-            });
-        }
-        if let Some((earlier, earlier_threshold)) = previous
-            && threshold < earlier_threshold
-        {
-            return Err(ProfileError::InvalidInput {
-                message: format!("environment.idlePolicy.{name} must not be below {earlier}"),
-            });
-        }
-        previous = Some((name, threshold));
-    }
-    if !any {
-        return Err(ProfileError::InvalidInput {
-            message: "environment.idlePolicy must set at least one stage".to_owned(),
-        });
-    }
-    Ok(())
 }
 
 fn validate_inline_profile(profile: &InlineAgentProfile) -> Result<(), ProfileError> {
@@ -345,8 +239,6 @@ fn validate_nonnegative_i64(name: &str, value: i64) -> Result<(), ProfileError> 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-
-    use api::ProfileEnvironmentRetention;
 
     use super::*;
 
@@ -422,122 +314,13 @@ mod tests {
     }
 
     #[test]
-    fn document_validation_checks_provision_environment_fields() {
-        let provision =
-            |provider_id: &str, template_id: &str, metadata: BTreeMap<String, String>| {
-                ProfileDocument {
-                    environment: Some(ProfileEnvironment::Provision {
-                        provider_id: provider_id.to_owned(),
-                        template_id: template_id.to_owned(),
-                        display_name: None,
-                        metadata,
-                        retention: ProfileEnvironmentRetention::default(),
-                        idle_policy: None,
-                        credentials: Vec::new(),
-                    }),
-                    ..ProfileDocument::default()
-                }
-            };
-        let with_policy = |policy: api::EnvironmentIdlePolicyView| ProfileDocument {
-            environment: Some(ProfileEnvironment::Provision {
-                provider_id: "incus".to_owned(),
-                template_id: "dev-small-v1".to_owned(),
-                display_name: None,
-                metadata: BTreeMap::new(),
-                retention: ProfileEnvironmentRetention::default(),
-                idle_policy: Some(policy),
-                credentials: Vec::new(),
-            }),
-            ..ProfileDocument::default()
-        };
+    fn profile_provision_intents_are_rejected() {
         assert!(
-            validate_profile_document(&with_policy(api::EnvironmentIdlePolicyView {
-                pause_after_ms: Some(60_000),
-                close_after_ms: Some(3_600_000),
-                ..api::EnvironmentIdlePolicyView::default()
+            serde_json::from_value::<ProfileEnvironment>(serde_json::json!({
+                "type": "provision", "providerId": "incus", "templateId": "dev"
             }))
-            .is_ok()
+            .is_err()
         );
-        assert!(matches!(
-            validate_profile_document(&with_policy(api::EnvironmentIdlePolicyView::default())),
-            Err(ProfileError::InvalidInput { message }) if message.contains("idlePolicy")
-        ));
-        assert!(matches!(
-            validate_profile_document(&with_policy(api::EnvironmentIdlePolicyView {
-                pause_after_ms: Some(60_000),
-                stop_after_ms: Some(1_000),
-                ..api::EnvironmentIdlePolicyView::default()
-            })),
-            Err(ProfileError::InvalidInput { message }) if message.contains("stopAfterMs")
-        ));
-        assert!(
-            validate_profile_document(&provision("incus", "dev-small-v1", BTreeMap::new())).is_ok()
-        );
-        assert!(matches!(
-            validate_profile_document(&provision(" ", "dev-small-v1", BTreeMap::new())),
-            Err(ProfileError::InvalidInput { message }) if message.contains("environment.providerId")
-        ));
-        assert!(matches!(
-            validate_profile_document(&provision("incus", "", BTreeMap::new())),
-            Err(ProfileError::InvalidInput { message }) if message.contains("environment.templateId")
-        ));
-        assert!(matches!(
-            validate_profile_document(&provision(
-                "incus",
-                "dev-small-v1",
-                BTreeMap::from([("role".to_owned(), String::new())])
-            )),
-            Err(ProfileError::InvalidInput { message }) if message.contains("environment.metadata value")
-        ));
-        assert_eq!(
-            ProfileEnvironmentRetention::default(),
-            ProfileEnvironmentRetention::CloseWithSession
-        );
-    }
-
-    #[test]
-    fn document_validation_checks_provision_environment_credentials() {
-        let with_credentials =
-            |credentials: Vec<api::ProfileEnvironmentCredential>| ProfileDocument {
-                environment: Some(ProfileEnvironment::Provision {
-                    provider_id: "incus".to_owned(),
-                    template_id: "dev-small-v1".to_owned(),
-                    display_name: None,
-                    metadata: BTreeMap::new(),
-                    retention: ProfileEnvironmentRetention::default(),
-                    idle_policy: None,
-                    credentials,
-                }),
-                ..ProfileDocument::default()
-            };
-        let grant = |env_name: &str, grant_id: &str| api::ProfileEnvironmentCredential {
-            env_name: env_name.to_owned(),
-            source: api::EnvironmentCredentialSourceView::AuthGrant {
-                grant_id: grant_id.to_owned(),
-            },
-        };
-        assert!(
-            validate_profile_document(&with_credentials(vec![
-                grant("CLAUDE_CODE_OAUTH_TOKEN", "authgrant_1"),
-                grant("GITHUB_TOKEN", "authgrant_2"),
-            ]))
-            .is_ok()
-        );
-        assert!(matches!(
-            validate_profile_document(&with_credentials(vec![grant("1BAD", "authgrant_1")])),
-            Err(ProfileError::InvalidInput { message }) if message.contains("envName")
-        ));
-        assert!(matches!(
-            validate_profile_document(&with_credentials(vec![
-                grant("GITHUB_TOKEN", "authgrant_1"),
-                grant("GITHUB_TOKEN", "authgrant_2"),
-            ])),
-            Err(ProfileError::InvalidInput { message }) if message.contains("more than once")
-        ));
-        assert!(matches!(
-            validate_profile_document(&with_credentials(vec![grant("GITHUB_TOKEN", " ")])),
-            Err(ProfileError::InvalidInput { message }) if message.contains("credentials[].source")
-        ));
     }
 
     #[test]

@@ -34,7 +34,6 @@ export function environmentSummary(
     const policy = current?.idlePolicy ? ` · ${describeIdlePolicy(current.idlePolicy)}` : "";
     return `${name}${current ? ` · ${current.status}` : ""}${policy}`;
   }
-  if (environment.type === "provision") return "A fresh environment per session";
   return "Inherits the session's environment";
 }
 

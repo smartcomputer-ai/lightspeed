@@ -128,7 +128,9 @@ both prompt sourcing and a review skill.
 
 ## Apply changes deliberately
 
-A new ordinary session receives the profile's setup at creation. Saving a
+A new ordinary session completes the profile's setup in its durable workflow
+before it reports readiness. Retrying session creation finishes the original
+setup even if the named profile has since changed. Saving a
 later profile revision affects future sessions; it does not alter those
 existing conversations automatically.
 
@@ -154,7 +156,7 @@ Applying a profile is not a deep merge of every field:
 | `config` absent | Leaves the current configuration in place. |
 | `instructions` present or absent | Replaces or clears the profile instruction layer. Sourced prompt files follow the resulting VFS setup. |
 | `environment` absent | Leaves the active environment unchanged. |
-| `environment` present | Applies that selection or provisioning intent. |
+| `environment` present | Applies the existing or inherited selection. |
 | Metadata and retention defaults | Remain creation defaults; applying the profile does not rewrite the existing session's metadata or retention. |
 
 Bots follow their named profile differently. Their Main conversation adopts
@@ -172,13 +174,13 @@ provide per-run overrides, so these fields should not be treated as hard
 authorization ceilings. Bot daily budgets and sub-agent tree limits govern
 different scopes.
 
-An environment intent can select an existing environment or provision one
-for a session. A delegated child can also explicitly inherit its parent's
-active environment. Existing and inherited environments are shared machines;
-provisioning can create a separate one with its own session-close policy.
-The profile must grant the relevant environment capability as well as select
-the machine. Read [Environments](../environments/overview.md) before adding
-compute to a profile that currently needs only VFS files.
+An environment intent selects an existing environment. A delegated child can
+also inherit its parent's active environment. Environments are created and
+managed independently: profiles never provision machines, bind credentials,
+or close them with the session. The profile must grant the relevant
+environment capability as well as select the machine. Read
+[Environments](../environments/overview.md) before adding compute to a profile
+that currently needs only VFS files.
 
 Metadata and retention settings supply defaults for newly created sessions.
 Use metadata for organization, such as `project=acorn`, and retention to

@@ -1556,10 +1556,7 @@ export function gatewayRoutes(ctx: AppContext) {
       if (status) {
         params.status = status as EnvironmentListParams["status"];
       }
-      const originSessionId = c.req.query("originSessionId");
-      if (originSessionId) {
-        params.originSessionId = originSessionId;
-      }
+
       const registrationKeyId = c.req.query("registrationKeyId");
       if (registrationKeyId) {
         params.registrationKeyId = registrationKeyId;

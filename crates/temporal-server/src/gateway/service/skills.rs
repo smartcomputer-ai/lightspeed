@@ -6,127 +6,15 @@ impl GatewayAgentApi {
         session_id: &SessionId,
     ) -> Result<LoadedSession, AgentApiError> {
         let loaded = self.load_session_state(session_id).await?;
-        if loaded.state.lifecycle.status == CoreAgentStatus::Open
-            && loaded.state.runs.active.is_none()
-            && loaded.state.runs.queued.is_empty()
-        {
-            self.refresh_environment_projection_for_idle_session(session_id, &loaded.state)
-                .await?;
-            let loaded = self.load_session_state(session_id).await?;
-            self.refresh_skill_catalog_for_idle_session(session_id, &loaded.state)
-                .await?;
+        if loaded.state.lifecycle.status == CoreAgentStatus::Open {
+            self.prepare_session_operation(
+                session_id,
+                temporal_workflow::SessionOperation::RefreshContext,
+            )
+            .await?;
             return self.load_session_state(session_id).await;
         }
         Ok(loaded)
-    }
-
-    pub(super) async fn refresh_skill_catalog_for_idle_session(
-        &self,
-        session_id: &SessionId,
-        state: &engine::CoreAgentState,
-    ) -> Result<(), AgentApiError> {
-        if state.runs.active.is_some() || !state.runs.queued.is_empty() {
-            return Ok(());
-        }
-        let mut commands: Vec<_> = self
-            .skill_catalog_refresh_command(session_id, state)
-            .await?
-            .into_iter()
-            .collect();
-        let resolver =
-            crate::environment_resolver::EnvironmentResolver::from_pg_store(self.store.clone());
-        let catalogs = engine::current_catalog_inputs(state);
-        if let Some(mut command) = crate::environment_skills::refresh(
-            self.store.as_ref(),
-            Some(&resolver),
-            Some(&self.environment_gateway),
-            session_id,
-            state
-                .lifecycle
-                .config
-                .as_ref()
-                .and_then(|config| config.features.environments.as_ref()),
-            state.environment.active_environment_id.as_ref(),
-            catalogs.get(&ContextEntryKey::new(
-                tools::skills::environment::ENVIRONMENT_SKILL_CATALOG_CONTEXT_KEY,
-            )),
-        )
-        .await
-        .map_err(|error| AgentApiError::internal(error.to_string()))?
-        {
-            match &mut command {
-                CoreAgentCommand::UpsertContext {
-                    expected_revision, ..
-                }
-                | CoreAgentCommand::RemoveContext {
-                    expected_revision, ..
-                } => *expected_revision = Some(state.context.revision),
-                _ => {}
-            }
-            commands.insert(0, command);
-        }
-        self.apply_catalog_refresh_commands(session_id, commands)
-            .await
-    }
-
-    pub(super) async fn skill_catalog_refresh_command(
-        &self,
-        _session_id: &SessionId,
-        state: &engine::CoreAgentState,
-    ) -> Result<Option<CoreAgentCommand>, AgentApiError> {
-        let catalogs = engine::current_catalog_inputs(state);
-        let current = catalogs.get(&ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY));
-        if current.is_some_and(|entry| entry.origin.as_deref() != Some("runtime.vfs.skills")) {
-            return Ok(None);
-        }
-        let skills_config = state
-            .lifecycle
-            .config
-            .as_ref()
-            .and_then(|config| config.features.vfs.as_ref())
-            .and_then(|vfs| vfs.skills.as_ref());
-        let Some(skills_config) = skills_config else {
-            return Ok(tools::catalog::clear_catalog_command(
-                current,
-                SKILL_CATALOG_CONTEXT_KEY,
-            ));
-        };
-        let links = self.resolve_session_workspace_links(state).await?;
-        let specs = configured_vfs_skill_root_specs(&links, skills_config.roots.as_deref())
-            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
-        if specs.is_empty() {
-            return Ok(tools::catalog::clear_catalog_command(
-                current,
-                SKILL_CATALOG_CONTEXT_KEY,
-            ));
-        }
-
-        let blobs: Arc<dyn BlobStore> = self.store.clone();
-        let workspace_store: Arc<dyn VfsWorkspaceStore> = self.store.clone();
-        let resolved = resolve_linked_vfs_skill_roots(blobs, workspace_store, links, specs)
-            .await
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        let inputs = resolved
-            .existing_directory_inputs()
-            .await
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        if inputs.is_empty() && resolved.warnings().is_empty() {
-            return Ok(tools::catalog::clear_catalog_command(
-                current,
-                SKILL_CATALOG_CONTEXT_KEY,
-            ));
-        }
-
-        let publication = tools::skills::prepare_skill_catalog_publication_with_warnings(
-            self.store.as_ref(),
-            Some(self.store.as_ref()),
-            current,
-            &inputs,
-            resolved.warnings().to_vec(),
-        )
-        .await
-        .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        Ok(publication.command)
     }
 
     pub(super) async fn project_skill_list(

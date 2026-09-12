@@ -2054,7 +2054,7 @@ async fn pg_live_universe_environments_are_independent_of_sessions() {
             template_id: EnvironmentTemplateId::new("rust-v1"),
             display_name: Some("Local host".to_owned()),
             metadata: Default::default(),
-            origin_session: None,
+
             idle_policy: Some(environments::EnvironmentIdlePolicy {
                 pause_after_ms: Some(60_000),
                 suspend_after_ms: None,
@@ -2212,65 +2212,6 @@ async fn pg_live_universe_environments_are_independent_of_sessions() {
         .await
         .expect("close environment while a session exists");
     assert_eq!(closing.status, EnvironmentStatus::Closing);
-
-    // Origin-session provenance round-trips, filters, and feeds the
-    // close-with-session sweep query.
-    let owned_id = EnvironmentId::new("environment-owned");
-    let owned = store
-        .create_environment(CreateEnvironment {
-            request_id: EnvironmentProvisionRequestId::for_session(&session_id),
-            environment_id: owned_id.clone(),
-            incarnation_id: EnvironmentIncarnationId::new("incarnation-owned"),
-            binding_id: EnvironmentProviderBindingId::new("primary"),
-            template_id: EnvironmentTemplateId::new("rust-v1"),
-            display_name: None,
-            metadata: Default::default(),
-            origin_session: Some(environments::EnvironmentOriginSession {
-                session_id: session_id.clone(),
-                profile_id: Some("coder".to_owned()),
-                close_with_session: true,
-            }),
-            idle_policy: None,
-            created_at_ms: 60,
-        })
-        .await
-        .expect("create session-provisioned environment");
-    assert_eq!(
-        owned.origin_session,
-        Some(environments::EnvironmentOriginSession {
-            session_id: session_id.clone(),
-            profile_id: Some("coder".to_owned()),
-            close_with_session: true,
-        })
-    );
-    let by_session = store
-        .list_environments(ListEnvironments {
-            metadata: Default::default(),
-            origin_session_id: Some(session_id.clone()),
-            ..ListEnvironments::default()
-        })
-        .await
-        .expect("list by origin session");
-    assert_eq!(by_session, vec![owned.clone()]);
-    let sweep = store
-        .list_environments_closing_with_session()
-        .await
-        .expect("sweep candidates");
-    assert_eq!(sweep, vec![owned]);
-    store
-        .begin_close_environment(BeginCloseEnvironment {
-            environment_id: owned_id,
-            updated_at_ms: 70,
-        })
-        .await
-        .expect("close owned environment");
-    assert!(
-        store
-            .list_environments_closing_with_session()
-            .await
-            .expect("sweep candidates")
-            .is_empty()
-    );
 
     // Leave nothing behind for a running dev reconciler to chase: the
     // provider endpoint is fictional and its closing environments would be
@@ -2885,7 +2826,7 @@ async fn pg_live_environment_credentials_round_trip() {
             template_id: EnvironmentTemplateId::new("rust-v1"),
             display_name: None,
             metadata: Default::default(),
-            origin_session: None,
+
             idle_policy: None,
             created_at_ms: 3,
         })

@@ -50,7 +50,7 @@ pub(crate) fn decide_idle_action(
     policy.due_action(report.idle_for_ms, &environment.incarnation.power_states)
 }
 
-impl GatewayAgentApi {
+impl EnvironmentService {
     /// Public entry point for one reaper pass; used by acceptance tests that
     /// drive the reaper deterministically instead of running the loop.
     pub async fn reap_idle_environments_once(&self) -> Result<PowerReaperStats, AgentApiError> {
@@ -205,7 +205,6 @@ mod tests {
             },
             public_ingress_enabled: false,
             public_endpoint: None,
-            origin_session: None,
             metadata: BTreeMap::new(),
             last_seen_at_ms: None,
             created_at_ms: 1,

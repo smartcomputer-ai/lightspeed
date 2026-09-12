@@ -65,9 +65,6 @@ pub struct EnvironmentReadResponse {
 pub struct EnvironmentListParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<EnvironmentProviderId>,
-    /// Only environments a profile provisioned for this session.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin_session_id: Option<SessionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_id: Option<EnvironmentProviderBindingId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -409,11 +406,6 @@ pub struct EnvironmentView {
     pub public_ingress_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_endpoint: Option<String>,
-    /// Present when a profile provisioned this environment for a session.
-    /// Provenance and an optional close trigger, not ownership: the
-    /// environment remains an ordinary universe resource.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin_session: Option<EnvironmentOriginSessionView>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
     /// Registered environments only: when the gateway last saw the daemon's
@@ -422,16 +414,6 @@ pub struct EnvironmentView {
     pub last_seen_at_ms: Option<i64>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct EnvironmentOriginSessionView {
-    pub session_id: SessionId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<ProfileId>,
-    /// When true, Lightspeed closes the environment once the session closes.
-    pub close_with_session: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

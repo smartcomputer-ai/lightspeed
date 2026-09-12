@@ -1276,6 +1276,98 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn preparation_batch_retry_after_lost_commit_response_preserves_all_changes_once() {
+        use engine::{
+            ContextEntryInput, ContextEntryKey, ContextEntryKind, CoreAgentAction,
+            CoreAgentCommand, CoreAgentDrive, CoreAgentState, EnvironmentsFeature, EventSeq,
+        };
+        let store = Arc::new(InMemorySessionStore::new());
+        let deps = storage_deps(store.clone());
+        let session_id = create_test_session(store.as_ref()).await;
+        let mut config = temporal_workflow::default_session_config(engine::ModelSelection {
+            api_kind: engine::ProviderApiKind::OpenAiResponses,
+            provider_id: "openai".into(),
+            model: "test-model".into(),
+        });
+        let open = CoreAgentCommand::OpenSession {
+            config: config.clone(),
+        };
+        config.features.environments = Some(EnvironmentsFeature::default());
+        let mut staged =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut events = Vec::new();
+        for command in [
+            open,
+            CoreAgentCommand::ReplaceSessionConfig {
+                expected_revision: Some(0),
+                config,
+            },
+            CoreAgentCommand::SetActiveEnvironment {
+                environment_id: engine::EnvironmentId::new("existing"),
+            },
+            CoreAgentCommand::ReplaceContextPrefix {
+                expected_revision: None,
+                key_prefix: ContextEntryKey::new("instructions"),
+                entries: BTreeMap::from([(
+                    ContextEntryKey::new("instructions.050.profile"),
+                    ContextEntryInput {
+                        kind: ContextEntryKind::Instructions,
+                        content: engine::ContentRef::text(BlobRef::from_bytes(b"prepared profile")),
+                        preview: None,
+                        origin: None,
+                        provenance_ref: None,
+                        token_estimate: None,
+                    },
+                )]),
+            },
+        ] {
+            let CoreAgentAction::AppendEvents { events: next, .. } =
+                staged.admit_command(command, 10).unwrap()
+            else {
+                panic!("fixture command must produce events");
+            };
+            let start = events.len() as u64;
+            let entries = next
+                .iter()
+                .enumerate()
+                .map(|(index, event)| StoredSessionEntry {
+                    position: SessionPosition {
+                        seq: EventSeq::new(start + index as u64 + 1),
+                    },
+                    observed_at_ms: event.observed_at_ms,
+                    joins: event.joins.clone(),
+                    event: event.event.clone(),
+                })
+                .collect();
+            staged.resume_appended(entries).unwrap();
+            events.extend(next);
+        }
+        let request = AppendEventsRequest {
+            session_id: session_id.clone(),
+            expected_head: None,
+            events,
+        };
+        // The database committed, but the activity completion was lost.
+        let committed = store
+            .append(AppendSessionEvents {
+                session_id: session_id.clone(),
+                expected_head: None,
+                events: request.events.clone(),
+            })
+            .await
+            .unwrap();
+        let retry = append_events(&deps, request.clone()).await.unwrap();
+        assert_eq!(retry, committed);
+        assert_eq!(append_events(&deps, request).await.unwrap(), committed);
+        let durable = read_all(store.as_ref(), &session_id).await;
+        assert_eq!(durable.entries, committed.entries);
+        let mut replay = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        replay.resume_appended(durable.entries).unwrap();
+        assert_eq!(replay.state(), staged.state());
+        assert_eq!(replay.state().lifecycle.config_revision, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn tool_emission_retry_and_restarted_reads_are_complete_across_pages() {
         use engine::{
             ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,

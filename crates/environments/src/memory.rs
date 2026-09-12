@@ -273,7 +273,6 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
             },
             public_ingress_enabled: false,
             public_endpoint: None,
-            origin_session: request.origin_session,
             metadata: request.metadata,
             last_seen_at_ms: None,
             created_at_ms: request.created_at_ms,
@@ -347,7 +346,6 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
             },
             public_ingress_enabled: false,
             public_endpoint: None,
-            origin_session: None,
             metadata: request.metadata,
             last_seen_at_ms: None,
             created_at_ms: request.created_at_ms,
@@ -405,7 +403,6 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
             },
             public_ingress_enabled: false,
             public_endpoint: None,
-            origin_session: None,
             metadata: request.metadata,
             last_seen_at_ms: None,
             created_at_ms: request.created_at_ms,
@@ -500,7 +497,6 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
             },
             public_ingress_enabled: false,
             public_endpoint: None,
-            origin_session: None,
             metadata: request.metadata,
             last_seen_at_ms: Some(request.created_at_ms),
             created_at_ms: request.created_at_ms,
@@ -618,41 +614,12 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
             })
             .filter(|record| request.status.is_none_or(|status| status == record.status))
             .filter(|record| {
-                request.origin_session_id.as_ref().is_none_or(|session_id| {
-                    record
-                        .origin_session
-                        .as_ref()
-                        .is_some_and(|origin| &origin.session_id == session_id)
-                })
-            })
-            .filter(|record| {
                 request
                     .registration_key_id
                     .as_ref()
                     .is_none_or(|id| record.registration_key_id() == Some(id))
             })
             .filter(|record| engine::storage::metadata_matches(&record.metadata, &request.metadata))
-            .cloned()
-            .collect())
-    }
-
-    async fn list_environments_closing_with_session(
-        &self,
-    ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
-        Ok(self
-            .read_state()?
-            .environments
-            .values()
-            .filter(|record| {
-                record
-                    .origin_session
-                    .as_ref()
-                    .is_some_and(|origin| origin.close_with_session)
-                    && !matches!(
-                        record.status,
-                        EnvironmentStatus::Closing | EnvironmentStatus::Closed
-                    )
-            })
             .cloned()
             .collect())
     }

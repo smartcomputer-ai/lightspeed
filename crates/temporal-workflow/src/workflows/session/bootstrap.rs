@@ -61,6 +61,8 @@ pub(super) async fn initialize(
         state.run_submissions = run_submissions;
         if let Some(continuation) = args.continuation_state.as_ref() {
             state.admission_failures = continuation.admission_failures.clone();
+            state.ready = continuation.ready;
+            state.operation_outcomes = continuation.operation_outcomes.clone();
         }
         state.initialized = true;
         state.last_error = None;

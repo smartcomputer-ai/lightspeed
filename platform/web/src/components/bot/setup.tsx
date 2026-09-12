@@ -110,7 +110,7 @@ export function BotSetup({
         ? { kind: "none" }
         : profile.data.environment.type === "existing"
           ? { kind: "existing", environmentId: profile.data.environment.environmentId }
-          : { kind: "provision" };
+          : { kind: "none" };
   const triggerList = triggers.data?.triggers ?? [];
   const wakeups = triggerList.filter((trigger) => trigger.kind !== "bot");
   const triggersLine =
@@ -515,11 +515,11 @@ function SessionProfileSection({
                     embedded
                     value={environmentDraft}
                     environments={environments.data}
-                    bindings={options.environmentBindings}
-                    templates={options.environmentTemplates}
-                    secrets={options.secrets}
+
+
+
                     disabled={readOnly}
-                    description="Choose an existing environment shared by this bot's sessions, or provision a fresh one for each session."
+                    description="Choose an existing environment shared by this bot's sessions. Manage its lifecycle on the Environments page."
                     onChange={setEnvironmentDraft}
                   />
                   {environmentDraft?.type === "existing" && (

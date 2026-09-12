@@ -1493,41 +1493,7 @@ export type ProfileEnvironment =
     }
   | {
       type: "inherit";
-    }
-  | {
-      /**
-       * Credentials bound to the environment right after it is
-       * provisioned before activation: references to universe
-       * grants/providers/secrets, never values. They become ordinary
-       * environment credential bindings; the profile is the initial set,
-       * not a live sync. Not available for `existing` environments.
-       */
-      credentials?: ProfileEnvironmentCredential[];
-      displayName?: string | null;
-      /**
-       * Optional staged idle policy for the provisioned environment.
-       * Stages the provider cannot realize are skipped.
-       */
-      idlePolicy?: EnvironmentIdlePolicyView | null;
-      metadata?: {
-        [k: string]: string;
-      };
-      providerId: string;
-      retention?: ProfileEnvironmentRetention & string;
-      /**
-       * Immutable provider template-version identity.
-       */
-      templateId: string;
-      type: "provision";
     };
-/**
- * What happens to a profile-provisioned environment when its originating
- * session closes.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileEnvironmentRetention".
- */
-export type ProfileEnvironmentRetention = "closeWithSession" | "retain";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProfileInstructions".
@@ -4238,12 +4204,6 @@ export interface EnvironmentView {
   metadata?: {
     [k: string]: string;
   };
-  /**
-   * Present when a profile provisioned this environment for a session.
-   * Provenance and an optional close trigger, not ownership: the
-   * environment remains an ordinary universe resource.
-   */
-  originSession?: EnvironmentOriginSessionView | null;
   publicEndpoint?: string | null;
   publicIngressEnabled: boolean;
   requestId: string;
@@ -4281,18 +4241,6 @@ export interface EnvironmentIncarnationView {
   provisionRequestId?: string | null;
   templateId?: string | null;
   updatedAtMs: number;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentOriginSessionView".
- */
-export interface EnvironmentOriginSessionView {
-  /**
-   * When true, Lightspeed closes the environment once the session closes.
-   */
-  closeWithSession: boolean;
-  profileId?: ProfileId | null;
-  sessionId: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -5445,10 +5393,6 @@ export interface ProfileApplyResponse {
 export interface ProfileApplySummary {
   activeEnvironmentChanged: boolean;
   configChanged: boolean;
-  /**
-   * True when this apply created a new environment for the session.
-   */
-  environmentProvisioned?: boolean;
   instructionsChanged: boolean;
 }
 /**
@@ -5477,8 +5421,8 @@ export interface AgentProfile {
   displayName?: string | null;
   /**
    * How the session obtains its active environment when this profile is
-   * applied: activate an existing universe environment, or provision a
-   * fresh one for this session. Absence leaves the session's current
+   * applied: select an existing environment or inherit the parent's
+   * selection. Absence leaves the session's current
    * active environment unchanged.
    */
   environment?: ProfileEnvironment | null;
@@ -5500,20 +5444,6 @@ export interface AgentProfile {
   retention?: ProfileSessionRetention | null;
   revision: number;
   updatedAtMs: number;
-}
-/**
- * One environment credential binding requested by a profile: the same shape
- * as `environments/credentials/bind`.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileEnvironmentCredential".
- */
-export interface ProfileEnvironmentCredential {
-  /**
-   * Environment variable name (`[A-Za-z_][A-Za-z0-9_]{0,127}`).
-   */
-  envName: string;
-  source: EnvironmentCredentialSourceView;
 }
 /**
  * Root-session retention policy supplied by a profile at session creation.
@@ -6135,8 +6065,8 @@ export interface AgentProfileInput {
   displayName?: string | null;
   /**
    * How the session obtains its active environment when this profile is
-   * applied: activate an existing universe environment, or provision a
-   * fresh one for this session. Absence leaves the session's current
+   * applied: select an existing environment or inherit the parent's
+   * selection. Absence leaves the session's current
    * active environment unchanged.
    */
   environment?: ProfileEnvironment | null;
@@ -6969,10 +6899,6 @@ export interface EnvironmentListParams {
   metadata?: {
     [k: string]: string;
   };
-  /**
-   * Only environments a profile provisioned for this session.
-   */
-  originSessionId?: string | null;
   providerId?: string | null;
   /**
    * Only registered environments admitted by this registration key.
@@ -7087,8 +7013,8 @@ export interface InlineAgentProfile {
   displayName?: string | null;
   /**
    * How the session obtains its active environment when this profile is
-   * applied: activate an existing universe environment, or provision a
-   * fresh one for this session. Absence leaves the session's current
+   * applied: select an existing environment or inherit the parent's
+   * selection. Absence leaves the session's current
    * active environment unchanged.
    */
   environment?: ProfileEnvironment | null;

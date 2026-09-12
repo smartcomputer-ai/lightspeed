@@ -186,11 +186,11 @@ pub(super) fn mcp_tool_from_config_link(
     })
 }
 
-impl GatewayAgentApi {
+impl super::session_preparation::SessionPreparationService {
     /// Resolve the config's declared MCP links into the desired remote tool
     /// specs, loading catalog records and auth grants. Used both to validate
     /// a config document at admission and to reconcile the session toolset.
-    pub(super) async fn desired_mcp_tools(
+    pub(crate) async fn desired_mcp_tools(
         &self,
         features: &engine::FeaturesConfig,
     ) -> Result<BTreeMap<ToolName, engine::ToolSpec>, AgentApiError> {
@@ -520,5 +520,22 @@ mod tests {
         };
         assert_eq!(tools[0].title.as_deref(), Some(retained.as_str()));
         assert_eq!(tools[0].description.as_deref(), Some(retained.as_str()));
+    }
+}
+
+impl GatewayAgentApi {
+    pub(super) fn preparation_service(
+        &self,
+    ) -> super::session_preparation::SessionPreparationService {
+        super::session_preparation::SessionPreparationService {
+            store: self.store.clone(),
+            task_queue: self.task_queue.clone(),
+        }
+    }
+    pub(super) async fn desired_mcp_tools(
+        &self,
+        features: &engine::FeaturesConfig,
+    ) -> Result<BTreeMap<ToolName, engine::ToolSpec>, AgentApiError> {
+        self.preparation_service().desired_mcp_tools(features).await
     }
 }

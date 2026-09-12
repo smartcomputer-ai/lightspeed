@@ -583,9 +583,9 @@ function ConfigSection({
             embedded
             value={draft.environment}
             environments={environments.data}
-            bindings={options.environmentBindings}
-            templates={options.environmentTemplates}
-            secrets={options.secrets}
+
+
+
             description="How a session obtains its active environment when this profile is applied. Absence leaves an existing session's selection unchanged."
             onChange={(environment) =>
               mutate((document) => {

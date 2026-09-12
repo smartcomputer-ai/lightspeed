@@ -533,14 +533,6 @@ impl HttpAgentApi {
             .await
     }
 
-    pub(crate) async fn list_environment_templates(
-        &self,
-        params: api::EnvironmentTemplateListParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentTemplateListResponse>, AgentApiError> {
-        self.request(api::METHOD_ENVIRONMENTS_TEMPLATES_LIST, params)
-            .await
-    }
-
     pub(crate) async fn list_environments(
         &self,
         params: EnvironmentListParams,

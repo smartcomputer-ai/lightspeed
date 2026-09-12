@@ -289,7 +289,12 @@ impl UniverseRuntime {
                         continue;
                     }
                 };
-                match state.api.reconcile_environment_lifecycle_once().await {
+                match state
+                    .api
+                    .environment_service()
+                    .reconcile_environment_lifecycle_once()
+                    .await
+                {
                     Ok(_) => failures.succeeded(universe_id),
                     Err(error) => failures.failed(universe_id, &error),
                 }
@@ -324,7 +329,12 @@ impl UniverseRuntime {
                         continue;
                     }
                 };
-                match state.api.reconcile_idle_power_once().await {
+                match state
+                    .api
+                    .environment_service()
+                    .reconcile_idle_power_once()
+                    .await
+                {
                     Ok(_) => failures.succeeded(universe_id),
                     Err(error) => failures.failed(universe_id, &error),
                 }

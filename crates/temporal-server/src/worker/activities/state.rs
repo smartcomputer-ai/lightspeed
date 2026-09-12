@@ -118,6 +118,7 @@ pub struct ActivityState {
     llm: LlmActivityDeps,
     tools: ToolActivityDeps,
     runtime_projection: Option<RuntimeProjectionActivityDeps>,
+    pub(super) preparation_store: Option<Arc<PgStore>>,
     preprocess: PreprocessActivityDeps,
     environment_jobs: Option<EnvironmentJobActivityDeps>,
     workflow_tool_executions: Option<WorkflowToolExecutionDeps>,
@@ -149,6 +150,7 @@ impl ActivityState {
                 native_mcp: None,
             },
             runtime_projection: None,
+            preparation_store: None,
             preprocess: PreprocessActivityDeps {
                 blobs: blobs.clone(),
                 transcriber: Arc::new(UnavailableAudioTranscriber),
@@ -225,6 +227,7 @@ impl ActivityState {
         let workspace_store: Arc<dyn VfsWorkspaceStore> = store.clone();
         let profile_store: Arc<dyn ::profiles::ProfileStore> = store.clone();
         let mut state = Self::new(sessions, blobs, llm, tools);
+        state.preparation_store = Some(store.clone());
         state.storage.blob_graph = Some(blob_graph.clone());
         state.tools.blob_graph = Some(blob_graph.clone());
         let mut state = state
