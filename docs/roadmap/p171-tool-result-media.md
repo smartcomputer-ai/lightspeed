@@ -30,7 +30,9 @@ Implementation notes:
 - Review follow-ups landed: Anthropic keeps every `tool_result` block ahead of
   the media of parallel calls in one user message; an `await` over several
   promises shares one media budget of eight with an omission note, joined
-  calls keep one budget each.
+  calls keep one budget each. Transcript media links use browser object URLs
+  so images and documents open when clicked; each mounted view releases its
+  URL on cleanup, and cached reads are scoped to the media loader.
 - Accepted limits: a child resolves the handles it links against its active
   context, so media compacted out of the child before it answers is not
   handed up; awaiting an already-delivered promise again delivers its media

@@ -1599,7 +1599,8 @@ export function SessionDetail({
       const result = await api<{ bytesBase64: string }>(
         "GET", `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(blobRef)}`,
       );
-      return `data:${mime};base64,${result.bytesBase64}`;
+      const bytes = Uint8Array.from(atob(result.bytesBase64), (char) => char.charCodeAt(0));
+      return new Blob([bytes], { type: mime });
     },
     [universeId],
   );

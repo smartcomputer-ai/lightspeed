@@ -1,32 +1,50 @@
 import { useContext, useEffect, useState } from "react";
 import { FileText, ImageOff } from "lucide-react";
-import { TranscriptLinksContext } from "@/components/session/transcript-links";
+import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/transcript-links";
 import type { TranscriptMedia } from "@/lib/sessions/transcript";
 import { cn } from "@/lib/utils";
 
 /// Media the model was shown, rendered from CAS: image thumbnails that open
 /// full size, and document chips that open the file. Bytes load lazily
-/// through the page's blob reader and are cached per blob for the session.
+/// through the page's blob reader. Reads are shared within that reader;
+/// each mounted view owns an object URL that also supports navigation.
 
-const urlCache = new Map<string, Promise<string>>();
+type MediaLoader = NonNullable<TranscriptLinks["loadMedia"]>;
+const blobCache = new WeakMap<MediaLoader, Map<string, Promise<Blob>>>();
 
 export function useMediaUrl(media: TranscriptMedia | null): string | null {
   const links = useContext(TranscriptLinksContext);
   const loadMedia = links.loadMedia;
-  const [url, setUrl] = useState<string | null>(null);
+  const blobRef = media?.blobRef;
+  const mime = media?.mime;
+  const key = JSON.stringify([blobRef, mime]);
+  const [loaded, setLoaded] = useState<{ loader: MediaLoader; key: string; url: string } | null>(null);
   useEffect(() => {
-    if (!media || !loadMedia) return;
+    if (!blobRef || !mime || !loadMedia) return;
     let cancelled = false;
-    let promise = urlCache.get(media.blobRef);
-    if (!promise) {
-      promise = loadMedia(media.blobRef, media.mime);
-      urlCache.set(media.blobRef, promise);
-      promise.catch(() => urlCache.delete(media.blobRef));
+    let objectUrl: string | undefined;
+    let cache = blobCache.get(loadMedia);
+    if (!cache) {
+      cache = new Map();
+      blobCache.set(loadMedia, cache);
     }
-    promise.then((value) => { if (!cancelled) setUrl(value); }, () => { if (!cancelled) setUrl(null); });
-    return () => { cancelled = true; };
-  }, [media, loadMedia]);
-  return url;
+    let promise = cache.get(key);
+    if (!promise) {
+      promise = loadMedia(blobRef, mime);
+      cache.set(key, promise);
+      promise.catch(() => cache.delete(key));
+    }
+    promise.then((blob) => {
+      if (cancelled) return;
+      objectUrl = URL.createObjectURL(blob);
+      setLoaded({ loader: loadMedia, key, url: objectUrl });
+    }, () => { if (!cancelled) setLoaded(null); });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [blobRef, mime, key, loadMedia]);
+  return loaded?.loader === loadMedia && loaded?.key === key ? loaded.url : null;
 }
 
 export function MediaStrip({ items, className }: { items: TranscriptMedia[]; className?: string }) {

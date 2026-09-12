@@ -8,8 +8,8 @@ export interface TranscriptLinks {
   botName?: (botId: string) => string | undefined;
   sessionHref?: (sessionId: string) => string;
   navigate?: (href: string) => void;
-  /// Read a media blob and return a URL an `img` or link can use.
-  loadMedia?: (blobRef: string, mime: string) => Promise<string>;
+  /// Read media bytes; mounted media views own their browser object URLs.
+  loadMedia?: (blobRef: string, mime: string) => Promise<Blob>;
   /// Every media item the transcript has folded, by `media:` handle, for
   /// resolving the handles assistant text references.
   mediaByHandle?: Map<string, TranscriptMedia>;
