@@ -73,7 +73,8 @@ These code locations explain how the existing paths fit together:
 | [Toolset](../../../crates/tools/src/toolset.rs) | Construct the selected tool surface and provider-specific presentation. |
 | [Tool runtime interfaces](../../../crates/tools/src/runtime/mod.rs) | Typed invocation/output helpers and runtime contracts. |
 | [Inline dispatch](../../../crates/tools/src/runtime/inline.rs) | Execute supported compiled operations with the correct context. |
-| [Session tool admission](../../../crates/temporal-server/src/gateway/service/session_toolset.rs) | Reconcile declared session capabilities with installed tools. |
+| [Session tool preparation](../../../crates/temporal-server/src/gateway/service/session_preparation.rs) | Materialize the desired tools from session capabilities and current registry records. |
+| [Workflow preparation](../../../crates/temporal-workflow/src/workflows/session/preparation.rs) | Order preparation and publish tool changes at safe session boundaries. |
 | [Hosted tool execution](../../../crates/temporal-server/src/worker/session_tools.rs) | Assemble runtime adapters for session tool batches. |
 
 The provider-facing function name is not necessarily the logical ID. Existing
