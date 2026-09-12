@@ -58,18 +58,10 @@ pub struct AgentSessionArgs {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSessionContinuationState {
     pub version: u32,
-    #[serde(default = "legacy_continuation_ready")]
     pub ready: bool,
-    #[serde(default)]
     pub operation_outcomes: crate::SessionOperationReceipts,
     #[serde(default)]
     pub admission_failures: Vec<AgentAdmissionFailure>,
-}
-
-// Continuations written before workflow-owned setup already passed gateway
-// setup. Preserve their ability to resume active runs after a worker upgrade.
-fn legacy_continuation_ready() -> bool {
-    true
 }
 
 impl AgentSessionContinuationState {
@@ -126,7 +118,6 @@ pub struct AgentAdmission {
 pub struct AgentSessionStatus {
     pub session_id: String,
     pub initialized: bool,
-    #[serde(default)]
     pub ready: bool,
     #[serde(default)]
     pub setup_error: Option<api::AgentApiError>,

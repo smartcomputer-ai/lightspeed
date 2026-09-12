@@ -38,21 +38,10 @@ pub(super) async fn admit_admissions(
         };
         let correlation_token = admission.correlation_token.clone();
         let mut command = admission.command;
-        if ctx.is_replaying() {
-            if let CoreAgentCommand::RequestRunSteering { run_id, .. } = &mut command {
-                if run_id.as_u64() == 0 {
-                    if let Some(active) = drive.state().runs.active.as_ref() {
-                        *run_id = active.run_id;
-                    }
-                }
-            }
-        }
-        let workflow_preparation = ctx.patched(preparation::PREPARATION_PATCH);
-        if workflow_preparation
-            && let CoreAgentCommand::ReplaceSessionConfig {
-                config,
-                expected_revision,
-            } = &command
+        if let CoreAgentCommand::ReplaceSessionConfig {
+            config,
+            expected_revision,
+        } = &command
         {
             if let Err(error) = preparation::execute_operation(
                 ctx,
@@ -85,8 +74,7 @@ pub(super) async fn admit_admissions(
             }
         }
         let mut deferred_tools = None;
-        if workflow_preparation
-            && drive.state().lifecycle.status == CoreAgentStatus::Open
+        if drive.state().lifecycle.status == CoreAgentStatus::Open
             && matches!(command, CoreAgentCommand::RequestRun(_))
             && !preparation::known_submission(drive.state(), &command)
         {
@@ -147,11 +135,6 @@ pub(super) async fn admit_admissions(
                 );
                 continue;
             }
-        }
-        if !workflow_preparation
-            && should_refresh_runtime_projection_before_admitting(drive.state(), &command)
-        {
-            refresh_runtime_projection_before_run(ctx, drive).await?;
         }
         let prepared_admission = AgentAdmission {
             command: command.clone(),
@@ -503,23 +486,15 @@ pub(super) async fn prepare_runtime_projection(
     drive: &mut CoreAgentDrive,
     request: RuntimeProjectionRefreshActivityRequest,
 ) -> anyhow::Result<Vec<CoreAgentCommand>> {
-    let workflow_preparation = ctx.patched(preparation::PREPARATION_PATCH);
     let activity_ctx = ctx.clone();
     let activity = activity_ctx.start_activity(
         WorkflowActivities::runtime_projection_refresh,
         request,
-        if workflow_preparation {
-            preparation::activity_options()
-        } else {
-            activity_options()
-        },
+        preparation::activity_options(),
     );
-    let result = if workflow_preparation {
-        preparation::await_activity(ctx, drive, activity).await?
-    } else {
-        activity.await
-    }
-    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let result = preparation::await_activity(ctx, drive, activity)
+        .await?
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
 
     Ok(result.commands)
 }

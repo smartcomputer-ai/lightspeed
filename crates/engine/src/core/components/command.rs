@@ -75,7 +75,6 @@ pub enum CoreAgentCommand {
     CompactContext,
     RequestRun(RunRequestCommand),
     RequestRunSteering {
-        #[serde(default = "legacy_untargeted_steering_run_id")]
         run_id: RunId,
         input: Vec<ContextEntryInput>,
     },
@@ -125,8 +124,25 @@ pub enum CoreAgentCommand {
     },
 }
 
-// Older workflow signals did not carry a steering target. Zero never names an
-// admitted run; only historical workflow replay may resolve this sentinel.
-fn legacy_untargeted_steering_run_id() -> RunId {
-    RunId::new(0)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steering_requires_an_explicit_run_target() {
+        let command = CoreAgentCommand::RequestRunSteering {
+            run_id: RunId::new(7),
+            input: Vec::new(),
+        };
+        let mut wire = serde_json::to_value(&command).unwrap();
+        assert_eq!(
+            serde_json::from_value::<CoreAgentCommand>(wire.clone()).unwrap(),
+            command
+        );
+        wire["request_run_steering"]
+            .as_object_mut()
+            .unwrap()
+            .remove("run_id");
+        assert!(serde_json::from_value::<CoreAgentCommand>(wire).is_err());
+    }
 }

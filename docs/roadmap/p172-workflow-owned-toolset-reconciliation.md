@@ -187,6 +187,22 @@ handled in the planned audio refactor.
 
 ## Validation and rollout
 
+This is a coordinated breaking deployment requiring fresh sessions and workflow
+histories. Close existing sessions with the old runtime, stop old workers, apply
+schema migration 10, and deploy matching runtime and clients before creating new
+sessions. Retain stored sessions for historical reads and retain environment
+resources; no database wipe is required. Restarting workers alone still replays
+old histories and is not a migration strategy.
+
+Preparation patch gates, legacy continuation readiness/receipt defaults, and
+untargeted steering replay have been removed. Existing running histories and
+old continuation payloads are unsupported; new continuations explicitly carry
+readiness and operation receipts, and steering always names its target run.
+
+
+- Compatibility cleanup validation passed: 222 engine and 133 workflow unit
+  tests, plus `cargo check --workspace --all-targets`. The workflow contract
+  exporter produced no artifact changes. Live histories were not replayed.
 - Rust tests passed for `engine`, `temporal-workflow`, `temporal-server`,
   `profiles`, `environments`, `store-pg`, and `api`, including engine replay
   and committed contract checks. Final workflow/runtime unit reruns passed.

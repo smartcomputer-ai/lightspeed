@@ -2062,19 +2062,19 @@ fn accepted_submission_skips_new_policy_observations_even_after_config_is_remove
 }
 
 #[test]
-fn legacy_continuations_resume_as_ready_without_repeating_initial_setup() {
-    let legacy: AgentSessionContinuationState = serde_json::from_value(serde_json::json!({
-        "version": 1, "admission_failures": []
-    }))
-    .unwrap();
-    assert!(legacy.ready);
-    assert_eq!(
-        legacy.operation_outcomes,
-        crate::SessionOperationReceipts::default()
-    );
-    let mut current = AgentSessionContinuationState::v1(Vec::new());
-    current.ready = false;
-    let decoded: AgentSessionContinuationState =
-        serde_json::from_value(serde_json::to_value(&current).unwrap()).unwrap();
-    assert!(!decoded.ready, "explicit readiness must survive replay");
+fn continuations_require_explicit_preparation_state() {
+    for ready in [false, true] {
+        let mut current = AgentSessionContinuationState::v1(Vec::new());
+        current.ready = ready;
+        let wire = serde_json::to_value(&current).unwrap();
+        assert_eq!(
+            serde_json::from_value::<AgentSessionContinuationState>(wire.clone()).unwrap(),
+            current
+        );
+        for field in ["ready", "operation_outcomes"] {
+            let mut incomplete = wire.clone();
+            incomplete.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<AgentSessionContinuationState>(incomplete).is_err());
+        }
+    }
 }

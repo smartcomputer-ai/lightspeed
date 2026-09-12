@@ -562,22 +562,10 @@ async fn apply_profile(
     Ok(summary)
 }
 
-pub(super) const PREPARATION_PATCH: &str = "workflow_owned_session_preparation_v1";
-
 pub(super) async fn prepare_initial_session(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     args: &AgentSessionArgs,
 ) -> anyhow::Result<()> {
-    if !ctx.patched(PREPARATION_PATCH) {
-        // Existing histories performed setup through gateway commands. Replay
-        // those commands without inserting new activities. At new history the
-        // marker enables preparation for subsequent submissions.
-        ctx.state_mut(|state| {
-            state.ready = true;
-            state.setup_requested = false;
-        });
-        return Ok(());
-    }
     if ctx.state(|state| state.ready || !state.setup_requested) {
         return Ok(());
     }
