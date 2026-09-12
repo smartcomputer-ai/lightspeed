@@ -1,6 +1,44 @@
-import Markdown from "react-markdown";
+import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { ComponentProps } from "react";
+import { DocumentChip, MediaByHandle } from "@/components/session/media";
+import { TranscriptLinksContext } from "@/components/session/transcript-links";
+import { useContext } from "react";
 import { cn } from "@/lib/utils";
+
+const MEDIA_SCHEME = "media:";
+
+/// `media:` is how the model names media it was shown; keep those URLs so
+/// the renderer below can resolve them, and sanitize everything else.
+function urlTransform(url: string): string {
+  return url.startsWith(MEDIA_SCHEME) ? url : defaultUrlTransform(url);
+}
+
+function MarkdownImage({ src, alt }: ComponentProps<"img">) {
+  if (typeof src === "string" && src.startsWith(MEDIA_SCHEME)) {
+    return <MediaByHandle handle={src} alt={alt} />;
+  }
+  return <img src={src} alt={alt} />;
+}
+
+function MarkdownLink({ href, children, ...rest }: ComponentProps<"a">) {
+  const links = useContext(TranscriptLinksContext);
+  if (typeof href === "string" && href.startsWith(MEDIA_SCHEME)) {
+    const media = links.mediaByHandle?.get(href);
+    if (media && media.kind === "document") {
+      return <DocumentChip media={media} />;
+    }
+    if (media) {
+      return <MediaByHandle handle={href} alt={typeof children === "string" ? children : undefined} inline />;
+    }
+    return (
+      <span className="rounded border border-dashed px-1 text-xs text-muted-foreground" title="This media is not part of the session">
+        {children} (not found)
+      </span>
+    );
+  }
+  return <a href={href} target="_blank" rel="noreferrer" {...rest}>{children}</a>;
+}
 
 export function MarkdownContent({
   className,
@@ -33,7 +71,9 @@ export function MarkdownContent({
         className,
       )}
     >
-      <Markdown remarkPlugins={[remarkGfm]}>{children}</Markdown>
+      <Markdown remarkPlugins={[remarkGfm]} urlTransform={urlTransform} components={{ img: MarkdownImage, a: MarkdownLink }}>
+        {children}
+      </Markdown>
     </div>
   );
 }

@@ -265,11 +265,11 @@ impl InlineToolRuntime {
             call_id: call.call_id.clone(),
             status: ToolCallStatus::Succeeded,
             output_ref: Some(output_ref),
-            model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
+            model_visible_context_entries: model_visible_entries(
                 &call.call_id,
-                ToolCallStatus::Succeeded,
                 model_visible_ref,
-            )],
+                &output.media,
+            ),
             error_ref: None,
             effects,
         })
@@ -325,11 +325,11 @@ impl InlineToolRuntime {
             call_id: call.call_id.clone(),
             status: ToolCallStatus::Succeeded,
             output_ref: Some(output_ref),
-            model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
+            model_visible_context_entries: model_visible_entries(
                 &call.call_id,
-                ToolCallStatus::Succeeded,
                 model_visible_ref,
-            )],
+                &output.media,
+            ),
             error_ref: None,
             effects: output.effects,
         })
@@ -468,6 +468,23 @@ struct ProjectedText {
     bytes: Vec<u8>,
     output_bytes: u64,
     truncated: bool,
+}
+
+/// The tool result entry followed by one media entry per admitted asset, in
+/// the order the visible text announces them.
+fn model_visible_entries(
+    call_id: &engine::ToolCallId,
+    model_visible_ref: engine::BlobRef,
+    media: &[super::ToolMediaOutput],
+) -> Vec<engine::ContextEntryInput> {
+    let mut entries = Vec::with_capacity(1 + media.len());
+    entries.push(ToolInvocationResult::tool_result_context_entry(
+        call_id,
+        ToolCallStatus::Succeeded,
+        model_visible_ref,
+    ));
+    entries.extend(media.iter().map(super::ToolMediaOutput::context_entry));
+    entries
 }
 
 fn projected(bytes: Vec<u8>, max_bytes: u64) -> ProjectedText {
@@ -861,6 +878,59 @@ mod tests {
         let visible_ref = visible_tool_result_ref(&result);
         let visible = blobs.read_text(&visible_ref).await.expect("visible text");
         assert!(visible.contains("hello"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reading_an_image_hands_it_to_the_model_as_a_media_entry() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let fs = InMemoryFileSystem::full_access();
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&[9u8; 64]);
+        fs.write_file(&FsPath::new("/render.png").expect("path"), png.clone())
+            .await
+            .expect("write file");
+        let catalog = workspace_catalog(engine::ProviderApiKind::OpenAiResponses);
+        let runtime = runtime_with_vfs(fs, blobs.clone(), catalog);
+        let args_ref = blobs
+            .put_bytes(br#"{"path":"/render.png","offset":null,"limit":null}"#.to_vec())
+            .await
+            .expect("write args");
+
+        let result = runtime
+            .invoke_batch(batch_request(call(args_ref, "vfs_read_file")))
+            .await
+            .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
+            .single_result()
+            .expect("single result");
+
+        assert_eq!(result.status, ToolCallStatus::Succeeded);
+        let entries = &result.model_visible_context_entries;
+        assert_eq!(entries.len(), 2, "result then its media: {entries:?}");
+        let visible = blobs
+            .read_text(&entries[0].content.content_ref)
+            .await
+            .expect("visible text");
+        let handle = engine::media::media_handle(&BlobRef::from_bytes(&png));
+        assert!(visible.contains(&handle), "{visible}");
+        assert!(visible.contains("render.png"), "{visible}");
+        let media = &entries[1];
+        assert!(matches!(
+            media.kind,
+            ContextEntryKind::Message {
+                role: engine::ContextMessageRole::User
+            }
+        ));
+        assert_eq!(media.content.media_type.as_deref(), Some("image/png"));
+        assert_eq!(media.preview.as_deref(), Some("[image: render.png]"));
+        assert_eq!(
+            blobs
+                .read_bytes(&media.content.content_ref)
+                .await
+                .expect("bytes"),
+            png
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

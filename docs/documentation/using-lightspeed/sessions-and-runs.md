@@ -85,6 +85,11 @@ marked. Click a row to inspect its **Arguments**, **Result**, **Error**, and
 any reported **Effects**, with the raw tool name, call id, timing, and output
 size on a small line beneath. A final answer saying that a file was saved is
 useful, but the tool result and the file itself let you verify the operation.
+Images and documents a tool handed the model appear above the tool's result
+as thumbnails and document chips; click one to open it at full size. Images
+sent with your own message show in the input band the same way, and an image
+or document the assistant references by its `media:` handle renders inline
+in the reply.
 
 When a run finishes, its thinking, tool calls, and interim notes fold behind
 one strip that names the outcome ("Worked for 2m 14s", "Failed after 38s")

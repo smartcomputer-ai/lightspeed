@@ -7034,6 +7034,13 @@
           "contentRef": {
             "type": "string"
           },
+          "mediaHandle": {
+            "description": "The model-facing name of provider-native media (an admitted image or\nPDF): `media:` plus the first twelve hex characters of `content_ref`.\nThe model writes it as a URL (`![…](media:3f9a2c1d4e7b)`) to refer to\nmedia it was shown; resolve it against the media of the same session.\nAbsent for text and other content.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "mediaType": {
             "type": [
               "string",
@@ -16250,6 +16257,37 @@
         ],
         "type": "object"
       },
+      "ToolCallMediaView": {
+        "description": "One media item a tool call handed the model.",
+        "properties": {
+          "blobRef": {
+            "type": "string"
+          },
+          "handle": {
+            "description": "`media:` plus the first twelve hex characters of `blob_ref`; what the\nmodel calls this item.",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MediaKind"
+          },
+          "mime": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "handle",
+          "blobRef",
+          "mime",
+          "kind"
+        ],
+        "type": "object"
+      },
       "ToolCallView": {
         "properties": {
           "arguments": {
@@ -16301,6 +16339,13 @@
           "isError": {
             "default": false,
             "type": "boolean"
+          },
+          "media": {
+            "description": "Media the call handed the model (MCP images and documents, file\nreads, sub-agent hand-offs), in the order the model saw it. Each item\nis also a user-role media entry of the run; fetch bytes with\n`blobs/read`.",
+            "items": {
+              "$ref": "#/components/schemas/ToolCallMediaView"
+            },
+            "type": "array"
           },
           "output": {
             "type": [

@@ -198,7 +198,8 @@ impl ActivityState {
                 self.storage.sessions.clone(),
                 self.storage.blobs.clone(),
                 runtime,
-            ),
+            )
+            .with_blob_graph(self.storage.blob_graph.clone()),
         });
         self
     }

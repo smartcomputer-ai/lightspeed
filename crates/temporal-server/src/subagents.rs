@@ -9,13 +9,15 @@ use std::sync::Arc;
 
 use api::{
     AgentApiError, AgentApiService, AgentProfile, InlineAgentProfile, InputItem, ProfileId,
-    ProfileReadParams, ProfileSource, SessionCloseParams,
+    ProfileReadParams, ProfileSource, SessionCloseParams, SessionReadParams,
 };
 use async_trait::async_trait;
 use engine::{
     BlobRef, PromiseResolution, RunStatus, RunTerminalNotifyIntent, SessionId, SubmissionId,
+    media::MediaDescriptor,
     storage::{
-        BlobStore, CreateSession, SessionOrigin, SessionOriginKind, SessionStore, SessionStoreError,
+        BlobGraphStore, BlobStore, CreateSession, SessionOrigin, SessionOriginKind, SessionStore,
+        SessionStoreError,
     },
 };
 use temporal_workflow::{
@@ -55,6 +57,13 @@ pub trait SubagentChildRuntime: Send + Sync {
 
     async fn close_session(&self, session_id: &SessionId, force: bool)
     -> Result<(), AgentApiError>;
+
+    /// The media the child's session holds in its active context: what the
+    /// child was shown and may therefore hand up by handle.
+    async fn session_media(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<MediaDescriptor>, AgentApiError>;
 }
 
 #[derive(Clone)]
@@ -114,12 +123,42 @@ impl SubagentChildRuntime for AgentApiSubagentRuntime {
             .await
             .map(|_| ())
     }
+
+    async fn session_media(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<MediaDescriptor>, AgentApiError> {
+        let session = self
+            .api
+            .read_session(SessionReadParams {
+                session_id: session_id.as_str().to_owned(),
+                run_limit: Some(1),
+            })
+            .await?
+            .result
+            .session;
+        Ok(session
+            .active_context
+            .entries
+            .iter()
+            .filter(|entry| entry.content.media_handle.is_some())
+            .filter_map(|entry| {
+                let content_ref = BlobRef::parse(entry.content.content_ref.clone()).ok()?;
+                MediaDescriptor::new(
+                    content_ref,
+                    entry.content.media_type.as_deref()?,
+                    engine::media::media_preview_name(entry.preview.as_deref()).as_deref(),
+                )
+            })
+            .collect())
+    }
 }
 
 #[derive(Clone)]
 pub struct SubagentService {
     sessions: Arc<dyn SessionStore>,
     blobs: Arc<dyn BlobStore>,
+    blob_graph: Option<Arc<dyn BlobGraphStore>>,
     runtime: Arc<dyn SubagentChildRuntime>,
 }
 
@@ -132,8 +171,17 @@ impl SubagentService {
         Self {
             sessions,
             blobs,
+            blob_graph: None,
             runtime,
         }
+    }
+
+    /// Record containment edges from result envelopes to the media they
+    /// hand up, so the bytes outlive the child's close until the parent's
+    /// context entry roots them.
+    pub fn with_blob_graph(mut self, blob_graph: Option<Arc<dyn BlobGraphStore>>) -> Self {
+        self.blob_graph = blob_graph;
+        self
     }
 
     /// Step A of the execution. Every expected failure (limit, unlisted
@@ -351,13 +399,35 @@ impl SubagentService {
         })
     }
 
+    /// The media `text` links by handle that the child session actually
+    /// holds, in first-link order, capped like a tool result's media.
+    async fn linked_media(
+        &self,
+        session_id: &str,
+        text: &str,
+    ) -> Result<Vec<MediaDescriptor>, AgentApiError> {
+        let handles = engine::media::find_media_handles(text);
+        if handles.is_empty() {
+            return Ok(Vec::new());
+        }
+        let session_id = SessionId::try_new(session_id.to_owned())
+            .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        let available = self.runtime.session_media(&session_id).await?;
+        Ok(handles
+            .iter()
+            .filter_map(|handle| available.iter().find(|item| &item.handle == handle))
+            .take(engine::media::MAX_TOOL_MEDIA_ITEMS)
+            .cloned()
+            .collect())
+    }
+
     /// Step C: the envelope the parent sees, then the child is closed.
     pub async fn resolve(
         &self,
         child: SubagentChildRef,
         terminal: SubagentTerminal,
     ) -> Result<PromiseResolution, AgentApiError> {
-        let (status, output, error) = match terminal {
+        let (status, output, error, media) = match terminal {
             SubagentTerminal::Run {
                 status,
                 output,
@@ -371,16 +441,26 @@ impl SubagentService {
                     }
                     None => None,
                 };
+                // Media the child linked by handle in its answer is what it
+                // hands up: resolve each handle against what the child saw,
+                // in link order. Unknown handles stay plain text.
+                let media = match output.as_deref() {
+                    Some(text) if status == RunStatus::Completed => {
+                        self.linked_media(&child.session_id, text).await?
+                    }
+                    _ => Vec::new(),
+                };
                 let failure = match failure_message_ref.as_ref() {
                     Some(failure_ref) => Some(self.read_text(failure_ref).await?),
                     None => None,
                 };
                 match status {
-                    RunStatus::Completed => (SubagentResultStatus::Completed, output, None),
+                    RunStatus::Completed => (SubagentResultStatus::Completed, output, None, media),
                     RunStatus::Cancelled => (
                         SubagentResultStatus::Cancelled,
                         output,
                         Some("sub-agent run was cancelled".to_owned()),
+                        Vec::new(),
                     ),
                     RunStatus::Failed
                     | RunStatus::Active
@@ -389,6 +469,7 @@ impl SubagentService {
                         SubagentResultStatus::Failed,
                         output,
                         Some(failure.unwrap_or_else(|| "sub-agent run failed".to_owned())),
+                        Vec::new(),
                     ),
                 }
             }
@@ -396,6 +477,7 @@ impl SubagentService {
                 SubagentResultStatus::Deadline,
                 None,
                 Some("sub-agent run exceeded the grant deadline".to_owned()),
+                Vec::new(),
             ),
         };
         let envelope = SubagentResultEnvelope {
@@ -405,6 +487,7 @@ impl SubagentService {
             status,
             output,
             error,
+            media,
         };
         let payload_ref = self
             .blobs
@@ -413,6 +496,13 @@ impl SubagentService {
             })?)
             .await
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        engine::storage::record_contains_edges(
+            self.blob_graph.as_deref(),
+            &payload_ref,
+            envelope.media.iter().map(|item| item.content_ref.clone()),
+        )
+        .await
+        .map_err(|error| AgentApiError::internal(error.to_string()))?;
         self.close(&child.session_id).await?;
         Ok(match status {
             SubagentResultStatus::Completed => PromiseResolution::Resolved {
@@ -603,6 +693,7 @@ mod tests {
         started_sessions: Mutex<Vec<(String, ProfileSource)>>,
         started_runs: Mutex<Vec<StartedRun>>,
         closed: Mutex<Vec<(String, bool)>>,
+        media: Mutex<Vec<MediaDescriptor>>,
     }
 
     impl FakeChildRuntime {
@@ -685,6 +776,13 @@ mod tests {
                 Some(error) => Err(error),
                 None => Ok(()),
             }
+        }
+
+        async fn session_media(
+            &self,
+            _session_id: &SessionId,
+        ) -> Result<Vec<MediaDescriptor>, AgentApiError> {
+            Ok(self.media.lock().unwrap().clone())
         }
     }
 
@@ -1206,6 +1304,59 @@ mod tests {
             h.runtime.closed.lock().unwrap().clone(),
             vec![("agent_child".to_owned(), true)]
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resolve_hands_up_the_media_the_child_linked_by_handle_in_link_order() {
+        let runtime = Arc::new(FakeChildRuntime::default());
+        let png = MediaDescriptor::new(
+            BlobRef::from_bytes(b"png bytes"),
+            "image/png",
+            Some("render.png"),
+        )
+        .expect("png");
+        let pdf = MediaDescriptor::new(BlobRef::from_bytes(b"%PDF"), "application/pdf", None)
+            .expect("pdf");
+        let unseen = MediaDescriptor::new(BlobRef::from_bytes(b"other"), "image/jpeg", None)
+            .expect("unseen");
+        *runtime.media.lock().unwrap() = vec![png.clone(), pdf.clone()];
+        let h = harness(runtime).await;
+        let text = format!(
+            "The brief is [here]({}), the render ![r]({}) and again {}; not ours: {}",
+            pdf.handle, png.handle, png.handle, unseen.handle
+        );
+        let output = h.blobs.put_bytes(text.into_bytes()).await.expect("output");
+
+        let resolution = h
+            .service
+            .resolve(
+                child_ref(),
+                SubagentTerminal::Run {
+                    status: RunStatus::Completed,
+                    output: Some(engine::ContentRef::text(output.clone())),
+                    failure_message_ref: None,
+                },
+            )
+            .await
+            .expect("resolve");
+        let envelope = envelope_of(&h.blobs, &resolution).await;
+        assert_eq!(envelope.media, vec![pdf.clone(), png.clone()]);
+
+        // A failed run hands nothing up even when its text links media.
+        let failed = h
+            .service
+            .resolve(
+                child_ref(),
+                SubagentTerminal::Run {
+                    status: RunStatus::Failed,
+                    output: Some(engine::ContentRef::text(output)),
+                    failure_message_ref: None,
+                },
+            )
+            .await
+            .expect("resolve failed");
+        let envelope = envelope_of(&h.blobs, &failed).await;
+        assert!(envelope.media.is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -16,12 +16,12 @@ use crate::worker::{
     ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
     ACTIVITY_ENVIRONMENT_JOB_POLL, ACTIVITY_ENVIRONMENT_JOB_PREPARE_WORKFLOW_TOOL,
     ACTIVITY_ENVIRONMENT_JOB_START, ACTIVITY_LLM_GENERATE, ACTIVITY_MATERIALIZE_AWAIT_RESULT,
-    ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
-    ACTIVITY_RUNTIME_PROJECTION_REFRESH, ACTIVITY_START_WORKFLOW_TOOL_EXECUTION,
-    ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_PREPARE, ACTIVITY_SUBAGENT_RESOLVE,
-    ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL, ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS,
-    ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY, AppendEventsRequest,
-    AwaitEnvironmentReadyActivityRequest, AwaitEnvironmentReadyActivityResult,
+    ACTIVITY_PREPARE_JOINED_CONTEXT, ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB,
+    ACTIVITY_READ_BLOB, ACTIVITY_RUNTIME_PROJECTION_REFRESH,
+    ACTIVITY_START_WORKFLOW_TOOL_EXECUTION, ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_PREPARE,
+    ACTIVITY_SUBAGENT_RESOLVE, ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL,
+    ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS, ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY,
+    AppendEventsRequest, AwaitEnvironmentReadyActivityRequest, AwaitEnvironmentReadyActivityResult,
     ContextCompactActivityRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
     EnvironmentJobCancelActivityRequest, EnvironmentJobPollActivityRequest,
     EnvironmentJobPollActivityResult, EnvironmentJobStartActivityRequest,
@@ -204,6 +204,10 @@ mod tests {
         assert_eq!(
             WorkerActivities::materialize_await_result.name(),
             temporal_workflow::WorkflowActivities::materialize_await_result.name()
+        );
+        assert_eq!(
+            WorkerActivities::prepare_joined_context.name(),
+            temporal_workflow::WorkflowActivities::prepare_joined_context.name()
         );
         assert_eq!(
             WorkerActivities::append_events.name(),
@@ -486,9 +490,19 @@ impl WorkerActivities {
         self: Arc<Self>,
         ctx: ActivityContext,
         request: temporal_workflow::AwaitMaterializationRequest,
-    ) -> Result<BlobRef, ActivityError> {
+    ) -> Result<temporal_workflow::AwaitMaterializationResult, ActivityError> {
         let state = self.state_for(&ctx).await?;
         storage::materialize_await_result(state.storage(), request).await
+    }
+
+    #[activity(name = ACTIVITY_PREPARE_JOINED_CONTEXT)]
+    pub async fn prepare_joined_context(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        request: temporal_workflow::JoinedContextPreparationRequest,
+    ) -> Result<Vec<engine::PromiseContextEntries>, ActivityError> {
+        let state = self.state_for(&ctx).await?;
+        storage::prepare_joined_context(state.storage(), request).await
     }
 
     #[activity(name = ACTIVITY_APPEND_EVENTS)]

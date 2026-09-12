@@ -15,6 +15,28 @@ pub fn image_media_type(media_type: Option<&str>) -> Option<&str> {
     }
 }
 
+/// True for entries a tool appended (results and their media companions),
+/// as opposed to deliberate run input or steering.
+pub fn is_tool_sourced(entry: &engine::ContextEntry) -> bool {
+    matches!(entry.source, engine::ContextEntrySource::Tool { .. })
+}
+
+/// The text block written immediately before a media entry's provider-native
+/// block, naming it for the model: `[image · media:3f9a2c1d4e7b · image/png]`.
+pub fn media_announcement(entry: &engine::ContextEntry) -> String {
+    engine::media::media_announcement(&entry.content, entry.preview.as_deref())
+}
+
+/// The text a text-only dialect materializes in place of tool-produced media.
+pub fn text_only_omission(entry: &engine::ContextEntry) -> String {
+    let announcement = media_announcement(entry);
+    let inner = announcement
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(&announcement);
+    format!("[{inner} omitted: this model accepts text only]")
+}
+
 /// A user-message entry carrying an inbound document.
 ///
 /// PDFs are unambiguous by media type. Text-based documents share

@@ -48,6 +48,20 @@ async fn temporal_live_agent_run_returns_child_result_inline() -> anyhow::Result
     run_with_scripted_subagent_live_worker(run_agent_run_inline_live_client).await
 }
 
+/// A child that reads an image and links it by handle in its answer hands
+/// it up: the parent's `agent_run` result is followed by the image as a
+/// media entry, the run view attaches it to the call, and the envelope names
+/// it.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_agent_run_hands_up_media_the_child_linked() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    run_with_scripted_subagent_live_worker(run_agent_run_media_live_client).await
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
 async fn temporal_live_agent_run_fans_out_three_children() -> anyhow::Result<()> {
@@ -129,7 +143,9 @@ impl SubagentScriptedLlm {
         matches_kind: impl Fn(&ContextEntryKind) -> bool,
     ) -> Result<Option<String>, CoreAgentIoError> {
         for entry in request.request.context.entries.iter().rev() {
-            if matches_kind(&entry.kind) {
+            // Media entries carry bytes, not text; a real adapter lowers
+            // them to provider blocks, the script looks past them.
+            if matches_kind(&entry.kind) && !engine::media::is_media_content(&entry.content) {
                 return self
                     .blobs
                     .read_text(&entry.content.content_ref)
@@ -313,6 +329,24 @@ impl CoreAgentLlm for SubagentScriptedLlm {
                     )
                     .await;
             }
+            if user_text.starts_with("CHILD_MEDIA") {
+                // The child links the image it read by the handle the tool
+                // result announced, plus one handle it never saw.
+                let handles = engine::media::find_media_handles(&tool_result);
+                let Some(handle) = handles.first() else {
+                    return Err(CoreAgentIoError::Failed {
+                        message: format!(
+                            "child read_file announced no media handle: {tool_result}"
+                        ),
+                    });
+                };
+                return self
+                    .final_result(
+                        &request,
+                        format!("Here is the render: ![render]({handle}) and not ours ![x](media:000000000000)"),
+                    )
+                    .await;
+            }
             // Every tool result the parent sees ends its run, so the test
             // can read the sub-agent envelopes straight from the final text.
             let results = request
@@ -327,8 +361,54 @@ impl CoreAgentLlm for SubagentScriptedLlm {
             for content_ref in results {
                 texts.push(self.blobs.read_text(&content_ref).await.map_err(io_error)?);
             }
+            // Media a child handed up follows the result as media entries.
+            let media = request
+                .request
+                .context
+                .entries
+                .iter()
+                .filter(|entry| {
+                    matches!(entry.source, engine::ContextEntrySource::Tool { .. })
+                        && engine::media::is_media_content(&entry.content)
+                })
+                .map(|entry| engine::media::media_handle(&entry.content.content_ref))
+                .collect::<Vec<_>>();
+            let media_report = if media.is_empty() {
+                String::new()
+            } else {
+                format!(" parent media: {}", media.join(" "))
+            };
             return self
-                .final_result(&request, format!("parent done: {}", texts.join(" | ")))
+                .final_result(
+                    &request,
+                    format!("parent done: {}{media_report}", texts.join(" | ")),
+                )
+                .await;
+        }
+        if let Some(profile) = user_text.strip_prefix("AGENT_RUN_MEDIA ") {
+            return self
+                .tool_calls_result(
+                    &request,
+                    vec![(
+                        AGENT_RUN_TOOL_NAME,
+                        serde_json::json!({
+                            "agent": profile.trim(),
+                            "input": "CHILD_MEDIA",
+                            "label": "media child"
+                        }),
+                    )],
+                )
+                .await;
+        }
+        if user_text.starts_with("CHILD_MEDIA") {
+            return self
+                .tool_calls_result(
+                    &request,
+                    vec![(
+                        "vfs_read_file",
+                        serde_json::json!({"path": "/workspace/render.png", "offset": null, "limit": null}),
+                    )],
+                )
                 .await;
         }
 
@@ -504,6 +584,13 @@ fn subagents_features_with_deadline(
 
 /// A child profile for the scripted worker: no tools, scripted instructions.
 async fn create_child_profile(api: &GatewayAgentApi) -> anyhow::Result<ProfileId> {
+    create_child_profile_with_config(api, SessionConfig::default()).await
+}
+
+async fn create_child_profile_with_config(
+    api: &GatewayAgentApi,
+    config: SessionConfig,
+) -> anyhow::Result<ProfileId> {
     let profile_id = ProfileId::new(format!(
         "live_subagent_child_{}",
         uuid::Uuid::new_v4().simple()
@@ -515,7 +602,7 @@ async fn create_child_profile(api: &GatewayAgentApi) -> anyhow::Result<ProfileId
             description: Some("Answers CHILD_TASK briefs".to_owned()),
             document: ProfileDocument {
                 metadata: Default::default(),
-                config: Some(SessionConfig::default()),
+                config: Some(config),
                 instructions: Some(ProfileInstructions::Text {
                     text: "You are a scripted live sub-agent.".to_owned(),
                 }),
@@ -632,6 +719,113 @@ async fn cleanup_subagent_test(
     for id in sessions {
         terminate_live_session(client, id, "subagent live test cleanup").await;
     }
+}
+
+async fn run_agent_run_media_live_client(
+    client: Client,
+    session_id: SessionId,
+    api: Arc<GatewayAgentApi>,
+    blobs: Arc<dyn BlobStore>,
+    _sessions: Arc<dyn SessionStore>,
+    model: ModelSelection,
+) -> anyhow::Result<()> {
+    // A workspace holding one PNG, linked read-only into the child's profile.
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend_from_slice(b"live-subagent-render");
+    let handle = engine::media::media_handle(&engine::BlobRef::from_bytes(&png));
+    let snapshot = vfs::create_inline_snapshot(
+        blobs.as_ref(),
+        None,
+        vfs::CreateInlineSnapshotRequest::new(vec![vfs::InlineFile::new("/render.png", png)?]),
+    )
+    .await?;
+    let workspace = api
+        .create_vfs_workspace(api::VfsWorkspaceCreateParams {
+            snapshot_ref: Some(snapshot.snapshot_ref.to_string()),
+            ..Default::default()
+        })
+        .await?
+        .result
+        .workspace;
+    let child_config: SessionConfig = serde_json::from_value(serde_json::json!({
+        "features": {"vfs": {
+            "tools": "readOnly",
+            "workspaceLinks": [{
+                "path": "/workspace",
+                "target": {"type": "workspace", "workspaceId": workspace.workspace_id},
+                "access": "readOnly"
+            }]
+        }}
+    }))?;
+    let profile_id = create_child_profile_with_config(api.as_ref(), child_config).await?;
+    let run_id = start_subagent_parent(
+        api.as_ref(),
+        &session_id,
+        &model,
+        &profile_id,
+        4,
+        &format!("AGENT_RUN_MEDIA {profile_id}"),
+    )
+    .await?;
+
+    let parent_run = wait_for_terminal_run(api.as_ref(), &session_id, &run_id).await?;
+    assert_eq!(parent_run.status, api::RunStatus::Completed);
+    let parent_output = final_assistant_text(&parent_run).expect("parent assistant output");
+    assert!(
+        parent_output.contains(&format!("\"handle\":\"{handle}\"")),
+        "the envelope must name the handed-up image: {parent_output}"
+    );
+    assert!(
+        parent_output.contains("\"name\":\"render.png\""),
+        "the envelope must carry the file name: {parent_output}"
+    );
+    assert!(
+        !parent_output.contains("\"handle\":\"media:000000000000\""),
+        "a handle the child never saw must not be handed up: {parent_output}"
+    );
+    assert!(
+        parent_output.ends_with(&format!(" parent media: {handle}")),
+        "the parent must see exactly the handed-up image as a media entry: {parent_output}"
+    );
+    let agent_call = parent_run
+        .tool_batches
+        .iter()
+        .flat_map(|batch| &batch.calls)
+        .find(|call| call.tool_name == AGENT_RUN_TOOL_NAME)
+        .expect("agent_run call");
+    assert_eq!(agent_call.status, api::ToolItemStatus::Succeeded);
+    assert_eq!(
+        agent_call
+            .media
+            .iter()
+            .map(|item| (item.handle.clone(), item.mime.clone(), item.name.clone()))
+            .collect::<Vec<_>>(),
+        vec![(
+            handle.clone(),
+            "image/png".to_owned(),
+            Some("render.png".to_owned())
+        )]
+    );
+    let parent_view = api
+        .read_session(SessionReadParams {
+            session_id: session_id.as_str().to_owned(),
+            run_limit: None,
+        })
+        .await?
+        .result
+        .session;
+    let handles = parent_view
+        .active_context
+        .entries
+        .iter()
+        .filter_map(|entry| entry.content.media_handle.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(handles, vec![handle]);
+
+    api.delete_profile(ProfileDeleteParams { profile_id })
+        .await?;
+    terminate_live_session(&client, &session_id, "sub-agent media live cleanup").await;
+    Ok(())
 }
 
 async fn run_agent_run_inline_live_client(

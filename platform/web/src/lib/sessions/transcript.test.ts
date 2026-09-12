@@ -6,6 +6,8 @@ import {
   formatDuration,
   formatTokens,
   isFailedToolCall,
+  mediaByHandle,
+  mediaHandleFor,
   reconcileRuns,
   runInProgress,
   type TranscriptEntry,

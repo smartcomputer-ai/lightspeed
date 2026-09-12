@@ -324,6 +324,18 @@ reasoning and message text are projected in full; tool and catalog previews
 remain bounded, and the original bytes remain available through blob reads.
 An output can describe media without inventing a text representation for it.
 
+Media the model sees lives in context as user-role message entries whose
+content descriptor carries an image or PDF media type; run input and tool
+results produce the same shape, so provider lowering, compaction, and
+projection treat them alike. A tool appends its admitted media right after its
+result entry, and a sub-agent's or awaited promise's media rides on the resume
+output as descriptors the reducer copies into entries without reading bytes.
+Every such entry is named by a handle derived from its content reference,
+`media:` plus the first twelve hex characters of the SHA-256, which the model
+sees in the announcement before each provider block and writes back as a URL
+to refer to media. Views expose the handle on the content descriptor and list
+a tool call's media beside it; clients resolve `media:` links against those.
+
 These views are derived from the same retained facts and content. Keeping their
 jobs separate lets the model work with a manageable context, the user inspect
 the full retained history, and the runtime reconstruct the state needed to

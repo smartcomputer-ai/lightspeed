@@ -41,12 +41,13 @@ use crate::{
     AgentSessionContinuationState, AgentSessionStatus, AppendEventsRequest,
     AwaitMaterializationRequest, AwaitOutcome, AwaitPromiseResult, CancellingWatchdog,
     CreateOrLoadSessionRequest, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
-    LlmGenerateActivityRequest, PendingEmission, PendingPromiseCancellation,
-    PendingSourceResolution, PendingToolBatchResume, PreprocessRunInputActivityRequest,
-    PreprocessRunInputFailure, PreprocessRunInputFailureKind, PreprocessRunInputOutcome,
-    PromiseSourcePoll, PutBlobRequest, RuntimeProjectionRefreshActivityRequest,
-    ToolInvokeBatchActivityRequest, ToolPreparePromiseControlsActivityRequest, WorkflowActivities,
-    activity_options, compose_workflow_id, default_instructions, split_workflow_id,
+    JoinedContextPreparationRequest, LlmGenerateActivityRequest, PendingEmission,
+    PendingPromiseCancellation, PendingSourceResolution, PendingToolBatchResume,
+    PreprocessRunInputActivityRequest, PreprocessRunInputFailure, PreprocessRunInputFailureKind,
+    PreprocessRunInputOutcome, PromiseSourcePoll, PutBlobRequest,
+    RuntimeProjectionRefreshActivityRequest, ToolInvokeBatchActivityRequest,
+    ToolPreparePromiseControlsActivityRequest, WorkflowActivities, activity_options,
+    compose_workflow_id, default_instructions, split_workflow_id,
 };
 
 use activity_calls::{call_context_compact, call_llm_generate, call_tool_prepare_promise_controls};

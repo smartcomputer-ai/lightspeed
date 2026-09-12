@@ -79,10 +79,16 @@ pub(super) async fn process_satisfied_await(
         return Ok(());
     };
 
+    // The runtime prepares what the resolved payloads supply beside the
+    // results (a sub-agent's linked images, for example); the engine only
+    // records and sequences those entries.
+    let has_resolved_payload = results
+        .iter()
+        .any(|result| result.status == "resolved" && result.payload_ref.is_some());
     let resume_output = match &parked.suspension {
         engine::ToolBatchSuspension::AwaitTool { .. } => {
             let request = AwaitMaterializationRequest { outcome, results };
-            let result_ref = ctx
+            let materialized = ctx
                 .start_activity(
                     WorkflowActivities::materialize_await_result,
                     request,
@@ -90,10 +96,24 @@ pub(super) async fn process_satisfied_await(
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
-            engine::ToolBatchResumeOutput::AwaitTool { result_ref }
+            engine::ToolBatchResumeOutput::AwaitTool {
+                result_ref: materialized.result_ref,
+                additional_context: materialized.additional_context,
+            }
         }
         engine::ToolBatchSuspension::JoinedWorkflowCalls { .. } => {
-            engine::ToolBatchResumeOutput::JoinedWorkflowCalls
+            let additional_context = if has_resolved_payload {
+                ctx.start_activity(
+                    WorkflowActivities::prepare_joined_context,
+                    JoinedContextPreparationRequest { results },
+                    activity_options(),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("{error}"))?
+            } else {
+                Vec::new()
+            };
+            engine::ToolBatchResumeOutput::JoinedWorkflowCalls { additional_context }
         }
     };
     let command = engine::ResumeToolBatchCommand {

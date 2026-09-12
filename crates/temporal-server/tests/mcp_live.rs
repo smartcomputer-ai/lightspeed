@@ -48,6 +48,10 @@ use tokio::sync::Mutex;
 use tools::concurrency::{AWAIT_TOOL_NAME, SLEEP_TOOL_NAME};
 
 const LARGE_TOOL_COUNT: usize = 45;
+/// The binary assets the `rich` fixture tool returns; the model must see
+/// both as media named by their handles.
+const RICH_PNG_BYTES: &[u8] = b"\x89PNG\r\n\x1a\nrich-fixture-png";
+const RICH_PDF_BYTES: &[u8] = b"%PDF-1.4 rich-fixture-pdf";
 const LARGE_PAGE_SIZE: usize = 15;
 
 #[tokio::test(flavor = "current_thread")]
@@ -148,11 +152,62 @@ impl CoreAgentLlm for MatrixScriptedLlm {
             }
             "matrix_inject_rich" => {
                 require_contains(&result, "rich-text", &call_id)?;
+                // The image and the PDF the tool returned are announced by
+                // position and handle, and follow the result as media
+                // entries the model can see; the audio clip is dropped with
+                // a note.
+                let png_handle =
+                    engine::media::media_handle(&engine::BlobRef::from_bytes(RICH_PNG_BYTES));
+                let pdf_handle =
+                    engine::media::media_handle(&engine::BlobRef::from_bytes(RICH_PDF_BYTES));
                 require_contains(
                     &result,
-                    "[MCP image content stored as structured output]",
+                    &format!("[image 1 · {png_handle} · image/png"),
                     &call_id,
                 )?;
+                require_contains(
+                    &result,
+                    &format!("[document 1 · {pdf_handle} · application/pdf · brief.pdf"),
+                    &call_id,
+                )?;
+                require_contains(
+                    &result,
+                    "[audio 1 omitted: audio/wav is not supported]",
+                    &call_id,
+                )?;
+                let media = request
+                    .request
+                    .context
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        matches!(entry.source, engine::ContextEntrySource::Tool { .. })
+                            && engine::media::is_media_content(&entry.content)
+                    })
+                    .map(|entry| {
+                        (
+                            engine::media::media_handle(&entry.content.content_ref),
+                            entry.content.media_type.clone().unwrap_or_default(),
+                            entry.preview.clone().unwrap_or_default(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                if media
+                    != vec![
+                        (png_handle, "image/png".to_owned(), "[image]".to_owned()),
+                        (
+                            pdf_handle,
+                            "application/pdf".to_owned(),
+                            "[document: brief.pdf]".to_owned(),
+                        ),
+                    ]
+                {
+                    return Err(CoreAgentIoError::Failed {
+                        message: format!(
+                            "unexpected media entries after the rich result: {media:?}"
+                        ),
+                    });
+                }
                 self.tool_call(
                     &request,
                     "mcp_find_tools",
@@ -501,6 +556,40 @@ async fn run_matrix_client(
         final_assistant_text(&terminal),
         Some("native MCP matrix complete")
     );
+    // The run view attaches the media the rich call handed the model to that
+    // call, by handle, and the session's context carries the entries with
+    // their handles for clients to resolve `media:` links against.
+    let rich_call = terminal
+        .tool_batches
+        .iter()
+        .flat_map(|batch| batch.calls.iter())
+        .find(|call| call.call_id == "matrix_inject_rich")
+        .expect("rich call in run view");
+    let png_handle = engine::media::media_handle(&engine::BlobRef::from_bytes(RICH_PNG_BYTES));
+    let pdf_handle = engine::media::media_handle(&engine::BlobRef::from_bytes(RICH_PDF_BYTES));
+    assert_eq!(
+        rich_call
+            .media
+            .iter()
+            .map(|item| (item.handle.clone(), item.mime.clone(), item.name.clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            (png_handle.clone(), "image/png".to_owned(), None),
+            (
+                pdf_handle.clone(),
+                "application/pdf".to_owned(),
+                Some("brief.pdf".to_owned())
+            ),
+        ]
+    );
+    let session_view = read_session_view(&api, &session_id).await?;
+    let handles = session_view
+        .active_context
+        .entries
+        .iter()
+        .filter_map(|entry| entry.content.media_handle.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(handles, vec![png_handle, pdf_handle]);
 
     for server_id in [&ids.small, &ids.large, &ids.selected] {
         api.delete_mcp_server(McpServerDeleteParams {
@@ -852,13 +941,23 @@ async fn fixture_tool_call(
         ("small", "echo") => json!({
             "content": [{"type": "text", "text": format!("small-echo:{value}")}]
         }),
-        ("small", "rich") => json!({
-            "content": [
-                {"type": "text", "text": "rich-text"},
-                {"type": "image", "data": "aGVsbG8=", "mimeType": "image/png"}
-            ],
-            "structuredContent": {"kind": "rich", "count": 1}
-        }),
+        ("small", "rich") => {
+            use base64::Engine as _;
+            let b64 = base64::engine::general_purpose::STANDARD;
+            json!({
+                "content": [
+                    {"type": "text", "text": "rich-text"},
+                    {"type": "image", "data": b64.encode(RICH_PNG_BYTES), "mimeType": "image/png"},
+                    {"type": "audio", "data": b64.encode(b"RIFF"), "mimeType": "audio/wav"},
+                    {"type": "resource", "resource": {
+                        "uri": "fixture://docs/brief.pdf",
+                        "mimeType": "application/pdf",
+                        "blob": b64.encode(RICH_PDF_BYTES)
+                    }}
+                ],
+                "structuredContent": {"kind": "rich", "count": 1}
+            })
+        }
         ("large", name) if name.starts_with("catalog_tool_") => json!({
             "content": [{
                 "type": "text",

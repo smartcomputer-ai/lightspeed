@@ -1345,6 +1345,7 @@ mod tests {
                 content_ref: "sha256:entry".to_owned(),
                 media_type: None,
                 provider_kind: None,
+                media_handle: None,
             },
             origin: None,
             provenance_ref: None,

@@ -1,4 +1,6 @@
-import { createContext, useContext, useEffect, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
+import { useContext, useEffect, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
+import { MediaStrip } from "@/components/session/media";
+import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/transcript-links";
 import {
   Brain,
   Check,
@@ -42,15 +44,7 @@ import { cn } from "@/lib/utils";
 /// Success costs no ink; only running, waiting, failed and cancelled rows
 /// carry a mark. Clicking a row opens its details beneath it.
 
-/// Links the transcript cannot derive on its own: bot display names for
-/// Emit rows and where a sub-agent's child session opens.
-export interface TranscriptLinks {
-  botName?: (botId: string) => string | undefined;
-  sessionHref?: (sessionId: string) => string;
-  navigate?: (href: string) => void;
-}
-
-export const TranscriptLinksContext = createContext<TranscriptLinks>({});
+export { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/transcript-links";
 
 type IconComponent = ComponentType<SVGProps<SVGSVGElement> & { className?: string }>;
 
@@ -413,6 +407,7 @@ function ToolCallDetail({
 
   return (
     <div className="mb-1.5 min-w-0 max-w-full space-y-1.5 pl-[1.875rem] pr-2">
+      {call.media?.length ? <MediaStrip items={call.media} className="pt-1" /> : null}
       {input || output || effects ? (
         <Tabs defaultValue={defaultTab} className="min-w-0 max-w-full gap-1.5">
           <TabsList variant="line" className="h-6 text-xs">

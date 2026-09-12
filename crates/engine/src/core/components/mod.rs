@@ -57,10 +57,10 @@ pub use promise::{
 };
 pub use run::{
     AcceptedRun, AcceptedRunEvent, ActiveRun, AwaitMode, AwaitSpec, JoinedWorkflowCall,
-    ParkedToolBatch, ResumeToolBatchCommand, RunEvent, RunFailure, RunFailureKind, RunQueueState,
-    RunRecord, RunRequestCommand, RunRequestSource, RunSource, RunStatus, RunTerminalNotifyIntent,
-    SteeringBatch, ToolBatchResumeOutput, ToolBatchSuspension, WakeReason,
-    request_run_submission_digest,
+    ParkedToolBatch, PromiseContextEntries, ResumeToolBatchCommand, RunEvent, RunFailure,
+    RunFailureKind, RunQueueState, RunRecord, RunRequestCommand, RunRequestSource, RunSource,
+    RunStatus, RunTerminalNotifyIntent, SteeringBatch, ToolBatchResumeOutput, ToolBatchSuspension,
+    WakeReason, request_run_submission_digest,
 };
 pub use state::*;
 pub use tooling::{

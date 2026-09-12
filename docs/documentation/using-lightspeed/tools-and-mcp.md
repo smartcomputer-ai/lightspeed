@@ -137,6 +137,36 @@ Private-network permission for an OAuth sign-in is separate and does not
 authorize tool-call egress. See the
 [environment-variable reference](../reference/environment-variables.md) for operator settings.
 
+## See images and documents from tools
+
+Tools can show the model images and PDF documents, not only text. An MCP
+server whose result carries `image` blocks or embedded PDF resources, and a
+`read_file` (or **Read**) of a PNG, JPEG, GIF, WebP, or PDF file in a
+workspace or environment, hand the bytes to the model as provider-native
+media on every supported API: Anthropic Messages, OpenAI Responses, and
+OpenAI Chat Completions. Nothing is converted or resized. Audio, video, and
+other types are dropped with a note in the tool result, as is any asset over
+10 MB or beyond eight per result, so a wrong tool call or an accidental read
+of a binary file never fails the run. A text-only model such as DeepSeek
+receives a note in place of the media instead of an error.
+
+Every media item is named by a **handle**: `media:` followed by the first
+twelve characters of its content hash, for example `media:3f9a2c1d4e7b`. The
+tool result announces each item by position and handle
+(`[image 1 · media:3f9a2c1d4e7b · image/png · 38 KiB]`), and the model
+refers to media the same way, writing `![caption](media:3f9a2c1d4e7b)` or
+`[report](media:9b21e04c77a1)` in its answer. The transcript resolves those
+links against the session's media and renders the image or a document link
+in place; a handle the session never saw shows as a broken reference. A
+sub-agent hands an image or document up to its parent by linking it in its
+final answer the same way.
+
+One provider caveat: Claude Opus 5's refusal classifier rejects some
+tool-produced media follow-ups, reliably a PDF that arrives after a tool
+round-trip, and a refusal fails the turn. Other Claude models and both OpenAI
+APIs read the same content; choose one of them for sessions whose tools
+return documents.
+
 ## Require approval for tool calls
 
 The server's **Advanced options → Tool approval** defaults to **Never require

@@ -16,8 +16,8 @@ use api::{
     RunStatus as ApiRunStatus, RunSummarySourceView, RunSummaryView, RunView, RunViewSource,
     SessionEventKindView, SessionEventView, SessionManagementView, SessionRetentionView,
     SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView, TokenEstimateView,
-    ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView, ToolCallView,
-    ToolEffectView, ToolItemStatus, ToolKindView, ToolParallelismView, ToolView,
+    ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView, ToolCallMediaView,
+    ToolCallView, ToolEffectView, ToolItemStatus, ToolKindView, ToolParallelismView, ToolView,
     WorkflowEndpointInput, WorkflowStartRefInput, WorkflowToolCompletionInput,
     WorkflowToolCompletionKeySourceInput, WorkflowToolDeclarationInput,
     WorkflowToolDefinitionInput, WorkflowToolKindInput, WorkflowToolSpecInput,
@@ -1169,6 +1169,9 @@ impl<'a> CoreAgentProjector<'a> {
                             started_at_ms: None,
                             completed_at_ms: None,
                             duration_ms: None,
+                            media: result
+                                .map(|result| result.media.clone())
+                                .unwrap_or_default(),
                         })
                     }))
                     .await?;
@@ -1253,14 +1256,40 @@ impl<'a> CoreAgentProjector<'a> {
         Ok(batches)
     }
 
+    /// Tool results keyed by call, each with the media entries the tool
+    /// appended after it: the user-role media messages that follow a tool
+    /// result entry, in order, until the next non-media entry.
     async fn project_tool_results_for_run(
         &self,
         context_entries: &[&ContextEntry],
     ) -> Result<BTreeMap<String, ProjectedToolResult>, AgentApiError> {
+        let mut media_by_call: BTreeMap<String, Vec<ToolCallMediaView>> = BTreeMap::new();
+        let mut current_call: Option<String> = None;
+        for item in context_entries {
+            match &item.kind {
+                ContextEntryKind::ToolResult { call_id, .. } => {
+                    current_call = Some(call_id.as_str().to_owned());
+                }
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                } if matches!(item.source, ContextEntrySource::Tool { .. })
+                    && engine::media::is_media_content(&item.content) =>
+                {
+                    if let Some(call_id) = &current_call {
+                        media_by_call
+                            .entry(call_id.clone())
+                            .or_default()
+                            .push(tool_call_media_view(item));
+                    }
+                }
+                _ => current_call = None,
+            }
+        }
         let projected = try_join_all(context_entries.iter().filter_map(|item| {
             let ContextEntryKind::ToolResult { call_id, is_error } = &item.kind else {
                 return None;
             };
+            let media = media_by_call.remove(call_id.as_str()).unwrap_or_default();
             Some(async move {
                 Ok((
                     call_id.as_str().to_owned(),
@@ -1275,6 +1304,7 @@ impl<'a> CoreAgentProjector<'a> {
                         } else {
                             ToolItemStatus::Succeeded
                         },
+                        media,
                     },
                 ))
             })
@@ -1606,6 +1636,18 @@ struct ProjectedToolResult {
     output: Option<String>,
     is_error: bool,
     status: ToolItemStatus,
+    media: Vec<ToolCallMediaView>,
+}
+
+fn tool_call_media_view(entry: &ContextEntry) -> ToolCallMediaView {
+    let mime = entry.content.media_type.clone().unwrap_or_default();
+    ToolCallMediaView {
+        handle: engine::media::media_handle(&entry.content.content_ref),
+        blob_ref: entry.content.content_ref.as_str().to_owned(),
+        kind: media_kind_for_mime(&mime),
+        mime,
+        name: engine::media::media_preview_name(entry.preview.as_deref()),
+    }
 }
 
 pub struct CoreAgentProjection<'a> {
@@ -3100,6 +3142,7 @@ mod tests {
             started_at_ms: None,
             completed_at_ms: None,
             duration_ms: None,
+            media: Vec::new(),
         }
     }
 
@@ -3846,7 +3889,8 @@ mod tests {
                     .as_str()
                     .to_owned(),
                     media_type: Some("application/json".to_owned()),
-                    provider_kind: Some("openai.responses.compaction".to_owned())
+                    provider_kind: Some("openai.responses.compaction".to_owned()),
+                    media_handle: None,
                 },
                 origin: None,
                 provenance_ref: None,
@@ -3915,7 +3959,8 @@ mod tests {
                 content: api::ContentRefView {
                     content_ref: content_ref.as_str().to_owned(),
                     media_type: Some("application/json".to_owned()),
-                    provider_kind: Some(OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND.to_owned())
+                    provider_kind: Some(OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND.to_owned()),
+                    media_handle: None,
                 },
                 origin: None,
                 provenance_ref: None,
@@ -4494,6 +4539,75 @@ mod tests {
                 entries,
             }),
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tool_media_entries_project_onto_their_call_with_handles() {
+        let blobs = InMemoryBlobStore::new();
+        let projector = crate::CoreAgentProjector::new(&blobs);
+        let tool_source = ContextEntrySource::Tool {
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            batch_id: Some(ToolBatchId::new(1)),
+        };
+        let result_ref = blobs.put_bytes(b"[image 1 ...]".to_vec()).await.unwrap();
+        let png_ref = blobs.put_bytes(b"png".to_vec()).await.unwrap();
+        let pdf_ref = blobs.put_bytes(b"%PDF".to_vec()).await.unwrap();
+        let mut result = context_entry(1, tool_source.clone());
+        result.kind = ContextEntryKind::ToolResult {
+            call_id: engine::ToolCallId::new("call_1"),
+            is_error: false,
+        };
+        result.content = engine::ContentRef::text(result_ref);
+        let mut image = context_entry(2, tool_source.clone());
+        image.content = engine::ContentRef {
+            content_ref: png_ref.clone(),
+            media_type: Some("image/png".into()),
+            provider_kind: None,
+        };
+        image.preview = Some("[image]".into());
+        let mut pdf = context_entry(3, tool_source.clone());
+        pdf.content = engine::ContentRef {
+            content_ref: pdf_ref.clone(),
+            media_type: Some("application/pdf".into()),
+            provider_kind: None,
+        };
+        pdf.preview = Some("[document: report.pdf]".into());
+        let mut unrelated = context_entry(
+            4,
+            ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+        );
+        unrelated.content = engine::ContentRef {
+            content_ref: png_ref.clone(),
+            media_type: Some("image/png".into()),
+            provider_kind: None,
+        };
+        let entries = [&result, &image, &pdf, &unrelated];
+
+        let projected = projector
+            .project_tool_results_for_run(&entries)
+            .await
+            .expect("project");
+        let call = projected.get("call_1").expect("call result");
+        assert_eq!(
+            call.media.len(),
+            2,
+            "run-input media never attaches to a call"
+        );
+        assert_eq!(call.media[0].handle, engine::media::media_handle(&png_ref));
+        assert_eq!(call.media[0].kind, MediaKind::Image);
+        assert_eq!(call.media[0].name, None);
+        assert_eq!(call.media[1].mime, "application/pdf");
+        assert_eq!(call.media[1].kind, MediaKind::Document);
+        assert_eq!(call.media[1].name.as_deref(), Some("report.pdf"));
+        assert_eq!(
+            content_ref_to_api(&image.content).media_handle,
+            Some(engine::media::media_handle(&png_ref))
+        );
+        assert_eq!(content_ref_to_api(&result.content).media_handle, None);
     }
 
     fn context_entry(id: u64, source: ContextEntrySource) -> ContextEntry {

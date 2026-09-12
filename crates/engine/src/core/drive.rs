@@ -1245,12 +1245,19 @@ pub fn resume_tool_batch_proposals(
     let result = match (&parked.suspension, command.output) {
         (
             ToolBatchSuspension::AwaitTool { .. },
-            ToolBatchResumeOutput::AwaitTool { result_ref },
-        ) => await_resume_result(state, result_ref)?,
+            ToolBatchResumeOutput::AwaitTool {
+                result_ref,
+                additional_context,
+            },
+        ) => await_resume_result(state, result_ref, additional_context)?,
         (
             ToolBatchSuspension::JoinedWorkflowCalls { .. },
-            ToolBatchResumeOutput::JoinedWorkflowCalls,
-        ) => joined_workflow_resume_result(state, command.claim == WakeReason::Cancelled)?,
+            ToolBatchResumeOutput::JoinedWorkflowCalls { additional_context },
+        ) => joined_workflow_resume_result(
+            state,
+            command.claim == WakeReason::Cancelled,
+            &additional_context,
+        )?,
         _ => {
             return Err(DomainError::InvariantViolation(
                 "tool batch resume output does not match the parked suspension".to_owned(),
@@ -1366,10 +1373,34 @@ fn validate_await_spec_for_active_run(
     Ok(())
 }
 
+/// Supplemental entries ride beside a tool result; they may only be
+/// user-role messages, never results or calls of their own.
+fn validate_supplemental_entries(
+    entries: &[ContextEntryInput],
+    what: &dyn std::fmt::Display,
+) -> Result<(), DomainError> {
+    for entry in entries {
+        if !matches!(
+            entry.kind,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User
+            }
+        ) {
+            return Err(DomainError::InvariantViolation(format!(
+                "{what} supplemental entries must be user messages, got {:?}",
+                entry.kind
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn await_resume_result(
     state: &CoreAgentState,
     result_ref: BlobRef,
+    additional_context: Vec<ContextEntryInput>,
 ) -> Result<ToolInvocationBatchResult, DomainError> {
+    validate_supplemental_entries(&additional_context, &"await")?;
     let active_run = state
         .runs
         .active
@@ -1389,11 +1420,14 @@ fn await_resume_result(
         .ok_or_else(|| {
             DomainError::InvariantViolation(format!("tool batch {} is missing", parked.batch_id))
         })?;
-    let model_visible_context_entries = vec![ToolInvocationResult::tool_result_context_entry(
+    // The combined await result first, then whatever the awaited results
+    // supplied, in the order the runtime prepared it.
+    let mut model_visible_context_entries = vec![ToolInvocationResult::tool_result_context_entry(
         call_id,
         ToolCallStatus::Succeeded,
         result_ref.clone(),
     )];
+    model_visible_context_entries.extend(additional_context);
     Ok(ToolInvocationBatchResult {
         run_id: active_run.run_id,
         turn_id: batch.turn_id,
@@ -1415,6 +1449,7 @@ fn await_resume_result(
 fn joined_workflow_resume_result(
     state: &CoreAgentState,
     cancel_pending: bool,
+    additional_context: &[crate::PromiseContextEntries],
 ) -> Result<ToolInvocationBatchResult, DomainError> {
     let active_run = state
         .runs
@@ -1435,6 +1470,18 @@ fn joined_workflow_resume_result(
         .ok_or_else(|| {
             DomainError::InvariantViolation(format!("tool batch {} is missing", parked.batch_id))
         })?;
+    for supplement in additional_context {
+        if !calls
+            .iter()
+            .any(|joined| joined.promise_id == supplement.promise_id)
+        {
+            return Err(DomainError::InvariantViolation(format!(
+                "supplemental entries name promise {}, which no joined call of this batch owns",
+                supplement.promise_id
+            )));
+        }
+        validate_supplemental_entries(&supplement.entries, &supplement.promise_id)?;
+    }
     let mut results = Vec::with_capacity(calls.len());
     for joined in calls {
         let promise = state
@@ -1497,6 +1544,20 @@ fn joined_workflow_resume_result(
             }
             PromiseStatus::Pending => unreachable!("terminality was checked above"),
         };
+        let mut model_visible_context_entries =
+            vec![ToolInvocationResult::tool_result_context_entry(
+                &joined.call_id,
+                status,
+                content_ref,
+            )];
+        if status == ToolCallStatus::Succeeded {
+            model_visible_context_entries.extend(
+                additional_context
+                    .iter()
+                    .filter(|item| item.promise_id == joined.promise_id)
+                    .flat_map(|item| item.entries.iter().cloned()),
+            );
+        }
         results.push(ToolInvocationResult {
             duration_ms: None,
             output_bytes: None,
@@ -1504,11 +1565,7 @@ fn joined_workflow_resume_result(
             call_id: joined.call_id.clone(),
             status,
             output_ref,
-            model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
-                &joined.call_id,
-                status,
-                content_ref,
-            )],
+            model_visible_context_entries,
             error_ref,
             effects: Vec::new(),
         });
@@ -2614,6 +2671,7 @@ mod tests {
             claim_observed_at_ms: 91,
             output: ToolBatchResumeOutput::AwaitTool {
                 result_ref: BlobRef::from_bytes(b"await output"),
+                additional_context: Vec::new(),
             },
         })
     }
@@ -6564,7 +6622,7 @@ mod tests {
             promise.status = promise_status;
             promise.error_ref = (promise_status == PromiseStatus::Failed)
                 .then(|| BlobRef::from_bytes(b"reply failed"));
-            let resumed = joined_workflow_resume_result(&terminal_state, false)
+            let resumed = joined_workflow_resume_result(&terminal_state, false, &[])
                 .expect("map terminal Joined Promise");
             assert_eq!(resumed.results[0].call_id, call.call_id);
             assert_eq!(resumed.results[0].status, expected_call_status);
@@ -6583,7 +6641,9 @@ mod tests {
                 batch_id: request.batch_id,
                 claim: WakeReason::Cancelled,
                 claim_observed_at_ms: 100,
-                output: ToolBatchResumeOutput::JoinedWorkflowCalls,
+                output: ToolBatchResumeOutput::JoinedWorkflowCalls {
+                    additional_context: Vec::new(),
+                },
             },
             100,
         )
@@ -6613,6 +6673,13 @@ mod tests {
         commit_action(&mut drive, resolved);
         assert_eq!(await_wake(drive.state(), 100), Some(WakeReason::Terminal));
 
+        // The payload named one image; it follows the result as a media entry.
+        let handed_over = crate::media::MediaDescriptor::new(
+            BlobRef::from_bytes(b"png bytes"),
+            "image/png",
+            Some("render.png"),
+        )
+        .expect("admitted descriptor");
         let resumed = drive
             .admit_command(
                 CoreAgentCommand::ResumeToolBatch(ResumeToolBatchCommand {
@@ -6620,7 +6687,12 @@ mod tests {
                     batch_id: request.batch_id,
                     claim: WakeReason::Terminal,
                     claim_observed_at_ms: 100,
-                    output: ToolBatchResumeOutput::JoinedWorkflowCalls,
+                    output: ToolBatchResumeOutput::JoinedWorkflowCalls {
+                        additional_context: vec![crate::PromiseContextEntries {
+                            promise_id: promise_id.clone(),
+                            entries: vec![handed_over.context_entry()],
+                        }],
+                    },
                 }),
                 100,
             )
@@ -6637,6 +6709,16 @@ mod tests {
         assert_eq!(result.call_id, call.call_id);
         assert_eq!(result.status, ToolCallStatus::Succeeded);
         assert_eq!(result.output_ref.as_ref(), Some(&payload_ref));
+        assert_eq!(result.model_visible_context_entries.len(), 2);
+        let media_entry = &result.model_visible_context_entries[1];
+        assert!(matches!(
+            media_entry.kind,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User
+            }
+        ));
+        assert_eq!(media_entry.content, handed_over.context_entry().content);
+        assert_eq!(media_entry.preview.as_deref(), Some("[image: render.png]"));
         assert!(
             drive
                 .state()
@@ -6866,7 +6948,9 @@ mod tests {
                     batch_id: request.batch_id,
                     claim: WakeReason::Terminal,
                     claim_observed_at_ms: 100,
-                    output: ToolBatchResumeOutput::JoinedWorkflowCalls,
+                    output: ToolBatchResumeOutput::JoinedWorkflowCalls {
+                        additional_context: Vec::new(),
+                    },
                 }),
                 100,
             )

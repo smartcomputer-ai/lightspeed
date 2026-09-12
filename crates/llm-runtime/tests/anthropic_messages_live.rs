@@ -1338,3 +1338,89 @@ fn dumps(execution: &llm_runtime::LlmGenerationExecution) -> &llm_runtime::LlmDe
         .as_ref()
         .expect("live adapters are built with debug dumps enabled")
 }
+
+/// A tool result that hands the model an image as a media entry: the model
+/// must see it and name it by the handle the tool result announced.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_sees_tool_image() {
+    tool_media_round_trip(live_model(), support::tool_media::ToolMediaSet::SingleImage).await;
+}
+
+/// Two images and a PDF from one tool result. Claude Opus 5's refusal
+/// classifier (`reasoning_extraction`) rejects some tool-media follow-ups,
+/// reliably so when a PDF arrives after a tool round-trip, while the other
+/// Claude models read them, so this runs on Sonnet 5 by default;
+/// `ANTHROPIC_TOOL_MEDIA_MODEL` overrides.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_sees_tool_media() {
+    let model = env_or_dotenv_var("ANTHROPIC_TOOL_MEDIA_MODEL")
+        .unwrap_or_else(|_| "claude-sonnet-5".to_owned());
+    tool_media_round_trip(model, support::tool_media::ToolMediaSet::ImagesAndPdf).await;
+}
+
+async fn tool_media_round_trip(model: String, set: support::tool_media::ToolMediaSet) {
+    use support::tool_media::{
+        assert_tool_media_answer, assistant_entry, retained, tool_media_entries_for,
+        view_images_tool_spec,
+    };
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let input_ref = text_blob(&blobs, set.prompt()).await;
+    let tool = view_images_tool_spec(&blobs).await;
+    let adapter = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_debug_dumps(true);
+
+    let mut request = intent_request(
+        "live-anthropic-messages-tool-media",
+        vec![user_entry(1, input_ref.clone())],
+    );
+    request.model.model = model.clone();
+    request.tools = vec![tool.clone()];
+    request.tool_choice = Some(ToolChoice::RequiredAny);
+    request.parallel_tool_use = Some(false);
+    let execution = adapter
+        .generate(generation_request(1, request))
+        .await
+        .expect("generate tool call");
+    assert_eq!(execution.result.facts.finish, LlmFinish::ToolCalls);
+    let tool_call = execution
+        .result
+        .facts
+        .tool_calls
+        .first()
+        .expect("observed tool call");
+    assert_eq!(tool_call.tool_name, ToolName::new("view_images"));
+
+    let mut entries = vec![user_entry(1, input_ref)];
+    entries.extend(retained(2, &execution.result.context_entries));
+    let fixture = tool_media_entries_for(
+        &blobs,
+        tool_call.call_id.clone(),
+        entries.len() as u64 + 1,
+        set,
+    )
+    .await;
+    entries.extend(fixture.entries.clone());
+
+    let mut followup = intent_request("live-anthropic-messages-tool-media-followup", entries);
+    followup.model.model = model;
+    followup.tools = vec![tool];
+    let followup_execution = adapter
+        .generate(generation_request(2, followup))
+        .await
+        .expect("generate final answer");
+    if followup_execution.result.status != LlmGenerationStatus::Succeeded {
+        let failure = match &followup_execution.result.failure_ref {
+            Some(failure_ref) => blobs.read_text(failure_ref).await.unwrap_or_default(),
+            None => String::new(),
+        };
+        panic!("follow-up generation failed: {failure}");
+    }
+    let final_text =
+        support::content_text(blobs.as_ref(), &assistant_entry(&followup_execution)).await;
+    assert_tool_media_answer(&final_text, &fixture);
+}

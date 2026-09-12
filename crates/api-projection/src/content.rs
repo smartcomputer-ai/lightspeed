@@ -8,6 +8,8 @@ pub fn content_ref_to_api(content: &ContentRef) -> ContentRefView {
         content_ref: content.content_ref.as_str().to_owned(),
         media_type: content.media_type.clone(),
         provider_kind: content.provider_kind.clone(),
+        media_handle: engine::media::is_media_content(content)
+            .then(|| engine::media::media_handle(&content.content_ref)),
     }
 }
 

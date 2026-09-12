@@ -2,6 +2,8 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 #[allow(dead_code)]
 pub mod caching;
+#[allow(dead_code)]
+pub mod tool_media;
 
 use async_trait::async_trait;
 use engine::{ProviderApiKind, ProviderParams};
