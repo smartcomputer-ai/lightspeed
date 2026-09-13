@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use engine::{
-    BlobRef, WorkspaceLink, WorkspaceLinkAccess, WorkspaceLinkTarget, storage::BlobStore,
+    BlobRef, WorkspaceAccess, WorkspaceAttachment, WorkspaceAttachmentTarget, storage::BlobStore,
 };
 
 use crate::{
@@ -9,17 +9,17 @@ use crate::{
     read_snapshot_manifest,
 };
 
-/// A session workspace link resolved against one coherent catalog view.
+/// A session workspace attachment resolved against one coherent catalog view.
 /// This value is transient and must never be persisted as session authority.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResolvedWorkspaceLink {
+pub struct ResolvedWorkspaceAttachment {
     pub path: VfsPath,
-    pub target: ResolvedWorkspaceLinkTarget,
-    pub access: WorkspaceLinkAccess,
+    pub target: ResolvedWorkspaceAttachmentTarget,
+    pub access: WorkspaceAccess,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ResolvedWorkspaceLinkTarget {
+pub enum ResolvedWorkspaceAttachmentTarget {
     AvailableSnapshot {
         snapshot_ref: BlobRef,
     },
@@ -27,61 +27,68 @@ pub enum ResolvedWorkspaceLinkTarget {
         workspace: VfsWorkspaceRecord,
     },
     Unavailable {
-        declared_target: WorkspaceLinkTarget,
+        declared_target: WorkspaceAttachmentTarget,
         reason: String,
     },
 }
 
-impl ResolvedWorkspaceLink {
+impl ResolvedWorkspaceAttachment {
     pub fn is_available(&self) -> bool {
-        !matches!(self.target, ResolvedWorkspaceLinkTarget::Unavailable { .. })
+        !matches!(
+            self.target,
+            ResolvedWorkspaceAttachmentTarget::Unavailable { .. }
+        )
     }
 
     pub fn unavailable_reason(&self) -> Option<&str> {
         match &self.target {
-            ResolvedWorkspaceLinkTarget::Unavailable { reason, .. } => Some(reason),
+            ResolvedWorkspaceAttachmentTarget::Unavailable { reason, .. } => Some(reason),
             _ => None,
         }
     }
 
     pub fn is_writable(&self) -> bool {
-        self.access == WorkspaceLinkAccess::ReadWrite
+        self.access == WorkspaceAccess::Edit
     }
 }
 
 /// Resolve declarations without turning missing catalog resources into a
 /// global failure. Invalid durable identifiers remain request errors; missing
-/// or unreadable targets become per-link unavailable projections.
-pub async fn resolve_workspace_links(
+/// or unreadable targets become per-attachment unavailable projections.
+pub async fn resolve_workspace_attachments(
     blobs: Arc<dyn BlobStore>,
     workspace_store: Arc<dyn VfsWorkspaceStore>,
-    links: &[WorkspaceLink],
-) -> Result<Vec<ResolvedWorkspaceLink>, VfsCatalogError> {
-    let mut resolved = Vec::with_capacity(links.len());
-    for link in links {
-        let path = VfsPath::parse(&link.path).map_err(|error| VfsCatalogError::InvalidInput {
-            message: format!("invalid workspace link path {:?}: {error}", link.path),
-        })?;
-        let target = match &link.target {
-            WorkspaceLinkTarget::Snapshot { snapshot_ref } => {
+    attachments: &[WorkspaceAttachment],
+) -> Result<Vec<ResolvedWorkspaceAttachment>, VfsCatalogError> {
+    let mut resolved = Vec::with_capacity(attachments.len());
+    for attachment in attachments {
+        let path =
+            VfsPath::parse(&attachment.path).map_err(|error| VfsCatalogError::InvalidInput {
+                message: format!(
+                    "invalid workspace attachment path {:?}: {error}",
+                    attachment.path
+                ),
+            })?;
+        let target = match &attachment.target {
+            WorkspaceAttachmentTarget::Snapshot { snapshot_ref } => {
                 let snapshot_ref = BlobRef::parse(snapshot_ref.clone()).map_err(|error| {
                     VfsCatalogError::InvalidInput {
-                        message: format!("invalid workspace link snapshot ref: {error}"),
+                        message: format!("invalid workspace attachment snapshot ref: {error}"),
                     }
                 })?;
                 match read_snapshot_manifest(blobs.as_ref(), &snapshot_ref).await {
-                    Ok(_) => ResolvedWorkspaceLinkTarget::AvailableSnapshot { snapshot_ref },
-                    Err(error) => ResolvedWorkspaceLinkTarget::Unavailable {
-                        declared_target: link.target.clone(),
+                    Ok(_) => ResolvedWorkspaceAttachmentTarget::AvailableSnapshot { snapshot_ref },
+                    Err(error) => ResolvedWorkspaceAttachmentTarget::Unavailable {
+                        declared_target: attachment.target.clone(),
                         reason: error.to_string(),
                     },
                 }
             }
-            WorkspaceLinkTarget::Workspace { workspace_id } => {
+            WorkspaceAttachmentTarget::Workspace { workspace_id } => {
                 let workspace_id =
                     VfsWorkspaceId::try_new(workspace_id.clone()).map_err(|error| {
                         VfsCatalogError::InvalidInput {
-                            message: format!("invalid workspace link workspace id: {error}"),
+                            message: format!("invalid workspace attachment workspace id: {error}"),
                         }
                     })?;
                 match workspace_store.read_workspace(&workspace_id).await {
@@ -89,24 +96,26 @@ pub async fn resolve_workspace_links(
                         match read_snapshot_manifest(blobs.as_ref(), &workspace.head_snapshot_ref)
                             .await
                         {
-                            Ok(_) => ResolvedWorkspaceLinkTarget::AvailableWorkspace { workspace },
-                            Err(error) => ResolvedWorkspaceLinkTarget::Unavailable {
-                                declared_target: link.target.clone(),
+                            Ok(_) => {
+                                ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace }
+                            }
+                            Err(error) => ResolvedWorkspaceAttachmentTarget::Unavailable {
+                                declared_target: attachment.target.clone(),
                                 reason: error.to_string(),
                             },
                         }
                     }
-                    Err(error) => ResolvedWorkspaceLinkTarget::Unavailable {
-                        declared_target: link.target.clone(),
+                    Err(error) => ResolvedWorkspaceAttachmentTarget::Unavailable {
+                        declared_target: attachment.target.clone(),
                         reason: error.to_string(),
                     },
                 }
             }
         };
-        resolved.push(ResolvedWorkspaceLink {
+        resolved.push(ResolvedWorkspaceAttachment {
             path,
             target,
-            access: link.access,
+            access: attachment.access,
         });
     }
     Ok(resolved)
@@ -218,15 +227,15 @@ mod tests {
             })
             .await
             .unwrap();
-        let declaration = WorkspaceLink {
+        let declaration = WorkspaceAttachment {
             path: "/workspace".to_owned(),
-            target: WorkspaceLinkTarget::Workspace {
+            target: WorkspaceAttachmentTarget::Workspace {
                 workspace_id: workspace_id.to_string(),
             },
-            access: WorkspaceLinkAccess::ReadWrite,
+            access: WorkspaceAccess::Edit,
         };
 
-        let available = resolve_workspace_links(
+        let available = resolve_workspace_attachments(
             blobs.clone(),
             store.clone(),
             std::slice::from_ref(&declaration),
@@ -236,13 +245,14 @@ mod tests {
         assert!(available[0].is_available());
 
         store.delete_workspace(&workspace_id).await.unwrap();
-        let unavailable = resolve_workspace_links(blobs, store, std::slice::from_ref(&declaration))
-            .await
-            .unwrap();
+        let unavailable =
+            resolve_workspace_attachments(blobs, store, std::slice::from_ref(&declaration))
+                .await
+                .unwrap();
         assert!(!unavailable[0].is_available());
         assert_eq!(
             unavailable[0].target,
-            ResolvedWorkspaceLinkTarget::Unavailable {
+            ResolvedWorkspaceAttachmentTarget::Unavailable {
                 declared_target: declaration.target,
                 reason: format!("vfs catalog workspace not found: {workspace_id}"),
             }

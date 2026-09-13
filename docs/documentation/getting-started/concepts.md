@@ -64,7 +64,7 @@ mean sending the entire conversation to the model on every turn.
 ## A profile gives sessions a reusable setup
 
 A profile describes how to start an agent: its model, instructions,
-capabilities, limits, workspace links, and optional environment setup. The
+capabilities, limits, and the workspaces and environments it attaches. The
 incident response team could create an `incident-reviewer` profile that asks
 the agent to distinguish evidence from speculation and gives it access to a
 workspace for notes.
@@ -82,7 +82,7 @@ can converse with a model without any optional tool capabilities.
 
 A VFS workspace stores persistent files in Lightspeed's virtual filesystem.
 The incident reviewer can write notes there without an operating system
-attached. A session uses files through workspace links, and several sessions
+attached. A session uses files through workspace attachments, and several sessions
 can link to the same workspace. Those sessions still have separate
 conversations even though they can work with shared files.
 
@@ -104,7 +104,7 @@ machine lifecycle work.
 
 ```mermaid
 flowchart TB
-  Session["Incident reviewer session"] -->|Workspace link and VFS tools| Notes
+  Session["Incident reviewer session"] -->|Workspace attachment and VFS tools| Notes
   Session -->|Active environment and environment tools| Copy
   subgraph VFS["VFS workspace"]
     Notes["Incident report and notes"]

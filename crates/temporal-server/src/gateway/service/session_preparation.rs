@@ -21,14 +21,18 @@ impl SessionPreparationService {
         config.environment_selection = features
             .environments
             .as_ref()
-            .is_some_and(|environments| environments.selection_tools);
-        config.builtin = match features.vfs.as_ref().and_then(|vfs| vfs.tools) {
+            .is_some_and(|environments| environments.selection);
+        // Tool surfaces are the union of attachment grants: any attachment
+        // installs the read tools, any editing attachment the write tools.
+        config.builtin = match features.vfs.as_ref().and_then(|vfs| vfs.tool_access()) {
             None => tools::toolset::BuiltinToolsetConfig::disabled(),
-            Some(engine::VfsToolSurface::ReadOnly) => tools::toolset::BuiltinToolsetConfig {
+            Some(engine::WorkspaceAccess::Read) => tools::toolset::BuiltinToolsetConfig {
                 vfs: tools::toolset::FilesystemToolsetConfig::read_only(),
                 ..tools::toolset::BuiltinToolsetConfig::disabled()
             },
-            Some(engine::VfsToolSurface::Edit) => tools::toolset::BuiltinToolsetConfig::workspace(),
+            Some(engine::WorkspaceAccess::Edit) => {
+                tools::toolset::BuiltinToolsetConfig::workspace()
+            }
         };
         if let Some(web) = features.web.as_ref() {
             if let Some(search) = &web.search {
@@ -48,17 +52,17 @@ impl SessionPreparationService {
             config.concurrency = tools::concurrency::ConcurrencyToolsetConfig::timer();
         }
         if include_environment_tools && let Some(environment) = &features.environments {
-            config.builtin.environment.filesystem = match environment.tools {
+            let access = environment.tool_access();
+            config.builtin.environment.filesystem = match access {
                 None => tools::toolset::FilesystemToolsetConfig::disabled(),
-                Some(engine::EnvironmentToolSurface::ReadOnly) => {
-                    tools::toolset::FilesystemToolsetConfig::read_only()
-                }
-                Some(engine::EnvironmentToolSurface::Edit) => {
+                Some(access) if access.allows_edit() => {
                     tools::toolset::FilesystemToolsetConfig::workspace_edit()
                 }
+                Some(_) => tools::toolset::FilesystemToolsetConfig::read_only(),
             };
-            config.builtin.environment.run_process = environment.commands;
-            config.builtin.environment.continue_process = environment.commands;
+            let exec = access.is_some_and(|access| access.allows_exec());
+            config.builtin.environment.run_process = exec;
+            config.builtin.environment.continue_process = exec;
         }
         if include_job_read_tool {
             config.builtin.environment.job_read = true;
@@ -222,7 +226,8 @@ impl SessionPreparationService {
             .features
             .environments
             .as_ref()
-            .is_some_and(|e| e.jobs);
+            .and_then(|environments| environments.tool_access())
+            .is_some_and(|access| access.allows_jobs());
         let subagents = session_config.features.subagents.is_some();
         let mut declarations = Vec::new();
         if jobs {
@@ -317,16 +322,16 @@ impl SessionPreparationService {
             .validate()
             .map_err(|e| AgentApiError::invalid_request(e.to_string()))?;
         if let Some(vfs) = &config.features.vfs {
-            let links = vfs::resolve_workspace_links(
+            let links = vfs::resolve_workspace_attachments(
                 self.store.clone(),
                 self.store.clone(),
-                &vfs.workspace_links,
+                &vfs.workspaces,
             )
             .await
             .map_err(map_vfs_catalog_error)?;
             if let Some(link) = links.iter().find(|link| !link.is_available()) {
                 return Err(AgentApiError::invalid_request(format!(
-                    "workspace link target at {} is unavailable: {}",
+                    "workspace attachment target at {} is unavailable: {}",
                     link.path,
                     link.unavailable_reason().unwrap_or("unknown reason")
                 )));
@@ -385,70 +390,31 @@ impl SessionPreparationService {
                 },
             );
         }
+        // The fill candidate must be an attachment of the configuration being
+        // applied and selectable in the registry; whether it is applied is
+        // decided by the workflow against the live pointer.
         let environment_id = match request.environment {
             None => None,
-            Some(environment) => {
-                let feature = request
+            Some(environment_id) => {
+                let attached = request
                     .source
                     .config
                     .features
                     .environments
                     .as_ref()
-                    .ok_or_else(|| {
-                        AgentApiError::rejected(
-                            "profile environment requires features.environments",
-                        )
-                    })?;
-                let policy = ::environments::EnvironmentAccessPolicy::new(
-                    feature.providers.clone(),
-                    feature.registration_keys.clone(),
-                );
-                let id = match environment {
-                    ProfileEnvironment::Existing { environment_id } => {
-                        engine::EnvironmentId::try_new(environment_id)
-                            .map_err(|e| AgentApiError::invalid_request(e.to_string()))?
-                    }
-                    ProfileEnvironment::Inherit {} => {
-                        let child = self
-                            .store
-                            .load_session(&request.session_id)
-                            .await
-                            .map_err(map_session_store_error)?
-                            .ok_or_else(|| AgentApiError::not_found("child session not found"))?;
-                        let origin = child.origin.ok_or_else(|| {
-                            AgentApiError::rejected(
-                                "profile environment inherit requires a delegation origin",
-                            )
-                        })?;
-                        let parent = self
-                            .store
-                            .load_session(&origin.parent_session_id)
-                            .await
-                            .map_err(map_session_store_error)?
-                            .ok_or_else(|| AgentApiError::not_found("parent session not found"))?;
-                        let reduced = crate::checkpoint::load_reduction(
-                            self.store.as_ref(),
-                            self.store.as_ref(),
-                            &parent,
-                        )
-                        .await
-                        .map_err(|e| AgentApiError::internal(e.to_string()))?;
-                        let id = reduced
-                            .reduced
-                            .core_state
-                            .environment
-                            .active_environment_id
-                            .ok_or_else(|| {
-                                AgentApiError::rejected("parent session has no active environment")
-                            })?;
-                        id
-                    }
-                };
-                crate::environment_resolver::EnvironmentResolver::from_pg_store(self.store.clone())
-                    .selectable(&id, &policy)
-                    .await
-                    .map_err(super::environments::map_environment_resolve_error)?;
-                Some(id)
+                    .is_some_and(|environments| environments.is_attached(environment_id.as_str()));
+                if !attached {
+                    return Err(AgentApiError::rejected(format!(
+                        "environment {environment_id} is not attached in the session configuration"
+                    )));
+                }
+                crate::environments::resolver::EnvironmentResolver::from_pg_store(
+                    self.store.clone(),
+                )
+                .selectable(&environment_id)
+                .await
+                .map_err(super::environments::map_environment_resolve_error)?;
+                Some(environment_id)
             }
         };
         let toolset = self.prepare_toolset(request.source).await?;

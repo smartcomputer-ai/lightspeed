@@ -1,30 +1,19 @@
 import { describe, expect, it } from "vitest";
-import type { EnvironmentProviderBinding } from "@/api";
-import { environmentProviderOptions } from "./editor-options";
+import { attachedEnvironments, defaultEnvironmentAttachment, isEnvironmentAttached, resourceFeatureDisableReasons } from "./resource-features";
 
-const binding = (
-  bindingId: string,
-  providerId: string,
-  status: EnvironmentProviderBinding["status"],
-): EnvironmentProviderBinding => ({
-  bindingId,
-  providerId,
-  status,
-  revision: 1,
-  createdAtMs: 1,
-  updatedAtMs: 1,
-});
-
-describe("environment provider options", () => {
-  it("includes each enabled physical provider once", () => {
-    expect(environmentProviderOptions([
-      binding("disabled-a", "provider-a", "disabled"),
-      binding("enabled-a-2", "provider-a", "enabled"),
-      binding("enabled-b", "provider-b", "enabled"),
-      binding("enabled-a-1", "provider-a", "enabled"),
-    ])).toEqual([
-      { providerId: "provider-a", displayName: undefined },
-      { providerId: "provider-b", displayName: undefined },
-    ]);
+describe("environment attachment options", () => {
+  const config = { features: { environments: { environments: [
+    { environmentId: "primary", access: "jobs", default: true },
+    { environmentId: "logs", access: "read" },
+  ] } } };
+  it("offers only attached environments and resolves the declared default", () => {
+    expect(attachedEnvironments(config, [{ environmentId: "logs" }, { environmentId: "unlisted" }])).toEqual([{ environmentId: "logs" }]);
+    expect(defaultEnvironmentAttachment(config)?.environmentId).toBe("primary");
+    expect(isEnvironmentAttached(config, "unlisted")).toBe(false);
+    expect(defaultEnvironmentAttachment({})).toBeUndefined();
+  });
+  it("requires removing attachments before disabling their feature", () => {
+    expect(resourceFeatureDisableReasons({ config })).toHaveProperty("environments");
+    expect(resourceFeatureDisableReasons({ config: { features: { environments: { environments: [] } } } })).toEqual({});
   });
 });

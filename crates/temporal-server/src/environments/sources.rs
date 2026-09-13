@@ -1,6 +1,7 @@
 //! Environment source connections and directory validation; discovery never wakes a machine.
 use crate::{
-    environment_gateway::EnvironmentGatewayClientConfig, environment_resolver::EnvironmentResolver,
+    environments::gateway::EnvironmentGatewayClientConfig,
+    environments::resolver::EnvironmentResolver,
 };
 use engine::{
     ContextEntryInput, ContextEntryKey, CoreAgentCommand, EnvironmentId, EnvironmentsFeature,
@@ -113,9 +114,9 @@ pub(crate) async fn refresh(
     };
     let result = async {
         let skill_command =
-            crate::environment_skills::refresh(blobs, &mut discovery, session_id, current_skills)
+            crate::environments::skills::refresh(blobs, &mut discovery, session_id, current_skills)
                 .await?;
-        let prompt_entries = crate::environment_prompts::refresh(blobs, &mut discovery).await?;
+        let prompt_entries = crate::environments::prompts::refresh(blobs, &mut discovery).await?;
         Ok(Publication {
             skill_command,
             prompt_entries,
@@ -158,16 +159,12 @@ async fn connect(
     feature: &EnvironmentsFeature,
     id: &EnvironmentId,
 ) -> Result<SourceConnection, String> {
-    let policy = environments::EnvironmentAccessPolicy::new(
-        feature.providers.clone(),
-        feature.registration_keys.clone(),
-    );
+    let Some(attachment) = feature.attachment(id.as_str()) else {
+        return Err("active environment is not attached to this session".into());
+    };
     let environment = {
         let _timer = PhaseTimer::new("registry");
-        resolver
-            .read_allowed(id, &policy)
-            .await
-            .map_err(|e| e.to_string())?
+        resolver.read(id).await.map_err(|e| e.to_string())?
     };
     if environment.status != environments::EnvironmentStatus::Ready
         || environment.desired_power != environments::PowerState::Running
@@ -213,7 +210,7 @@ async fn connect(
         let _timer = PhaseTimer::new("working_directory");
         working_directory(
             &mut client,
-            feature.working_directory.as_deref(),
+            attachment.working_directory.as_deref(),
             initialized.default_cwd.as_deref(),
         )
         .await?

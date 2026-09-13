@@ -84,7 +84,8 @@ for the resolution rules.
 
 Before an idle session admits new run work, the session workflow refreshes
 material derived from its linked workspaces and selected environment. That
-includes enabled prompt sources, skill catalogs, and the sub-agent menu. The
+includes enabled prompt sources, skill catalogs, the environment catalog, and
+the sub-agent menu. The
 gateway submits the run without first repeating this discovery. Session setup,
 configuration changes, and explicit skill reads retain their own refresh paths.
 The admission refresh occurs when no run is active or already queued; it is not
@@ -124,15 +125,19 @@ Prompt caching rewards repeated request material, but an agent's context also
 needs to evolve. Lightspeed makes ordering and updates deliberate so changes
 need not disturb more of the request than necessary.
 
-VFS, skill, sub-agent, and client catalogs share one `Catalog { title }`
-context kind. Each runtime publisher stores the rendered text in CAS and keeps
+VFS, skill, environment, sub-agent, and client catalogs share one
+`Catalog { title }` context kind. Each runtime publisher stores the rendered text in CAS and keeps
 its structured snapshot in `provenance_ref` for API reads and source retention.
 Provider adapters read that stored text and add only the title and, for a
 successor, an update header. Replaying an old entry does not rerender its source
 with newer publisher code.
 
 Catalog identity comes from its key. The runtime owns `runtime.catalog.vfs`,
-`runtime.catalog.skills.vfs`, and `runtime.catalog.subagents`. Public context
+`runtime.catalog.skills.vfs`, `runtime.catalog.environments`, and
+`runtime.catalog.subagents`. The environment catalog lists every attached
+environment with its id, display name, status, access, working directory,
+default marker, and which one is active; it is built from configuration and
+display names without discovery. Public context
 append and remove reject `runtime` and `runtime.*`, as well as `run` and `run.*`.
 Client catalogs use other keys. Source discovery and refresh policy remain
 specific to each publisher; publishing compares both text and provenance.
@@ -255,7 +260,7 @@ copied again.
 
 A workspace adds a named, mutable head over those snapshots. Updating that
 head uses a revision check so a writer does not silently overwrite another
-writer's move. A snapshot link pins a particular version; a workspace link
+writer's move. A snapshot attachment pins a particular version; a workspace attachment
 resolves its current head at the relevant operation boundary.
 
 Session history has related fork primitives at the core/storage layer. A

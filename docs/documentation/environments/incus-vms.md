@@ -197,8 +197,9 @@ test, then configure it under [Power and cleanup](power-and-cleanup.md).
 
 The environment progresses through provisioning and booting toward ready.
 Expand **Details** to inspect the environment ID, provider, template, and
-provider target. Select it in a session with **Environments** enabled, then ask
-the agent to run `pwd` and a harmless file check.
+provider target. Attach it with **Exec** access and select it in a session
+with **Environments** enabled, then ask the agent to run `pwd` and a harmless
+file check.
 
 The provider configures the guest daemon during provisioning. The stock setup
 listens privately on port 19091 and starts commands in `/workspace`; it uses

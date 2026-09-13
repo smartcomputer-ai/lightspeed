@@ -21,24 +21,24 @@ relative to that workspace, and creates directories in the path as needed.
 Open a file, edit its contents, and choose **Save**.
 
 In a profile's **Virtual File System: Files, Instructions, Skills** section,
-enabling VFS selects **Edit files** and turns on **Prompt loading** and **Skill
-discovery**. Adjust these independently, then add a **Workspace link**. Existing
-configurations keep their saved settings.
+enabling VFS turns on **Prompt loading** and **Skill discovery** and lets you
+add a **Workspace attachment**. Adjust these independently. Existing configurations
+keep their saved settings.
 
 | Setting | Meaning |
 | --- | --- |
-| **File tools → No file tools** | Supplies no model-callable VFS file operations. |
-| **File tools → Read only** | Lets the agent inspect accessible files. |
-| **File tools → Edit files** | Adds editing operations, subject to link permissions. |
 | **Target type → Workspace** | Reads the live workspace as it changes. |
-| **Target type → Snapshot** | Reads an immutable snapshot. Snapshot links are always read-only. |
+| **Target type → Snapshot** | Reads an immutable snapshot. Snapshot links are always **Read**. |
 | **Session path** | The absolute path where this agent sees the linked files. |
-| **Access** | Whether this link permits writes to a live workspace. |
+| **Access → Read** | Lets the agent inspect the linked files. |
+| **Access → Edit** | Also lets the agent write, edit, and patch files under this path. |
 
-To edit `release-notes`, use **Edit files**, a live workspace link at
-`/workspace`, and **Read and write** access. A reviewer can use **Read only**
-for both the tools and the link. Link paths cannot overlap, and prompt or skill
-roots must fall inside a configured link.
+There is no separate file-tool switch. Linking any workspace installs the VFS
+read tools, and an **Edit** link adds the write tools; the toolset follows the
+union of the links' access, and a write under a **Read** link is refused. To
+edit `release-notes`, link the live workspace at `/workspace` with **Edit**
+access. A reviewer links it with **Read**. Link paths cannot overlap, and
+prompt or skill roots must fall inside a configured link.
 
 A profile linking the same workspace into several sessions shares its live
 files. A change made by one session becomes visible to another on a subsequent
@@ -62,7 +62,7 @@ an absent compatibility statement is not evidence of compatibility.
 Open the release-editor profile and enable **Prompt loading** under
 **Virtual File System**. Root overrides are optional: choose **Customize roots** under
 **Prompt loading** to edit them. Leave **VFS prompt roots** empty to use conventional
-directories beneath each workspace link. Save, then create a new session from the
+directories beneath each workspace attachment. Save, then create a new session from the
 profile or apply the updated setup to an existing idle session.
 
 Lightspeed loads all `.md` and `.txt` files directly inside each configured
@@ -78,7 +78,7 @@ For example, this optional file adds a second instruction source:
 Use it for a short convention such as “Use sentence case for headings.” The
 capability is explicit: merely placing `.lightspeed` files in a workspace does
 not enable sourcing. With `prompts: {}`, Lightspeed searches `.agents/prompts`
-and `.lightspeed/prompts` beneath each workspace link, including snapshot links.
+and `.lightspeed/prompts` beneath each workspace attachment, including snapshot attachments.
 Optional comma-separated root overrides replace these defaults. Clearing the
 field restores defaults; switching off **Prompt loading** disables sourcing
 and removes its sourced instructions at the next reconciliation. Roots have a
@@ -118,8 +118,8 @@ Ask before editing either file.
 workspace-relative path; the instructions use session paths under `/workspace`.*
 
 Enable **Skill discovery** under **Virtual File System** and set **VFS skill roots** in the profile to `/workspace/.lightspeed/skills`, keeping
-readable file tools and the workspace link enabled. Save the profile and
-start a session from it. The resulting workspace layout is:
+the workspace attachment in place; any attachment grants the read tools the agent needs
+to read the skill. Save the profile and start a session from it. The resulting workspace layout is:
 
 ```text
 release-notes/
@@ -187,19 +187,16 @@ belongs in the existing instruction mechanism.
 
 VFS skill discovery is independently opt-in through the session or profile's
 `features.vfs.skills` block. An empty block enables `.agents/skills` and
-`.lightspeed/skills` beneath each workspace link, including snapshot links.
+`.lightspeed/skills` beneath each workspace attachment, including snapshot attachments.
 No links means nothing to discover. For example:
 
 ```json
 {
   "features": {
     "vfs": {
-      "workspaceLinks": [{
-        "path": "/workspace",
-        "target": { "type": "workspace", "workspaceId": "release-notes" },
-        "access": "readOnly"
-      }],
-      "tools": "readOnly",
+      "workspaces": [
+        { "path": "/workspace", "workspaceId": "release-notes", "access": "read" }
+      ],
       "skills": {}
     }
   }
@@ -208,10 +205,12 @@ No links means nothing to discover. For example:
 
 Omitting `features.vfs.skills` disables discovery and removes its runtime
 catalog. To replace the conventional roots, supply a nonempty `roots` list of
-absolute paths inside workspace links, such as
+absolute paths inside workspace attachments, such as
 `"skills": { "roots": ["/workspace/team-skills"] }`. An explicit empty list
-and paths outside links are invalid. Workspace links, filesystem tools, prompt
-sourcing, and CLI chat defaults do not enable skill discovery.
+and paths outside links are invalid. Each entry of `workspaces` names a
+`workspaceId` or an immutable `snapshotRef` at an absolute `path` with `read`
+or `edit` access; snapshots must be `read`. Workspace attachments, prompt sourcing,
+and CLI chat defaults do not enable skill discovery.
 
 The profile editor, new-session form, and session settings expose a
 **Skill discovery** switch under **Virtual File System**. It enables defaults
@@ -232,18 +231,26 @@ separate identities with no cross-domain merging, deduplication, or fallback.
 
 ## Discover skills installed on a machine
 
-In the profile editor, new-session form, or session settings, set **Working
-directory** directly under **Environments**, then enable **Skill discovery** or
-**Prompt loading** independently. Enable environment **Read only** file tools
-if the agent should read discovered skill documents. The directory is shared by file tools,
-commands, jobs, and discovery; empty uses the selected endpoint's default.
+In the profile editor, new-session form, or session settings, attach the
+machine under **Environments** and set that attachment's **Working
+directory**, then enable **Skill discovery** or **Prompt loading**
+independently. Any attachment grants the environment read tools the agent
+needs to read discovered skill documents. The working directory belongs to
+the attachment and is shared by file tools, commands, jobs, and discovery;
+empty uses the machine's default.
 
 ```json
 {
   "features": {
     "environments": {
-      "workingDirectory": "/workspace/project",
-      "tools": "readOnly",
+      "environments": [
+        {
+          "environmentId": "<environment-id>",
+          "default": true,
+          "access": "read",
+          "workingDirectory": "/workspace/project"
+        }
+      ],
       "skills": {},
       "prompts": { "roots": ["./team-prompts"] }
     }
@@ -256,7 +263,7 @@ Empty source blocks search `.agents/skills` and `.lightspeed/skills`, or
 directory and execution user's home. No ancestors, `.claude`, or `.codex`
 directories are searched automatically. Optional `roots` lists replace **all**
 defaults, including home. These paths name actual source directories and can
-be absolute or relative to the working directory. Users may explicitly include
+be absolute or relative to the active attachment's working directory. Users may explicitly include
 Claude/Codex directories as overrides. Empty override lists are invalid;
 clearing the editor field restores defaults. Omitting a source block disables it.
 
@@ -338,9 +345,10 @@ Transfer files explicitly when a process needs them; see
 
 ## Copy files to or from a machine
 
-Linking a VFS workspace does not put it on an execution environment. With both
-VFS tools and environment access enabled, use `vfs_materialize` for a file,
-subtree or whole workspace, and `vfs_capture` to save machine outputs into an
-editable workspace. These tools handle binary files and executable scripts
+Linking a VFS workspace does not put it on an execution environment. With a
+workspace linked and an environment attached with `edit` or higher access, use
+`vfs_materialize` for a file, subtree or whole workspace; with an `edit`
+workspace attachment and any environment attachment, use `vfs_capture` to save
+machine outputs into that editable workspace. These tools handle binary files and executable scripts
 without passing their bytes through the model. See
 [VFS transfer](../environments/vfs-transfer.md) for replacement and retry behavior.

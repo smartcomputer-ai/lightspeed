@@ -404,13 +404,9 @@ impl GatewayAgentApi {
         &self,
         environment_id: &EnvironmentId,
     ) -> Result<EnvironmentRecord, AgentApiError> {
-        crate::environment_resolver::EnvironmentResolver::from_pg_store(self.store.clone())
+        crate::environments::resolver::EnvironmentResolver::from_pg_store(self.store.clone())
             .with_gateway(self.environment_gateway.clone())
-            .resolve_for_connection(
-                environment_id,
-                &::environments::EnvironmentAccessPolicy::ALLOW_ALL,
-                super::now_ms()?,
-            )
+            .resolve_for_connection(environment_id, super::now_ms()?)
             .await
             .map_err(super::environments::map_environment_resolve_error)
     }

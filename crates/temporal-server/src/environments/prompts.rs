@@ -1,5 +1,5 @@
 //! Idle-boundary environment prompt refresh, independent of VFS instruction ownership.
-use crate::environment_sources::{Discovery, PhaseTimer};
+use crate::environments::sources::{Discovery, PhaseTimer};
 use engine::{
     ContextEntryInput, ContextEntryKey,
     storage::{BlobStore, BlobStoreError},
@@ -140,7 +140,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            crate::environment_sources::refresh(
+            crate::environments::sources::refresh(
                 &blobs,
                 None,
                 None,

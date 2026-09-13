@@ -7,8 +7,10 @@ import {
   normalizeSessionConfig,
   SessionConfigEditor,
   type ModelOption,
-  workspaceLinksError,
-  workspaceLinksFromConfig,
+  workspaceAttachmentsError,
+  configError,
+  mcpAttachmentError,
+  workspaceAttachmentsFromConfig,
 } from "./session-config-editor";
 
 describe("specific tool choice", () => {
@@ -163,88 +165,71 @@ describe("workspace link config", () => {
     const config = normalizeSessionConfig({
       features: {
         vfs: {
-          tools: "edit",
-          workspaceLinks: [
+          workspaces: [
             {
               path: "/workspace",
-              access: "readWrite",
-              target: { type: "workspace", workspaceId: "primary" },
+              access: "edit",
+              workspaceId: "primary" ,
             },
             {
               path: "/skills",
-              access: "readOnly",
-              target: { type: "snapshot", snapshotRef: "sha256:skills" },
+              access: "read",
+              snapshotRef: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ,
             },
           ],
         },
       },
     });
 
-    expect(workspaceLinksFromConfig(config)).toEqual([
+    expect(workspaceAttachmentsFromConfig(config)).toEqual([
       {
         path: "/workspace",
-        access: "readWrite",
-        target: { type: "workspace", workspaceId: "primary" },
+        access: "edit",
+        workspaceId: "primary" ,
       },
       {
         path: "/skills",
-        access: "readOnly",
-        target: { type: "snapshot", snapshotRef: "sha256:skills" },
+        access: "read",
+        snapshotRef: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ,
       },
     ]);
   });
 
-  it("omits an empty workspace-link collection from the sparse config", () => {
+  it("keeps an empty attachment list without granting tools", () => {
     expect(normalizeSessionConfig({
-      features: { vfs: { tools: "edit", workspaceLinks: [] } },
-    })).toEqual({ features: { vfs: { tools: "edit" } } });
+      features: { vfs: { workspaces: [] } },
+    })).toEqual({ features: { vfs: { workspaces: [] } } });
   });
 
   it("rejects overlapping paths and writable snapshots", () => {
-    expect(workspaceLinksError([
+    expect(workspaceAttachmentsError([
       {
         path: "/workspace",
-        access: "readWrite",
-        target: { type: "workspace", workspaceId: "primary" },
+        access: "edit",
+        workspaceId: "primary" ,
       },
       {
         path: "/workspace/docs",
-        access: "readOnly",
-        target: { type: "snapshot", snapshotRef: "sha256:docs" },
+        access: "read",
+        snapshotRef: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ,
       },
     ])).toContain("cannot overlap");
 
-    expect(workspaceLinksError([{
+    expect(workspaceAttachmentsError([{
       path: "/archive",
-      access: "readWrite",
-      target: { type: "snapshot", snapshotRef: "sha256:archive" },
+      access: "edit",
+      snapshotRef: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ,
     }])).toContain("must be read only");
   });
 });
 
 describe("environment feature config", () => {
-  it("preserves independent selection and jobs grants", () => {
-    expect(normalizeSessionConfig({
-      features: {
-        environments: {
-          providers: ["sandbox-a"],
-          tools: "readOnly",
-          commands: true,
-          selectionTools: true,
-          jobs: true,
-        },
-      },
-    })).toEqual({
-      features: {
-        environments: {
-          providers: ["sandbox-a"],
-          tools: "readOnly",
-          commands: true,
-          selectionTools: true,
-          jobs: true,
-        },
-      },
-    });
+  it("preserves each attachment's access, default, and working directory", () => {
+    const environments = { selection: true, environments: [
+      { environmentId: "runner", access: "jobs", default: true, workingDirectory: "/project" },
+      { environmentId: "logs", access: "read", workingDirectory: "/var/log" },
+    ] };
+    expect(normalizeSessionConfig({ features: { environments } })).toEqual({ features: { environments } });
   });
 
   it("keeps setup collapsed for an initially enabled capability", () => {
@@ -371,24 +356,34 @@ describe("MCP feature config", () => {
   });
 });
 
-describe("independent skill discovery configuration", () => {
-  it("preserves default and explicit VFS roots without changing the environment scope", () => {
-    const environments = { workingDirectory: "/project", skills: { roots: ["/team"] } };
-    expect(normalizeSessionConfig({ features: {
-      vfs: { tools: "edit" }, environments,
-    } })).toEqual({ features: { vfs: { tools: "edit" }, environments } });
-    for (const skills of [{}, { roots: [] }]) {
+describe("attachment validation and source discovery", () => {
+  it("keeps source roots and per-environment directories independent", () => {
+    const environments = { environments: [{ environmentId: "runner", access: "exec", workingDirectory: "/project" }], skills: { roots: ["/team"] } };
+    for (const skills of [{}, { roots: [] }, { roots: ["/workspace/skills"] }]) {
       expect(normalizeSessionConfig({ features: { vfs: { skills }, environments } }))
-        .toEqual({ features: { vfs: { skills }, environments } });
+        .toEqual({ features: { vfs: { workspaces: [], skills }, environments } });
     }
-    const normalized = normalizeSessionConfig({ features: {
-      vfs: { skills: { roots: ["/workspace/skills"] } }, environments,
-    } });
-    expect(normalized).toEqual({ features: { vfs: { skills: { roots: ["/workspace/skills"] } }, environments } });
   });
-});
-
-it.each([undefined, "readOnly", "edit"])("preserves environment file surface %s without granting commands", (tools) => {
-  const environments = tools ? { tools } : {};
-  expect(normalizeSessionConfig({ features: { environments } })).toEqual({ features: { environments } });
+  it.each(["read", "edit", "exec", "jobs"])("preserves %s access without separate tool switches", (access) => {
+    const environments = { environments: [{ environmentId: "machine", access }] };
+    expect(normalizeSessionConfig({ features: { environments } })).toEqual({ features: { environments } });
+  });
+  it("rejects duplicate defaults and ids and restricts inherit to profiles", () => {
+    const attachment = { environmentId: "one", access: "read", default: true };
+    expect(configError({ features: { environments: { environments: [attachment, { ...attachment, environmentId: "two" }] } } })).toContain("one default");
+    expect(configError({ features: { environments: { environments: [attachment, { ...attachment, default: false }] } } })).toContain("only once");
+    const config = { features: { environments: { environments: [{ inherit: true, default: true, access: "exec" }] } } };
+    expect(configError(config)).toContain("sub-agent profiles");
+    expect(configError(config, undefined, true)).toBeNull();
+  });
+  it("keeps incomplete MCP drafts while requiring a nonempty permitted subset", () => {
+    for (const tools of [[], ["search"]]) {
+      const config = { features: { mcp: { servers: [{ serverId: "catalog", tools }] } } };
+      expect(normalizeSessionConfig(config)).toEqual(config);
+      if (tools.length) expect(configError(config)).toBeNull();
+      else expect(configError(config)).toContain("at least one tool");
+      expect(mcpAttachmentError(config, [{ serverId: "catalog", allowedTools: ["search"] }])).toBeNull();
+    }
+    expect(mcpAttachmentError({ features: { mcp: { servers: [{ serverId: "catalog", tools: ["delete"] }] } } }, [{ serverId: "catalog", allowedTools: ["search"] }])).toContain("not allowed");
+  });
 });

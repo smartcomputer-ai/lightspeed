@@ -334,7 +334,6 @@ export interface ProfileInit {
   instructions: string;
   config: Record<string, unknown>;
   metadata?: Record<string, string>;
-  environment?: ProfileDocument["environment"];
   revision: number;
   createdAtMs: number;
   updatedAtMs: number;
@@ -348,7 +347,6 @@ export function profile(init: ProfileInit): ProfileDocument {
     instructions: { type: "text", text: init.instructions },
     config: structuredClone(init.config),
     ...(init.metadata === undefined ? {} : { metadata: structuredClone(init.metadata) }),
-    ...(init.environment === undefined ? {} : { environment: init.environment }),
     revision: init.revision,
     createdAtMs: init.createdAtMs,
     updatedAtMs: init.updatedAtMs,
@@ -500,8 +498,8 @@ export function mcpServer(init: McpServerInit): McpServer {
     allowedTools: null,
     execution: "provider",
     exposure: "inject",
-    approvalDefault: "never",
-    deferLoadingDefault: null,
+    approval: "never",
+    deferLoading: null,
     allowPrivateNetwork: false,
     credential: null,
     revision: 1,

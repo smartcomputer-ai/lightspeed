@@ -388,7 +388,7 @@ function ServerDialog({
     server?.allowPrivateNetwork ?? false,
   );
   const [approval, setApproval] = useState<string>(
-    server?.approvalDefault ?? "never",
+    server?.approval ?? "never",
   );
   const [allToolsAllowed, setAllToolsAllowed] = useState(server?.allowedTools == null);
   const [allowedTools, setAllowedTools] = useState<string[]>(server?.allowedTools ?? []);
@@ -540,7 +540,7 @@ function ServerDialog({
           defaultServerLabel: serverId,
           execution,
           exposure: execution === "native" ? exposure : "inject",
-          approvalDefault: approval,
+          approval: approval,
           allowPrivateNetwork,
           authPolicy: policy,
           credential,
@@ -560,14 +560,14 @@ function ServerDialog({
           execution,
           exposure: execution === "native" ? exposure : "inject",
           revision: server.revision,
-          approvalDefault: approval,
+          approval: approval,
           authPolicy: policy,
           credential,
           status: nextStatus,
           displayName: displayName.trim() || null,
           description: description.trim() || null,
           allowedTools: allToolsAllowed ? null : parsedTools,
-          deferLoadingDefault: server.deferLoadingDefault ?? null,
+          deferLoading: server.deferLoading ?? null,
           allowPrivateNetwork,
         },
       );

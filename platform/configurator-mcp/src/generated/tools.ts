@@ -163,6 +163,51 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "EnvironmentAccess": {
+          "description": "Per-attachment environment access, an ordered ladder: `edit` adds file\nediting to `read`, `exec` adds processes, `jobs` adds durable jobs.\nProcesses can write files regardless of the file-tool level, so\nread-only files with commands is deliberately not expressible.",
+          "enum": [
+            "read",
+            "edit",
+            "exec",
+            "jobs"
+          ],
+          "type": "string"
+        },
+        "EnvironmentAttachment": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "One environment the session may use. Exactly one of `environmentId` and\n`inherit` identifies the machine. `inherit` is valid only in a profile\ndocument applied to a sub-agent: it resolves to the delegating parent's\nactive environment at spawn and is stored on the child as a concrete id.\nIf the parent's environment is also listed explicitly, the explicit\nattachment wins; if the parent has none, the inherit attachment is dropped.",
+          "properties": {
+            "access": {
+              "$ref": "#/definitions/EnvironmentAccess"
+            },
+            "default": {
+              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. Never overrides a live\nselection and never applies on a plain `session/config/put`.",
+              "type": "boolean"
+            },
+            "environmentId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "inherit": {
+              "type": "boolean"
+            },
+            "workingDirectory": {
+              "description": "Absolute machine working directory for file tools, commands, jobs,\nand sources; absent uses the machine's advertised default.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "access"
+          ],
+          "type": "object"
+        },
         "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
@@ -203,29 +248,18 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentToolSurface": {
-          "description": "Agent-facing environment filesystem tools; independent of execution grants.",
-          "enum": [
-            "readOnly",
-            "edit"
-          ],
-          "type": "string"
-        },
         "EnvironmentsFeature": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants active session environments. Filesystem tools, commands, selection,\ndurable jobs, prompts, and skills are independent, default-off sub-grants.",
+          "description": "Grants session environments. The `environments` list is the allowed set:\nthe session can select, read, and run work only on a listed machine, each\nwith its own access grant and working directory. The installed tool\nsurface is the union of every attachment's grant; a call the active\nmachine's grant does not cover fails at execution, so switching machines\nnever changes the toolset. `{}` grants the feature with no reachable\nmachine.",
           "properties": {
-            "commands": {
-              "default": false,
-              "description": "Grants command execution and process continuation. Commands may modify\nfiles even when filesystem tools are read-only or disabled.",
-              "type": "boolean"
-            },
-            "jobs": {
-              "default": false,
-              "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
-              "type": "boolean"
+            "environments": {
+              "description": "The environments this session may use; unique ids, at most one\ndefault, at most one `inherit` (profiles only).",
+              "items": {
+                "$ref": "#/definitions/EnvironmentAttachment"
+              },
+              "type": "array"
             },
             "prompts": {
               "anyOf": [
@@ -238,29 +272,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ],
               "description": "Independent environment prompt loading; absent disables sourced instructions."
             },
-            "providers": {
-              "description": "Absent means every registered provider is allowed.",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "registrationKeys": {
-              "description": "Registration keys whose registered environments the session may\nlist and activate; absent means every key. Independent of\n`providers`: each list scopes its own environment source, and\nexternal environments pass only when neither list is set.",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "selectionTools": {
+            "selection": {
               "default": false,
-              "description": "Exposes `environment_list`, `environment_activate`, and\n`environment_deactivate` to the model. `environment_read` is available\nwhenever environments are enabled, and external API/profile activation\nremains available when this is false.",
+              "description": "Exposes `environment_list`, `environment_activate`, and\n`environment_deactivate` over the attached environments.\n`environment_read` is available whenever environments are enabled, and\nexternal API/profile activation remains available when this is false.",
               "type": "boolean"
             },
             "skills": {
@@ -274,29 +288,11 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ],
               "description": "Independent environment skill discovery. Absent disables discovery."
             },
-            "tools": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/EnvironmentToolSurface"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Filesystem tool surface. Absent installs no filesystem tools; sources\nremain independent. Read-only does not restrict commands or durable jobs."
-            },
             "version": {
               "default": 1,
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
-            },
-            "workingDirectory": {
-              "description": "Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.",
-              "type": [
-                "string",
-                "null"
-              ]
             }
           },
           "type": "object"
@@ -446,17 +442,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "environment": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ProfileEnvironment"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "How the session obtains its active environment when this profile is\napplied: select an existing environment or inherit the parent's\nselection. Absence leaves the session's current\nactive environment unchanged."
-            },
             "instructions": {
               "anyOf": [
                 {
@@ -538,10 +523,20 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns all connection and\nbehavior configuration.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the link may only narrow the\nrecord's tool allowlist for this session.",
           "properties": {
             "serverId": {
               "type": "string"
+            },
+            "tools": {
+              "description": "Non-empty subset of the record's allowed tools exposed to this\nsession, under both injection and search; absent exposes the record's\nfull allowlist.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
           "required": [
@@ -576,47 +571,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "flex"
           ],
           "type": "string"
-        },
-        "ProfileEnvironment": {
-          "description": "Environment intent carried by a profile document.",
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Activate an existing universe environment. The profile never closes\nit.",
-              "properties": {
-                "environmentId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "existing",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "environmentId"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Activate the delegating parent's active environment. Resolved at\nsub-agent spawn, shared not copied, never closed by the\nchild; rejected on a session without a delegation origin or whose\nparent has no active environment.",
-              "properties": {
-                "type": {
-                  "const": "inherit",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "ProfileId": {
           "type": "string"
@@ -954,7 +908,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants the session virtual filesystem. Workspace links declare the\nsession-visible namespace and the VFS catalog is surfaced. Sub-grants are independent; `{}` grants a VFS with\nno tools and no sourcing.",
+          "description": "Grants the session virtual filesystem. Workspace attachments declare the\nsession-visible namespace and the VFS catalog is surfaced. The file tool\nsurface is derived from the attachments: any attachment installs the read\ntools, any `edit` attachment adds the write tools, and with the\nenvironments feature granted the matching transfer tools appear. `{}`\ngrants a VFS with no attachments, no tools, and no sourcing.",
           "properties": {
             "prompts": {
               "anyOf": [
@@ -965,7 +919,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional linked roots."
+              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional attached roots."
             },
             "skills": {
               "anyOf": [
@@ -976,18 +930,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional linked roots."
-            },
-            "tools": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/VfsToolSurface"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Agent-facing filesystem tool surface; absent = no fs tools. Per-path\nwritability is defined by each workspace link's own access.\nWith the environments feature granted, `readOnly` also exposes\n`vfs_materialize`; `edit` additionally exposes `vfs_capture`.\nPrompt/skill sourcing alone does not grant transfer tools."
+              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional attached roots."
             },
             "version": {
               "default": 1,
@@ -1002,10 +945,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "workspaceLinks": {
-              "description": "Catalog resources exposed in the session's workspace namespace.",
+            "workspaces": {
+              "description": "Catalog resources exposed in the session's workspace namespace at\ndisjoint absolute paths.",
               "items": {
-                "$ref": "#/definitions/WorkspaceLink"
+                "$ref": "#/definitions/WorkspaceAttachment"
               },
               "type": "array"
             }
@@ -1018,7 +961,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
+              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
               "items": {
                 "type": "string"
               },
@@ -1036,7 +979,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
+              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
               "items": {
                 "type": "string"
               },
@@ -1048,13 +991,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           },
           "type": "object"
-        },
-        "VfsToolSurface": {
-          "enum": [
-            "readOnly",
-            "edit"
-          ],
-          "type": "string"
         },
         "WebFeature": {
           "additionalProperties": {
@@ -1121,70 +1057,44 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "WorkspaceLink": {
+        "WorkspaceAccess": {
+          "description": "Per-attachment VFS access; `edit` implies `read`.",
+          "enum": [
+            "read",
+            "edit"
+          ],
+          "type": "string"
+        },
+        "WorkspaceAttachment": {
           "additionalProperties": {
             "not": {}
           },
+          "description": "One catalog resource mounted into the session namespace. Exactly one of\n`workspaceId` and `snapshotRef` names the resource; snapshots are\nimmutable and must be attached with `read` access.",
           "properties": {
             "access": {
-              "$ref": "#/definitions/WorkspaceLinkAccess"
+              "$ref": "#/definitions/WorkspaceAccess"
             },
             "path": {
               "type": "string"
             },
-            "target": {
-              "$ref": "#/definitions/WorkspaceLinkTarget"
+            "snapshotRef": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspaceId": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
             "path",
-            "target",
             "access"
           ],
           "type": "object"
-        },
-        "WorkspaceLinkAccess": {
-          "enum": [
-            "readOnly",
-            "readWrite"
-          ],
-          "type": "string"
-        },
-        "WorkspaceLinkTarget": {
-          "oneOf": [
-            {
-              "properties": {
-                "type": {
-                  "const": "workspace",
-                  "type": "string"
-                },
-                "workspaceId": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "workspaceId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "snapshotRef": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "snapshot",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "snapshotRef"
-              ],
-              "type": "object"
-            }
-          ]
         }
       }
     }
@@ -1387,6 +1297,51 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "EnvironmentAccess": {
+          "description": "Per-attachment environment access, an ordered ladder: `edit` adds file\nediting to `read`, `exec` adds processes, `jobs` adds durable jobs.\nProcesses can write files regardless of the file-tool level, so\nread-only files with commands is deliberately not expressible.",
+          "enum": [
+            "read",
+            "edit",
+            "exec",
+            "jobs"
+          ],
+          "type": "string"
+        },
+        "EnvironmentAttachment": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "One environment the session may use. Exactly one of `environmentId` and\n`inherit` identifies the machine. `inherit` is valid only in a profile\ndocument applied to a sub-agent: it resolves to the delegating parent's\nactive environment at spawn and is stored on the child as a concrete id.\nIf the parent's environment is also listed explicitly, the explicit\nattachment wins; if the parent has none, the inherit attachment is dropped.",
+          "properties": {
+            "access": {
+              "$ref": "#/definitions/EnvironmentAccess"
+            },
+            "default": {
+              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. Never overrides a live\nselection and never applies on a plain `session/config/put`.",
+              "type": "boolean"
+            },
+            "environmentId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "inherit": {
+              "type": "boolean"
+            },
+            "workingDirectory": {
+              "description": "Absolute machine working directory for file tools, commands, jobs,\nand sources; absent uses the machine's advertised default.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "access"
+          ],
+          "type": "object"
+        },
         "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
@@ -1427,29 +1382,18 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentToolSurface": {
-          "description": "Agent-facing environment filesystem tools; independent of execution grants.",
-          "enum": [
-            "readOnly",
-            "edit"
-          ],
-          "type": "string"
-        },
         "EnvironmentsFeature": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants active session environments. Filesystem tools, commands, selection,\ndurable jobs, prompts, and skills are independent, default-off sub-grants.",
+          "description": "Grants session environments. The `environments` list is the allowed set:\nthe session can select, read, and run work only on a listed machine, each\nwith its own access grant and working directory. The installed tool\nsurface is the union of every attachment's grant; a call the active\nmachine's grant does not cover fails at execution, so switching machines\nnever changes the toolset. `{}` grants the feature with no reachable\nmachine.",
           "properties": {
-            "commands": {
-              "default": false,
-              "description": "Grants command execution and process continuation. Commands may modify\nfiles even when filesystem tools are read-only or disabled.",
-              "type": "boolean"
-            },
-            "jobs": {
-              "default": false,
-              "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
-              "type": "boolean"
+            "environments": {
+              "description": "The environments this session may use; unique ids, at most one\ndefault, at most one `inherit` (profiles only).",
+              "items": {
+                "$ref": "#/definitions/EnvironmentAttachment"
+              },
+              "type": "array"
             },
             "prompts": {
               "anyOf": [
@@ -1462,29 +1406,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ],
               "description": "Independent environment prompt loading; absent disables sourced instructions."
             },
-            "providers": {
-              "description": "Absent means every registered provider is allowed.",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "registrationKeys": {
-              "description": "Registration keys whose registered environments the session may\nlist and activate; absent means every key. Independent of\n`providers`: each list scopes its own environment source, and\nexternal environments pass only when neither list is set.",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "selectionTools": {
+            "selection": {
               "default": false,
-              "description": "Exposes `environment_list`, `environment_activate`, and\n`environment_deactivate` to the model. `environment_read` is available\nwhenever environments are enabled, and external API/profile activation\nremains available when this is false.",
+              "description": "Exposes `environment_list`, `environment_activate`, and\n`environment_deactivate` over the attached environments.\n`environment_read` is available whenever environments are enabled, and\nexternal API/profile activation remains available when this is false.",
               "type": "boolean"
             },
             "skills": {
@@ -1498,29 +1422,11 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ],
               "description": "Independent environment skill discovery. Absent disables discovery."
             },
-            "tools": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/EnvironmentToolSurface"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Filesystem tool surface. Absent installs no filesystem tools; sources\nremain independent. Read-only does not restrict commands or durable jobs."
-            },
             "version": {
               "default": 1,
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
-            },
-            "workingDirectory": {
-              "description": "Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.",
-              "type": [
-                "string",
-                "null"
-              ]
             }
           },
           "type": "object"
@@ -1696,10 +1602,20 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns all connection and\nbehavior configuration.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the link may only narrow the\nrecord's tool allowlist for this session.",
           "properties": {
             "serverId": {
               "type": "string"
+            },
+            "tools": {
+              "description": "Non-empty subset of the record's allowed tools exposed to this\nsession, under both injection and search; absent exposes the record's\nfull allowlist.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
           "required": [
@@ -1940,7 +1856,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants the session virtual filesystem. Workspace links declare the\nsession-visible namespace and the VFS catalog is surfaced. Sub-grants are independent; `{}` grants a VFS with\nno tools and no sourcing.",
+          "description": "Grants the session virtual filesystem. Workspace attachments declare the\nsession-visible namespace and the VFS catalog is surfaced. The file tool\nsurface is derived from the attachments: any attachment installs the read\ntools, any `edit` attachment adds the write tools, and with the\nenvironments feature granted the matching transfer tools appear. `{}`\ngrants a VFS with no attachments, no tools, and no sourcing.",
           "properties": {
             "prompts": {
               "anyOf": [
@@ -1951,7 +1867,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional linked roots."
+              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional attached roots."
             },
             "skills": {
               "anyOf": [
@@ -1962,18 +1878,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional linked roots."
-            },
-            "tools": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/VfsToolSurface"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Agent-facing filesystem tool surface; absent = no fs tools. Per-path\nwritability is defined by each workspace link's own access.\nWith the environments feature granted, `readOnly` also exposes\n`vfs_materialize`; `edit` additionally exposes `vfs_capture`.\nPrompt/skill sourcing alone does not grant transfer tools."
+              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional attached roots."
             },
             "version": {
               "default": 1,
@@ -1988,10 +1893,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "workspaceLinks": {
-              "description": "Catalog resources exposed in the session's workspace namespace.",
+            "workspaces": {
+              "description": "Catalog resources exposed in the session's workspace namespace at\ndisjoint absolute paths.",
               "items": {
-                "$ref": "#/definitions/WorkspaceLink"
+                "$ref": "#/definitions/WorkspaceAttachment"
               },
               "type": "array"
             }
@@ -2004,7 +1909,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
+              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
               "items": {
                 "type": "string"
               },
@@ -2022,7 +1927,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
+              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
               "items": {
                 "type": "string"
               },
@@ -2034,13 +1939,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           },
           "type": "object"
-        },
-        "VfsToolSurface": {
-          "enum": [
-            "readOnly",
-            "edit"
-          ],
-          "type": "string"
         },
         "WebFeature": {
           "additionalProperties": {
@@ -2107,70 +2005,44 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "WorkspaceLink": {
+        "WorkspaceAccess": {
+          "description": "Per-attachment VFS access; `edit` implies `read`.",
+          "enum": [
+            "read",
+            "edit"
+          ],
+          "type": "string"
+        },
+        "WorkspaceAttachment": {
           "additionalProperties": {
             "not": {}
           },
+          "description": "One catalog resource mounted into the session namespace. Exactly one of\n`workspaceId` and `snapshotRef` names the resource; snapshots are\nimmutable and must be attached with `read` access.",
           "properties": {
             "access": {
-              "$ref": "#/definitions/WorkspaceLinkAccess"
+              "$ref": "#/definitions/WorkspaceAccess"
             },
             "path": {
               "type": "string"
             },
-            "target": {
-              "$ref": "#/definitions/WorkspaceLinkTarget"
+            "snapshotRef": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspaceId": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
             "path",
-            "target",
             "access"
           ],
           "type": "object"
-        },
-        "WorkspaceLinkAccess": {
-          "enum": [
-            "readOnly",
-            "readWrite"
-          ],
-          "type": "string"
-        },
-        "WorkspaceLinkTarget": {
-          "oneOf": [
-            {
-              "properties": {
-                "type": {
-                  "const": "workspace",
-                  "type": "string"
-                },
-                "workspaceId": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "workspaceId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "snapshotRef": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "snapshot",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "snapshotRef"
-              ],
-              "type": "object"
-            }
-          ]
         }
       }
     }
@@ -3450,6 +3322,51 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "EnvironmentAccess": {
+          "description": "Per-attachment environment access, an ordered ladder: `edit` adds file\nediting to `read`, `exec` adds processes, `jobs` adds durable jobs.\nProcesses can write files regardless of the file-tool level, so\nread-only files with commands is deliberately not expressible.",
+          "enum": [
+            "read",
+            "edit",
+            "exec",
+            "jobs"
+          ],
+          "type": "string"
+        },
+        "EnvironmentAttachment": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "One environment the session may use. Exactly one of `environmentId` and\n`inherit` identifies the machine. `inherit` is valid only in a profile\ndocument applied to a sub-agent: it resolves to the delegating parent's\nactive environment at spawn and is stored on the child as a concrete id.\nIf the parent's environment is also listed explicitly, the explicit\nattachment wins; if the parent has none, the inherit attachment is dropped.",
+          "properties": {
+            "access": {
+              "$ref": "#/definitions/EnvironmentAccess"
+            },
+            "default": {
+              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. Never overrides a live\nselection and never applies on a plain `session/config/put`.",
+              "type": "boolean"
+            },
+            "environmentId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "inherit": {
+              "type": "boolean"
+            },
+            "workingDirectory": {
+              "description": "Absolute machine working directory for file tools, commands, jobs,\nand sources; absent uses the machine's advertised default.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "access"
+          ],
+          "type": "object"
+        },
         "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
@@ -3490,29 +3407,18 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentToolSurface": {
-          "description": "Agent-facing environment filesystem tools; independent of execution grants.",
-          "enum": [
-            "readOnly",
-            "edit"
-          ],
-          "type": "string"
-        },
         "EnvironmentsFeature": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants active session environments. Filesystem tools, commands, selection,\ndurable jobs, prompts, and skills are independent, default-off sub-grants.",
+          "description": "Grants session environments. The `environments` list is the allowed set:\nthe session can select, read, and run work only on a listed machine, each\nwith its own access grant and working directory. The installed tool\nsurface is the union of every attachment's grant; a call the active\nmachine's grant does not cover fails at execution, so switching machines\nnever changes the toolset. `{}` grants the feature with no reachable\nmachine.",
           "properties": {
-            "commands": {
-              "default": false,
-              "description": "Grants command execution and process continuation. Commands may modify\nfiles even when filesystem tools are read-only or disabled.",
-              "type": "boolean"
-            },
-            "jobs": {
-              "default": false,
-              "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
-              "type": "boolean"
+            "environments": {
+              "description": "The environments this session may use; unique ids, at most one\ndefault, at most one `inherit` (profiles only).",
+              "items": {
+                "$ref": "#/definitions/EnvironmentAttachment"
+              },
+              "type": "array"
             },
             "prompts": {
               "anyOf": [
@@ -3525,29 +3431,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ],
               "description": "Independent environment prompt loading; absent disables sourced instructions."
             },
-            "providers": {
-              "description": "Absent means every registered provider is allowed.",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "registrationKeys": {
-              "description": "Registration keys whose registered environments the session may\nlist and activate; absent means every key. Independent of\n`providers`: each list scopes its own environment source, and\nexternal environments pass only when neither list is set.",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "selectionTools": {
+            "selection": {
               "default": false,
-              "description": "Exposes `environment_list`, `environment_activate`, and\n`environment_deactivate` to the model. `environment_read` is available\nwhenever environments are enabled, and external API/profile activation\nremains available when this is false.",
+              "description": "Exposes `environment_list`, `environment_activate`, and\n`environment_deactivate` over the attached environments.\n`environment_read` is available whenever environments are enabled, and\nexternal API/profile activation remains available when this is false.",
               "type": "boolean"
             },
             "skills": {
@@ -3561,29 +3447,11 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ],
               "description": "Independent environment skill discovery. Absent disables discovery."
             },
-            "tools": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/EnvironmentToolSurface"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Filesystem tool surface. Absent installs no filesystem tools; sources\nremain independent. Read-only does not restrict commands or durable jobs."
-            },
             "version": {
               "default": 1,
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
-            },
-            "workingDirectory": {
-              "description": "Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.",
-              "type": [
-                "string",
-                "null"
-              ]
             }
           },
           "type": "object"
@@ -3733,17 +3601,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "environment": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ProfileEnvironment"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "How the session obtains its active environment when this profile is\napplied: select an existing environment or inherit the parent's\nselection. Absence leaves the session's current\nactive environment unchanged."
-            },
             "instructions": {
               "anyOf": [
                 {
@@ -3825,10 +3682,20 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns all connection and\nbehavior configuration.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the link may only narrow the\nrecord's tool allowlist for this session.",
           "properties": {
             "serverId": {
               "type": "string"
+            },
+            "tools": {
+              "description": "Non-empty subset of the record's allowed tools exposed to this\nsession, under both injection and search; absent exposes the record's\nfull allowlist.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
           "required": [
@@ -3863,47 +3730,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "flex"
           ],
           "type": "string"
-        },
-        "ProfileEnvironment": {
-          "description": "Environment intent carried by a profile document.",
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Activate an existing universe environment. The profile never closes\nit.",
-              "properties": {
-                "environmentId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "existing",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "environmentId"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Activate the delegating parent's active environment. Resolved at\nsub-agent spawn, shared not copied, never closed by the\nchild; rejected on a session without a delegation origin or whose\nparent has no active environment.",
-              "properties": {
-                "type": {
-                  "const": "inherit",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "ProfileId": {
           "type": "string"
@@ -4202,7 +4028,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants the session virtual filesystem. Workspace links declare the\nsession-visible namespace and the VFS catalog is surfaced. Sub-grants are independent; `{}` grants a VFS with\nno tools and no sourcing.",
+          "description": "Grants the session virtual filesystem. Workspace attachments declare the\nsession-visible namespace and the VFS catalog is surfaced. The file tool\nsurface is derived from the attachments: any attachment installs the read\ntools, any `edit` attachment adds the write tools, and with the\nenvironments feature granted the matching transfer tools appear. `{}`\ngrants a VFS with no attachments, no tools, and no sourcing.",
           "properties": {
             "prompts": {
               "anyOf": [
@@ -4213,7 +4039,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional linked roots."
+              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional attached roots."
             },
             "skills": {
               "anyOf": [
@@ -4224,18 +4050,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional linked roots."
-            },
-            "tools": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/VfsToolSurface"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Agent-facing filesystem tool surface; absent = no fs tools. Per-path\nwritability is defined by each workspace link's own access.\nWith the environments feature granted, `readOnly` also exposes\n`vfs_materialize`; `edit` additionally exposes `vfs_capture`.\nPrompt/skill sourcing alone does not grant transfer tools."
+              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional attached roots."
             },
             "version": {
               "default": 1,
@@ -4250,10 +4065,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "workspaceLinks": {
-              "description": "Catalog resources exposed in the session's workspace namespace.",
+            "workspaces": {
+              "description": "Catalog resources exposed in the session's workspace namespace at\ndisjoint absolute paths.",
               "items": {
-                "$ref": "#/definitions/WorkspaceLink"
+                "$ref": "#/definitions/WorkspaceAttachment"
               },
               "type": "array"
             }
@@ -4266,7 +4081,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
+              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
               "items": {
                 "type": "string"
               },
@@ -4284,7 +4099,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
+              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
               "items": {
                 "type": "string"
               },
@@ -4296,13 +4111,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           },
           "type": "object"
-        },
-        "VfsToolSurface": {
-          "enum": [
-            "readOnly",
-            "edit"
-          ],
-          "type": "string"
         },
         "WebFeature": {
           "additionalProperties": {
@@ -4369,70 +4177,44 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "WorkspaceLink": {
+        "WorkspaceAccess": {
+          "description": "Per-attachment VFS access; `edit` implies `read`.",
+          "enum": [
+            "read",
+            "edit"
+          ],
+          "type": "string"
+        },
+        "WorkspaceAttachment": {
           "additionalProperties": {
             "not": {}
           },
+          "description": "One catalog resource mounted into the session namespace. Exactly one of\n`workspaceId` and `snapshotRef` names the resource; snapshots are\nimmutable and must be attached with `read` access.",
           "properties": {
             "access": {
-              "$ref": "#/definitions/WorkspaceLinkAccess"
+              "$ref": "#/definitions/WorkspaceAccess"
             },
             "path": {
               "type": "string"
             },
-            "target": {
-              "$ref": "#/definitions/WorkspaceLinkTarget"
+            "snapshotRef": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspaceId": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
             "path",
-            "target",
             "access"
           ],
           "type": "object"
-        },
-        "WorkspaceLinkAccess": {
-          "enum": [
-            "readOnly",
-            "readWrite"
-          ],
-          "type": "string"
-        },
-        "WorkspaceLinkTarget": {
-          "oneOf": [
-            {
-              "properties": {
-                "type": {
-                  "const": "workspace",
-                  "type": "string"
-                },
-                "workspaceId": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "workspaceId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "snapshotRef": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "snapshot",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "snapshotRef"
-              ],
-              "type": "object"
-            }
-          ]
         }
       }
     }
@@ -5206,17 +4988,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "environment": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ProfileEnvironment"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "How the session obtains its active environment when this profile is\napplied: select an existing environment or inherit the parent's\nselection. Absence leaves the session's current\nactive environment unchanged."
-            },
             "instructions": {
               "anyOf": [
                 {
@@ -5336,6 +5107,51 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "EnvironmentAccess": {
+          "description": "Per-attachment environment access, an ordered ladder: `edit` adds file\nediting to `read`, `exec` adds processes, `jobs` adds durable jobs.\nProcesses can write files regardless of the file-tool level, so\nread-only files with commands is deliberately not expressible.",
+          "enum": [
+            "read",
+            "edit",
+            "exec",
+            "jobs"
+          ],
+          "type": "string"
+        },
+        "EnvironmentAttachment": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "One environment the session may use. Exactly one of `environmentId` and\n`inherit` identifies the machine. `inherit` is valid only in a profile\ndocument applied to a sub-agent: it resolves to the delegating parent's\nactive environment at spawn and is stored on the child as a concrete id.\nIf the parent's environment is also listed explicitly, the explicit\nattachment wins; if the parent has none, the inherit attachment is dropped.",
+          "properties": {
+            "access": {
+              "$ref": "#/definitions/EnvironmentAccess"
+            },
+            "default": {
+              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. Never overrides a live\nselection and never applies on a plain `session/config/put`.",
+              "type": "boolean"
+            },
+            "environmentId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "inherit": {
+              "type": "boolean"
+            },
+            "workingDirectory": {
+              "description": "Absolute machine working directory for file tools, commands, jobs,\nand sources; absent uses the machine's advertised default.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "access"
+          ],
+          "type": "object"
+        },
         "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
@@ -5376,29 +5192,18 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentToolSurface": {
-          "description": "Agent-facing environment filesystem tools; independent of execution grants.",
-          "enum": [
-            "readOnly",
-            "edit"
-          ],
-          "type": "string"
-        },
         "EnvironmentsFeature": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants active session environments. Filesystem tools, commands, selection,\ndurable jobs, prompts, and skills are independent, default-off sub-grants.",
+          "description": "Grants session environments. The `environments` list is the allowed set:\nthe session can select, read, and run work only on a listed machine, each\nwith its own access grant and working directory. The installed tool\nsurface is the union of every attachment's grant; a call the active\nmachine's grant does not cover fails at execution, so switching machines\nnever changes the toolset. `{}` grants the feature with no reachable\nmachine.",
           "properties": {
-            "commands": {
-              "default": false,
-              "description": "Grants command execution and process continuation. Commands may modify\nfiles even when filesystem tools are read-only or disabled.",
-              "type": "boolean"
-            },
-            "jobs": {
-              "default": false,
-              "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
-              "type": "boolean"
+            "environments": {
+              "description": "The environments this session may use; unique ids, at most one\ndefault, at most one `inherit` (profiles only).",
+              "items": {
+                "$ref": "#/definitions/EnvironmentAttachment"
+              },
+              "type": "array"
             },
             "prompts": {
               "anyOf": [
@@ -5411,29 +5216,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ],
               "description": "Independent environment prompt loading; absent disables sourced instructions."
             },
-            "providers": {
-              "description": "Absent means every registered provider is allowed.",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "registrationKeys": {
-              "description": "Registration keys whose registered environments the session may\nlist and activate; absent means every key. Independent of\n`providers`: each list scopes its own environment source, and\nexternal environments pass only when neither list is set.",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "selectionTools": {
+            "selection": {
               "default": false,
-              "description": "Exposes `environment_list`, `environment_activate`, and\n`environment_deactivate` to the model. `environment_read` is available\nwhenever environments are enabled, and external API/profile activation\nremains available when this is false.",
+              "description": "Exposes `environment_list`, `environment_activate`, and\n`environment_deactivate` over the attached environments.\n`environment_read` is available whenever environments are enabled, and\nexternal API/profile activation remains available when this is false.",
               "type": "boolean"
             },
             "skills": {
@@ -5447,29 +5232,11 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ],
               "description": "Independent environment skill discovery. Absent disables discovery."
             },
-            "tools": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/EnvironmentToolSurface"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Filesystem tool surface. Absent installs no filesystem tools; sources\nremain independent. Read-only does not restrict commands or durable jobs."
-            },
             "version": {
               "default": 1,
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
-            },
-            "workingDirectory": {
-              "description": "Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.",
-              "type": [
-                "string",
-                "null"
-              ]
             }
           },
           "type": "object"
@@ -5645,10 +5412,20 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns all connection and\nbehavior configuration.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the link may only narrow the\nrecord's tool allowlist for this session.",
           "properties": {
             "serverId": {
               "type": "string"
+            },
+            "tools": {
+              "description": "Non-empty subset of the record's allowed tools exposed to this\nsession, under both injection and search; absent exposes the record's\nfull allowlist.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
           "required": [
@@ -5683,47 +5460,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "flex"
           ],
           "type": "string"
-        },
-        "ProfileEnvironment": {
-          "description": "Environment intent carried by a profile document.",
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Activate an existing universe environment. The profile never closes\nit.",
-              "properties": {
-                "environmentId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "existing",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "environmentId"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Activate the delegating parent's active environment. Resolved at\nsub-agent spawn, shared not copied, never closed by the\nchild; rejected on a session without a delegation origin or whose\nparent has no active environment.",
-              "properties": {
-                "type": {
-                  "const": "inherit",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "ProfileId": {
           "type": "string"
@@ -5986,7 +5722,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants the session virtual filesystem. Workspace links declare the\nsession-visible namespace and the VFS catalog is surfaced. Sub-grants are independent; `{}` grants a VFS with\nno tools and no sourcing.",
+          "description": "Grants the session virtual filesystem. Workspace attachments declare the\nsession-visible namespace and the VFS catalog is surfaced. The file tool\nsurface is derived from the attachments: any attachment installs the read\ntools, any `edit` attachment adds the write tools, and with the\nenvironments feature granted the matching transfer tools appear. `{}`\ngrants a VFS with no attachments, no tools, and no sourcing.",
           "properties": {
             "prompts": {
               "anyOf": [
@@ -5997,7 +5733,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional linked roots."
+              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional attached roots."
             },
             "skills": {
               "anyOf": [
@@ -6008,18 +5744,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional linked roots."
-            },
-            "tools": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/VfsToolSurface"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Agent-facing filesystem tool surface; absent = no fs tools. Per-path\nwritability is defined by each workspace link's own access.\nWith the environments feature granted, `readOnly` also exposes\n`vfs_materialize`; `edit` additionally exposes `vfs_capture`.\nPrompt/skill sourcing alone does not grant transfer tools."
+              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional attached roots."
             },
             "version": {
               "default": 1,
@@ -6034,10 +5759,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "workspaceLinks": {
-              "description": "Catalog resources exposed in the session's workspace namespace.",
+            "workspaces": {
+              "description": "Catalog resources exposed in the session's workspace namespace at\ndisjoint absolute paths.",
               "items": {
-                "$ref": "#/definitions/WorkspaceLink"
+                "$ref": "#/definitions/WorkspaceAttachment"
               },
               "type": "array"
             }
@@ -6050,7 +5775,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
+              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
               "items": {
                 "type": "string"
               },
@@ -6068,7 +5793,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
+              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
               "items": {
                 "type": "string"
               },
@@ -6080,13 +5805,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           },
           "type": "object"
-        },
-        "VfsToolSurface": {
-          "enum": [
-            "readOnly",
-            "edit"
-          ],
-          "type": "string"
         },
         "WebFeature": {
           "additionalProperties": {
@@ -6153,70 +5871,44 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "WorkspaceLink": {
+        "WorkspaceAccess": {
+          "description": "Per-attachment VFS access; `edit` implies `read`.",
+          "enum": [
+            "read",
+            "edit"
+          ],
+          "type": "string"
+        },
+        "WorkspaceAttachment": {
           "additionalProperties": {
             "not": {}
           },
+          "description": "One catalog resource mounted into the session namespace. Exactly one of\n`workspaceId` and `snapshotRef` names the resource; snapshots are\nimmutable and must be attached with `read` access.",
           "properties": {
             "access": {
-              "$ref": "#/definitions/WorkspaceLinkAccess"
+              "$ref": "#/definitions/WorkspaceAccess"
             },
             "path": {
               "type": "string"
             },
-            "target": {
-              "$ref": "#/definitions/WorkspaceLinkTarget"
+            "snapshotRef": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspaceId": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
             "path",
-            "target",
             "access"
           ],
           "type": "object"
-        },
-        "WorkspaceLinkAccess": {
-          "enum": [
-            "readOnly",
-            "readWrite"
-          ],
-          "type": "string"
-        },
-        "WorkspaceLinkTarget": {
-          "oneOf": [
-            {
-              "properties": {
-                "type": {
-                  "const": "workspace",
-                  "type": "string"
-                },
-                "workspaceId": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "workspaceId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "snapshotRef": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "snapshot",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "snapshotRef"
-              ],
-              "type": "object"
-            }
-          ]
         }
       }
     }
@@ -6310,17 +6002,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "environment": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ProfileEnvironment"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "How the session obtains its active environment when this profile is\napplied: select an existing environment or inherit the parent's\nselection. Absence leaves the session's current\nactive environment unchanged."
-            },
             "instructions": {
               "anyOf": [
                 {
@@ -6440,6 +6121,51 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "EnvironmentAccess": {
+          "description": "Per-attachment environment access, an ordered ladder: `edit` adds file\nediting to `read`, `exec` adds processes, `jobs` adds durable jobs.\nProcesses can write files regardless of the file-tool level, so\nread-only files with commands is deliberately not expressible.",
+          "enum": [
+            "read",
+            "edit",
+            "exec",
+            "jobs"
+          ],
+          "type": "string"
+        },
+        "EnvironmentAttachment": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "One environment the session may use. Exactly one of `environmentId` and\n`inherit` identifies the machine. `inherit` is valid only in a profile\ndocument applied to a sub-agent: it resolves to the delegating parent's\nactive environment at spawn and is stored on the child as a concrete id.\nIf the parent's environment is also listed explicitly, the explicit\nattachment wins; if the parent has none, the inherit attachment is dropped.",
+          "properties": {
+            "access": {
+              "$ref": "#/definitions/EnvironmentAccess"
+            },
+            "default": {
+              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. Never overrides a live\nselection and never applies on a plain `session/config/put`.",
+              "type": "boolean"
+            },
+            "environmentId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "inherit": {
+              "type": "boolean"
+            },
+            "workingDirectory": {
+              "description": "Absolute machine working directory for file tools, commands, jobs,\nand sources; absent uses the machine's advertised default.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "access"
+          ],
+          "type": "object"
+        },
         "EnvironmentPromptsConfig": {
           "additionalProperties": {
             "not": {}
@@ -6480,29 +6206,18 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "EnvironmentToolSurface": {
-          "description": "Agent-facing environment filesystem tools; independent of execution grants.",
-          "enum": [
-            "readOnly",
-            "edit"
-          ],
-          "type": "string"
-        },
         "EnvironmentsFeature": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants active session environments. Filesystem tools, commands, selection,\ndurable jobs, prompts, and skills are independent, default-off sub-grants.",
+          "description": "Grants session environments. The `environments` list is the allowed set:\nthe session can select, read, and run work only on a listed machine, each\nwith its own access grant and working directory. The installed tool\nsurface is the union of every attachment's grant; a call the active\nmachine's grant does not cover fails at execution, so switching machines\nnever changes the toolset. `{}` grants the feature with no reachable\nmachine.",
           "properties": {
-            "commands": {
-              "default": false,
-              "description": "Grants command execution and process continuation. Commands may modify\nfiles even when filesystem tools are read-only or disabled.",
-              "type": "boolean"
-            },
-            "jobs": {
-              "default": false,
-              "description": "Grants the advanced durable-job tool surface. The workflow binding is\ninstalled for the session when granted; invocations still require an\nactive, ready environment with matching job capabilities.",
-              "type": "boolean"
+            "environments": {
+              "description": "The environments this session may use; unique ids, at most one\ndefault, at most one `inherit` (profiles only).",
+              "items": {
+                "$ref": "#/definitions/EnvironmentAttachment"
+              },
+              "type": "array"
             },
             "prompts": {
               "anyOf": [
@@ -6515,29 +6230,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ],
               "description": "Independent environment prompt loading; absent disables sourced instructions."
             },
-            "providers": {
-              "description": "Absent means every registered provider is allowed.",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "registrationKeys": {
-              "description": "Registration keys whose registered environments the session may\nlist and activate; absent means every key. Independent of\n`providers`: each list scopes its own environment source, and\nexternal environments pass only when neither list is set.",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "selectionTools": {
+            "selection": {
               "default": false,
-              "description": "Exposes `environment_list`, `environment_activate`, and\n`environment_deactivate` to the model. `environment_read` is available\nwhenever environments are enabled, and external API/profile activation\nremains available when this is false.",
+              "description": "Exposes `environment_list`, `environment_activate`, and\n`environment_deactivate` over the attached environments.\n`environment_read` is available whenever environments are enabled, and\nexternal API/profile activation remains available when this is false.",
               "type": "boolean"
             },
             "skills": {
@@ -6551,29 +6246,11 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ],
               "description": "Independent environment skill discovery. Absent disables discovery."
             },
-            "tools": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/EnvironmentToolSurface"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Filesystem tool surface. Absent installs no filesystem tools; sources\nremain independent. Read-only does not restrict commands or durable jobs."
-            },
             "version": {
               "default": 1,
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
-            },
-            "workingDirectory": {
-              "description": "Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.",
-              "type": [
-                "string",
-                "null"
-              ]
             }
           },
           "type": "object"
@@ -6749,10 +6426,20 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns all connection and\nbehavior configuration.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the link may only narrow the\nrecord's tool allowlist for this session.",
           "properties": {
             "serverId": {
               "type": "string"
+            },
+            "tools": {
+              "description": "Non-empty subset of the record's allowed tools exposed to this\nsession, under both injection and search; absent exposes the record's\nfull allowlist.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
           "required": [
@@ -6787,47 +6474,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "flex"
           ],
           "type": "string"
-        },
-        "ProfileEnvironment": {
-          "description": "Environment intent carried by a profile document.",
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Activate an existing universe environment. The profile never closes\nit.",
-              "properties": {
-                "environmentId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "existing",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "environmentId"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "description": "Activate the delegating parent's active environment. Resolved at\nsub-agent spawn, shared not copied, never closed by the\nchild; rejected on a session without a delegation origin or whose\nparent has no active environment.",
-              "properties": {
-                "type": {
-                  "const": "inherit",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "ProfileId": {
           "type": "string"
@@ -7090,7 +6736,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants the session virtual filesystem. Workspace links declare the\nsession-visible namespace and the VFS catalog is surfaced. Sub-grants are independent; `{}` grants a VFS with\nno tools and no sourcing.",
+          "description": "Grants the session virtual filesystem. Workspace attachments declare the\nsession-visible namespace and the VFS catalog is surfaced. The file tool\nsurface is derived from the attachments: any attachment installs the read\ntools, any `edit` attachment adds the write tools, and with the\nenvironments feature granted the matching transfer tools appear. `{}`\ngrants a VFS with no attachments, no tools, and no sourcing.",
           "properties": {
             "prompts": {
               "anyOf": [
@@ -7101,7 +6747,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional linked roots."
+              "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional attached roots."
             },
             "skills": {
               "anyOf": [
@@ -7112,18 +6758,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional linked roots."
-            },
-            "tools": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/VfsToolSurface"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Agent-facing filesystem tool surface; absent = no fs tools. Per-path\nwritability is defined by each workspace link's own access.\nWith the environments feature granted, `readOnly` also exposes\n`vfs_materialize`; `edit` additionally exposes `vfs_capture`.\nPrompt/skill sourcing alone does not grant transfer tools."
+              "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional attached roots."
             },
             "version": {
               "default": 1,
@@ -7138,10 +6773,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "workspaceLinks": {
-              "description": "Catalog resources exposed in the session's workspace namespace.",
+            "workspaces": {
+              "description": "Catalog resources exposed in the session's workspace namespace at\ndisjoint absolute paths.",
               "items": {
-                "$ref": "#/definitions/WorkspaceLink"
+                "$ref": "#/definitions/WorkspaceAttachment"
               },
               "type": "array"
             }
@@ -7154,7 +6789,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
+              "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
               "items": {
                 "type": "string"
               },
@@ -7172,7 +6807,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "properties": {
             "roots": {
-              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace link. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace links.",
+              "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
               "items": {
                 "type": "string"
               },
@@ -7184,13 +6819,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           },
           "type": "object"
-        },
-        "VfsToolSurface": {
-          "enum": [
-            "readOnly",
-            "edit"
-          ],
-          "type": "string"
         },
         "WebFeature": {
           "additionalProperties": {
@@ -7257,70 +6885,44 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "WorkspaceLink": {
+        "WorkspaceAccess": {
+          "description": "Per-attachment VFS access; `edit` implies `read`.",
+          "enum": [
+            "read",
+            "edit"
+          ],
+          "type": "string"
+        },
+        "WorkspaceAttachment": {
           "additionalProperties": {
             "not": {}
           },
+          "description": "One catalog resource mounted into the session namespace. Exactly one of\n`workspaceId` and `snapshotRef` names the resource; snapshots are\nimmutable and must be attached with `read` access.",
           "properties": {
             "access": {
-              "$ref": "#/definitions/WorkspaceLinkAccess"
+              "$ref": "#/definitions/WorkspaceAccess"
             },
             "path": {
               "type": "string"
             },
-            "target": {
-              "$ref": "#/definitions/WorkspaceLinkTarget"
+            "snapshotRef": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspaceId": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
             "path",
-            "target",
             "access"
           ],
           "type": "object"
-        },
-        "WorkspaceLinkAccess": {
-          "enum": [
-            "readOnly",
-            "readWrite"
-          ],
-          "type": "string"
-        },
-        "WorkspaceLinkTarget": {
-          "oneOf": [
-            {
-              "properties": {
-                "type": {
-                  "const": "workspace",
-                  "type": "string"
-                },
-                "workspaceId": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "workspaceId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "snapshotRef": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "snapshot",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "snapshotRef"
-              ],
-              "type": "object"
-            }
-          ]
         }
       }
     }
@@ -7765,13 +7367,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "approvalDefault": {
+            "approval": {
               "allOf": [
                 {
                   "$ref": "#/definitions/RemoteMcpApprovalPolicy"
                 }
               ],
-              "default": "never"
+              "default": "never",
+              "description": "Approval policy for every session linking this server."
             },
             "authPolicy": {
               "allOf": [
@@ -7796,7 +7399,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "defaultServerLabel": {
               "type": "string"
             },
-            "deferLoadingDefault": {
+            "deferLoading": {
+              "description": "Provider-side deferred loading of tool definitions where supported.",
               "type": [
                 "boolean",
                 "null"

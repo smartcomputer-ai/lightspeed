@@ -53,22 +53,21 @@ provider that supports tool calls. Select it explicitly so the profile does
 not depend on a different deployment default.
 
 Instructions describe the work, but they do not grant access to files. Enable
-**Virtual File System: Files, Instructions, Skills**, then set **File tools**
-to **Edit files**.
+**Virtual File System: Files, Instructions, Skills**.
 
-Under **Workspace links**, choose **Add link** and configure:
+Under **Workspace attachments**, choose **Add link** and configure:
 
 | Field | Value |
 | --- | --- |
 | Target type | Workspace |
 | Workspace | Release notes (`release-notes`) |
 | Session path | `/workspace` |
-| Access | Read and write |
+| Access | Edit |
 
 Leave the other capabilities and prompt/skill roots unset, then choose
-**Save**. The profile now grants file operations and links a writable
-workspace. Both are needed: tools without a link have no workspace to operate
-on, while a read-only link cannot accept the release notes.
+**Save**. The profile now links an editable workspace, and the link is what
+installs the file tools: any attachment grants reading, and an **Edit** link adds
+writing. A **Read** link could not accept the release notes.
 
 The session path is how this agent sees the workspace. Its source file will
 be `/workspace/changes.md`. In the workspace browser, the same file is simply
@@ -136,9 +135,9 @@ Existing sessions keep their setup until you explicitly change or reapply it.
 
 | Symptom | What to check |
 | --- | --- |
-| The agent prints release notes in chat but never saves a file | Confirm that the task asks for a saved file and the profile has **File tools → Edit files**. Inspect the transcript for an actual write operation. |
-| The agent cannot find `changes.md` | Check the workspace link and session path. The agent needs `/workspace/changes.md`; the workspace browser shows `changes.md`. |
-| The write is refused | The workspace link must use **Read and write** as well as granting edit tools. |
+| The agent prints release notes in chat but never saves a file | Confirm that the task asks for a saved file and the workspace attachment has **Edit** access. Inspect the transcript for an actual write operation. |
+| The agent cannot find `changes.md` | Check the workspace attachment and session path. The agent needs `/workspace/changes.md`; the workspace browser shows `changes.md`. |
+| The write is refused | The workspace attachment must use **Edit** access; a **Read** link or a snapshot never accepts writes. |
 | Fixing the profile does not fix the session | Create a fresh session from the corrected profile, or explicitly update the existing session's setup. |
 | The file contains unsupported claims | Revise the instructions or ask for a correction against the source. Tool success verifies that a file was written, not that its contents are correct. |
 

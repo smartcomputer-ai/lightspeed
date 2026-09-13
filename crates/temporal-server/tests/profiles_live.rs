@@ -121,22 +121,20 @@ async fn run_profile_environment_selection_live_client(
                     features: Some(api::FeaturesConfig {
                         environments: Some(api::EnvironmentsFeature {
                             version: api::CURRENT_FEATURE_VERSION,
-                            tools: None,
-                            commands: false,
-                            jobs: false,
-                            selection_tools: false,
-                            providers: None,
-                            registration_keys: None,
-                            working_directory: None,
+                            selection: false,
                             prompts: None,
                             skills: None,
+                            environments: vec![api::EnvironmentAttachment {
+                                environment_id: Some(environment_id.clone()),
+                                inherit: false,
+                                default: true,
+                                access: api::EnvironmentAccess::Read,
+                                working_directory: None,
+                            }],
                         }),
                         ..Default::default()
                     }),
                     ..Default::default()
-                }),
-                environment: Some(api::ProfileEnvironment::Existing {
-                    environment_id: environment_id.clone(),
                 }),
                 ..Default::default()
             },
@@ -262,8 +260,8 @@ async fn run_profiles_live_client(
             allowed_tools: Some(vec!["lookup_customer".to_owned()]),
             execution: api::RemoteMcpExecution::Provider,
             exposure: api::RemoteMcpExposure::Inject,
-            approval_default: RemoteMcpApprovalPolicy::Never,
-            defer_loading_default: Some(true),
+            approval: RemoteMcpApprovalPolicy::Never,
+            defer_loading: Some(true),
             allow_private_network: false,
             auth_policy: api::McpServerAuthPolicy::None,
             credential: None,
@@ -287,6 +285,7 @@ async fn run_profiles_live_client(
                                 version: api::CURRENT_FEATURE_VERSION,
                                 servers: vec![api::McpServerLink {
                                     server_id: server_id.clone(),
+                                    tools: None,
                                 }],
                             }),
                             timers: Some(api::TimersFeature {
@@ -299,7 +298,6 @@ async fn run_profiles_live_client(
                     instructions: Some(ProfileInstructions::Text {
                         text: "Use the profile instructions in this live test.".to_owned(),
                     }),
-                    environment: None,
                     retention: None,
                 },
             },

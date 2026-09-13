@@ -1,3 +1,4 @@
+import { defaultEnvironmentAttachment } from "@/lib/sessions/resource-features";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
@@ -6,9 +7,7 @@ import {
   api,
   type BotCreateResponse,
   type BotListResponse,
-  type Environment,
   type ProfileDocument,
-  type ProfileEnvironment,
   type ProfileSummary,
 } from "@/api";
 import { BotAvatar, botColor } from "@/components/bot/face";
@@ -34,7 +33,6 @@ import {
 } from "@/components/bot/triggers";
 import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
-import { ProfileEnvironmentEditor } from "@/components/session/profile-environment-editor";
 import { ProfileRetentionEditor } from "@/components/session/profile-retention-editor";
 import { SessionConfigEditor } from "@/components/session/session-config-editor";
 import { Button } from "@/components/ui/button";
@@ -73,7 +71,6 @@ export function botOwnedProfileDocument({
   displayName,
   config,
   baseInstructions,
-  environment,
   metadata,
   retention,
 }: {
@@ -81,7 +78,6 @@ export function botOwnedProfileDocument({
   displayName: string;
   config?: Record<string, unknown>;
   baseInstructions: string;
-  environment?: ProfileEnvironment;
   metadata?: Record<string, string>;
   retention?: number;
 }): ProfileDocument {
@@ -91,7 +87,6 @@ export function botOwnedProfileDocument({
     description: `Setup of bot ${profileId}`,
     ...(config ? { config } : {}),
     ...(baseInstructions.trim() ? { instructions: { type: "text", text: baseInstructions } } : {}),
-    ...(environment ? { environment } : {}),
     ...(metadata ? { metadata } : {}),
     ...(retention !== undefined ? { retention: { deleteAfterCloseMs: retention } } : {}),
   };
@@ -170,7 +165,6 @@ function Wizard({
   const [config, setConfig] = useState<Record<string, unknown> | undefined>(undefined);
   const [configError, setConfigError] = useState<string | null>(null);
   const [baseInstructions, setBaseInstructions] = useState("");
-  const [environment, setEnvironment] = useState<ProfileEnvironment | undefined>(undefined);
   const [metadata, setMetadata] = useState<Record<string, string> | undefined>();
   const [retention, setRetention] = useState<number | undefined>();
   const [retentionError, setRetentionError] = useState<string | null>(null);
@@ -224,17 +218,13 @@ function Wizard({
     queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
   });
   const options = useSessionConfigEditorOptions(universeId, step === "profile" || step === "wakeups");
-  const environments = useQuery({
-    queryKey: ["environments", universeId],
-    queryFn: () => api<Environment[]>("GET", `/api/v1/universes/${universeId}/environments`),
-    enabled: step === "profile" || step === "wakeups",
-  });
+  const defaultEnvironmentId = defaultEnvironmentAttachment(config)?.environmentId;
 
   const env: BotEnvStatus =
     setupMode === "shared"
       ? { kind: "unknown" }
-      : environment?.type === "existing"
-        ? { kind: "existing", environmentId: environment.environmentId }
+      : defaultEnvironmentId
+        ? { kind: "existing", environmentId: defaultEnvironmentId }
         : { kind: "none" };
 
   const applyTemplate = (template: BotTemplate) => {
@@ -300,7 +290,7 @@ function Wizard({
         ? `Session profile: ${configError}`
         : retentionError
           ? `Session profile: ${retentionError}`
-          : setupResourceFeatureError({ config, environment })
+          : setupResourceFeatureError({ config })
       : sharedProfileId
         ? null
         : "Pick the shared profile this bot applies.";
@@ -330,7 +320,6 @@ function Wizard({
             displayName: displayName.trim() || id,
             config,
             baseInstructions,
-            environment,
             metadata,
             retention,
           }),
@@ -685,30 +674,8 @@ function Wizard({
                       workspacesLoading={options.workspacesLoading}
                       models={options.models}
                       profiles={options.profiles}
-                      environmentProviders={options.environmentProviders}
-                      environmentSetup={
-                        <div className="grid gap-3">
-                          <ProfileEnvironmentEditor
-                            embedded
-                            value={environment}
-                            environments={environments.data}
-
-
-
-                            description="Choose an existing environment shared by this bot's sessions. Manage its lifecycle on the Environments page."
-                            onChange={setEnvironment}
-                          />
-                          {environments.data?.length === 0 && (
-                            <p className="text-xs text-muted-foreground">
-                              No environments yet — create one under{" "}
-                              <NavLink to={`/u/${slug}/settings/environments`} className="underline">
-                                Settings › Environments
-                              </NavLink>{" "}
-                              if the bot needs a machine.
-                            </p>
-                          )}
-                        </div>
-                      }
+                      environments={options.environments}
+                      discoverMcpTools={options.discoverMcpTools}
                       metadataSetup={<MetadataMapEditor value={metadata} onChange={setMetadata} />}
                       metadataDescription="Defaults copied to every session this bot creates. Metadata helps with filtering and does not affect runtime behavior."
                       retentionSetup={

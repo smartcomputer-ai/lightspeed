@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 use crate::{
     config::{DeploymentStores, GatewayAuthMode, gateway_auth_mode_from_env},
-    environment_gateway::{RouteKey, bearer_matches, close_message},
+    environments::gateway::{RouteKey, bearer_matches, close_message},
     universe::{UniverseError, UniverseRuntime},
 };
 

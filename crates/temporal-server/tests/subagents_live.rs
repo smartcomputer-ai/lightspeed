@@ -606,7 +606,6 @@ async fn create_child_profile_with_config(
                 instructions: Some(ProfileInstructions::Text {
                     text: "You are a scripted live sub-agent.".to_owned(),
                 }),
-                environment: None,
                 retention: None,
             },
         },
@@ -749,11 +748,10 @@ async fn run_agent_run_media_live_client(
         .workspace;
     let child_config: SessionConfig = serde_json::from_value(serde_json::json!({
         "features": {"vfs": {
-            "tools": "readOnly",
-            "workspaceLinks": [{
+            "workspaces": [{
                 "path": "/workspace",
-                "target": {"type": "workspace", "workspaceId": workspace.workspace_id},
-                "access": "readOnly"
+                "workspaceId": workspace.workspace_id,
+                "access": "read"
             }]
         }}
     }))?;
@@ -1175,17 +1173,12 @@ async fn run_agent_run_inherit_environment_live_client(
             updated_at_ms: 1,
         })
         .await?;
-    let environments_feature = api::EnvironmentsFeature {
-        tools: Some(api::EnvironmentToolSurface::Edit),
-        commands: true,
-        working_directory: None,
-        prompts: None,
+    let environments_feature = |attachment: api::EnvironmentAttachment| api::EnvironmentsFeature {
         version: api::CURRENT_FEATURE_VERSION,
-        providers: None,
-        registration_keys: None,
-        selection_tools: false,
-        jobs: false,
+        selection: false,
+        prompts: None,
         skills: None,
+        environments: vec![attachment],
     };
 
     // Child profile: inherits whatever environment its parent has active.
@@ -1199,7 +1192,13 @@ async fn run_agent_run_inherit_environment_live_client(
                 metadata: Default::default(),
                 config: Some(SessionConfig {
                     features: Some(api::FeaturesConfig {
-                        environments: Some(environments_feature.clone()),
+                        environments: Some(environments_feature(api::EnvironmentAttachment {
+                            environment_id: None,
+                            inherit: true,
+                            default: true,
+                            access: api::EnvironmentAccess::Exec,
+                            working_directory: None,
+                        })),
                         ..api::FeaturesConfig::default()
                     }),
                     ..SessionConfig::default()
@@ -1207,7 +1206,6 @@ async fn run_agent_run_inherit_environment_live_client(
                 instructions: Some(ProfileInstructions::Text {
                     text: "You are a scripted live sub-agent.".to_owned(),
                 }),
-                environment: Some(api::ProfileEnvironment::Inherit {}),
                 retention: None,
             },
         },
@@ -1243,15 +1241,20 @@ async fn run_agent_run_inherit_environment_live_client(
                     config: Some(SessionConfig {
                         model: Some(model_to_api(&model)),
                         features: Some(api::FeaturesConfig {
-                            environments: Some(environments_feature),
+                            environments: Some(environments_feature(api::EnvironmentAttachment {
+                                environment_id: Some(
+                                    independent_environment.environment_id.clone(),
+                                ),
+                                inherit: false,
+                                default: true,
+                                access: api::EnvironmentAccess::Exec,
+                                working_directory: None,
+                            })),
                             ..subagents_features(&child_profile_id, 16)
                         }),
                         ..SessionConfig::default()
                     }),
                     instructions: None,
-                    environment: Some(api::ProfileEnvironment::Existing {
-                        environment_id: independent_environment.environment_id.clone(),
-                    }),
                     retention: None,
                 },
             }),

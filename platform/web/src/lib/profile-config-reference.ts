@@ -13,39 +13,41 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
   },
   // Capability grants. An absent feature is not granted; \`{}\` grants it with defaults. Every block carries a behavior \`version\` that pins semantics.
   "features": {
-    // Grants active session environments. Filesystem tools, commands, selection, durable jobs, prompts, and skills are independent, default-off sub-grants.
+    // Grants session environments. The \`environments\` list is the allowed set: the session can select, read, and run work only on a listed machine, each with its own access grant and working directory. The installed tool surface is the union of every attachment's grant; a call the active machine's grant does not cover fails at execution, so switching machines never changes the toolset. \`{}\` grants the feature with no reachable machine.
     "environments": {
-      // Grants command execution and process continuation. Commands may modify files even when filesystem tools are read-only or disabled.
-      "commands": true | false,
-      // Grants the advanced durable-job tool surface. The workflow binding is installed for the session when granted; invocations still require an active, ready environment with matching job capabilities.
-      "jobs": true | false,
+      // The environments this session may use; unique ids, at most one default, at most one \`inherit\` (profiles only).
+      "environments": [{
+        // Per-attachment environment access, an ordered ladder: \`edit\` adds file editing to \`read\`, \`exec\` adds processes, \`jobs\` adds durable jobs. Processes can write files regardless of the file-tool level, so read-only files with commands is deliberately not expressible.
+        // (required when this object is present)
+        "access": "read" | "edit" | "exec" | "jobs",
+        // Activated when a profile is applied while the session has no active environment; creation is the trivial case. Never overrides a live selection and never applies on a plain \`session/config/put\`.
+        "default": true | false,
+        "environmentId": "string",
+        "inherit": true | false,
+        // Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the machine's advertised default.
+        "workingDirectory": "string",
+      }],
       // Independent environment prompt loading; absent disables sourced instructions.
       "prompts": {
         // Optional source directories, absolute or relative to the environment working directory. Explicit nonempty lists replace all defaults, including home roots. Defaults are .agents/prompts and .lightspeed/prompts under working directory and execution home.
         "roots": ["string"],
       },
-      // Absent means every registered provider is allowed.
-      "providers": ["string"],
-      // Registration keys whose registered environments the session may list and activate; absent means every key. Independent of \`providers\`: each list scopes its own environment source, and external environments pass only when neither list is set.
-      "registrationKeys": ["string"],
-      // Exposes \`environment_list\`, \`environment_activate\`, and \`environment_deactivate\` to the model. \`environment_read\` is available whenever environments are enabled, and external API/profile activation remains available when this is false.
-      "selectionTools": true | false,
+      // Exposes \`environment_list\`, \`environment_activate\`, and \`environment_deactivate\` over the attached environments. \`environment_read\` is available whenever environments are enabled, and external API/profile activation remains available when this is false.
+      "selection": true | false,
       // Independent environment skill discovery. Absent disables discovery.
       "skills": {
         // Optional source directories, absolute or relative to the environment working directory. Explicit nonempty lists replace all defaults, including home roots. Defaults are .agents/skills and .lightspeed/skills under working directory and execution home.
         "roots": ["string"],
       },
-      // Filesystem tool surface. Absent installs no filesystem tools; sources remain independent. Read-only does not restrict commands or durable jobs.
-      "tools": "readOnly" | "edit",
       "version": 0,
-      // Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
-      "workingDirectory": "string",
     },
     // Grants remote MCP tools by declaring linked servers from the universe MCP catalog; must link at least one server, with unique server ids.
     "mcp": {
       "servers": [{
         // (required when this object is present)
         "serverId": "string",
+        // Non-empty subset of the record's allowed tools exposed to this session, under both injection and search; absent exposes the record's full allowlist.
+        "tools": ["string"],
       }],
       "version": 0,
     },
@@ -71,33 +73,30 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
     "timers": {
       "version": 0,
     },
-    // Grants the session virtual filesystem. Workspace links declare the session-visible namespace and the VFS catalog is surfaced. Sub-grants are independent; \`{}\` grants a VFS with no tools and no sourcing.
+    // Grants the session virtual filesystem. Workspace attachments declare the session-visible namespace and the VFS catalog is surfaced. The file tool surface is derived from the attachments: any attachment installs the read tools, any \`edit\` attachment adds the write tools, and with the environments feature granted the matching transfer tools appear. \`{}\` grants a VFS with no attachments, no tools, and no sourcing.
     "vfs": {
-      // Prompt-instruction sourcing from the VFS. Absent disables loading; an empty block discovers conventional linked roots.
+      // Prompt-instruction sourcing from the VFS. Absent disables loading; an empty block discovers conventional attached roots.
       "prompts": {
-        // Absent searches .agents/prompts and .lightspeed/prompts beneath each workspace link. Explicit roots replace these defaults and must be non-empty absolute paths contained in workspace links.
+        // Absent searches .agents/prompts and .lightspeed/prompts beneath each workspace attachment. Explicit roots replace these defaults and must be non-empty absolute paths contained in workspace attachments.
         "roots": ["string"],
       },
-      // Independent VFS skill discovery. Absent disables discovery and removes its runtime catalog; an empty block discovers conventional linked roots.
+      // Independent VFS skill discovery. Absent disables discovery and removes its runtime catalog; an empty block discovers conventional attached roots.
       "skills": {
-        // Absent searches .agents/skills and .lightspeed/skills beneath each workspace link. Explicit roots replace these defaults and must be non-empty absolute paths contained in workspace links.
+        // Absent searches .agents/skills and .lightspeed/skills beneath each workspace attachment. Explicit roots replace these defaults and must be non-empty absolute paths contained in workspace attachments.
         "roots": ["string"],
       },
-      // Agent-facing filesystem tool surface; absent = no fs tools. Per-path writability is defined by each workspace link's own access. With the environments feature granted, \`readOnly\` also exposes \`vfs_materialize\`; \`edit\` additionally exposes \`vfs_capture\`. Prompt/skill sourcing alone does not grant transfer tools.
-      "tools": "readOnly" | "edit",
       "version": 0,
       // Absolute VFS tool working directory; absent uses /.
       "workingDirectory": "string",
-      // Catalog resources exposed in the session's workspace namespace.
-      "workspaceLinks": [{
+      // Catalog resources exposed in the session's workspace namespace at disjoint absolute paths.
+      "workspaces": [{
+        // Per-attachment VFS access; \`edit\` implies \`read\`.
         // (required when this object is present)
-        "access": "readOnly" | "readWrite",
+        "access": "read" | "edit",
         // (required when this object is present)
         "path": "string",
-        // (required when this object is present)
-        "target": // one of:
-          { "type": "workspace", "workspaceId": "string" } |
-          { "snapshotRef": "string", "type": "snapshot" },
+        "snapshotRef": "string",
+        "workspaceId": "string",
       }],
     },
     // Grants network access through the web toolset; \`fetch\` and \`search\` are independently granted, and a web block granting neither is rejected.

@@ -38,8 +38,8 @@ mod compaction;
 mod environment_jobs;
 mod llm;
 mod preprocess;
-mod runtime_projection;
-pub use runtime_projection::subagent_catalog_snapshot;
+mod context_refresh;
+pub use context_refresh::subagent_catalog_snapshot;
 mod state;
 mod storage;
 mod subagents;
@@ -345,7 +345,7 @@ mod tests {
                     active_environment_id: None,
                     environment_policy: None,
                     subagents_policy: None,
-                    workspace_links: Vec::new(),
+                    workspace_attachments: Vec::new(),
                     calls: vec![ToolInvocationRequest {
                         builtin: None,
                         call_id: tool_call.call_id.clone(),
@@ -639,7 +639,7 @@ impl WorkerActivities {
         request: RuntimeProjectionRefreshActivityRequest,
     ) -> Result<RuntimeProjectionRefreshActivityResult, ActivityError> {
         let state = self.state_for(&ctx).await?;
-        runtime_projection::refresh_runtime_projection(state.runtime_projection(), request).await
+        context_refresh::refresh_context(state.runtime_projection(), request).await
     }
 
     #[activity(name = ACTIVITY_ENVIRONMENT_JOB_START)]

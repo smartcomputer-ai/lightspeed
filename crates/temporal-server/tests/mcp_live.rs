@@ -492,12 +492,15 @@ async fn run_matrix_client(
                     servers: vec![
                         McpServerLink {
                             server_id: ids.small.clone(),
+                            tools: None,
                         },
                         McpServerLink {
                             server_id: ids.large.clone(),
+                            tools: None,
                         },
                         McpServerLink {
                             server_id: ids.selected.clone(),
+                            tools: None,
                         },
                     ],
                 }),
@@ -614,7 +617,7 @@ async fn put_fixture_server(
     server_url: &str,
     exposure: RemoteMcpExposure,
     allowed_tools: Option<Vec<String>>,
-    approval_default: RemoteMcpApprovalPolicy,
+    approval: RemoteMcpApprovalPolicy,
 ) -> anyhow::Result<()> {
     api.put_mcp_server(McpServerPutParams {
         server: McpServerInput {
@@ -626,8 +629,8 @@ async fn put_fixture_server(
             allowed_tools,
             execution: RemoteMcpExecution::Native,
             exposure,
-            approval_default,
-            defer_loading_default: None,
+            approval,
+            defer_loading: None,
             allow_private_network: true,
             auth_policy: api::McpServerAuthPolicy::None,
             credential: None,
@@ -1537,8 +1540,8 @@ async fn run_native_mcp_live_client(
             allowed_tools: None,
             execution: api::RemoteMcpExecution::Native,
             exposure: api::RemoteMcpExposure::Search,
-            approval_default: RemoteMcpApprovalPolicy::Always,
-            defer_loading_default: None,
+            approval: RemoteMcpApprovalPolicy::Always,
+            defer_loading: None,
             allow_private_network: true,
             auth_policy: api::McpServerAuthPolicy::None,
             credential: None,
@@ -1559,6 +1562,7 @@ async fn run_native_mcp_live_client(
                     version: api::CURRENT_FEATURE_VERSION,
                     servers: vec![api::McpServerLink {
                         server_id: server_id.clone(),
+                        tools: None,
                     }],
                 }),
                 ..FeaturesConfig::default()
@@ -1651,8 +1655,8 @@ async fn run_mcp_live_client(
                 allowed_tools: Some(vec![selected_tool.clone()]),
                 execution: api::RemoteMcpExecution::Provider,
                 exposure: api::RemoteMcpExposure::Inject,
-                approval_default: RemoteMcpApprovalPolicy::Never,
-                defer_loading_default: Some(true),
+                approval: RemoteMcpApprovalPolicy::Never,
+                defer_loading: Some(true),
                 allow_private_network: true,
                 auth_policy: api::McpServerAuthPolicy::None,
                 credential: None,
@@ -1733,6 +1737,7 @@ async fn run_mcp_live_client(
         version: api::CURRENT_FEATURE_VERSION,
         servers: vec![api::McpServerLink {
             server_id: server_id.clone(),
+            tools: None,
         }],
     });
     linked_config.features = Some(features);
@@ -2201,8 +2206,8 @@ async fn run_mixed_batch_live_client(
             allowed_tools: Some(vec![selected_tool.to_owned()]),
             execution: api::RemoteMcpExecution::Native,
             exposure: api::RemoteMcpExposure::Inject,
-            approval_default: RemoteMcpApprovalPolicy::Always,
-            defer_loading_default: None,
+            approval: RemoteMcpApprovalPolicy::Always,
+            defer_loading: None,
             allow_private_network: true,
             auth_policy: api::McpServerAuthPolicy::None,
             credential: None,
@@ -2226,6 +2231,7 @@ async fn run_mixed_batch_live_client(
                     version: api::CURRENT_FEATURE_VERSION,
                     servers: vec![api::McpServerLink {
                         server_id: server_id.clone(),
+                        tools: None,
                     }],
                 }),
                 ..FeaturesConfig::default()

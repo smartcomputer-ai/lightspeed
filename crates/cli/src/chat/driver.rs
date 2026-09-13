@@ -9,7 +9,7 @@ use api::{
     ModelConfig, ProfileId, ProfileSource, RunStartConfig, RunStartParams, RunStartResponse,
     RunStartSource, SessionEventKindView, SessionEventView, SessionEventsReadParams,
     SessionReadParams, SessionStartParams, SessionView, TimersFeature, ToolCallEventView,
-    VfsFeature, VfsPromptsConfig, VfsToolSurface, WebFeature, WebFetchFeature, WebSearchFeature,
+    VfsFeature, VfsPromptsConfig, WebFeature, WebFetchFeature, WebSearchFeature, WorkspaceAccess,
 };
 #[cfg(test)]
 use api::{ContextEntryKindView, ContextEntryView, ToolBatchView, ToolCallView, ToolItemStatus};
@@ -68,7 +68,9 @@ pub(crate) struct ChatArgs {
     /// Disable web fetch for this session.
     #[arg(long = "no-web-fetch")]
     no_web_fetch: bool,
-    /// Filesystem tool mode for this session: edit, read-only, or none.
+    /// Access granted on the `--mount` workspace attachment: edit or read.
+    /// File tools are derived from attachments, so without a mount the
+    /// session has a VFS but no file tools.
     #[arg(long = "filesystem-tools")]
     filesystem_tools: Option<String>,
     /// Start with no feature grants at all (model + runs only) instead of
@@ -312,6 +314,7 @@ impl ChatSessionDriver {
             self.session_id.clone(),
             mount_path,
             workspace.workspace_id,
+            mount_access(&self.settings),
         )
         .await
         .context("failed to mount chat workspace")?;
@@ -1523,16 +1526,20 @@ fn draft_settings(args: &ChatArgs) -> Result<ChatDraftSettings> {
     })
 }
 
-fn parse_filesystem_tool_mode(value: &str) -> Result<crate::chat::protocol::FilesystemToolMode> {
-    use crate::chat::protocol::FilesystemToolMode;
+fn parse_filesystem_tool_mode(value: &str) -> Result<WorkspaceAccess> {
     match value {
-        "edit" => Ok(FilesystemToolMode::Edit),
-        "read-only" | "read_only" | "readonly" => Ok(FilesystemToolMode::ReadOnly),
-        "none" | "off" | "disabled" => Ok(FilesystemToolMode::None),
+        "edit" => Ok(WorkspaceAccess::Edit),
+        "read" | "read-only" | "read_only" | "readonly" => Ok(WorkspaceAccess::Read),
         other => Err(anyhow!(
-            "invalid filesystem tool mode '{other}'; expected edit, read-only, or none"
+            "invalid filesystem tool mode '{other}'; expected edit or read"
         )),
     }
+}
+
+/// Access of the workspace the chat client attaches for `--mount`; edit
+/// unless the user narrowed it.
+fn mount_access(settings: &ChatDraftSettings) -> WorkspaceAccess {
+    settings.filesystem_tools.unwrap_or(WorkspaceAccess::Edit)
 }
 
 fn model_config(settings: &ChatDraftSettings) -> ModelConfig {
@@ -1555,15 +1562,10 @@ fn session_start_config(settings: &ChatDraftSettings) -> api::SessionConfig {
 
 /// The CLI's development defaults: features are secure-by-default on the
 /// server (absent = off), so the chat client grants a usable dev surface
-/// explicitly — VFS with fs tools and prompt sourcing, web, timers. Skill discovery
-/// requires an explicit profile/session configuration.
+/// explicitly — VFS with prompt sourcing, web, timers. File tools appear once
+/// a workspace is attached (`--mount`); skill discovery requires an explicit
+/// profile/session configuration.
 fn dev_features(settings: &ChatDraftSettings) -> FeaturesConfig {
-    let vfs_tools = match settings.filesystem_tools {
-        None => Some(VfsToolSurface::Edit),
-        Some(crate::chat::protocol::FilesystemToolMode::Edit) => Some(VfsToolSurface::Edit),
-        Some(crate::chat::protocol::FilesystemToolMode::ReadOnly) => Some(VfsToolSurface::ReadOnly),
-        Some(crate::chat::protocol::FilesystemToolMode::None) => None,
-    };
     let web_fetch = settings.web_fetch.unwrap_or(true);
     let web_search = settings.web_search.unwrap_or(true)
         && matches!(
@@ -1574,8 +1576,7 @@ fn dev_features(settings: &ChatDraftSettings) -> FeaturesConfig {
         vfs: Some(VfsFeature {
             working_directory: None,
             version: api::CURRENT_FEATURE_VERSION,
-            workspace_links: Vec::new(),
-            tools: vfs_tools,
+            workspaces: Vec::new(),
             prompts: Some(VfsPromptsConfig::default()),
             skills: None,
         }),
@@ -1987,7 +1988,7 @@ mod tests {
 
         let features = config.features.expect("features");
         let vfs = features.vfs.expect("vfs");
-        assert_eq!(vfs.tools, Some(VfsToolSurface::Edit));
+        assert!(vfs.workspaces.is_empty());
         assert!(vfs.prompts.is_some());
         assert!(vfs.skills.is_none());
         let web = features.web.expect("web");
@@ -2023,15 +2024,18 @@ mod tests {
     }
 
     #[test]
-    fn session_start_config_can_select_read_only_filesystem_tools() {
+    fn mount_access_defaults_to_edit_and_can_be_narrowed_to_read() {
+        let settings = draft_settings(&chat_args_with_effort(None)).expect("draft settings");
+        assert_eq!(mount_access(&settings), WorkspaceAccess::Edit);
+
         let mut args = chat_args_with_effort(None);
         args.filesystem_tools = Some("read-only".to_owned());
         let settings = draft_settings(&args).expect("draft settings");
+        assert_eq!(mount_access(&settings), WorkspaceAccess::Read);
 
-        let config = session_start_config(&settings);
-
-        let vfs = config.features.expect("features").vfs.expect("vfs");
-        assert_eq!(vfs.tools, Some(VfsToolSurface::ReadOnly));
+        let mut args = chat_args_with_effort(None);
+        args.filesystem_tools = Some("none".to_owned());
+        assert!(draft_settings(&args).is_err());
     }
 
     #[test]

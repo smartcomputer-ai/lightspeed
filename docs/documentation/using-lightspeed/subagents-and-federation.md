@@ -23,8 +23,8 @@ platform administrator account to configure them.
 
 First create the `release-reviewer` profile from
 [Profiles and instructions](profiles-and-instructions.md#create-a-profile-for-a-job).
-It should have a clear description, read-only VFS tools, and its own read-only
-link to the `release-notes` workspace at `/workspace`.
+It should have a clear description and its own `read` link to the
+`release-notes` workspace at `/workspace`.
 
 Open the parent `release-editor` profile and enable **Sub-agents**. In
 **Agents**, select `release-reviewer`. Optional limits are hidden by default;
@@ -61,18 +61,21 @@ that can write to a database delegates that authority even if the parent
 cannot call the database tool directly. Review the child profile as part of
 the parent's access design.
 
-Workspace links are shared only when both profiles point to the same live
-workspace. They do not create isolated copies. Give a reviewer read-only
+Workspace attachments are shared only when both profiles point to the same live
+workspace. They do not create isolated copies. Give a reviewer `read`
 access, or use a snapshot when it must review a fixed version while another
 agent continues editing.
 
-Environment behavior is also explicit. An existing environment or an inherited
-parent environment shares a real filesystem. The child profile option
-**Inherit the parent's active environment (sub-agents only)** needs a parent
-with an active environment and the appropriate capability.
-Provisioning can give the child a separate machine, normally closed with its
-session according to the selected policy. VFS files remain separate from
-these machine files; see [Environments](../environments/overview.md).
+Environment behavior is also explicit. An attached environment or an inherited
+parent environment shares a real filesystem. The child profile's
+**Inherit the parent's active environment (sub-agents only)** attachment
+(`"inherit": true`) resolves to the parent's active machine when the child is
+spawned, with the access level the child's attachment declares. It is
+dropped when the parent has no active environment, and an explicit attachment
+of the same machine wins over it. The child can also attach a different
+existing machine with its own access; profiles never provision one. VFS files
+remain separate from these machine files; see
+[Environments](../environments/overview.md).
 
 A sub-agent spawned by a bot does not become another bot. It gets its profile
 and brief, without the parent's bot history, inbox, or controller-specific
@@ -216,7 +219,7 @@ its neighbors.
 | Symptom | What to check |
 | --- | --- |
 | The parent cannot find a specialist | Add the named profile to **Sub-agents → Agents** and give it a useful description. |
-| The child cannot read the parent's files | Configure links in the child profile; the brief alone grants no access. |
+| The child cannot read the parent's files | Link the workspace in the child profile; the brief alone grants no access. |
 | New children are refused despite none currently running | Check the lifetime descendant budget as well as concurrency and depth. |
 | A spawned child ends before its result is used | The parent run may have ended with a run-scoped promise still pending. Await it or deliberately detach it. |
 | A bot is absent from the federation directory | Check sending permission, target state, and the recipient's enabled inbox allowlist. |

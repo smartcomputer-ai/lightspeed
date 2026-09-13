@@ -12,7 +12,7 @@ impl GatewayAgentApi {
         config
             .validate()
             .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
-        self.validate_workspace_link_targets(&config.features)
+        self.validate_workspace_attachment_targets(&config.features)
             .await?;
         self.validate_subagent_agents(&config.features).await?;
         Ok(config)
@@ -150,41 +150,26 @@ fn features_from_api(
         return Ok(engine::FeaturesConfig::default());
     };
     Ok(engine::FeaturesConfig {
-        vfs: features.vfs.map(|vfs| engine::VfsFeature {
-            version: vfs.version,
-            working_directory: vfs.working_directory,
-            workspace_links: vfs
-                .workspace_links
-                .into_iter()
-                .map(|link| engine::WorkspaceLink {
-                    path: link.path,
-                    target: match link.target {
-                        api::WorkspaceLinkTarget::Workspace { workspace_id } => {
-                            engine::WorkspaceLinkTarget::Workspace { workspace_id }
-                        }
-                        api::WorkspaceLinkTarget::Snapshot { snapshot_ref } => {
-                            engine::WorkspaceLinkTarget::Snapshot { snapshot_ref }
-                        }
-                    },
-                    access: match link.access {
-                        api::WorkspaceLinkAccess::ReadOnly => engine::WorkspaceLinkAccess::ReadOnly,
-                        api::WorkspaceLinkAccess::ReadWrite => {
-                            engine::WorkspaceLinkAccess::ReadWrite
-                        }
-                    },
+        vfs: features
+            .vfs
+            .map(|vfs| {
+                Ok::<_, AgentApiError>(engine::VfsFeature {
+                    version: vfs.version,
+                    working_directory: vfs.working_directory,
+                    workspaces: vfs
+                        .workspaces
+                        .into_iter()
+                        .map(workspace_attachment_from_api)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    prompts: vfs.prompts.map(|prompts| engine::VfsPromptsConfig {
+                        roots: prompts.roots,
+                    }),
+                    skills: vfs.skills.map(|skills| engine::VfsSkillsConfig {
+                        roots: skills.roots,
+                    }),
                 })
-                .collect(),
-            tools: vfs.tools.map(|tools| match tools {
-                api::VfsToolSurface::ReadOnly => engine::VfsToolSurface::ReadOnly,
-                api::VfsToolSurface::Edit => engine::VfsToolSurface::Edit,
-            }),
-            prompts: vfs.prompts.map(|prompts| engine::VfsPromptsConfig {
-                roots: prompts.roots,
-            }),
-            skills: vfs.skills.map(|skills| engine::VfsSkillsConfig {
-                roots: skills.roots,
-            }),
-        }),
+            })
+            .transpose()?,
         web: features.web.map(|web| engine::WebFeature {
             version: web.version,
             fetch: web.fetch.map(|_| engine::WebFetchFeature {}),
@@ -216,31 +201,28 @@ fn features_from_api(
         }),
         environments: features
             .environments
-            .map(|environments| engine::EnvironmentsFeature {
-                tools: environments.tools.map(|surface| match surface {
-                    api::EnvironmentToolSurface::ReadOnly => {
-                        engine::EnvironmentToolSurface::ReadOnly
-                    }
-                    api::EnvironmentToolSurface::Edit => engine::EnvironmentToolSurface::Edit,
-                }),
-                commands: environments.commands,
-                version: environments.version,
-                working_directory: environments.working_directory,
-                prompts: environments
-                    .prompts
-                    .map(|source| engine::EnvironmentPromptsConfig {
-                        roots: source.roots,
-                    }),
-                providers: environments.providers,
-                registration_keys: environments.registration_keys,
-                selection_tools: environments.selection_tools,
-                jobs: environments.jobs,
-                skills: environments
-                    .skills
-                    .map(|skills| engine::EnvironmentSkillsConfig {
-                        roots: skills.roots,
-                    }),
-            }),
+            .map(|environments| {
+                Ok::<_, AgentApiError>(engine::EnvironmentsFeature {
+                    version: environments.version,
+                    selection: environments.selection,
+                    prompts: environments
+                        .prompts
+                        .map(|source| engine::EnvironmentPromptsConfig {
+                            roots: source.roots,
+                        }),
+                    skills: environments
+                        .skills
+                        .map(|skills| engine::EnvironmentSkillsConfig {
+                            roots: skills.roots,
+                        }),
+                    environments: environments
+                        .environments
+                        .into_iter()
+                        .map(environment_attachment_from_api)
+                        .collect::<Result<Vec<_>, _>>()?,
+                })
+            })
+            .transpose()?,
         mcp: features.mcp.map(|mcp| engine::McpFeature {
             version: mcp.version,
             servers: mcp
@@ -248,10 +230,72 @@ fn features_from_api(
                 .into_iter()
                 .map(|link| engine::McpServerLink {
                     server_id: link.server_id,
+                    tools: link.tools,
                 })
                 .collect(),
         }),
     })
+}
+
+fn workspace_attachment_from_api(
+    link: api::WorkspaceAttachment,
+) -> Result<engine::WorkspaceAttachment, AgentApiError> {
+    let target = match (link.workspace_id, link.snapshot_ref) {
+        (Some(workspace_id), None) => engine::WorkspaceAttachmentTarget::Workspace { workspace_id },
+        (None, Some(snapshot_ref)) => engine::WorkspaceAttachmentTarget::Snapshot { snapshot_ref },
+        _ => {
+            return Err(AgentApiError::invalid_request(format!(
+                "workspace attachment at {} must set exactly one of workspaceId and snapshotRef",
+                link.path
+            )));
+        }
+    };
+    Ok(engine::WorkspaceAttachment {
+        path: link.path,
+        target,
+        access: match link.access {
+            api::WorkspaceAccess::Read => engine::WorkspaceAccess::Read,
+            api::WorkspaceAccess::Edit => engine::WorkspaceAccess::Edit,
+        },
+    })
+}
+
+/// A session configuration names concrete machines only. `inherit` is a
+/// profile-document notion resolved at sub-agent spawn, so it is rejected
+/// here rather than silently dropped.
+fn environment_attachment_from_api(
+    attachment: api::EnvironmentAttachment,
+) -> Result<engine::EnvironmentAttachment, AgentApiError> {
+    let environment_id = match (attachment.environment_id, attachment.inherit) {
+        (Some(environment_id), false) => environment_id,
+        (None, true) => {
+            return Err(AgentApiError::invalid_request(
+                "environment attachment inherit is resolved when a sub-agent profile is spawned; a session configuration must name the environment",
+            ));
+        }
+        _ => {
+            return Err(AgentApiError::invalid_request(
+                "environment attachment must set exactly one of environmentId and inherit",
+            ));
+        }
+    };
+    Ok(engine::EnvironmentAttachment {
+        environment_id,
+        default: attachment.default,
+        access: environment_access_from_api(attachment.access),
+        working_directory: attachment.working_directory,
+    })
+}
+
+pub(super) fn environment_access_from_api(
+    access: api::EnvironmentAccess,
+) -> engine::EnvironmentAccess {
+    match access {
+        api::EnvironmentAccess::Read => engine::EnvironmentAccess::Read,
+        api::EnvironmentAccess::Edit => engine::EnvironmentAccess::Edit,
+        api::EnvironmentAccess::Exec => engine::EnvironmentAccess::Exec,
+        api::EnvironmentAccess::Jobs => engine::EnvironmentAccess::Jobs,
+    }
 }
 
 pub(super) fn apply_run_start_config(

@@ -6,7 +6,7 @@
 /// writes, delegates research to a second bot that runs sub-agents, and
 /// takes the Monday numbers from a metrics bot — the personal-agent pattern
 /// built from bots, triggers, workspaces, skills, and one Mac mini at home.
-import type { Environment, ProfileEnvironment, SecretGrant, UniverseSetup } from "@/api";
+import type { Environment, SecretGrant, UniverseSetup } from "@/api";
 import type { SessionSummaryView } from "@lightspeed-ai/agent-client";
 import { appendExchange, appendScriptedRun, closeSession, newSession } from "../engine";
 import type { DemoResponder, DemoStore, DemoToolCall, DemoTurn, SessionRecord, UniverseState } from "../store";
@@ -678,16 +678,16 @@ const WRITER_INSTRUCTIONS = `You turn Ada's memory and briefs into documents oth
 
 Read /memory/commitments.md and the relevant /briefs first; every number traces to a digest or a log line, and you name it in a footnote. Plain sentences, no adjectives, no claims memory does not support. When something is missing, leave a bracketed question for Ada rather than filling it in.`;
 
-const link = (workspaceId: string, path: string, access: "readOnly" | "readWrite") => ({
+const link = (workspaceId: string, path: string, access: "read" | "edit") => ({
   path,
   access,
-  target: { type: "workspace", workspaceId },
+  workspaceId,
 });
-const MEMORY_RW = link(WORKSPACE.memory, "/memory", "readWrite");
-const MEMORY_RO = link(WORKSPACE.memory, "/memory", "readOnly");
-const SKILLS_RO = link(WORKSPACE.skills, "/skills", "readOnly");
-const BRIEFS_RW = link(WORKSPACE.briefs, "/briefs", "readWrite");
-const BRIEFS_RO = link(WORKSPACE.briefs, "/briefs", "readOnly");
+const MEMORY_RW = link(WORKSPACE.memory, "/memory", "edit");
+const MEMORY_RO = link(WORKSPACE.memory, "/memory", "read");
+const SKILLS_RO = link(WORKSPACE.skills, "/skills", "read");
+const BRIEFS_RW = link(WORKSPACE.briefs, "/briefs", "edit");
+const BRIEFS_RO = link(WORKSPACE.briefs, "/briefs", "read");
 
 const ASSISTANT_LIMITS = { maxDepth: 1, maxDescendants: 4, maxConcurrent: 2, deadlineMs: 15 * MINUTE_MS };
 const RESEARCH_LIMITS = { maxDepth: 1, maxDescendants: 6, maxConcurrent: 3, deadlineMs: 10 * MINUTE_MS };
@@ -710,19 +710,18 @@ const ASSISTANT_CONFIG: Record<string, unknown> = {
   generation: { reasoningEffort: "medium", maxOutputTokens: 8_000 },
   limits: { maxToolRounds: 16 },
   features: {
-    vfs: { tools: "edit", workspaceLinks: [MEMORY_RW, SKILLS_RO, BRIEFS_RW], skills: { roots: ["/skills"] } },
+    vfs: { workspaces: [MEMORY_RW, SKILLS_RO, BRIEFS_RW], skills: { roots: ["/skills"] } },
     mcp: {
       servers: [
         { serverId: MCP.google },
         { serverId: MCP.slack },
       ],
     },
-    environments: { selectionTools: false },
+    environments: { environments: [{ environmentId: ENV_MAC_MINI, default: true, access: "jobs" }] },
     subagents: { agents: [{ profileId: PROFILE.researcher }], ...ASSISTANT_LIMITS },
     web: { fetch: {} },
   },
 };
-const ASSISTANT_ENVIRONMENT: ProfileEnvironment = { type: "existing", environmentId: ENV_MAC_MINI };
 
 const RESEARCHER_CONFIG: Record<string, unknown> = {
   model: SONNET,
@@ -730,7 +729,8 @@ const RESEARCHER_CONFIG: Record<string, unknown> = {
   limits: { maxToolRounds: 30 },
   features: {
     web: { fetch: {}, search: { blockedDomains: ["pinterest.com", "quora.com"] } },
-    vfs: { tools: "edit", workspaceLinks: [MEMORY_RW] },
+    vfs: { workspaces: [MEMORY_RW] },
+    environments: { environments: [{ inherit: true, default: true, access: "exec" }] },
     subagents: { agents: [{ profileId: PROFILE.researcher }], ...RESEARCH_LIMITS },
   },
 };
@@ -741,7 +741,7 @@ const METRICS_CONFIG: Record<string, unknown> = {
   limits: { maxToolRounds: 10, maxTurns: 8 },
   features: {
     mcp: { servers: [{ serverId: MCP.stripe }, { serverId: MCP.hubspot }] },
-    vfs: { tools: "readOnly", workspaceLinks: [MEMORY_RO] },
+    vfs: { workspaces: [MEMORY_RO] },
   },
 };
 
@@ -750,7 +750,7 @@ const WRITER_CONFIG: Record<string, unknown> = {
   generation: { reasoningEffort: "high", maxOutputTokens: 16_000 },
   limits: { maxTurns: 20 },
   features: {
-    vfs: { tools: "edit", workspaceLinks: [MEMORY_RO, BRIEFS_RW] },
+    vfs: { workspaces: [MEMORY_RO, BRIEFS_RW] },
   },
 };
 
@@ -776,7 +776,6 @@ const ASSISTANT_PROFILE: ProfileInit = {
   description: "Ada's assistant: briefs, inbox triage with drafts for approval, meeting prep, calendar, travel, memory it keeps itself; delegates research.",
   instructions: ASSISTANT_INSTRUCTIONS,
   config: ASSISTANT_CONFIG,
-  environment: ASSISTANT_ENVIRONMENT,
   revision: 17,
   createdAtMs: ago(41 * DAY_MS),
   updatedAtMs: ago(4 * DAY_MS),
@@ -787,7 +786,6 @@ const RESEARCHER_PROFILE: ProfileInit = {
   description: "Sourced answers from public pages; splits a question across sub-agents and writes the result under /memory/research.",
   instructions: RESEARCHER_INSTRUCTIONS,
   config: RESEARCHER_CONFIG,
-  environment: { type: "inherit" },
   revision: 6,
   createdAtMs: ago(30 * DAY_MS),
   updatedAtMs: ago(9 * DAY_MS),
@@ -974,8 +972,8 @@ function seedIntegrations(universe: UniverseState): void {
       serverUrl: `${WORKSPACE_MCP_URL}/mcp`,
       description: "Gmail and Calendar for ada@lumen.example: search, drafts, sends, events. The inbox and calendar polls read through the same server.",
       allowedTools: GOOGLE_TOOLS,
-      approvalDefault: "never",
-      deferLoadingDefault: false,
+      approval: "never",
+      deferLoading: false,
       authPolicy: { type: "requiredOAuth", resource: `${WORKSPACE_MCP_URL}/mcp`, scopes: ["gmail.modify", "calendar.events"] },
       credential: { type: "authGrant", grantId: GRANT.google },
       status: "active",
@@ -989,7 +987,7 @@ function seedIntegrations(universe: UniverseState): void {
       serverUrl: "https://mcp.slack.example/mcp",
       description: "Read-only on the Lumen workspace: search and channel history, for what Ada was told where.",
       allowedTools: SLACK_TOOLS,
-      approvalDefault: "never",
+      approval: "never",
       authPolicy: { type: "requiredBearer" },
       credential: { type: "authGrant", grantId: GRANT.slack },
       status: "active",
@@ -1003,7 +1001,7 @@ function seedIntegrations(universe: UniverseState): void {
       serverUrl: "https://mcp.stripe.example/v1",
       description: "Subscriptions, invoices, and customers for the metrics bot; restricted read-only key.",
       allowedTools: ["search_subscriptions", "list_invoices", "retrieve_invoice", "retrieve_customer", "retrieve_subscription"],
-      approvalDefault: "never",
+      approval: "never",
       authPolicy: { type: "requiredBearer" },
       credential: { type: "authGrant", grantId: GRANT.stripe },
       status: "active",
@@ -1017,7 +1015,7 @@ function seedIntegrations(universe: UniverseState): void {
       serverUrl: "https://mcp.hubspot.example/mcp",
       description: "Deals and pipelines for coverage numbers and the AE hiring pipeline Marco keeps there.",
       allowedTools: ["search_deals", "get_pipeline", "get_deal"],
-      approvalDefault: "never",
+      approval: "never",
       authPolicy: { type: "requiredOAuth", resource: "https://mcp.hubspot.example/mcp" },
       credential: { type: "authGrant", grantId: GRANT.hubspot },
       status: "active",

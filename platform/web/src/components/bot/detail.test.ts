@@ -122,7 +122,7 @@ describe("setup summaries", () => {
     expect(otherBotsSummary(false, "off")).toBe("cannot send · receives from nobody");
   });
   it("names the environment", () => {
-    expect(environmentSummary(undefined)).toBe("No environment");
-    expect(environmentSummary({ type: "existing", environmentId: "env-1" })).toBe("env-1");
+    expect(environmentSummary(undefined)).toBe("No default environment");
+    expect(environmentSummary({ features: { environments: { environments: [{ environmentId: "env-1", access: "read", default: true }] } } })).toBe("env-1");
   });
 });

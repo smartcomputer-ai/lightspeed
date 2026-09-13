@@ -396,7 +396,7 @@ async fn read_prompt_source(
         content_ref,
         text,
         bytes: bytes.len() as u64,
-        writable: input.root.access == engine::WorkspaceLinkAccess::ReadWrite,
+        writable: input.root.access == engine::WorkspaceAccess::Edit,
         warnings: Vec::new(),
     }))
 }
@@ -854,7 +854,7 @@ struct SourceFingerprintPayload<'a> {
 mod tests {
     use std::sync::Arc;
 
-    use engine::WorkspaceLinkAccess;
+    use engine::WorkspaceAccess;
     use engine::storage::{BlobStore, InMemoryBlobStore};
 
     use super::*;
@@ -1115,7 +1115,7 @@ mod tests {
                     snapshot_ref: BlobRef::from_bytes(b"snapshot-1"),
                     link_path: VfsPath::parse("/workspace").unwrap(),
                 },
-                access: WorkspaceLinkAccess::ReadOnly,
+                access: WorkspaceAccess::Read,
             },
             fs,
         }

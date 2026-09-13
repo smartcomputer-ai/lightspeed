@@ -17,8 +17,8 @@ tools and separate contents:
 
 | Domain | Where the files live | How the session gets access |
 | --- | --- | --- |
-| VFS workspace | Lightspeed's persistent storage | Workspace links and VFS capabilities in session configuration |
-| Environment filesystem | The machine or container running the environment daemon | Environment capability and an active environment |
+| VFS workspace | Lightspeed's persistent storage | Workspace attachments in the session's VFS feature, each with `read` or `edit` access |
+| Environment filesystem | The machine or container running the environment daemon | An environment attachment with its access level, and an active environment |
 
 Suppose an agent writes a test plan in its VFS workspace, then selects a VM to
 run the tests. The plan does not appear in the VM automatically. If a command
@@ -52,21 +52,26 @@ can then create environments from its available templates.
 
 ## Select an environment for a session
 
-Environments belong to a universe. A session records one active environment
-at a time, and its environment file and process tools operate there. Enable
-the **Environments** capability and select an **Active environment** in the
-session setup, or configure the environment in the profile used to start it.
+Environments belong to a universe. A session's configuration attaches the
+environments it may use, each with an access level (`read`, `edit`, `exec`,
+or `jobs`, each including the previous ones) and an optional working
+directory, and records one active environment at a time; its environment file
+and process tools operate there. Enable the **Environments** capability,
+attach the machine, and select it as the **Active environment** in the
+session setup, or mark it as the profile's default attachment so it is
+activated when the profile is applied.
 
-A profile can select an existing environment or inherit a parent’s selection.
-For a provisioned environment, the runtime can wait for readiness before
-executing an environment-dependent tool call. The session does not need to
-guess how long provisioning takes.
+A profile attaches existing environments and, for sub-agents, can inherit the
+parent's active machine. For a provisioned environment, the runtime can wait
+for readiness before executing an environment-dependent tool call. The
+session does not need to guess how long provisioning takes.
 
-Model-driven selection is a separate capability: selection tools let the agent
-discover and change its active environment. They are unnecessary when you
-choose the machine yourself. Background job tools are another separate grant.
-Provider and registration-key filters can restrict which environments a
-session may use.
+Model-driven selection is a separate switch: selection tools let the agent
+list, activate, and deactivate the attached environments. They are
+unnecessary when you choose the machine yourself. The attachment list is the
+only allowed set; the toolset is the union of the attachments' access and
+does not change when the agent switches machines, while a call the active
+machine's access does not cover is refused when it executes.
 
 Selecting an environment does not reserve it. Several sessions and bots can
 use the same environment, and their processes and file writes share that
@@ -107,9 +112,9 @@ and reconnects under the same identity. Ephemeral registration closes the
 environment after its configured disconnect grace period.
 
 Closing or deleting a session leaves its environment available. Environments
-are created, credentialed, powered, and closed independently. Profiles can
-select existing environments or inherit a parent's selection; they do not
-provision machines or attach cleanup to a session's lifetime.
+are created, credentialed, powered, and closed independently. Profiles attach
+existing environments or, for sub-agents, inherit a parent's selection; they
+do not provision machines or attach cleanup to a session's lifetime.
 
 Closing a registered or external environment removes its availability in
 Lightspeed; it does not delete or shut down your computer. Closing a provisioned

@@ -829,7 +829,7 @@ pub struct AwaitEnvironmentReadyActivityRequest {
     pub session_id: SessionId,
     pub environment_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment_policy: Option<engine::EnvironmentPolicyRuntime>,
+    pub environment_policy: Option<engine::EnvironmentsFeature>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -861,7 +861,7 @@ pub struct RuntimeProjectionRefreshActivityRequest {
     pub active_environment_id: Option<engine::EnvironmentId>,
     pub session_id: SessionId,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub workspace_links: Vec<engine::WorkspaceLink>,
+    pub workspace_attachments: Vec<engine::WorkspaceAttachment>,
     pub vfs_catalog_enabled: bool,
     pub vfs_prompts_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

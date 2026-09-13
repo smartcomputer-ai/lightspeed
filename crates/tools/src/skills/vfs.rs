@@ -1,11 +1,12 @@
-//! Skill catalog root resolution for CAS-backed VFS workspace links.
+//! Skill catalog root resolution for CAS-backed VFS workspace attachments.
 
 use std::{collections::BTreeSet, sync::Arc};
 
 use engine::storage::BlobStore;
 use thiserror::Error;
 use vfs::{
-    ResolvedWorkspaceLink, ResolvedWorkspaceLinkTarget, VfsPath, VfsWorkspaceId, VfsWorkspaceStore,
+    ResolvedWorkspaceAttachment, ResolvedWorkspaceAttachmentTarget, VfsPath, VfsWorkspaceId,
+    VfsWorkspaceStore,
 };
 
 use crate::{
@@ -110,7 +111,7 @@ pub enum SkillVfsRootError {
     #[error("invalid configured VFS skill root {root}: {message}")]
     InvalidConfiguredRoot { root: String, message: String },
 
-    #[error("VFS skill root {root_id} at {root_path} is not under a workspace link")]
+    #[error("VFS skill root {root_id} at {root_path} is not under a workspace attachment")]
     UnlinkedRoot { root_id: String, root_path: VfsPath },
 
     #[error("invalid VFS skill root {root_id} at {root_path}: {message}")]
@@ -133,7 +134,7 @@ pub enum SkillVfsRootError {
 pub async fn resolve_linked_vfs_skill_roots(
     blobs: Arc<dyn BlobStore>,
     workspace_store: Arc<dyn VfsWorkspaceStore>,
-    links: Vec<ResolvedWorkspaceLink>,
+    links: Vec<ResolvedWorkspaceAttachment>,
     specs: Vec<VfsSkillRootSpec>,
 ) -> Result<LinkedVfsSkillCatalogRoots, SkillVfsRootError> {
     validate_specs(&specs)?;
@@ -147,12 +148,12 @@ pub async fn resolve_linked_vfs_skill_roots(
     let mut warnings = Vec::new();
     for spec in specs {
         if let Some(link) = link_for_root(fs.links(), &spec.root_path)
-            && let ResolvedWorkspaceLinkTarget::Unavailable { reason, .. } = &link.target
+            && let ResolvedWorkspaceAttachmentTarget::Unavailable { reason, .. } = &link.target
         {
             warnings.push(SkillLoadWarning::new(
                 spec.root_id.clone(),
                 Some(spec.root_path.to_string()),
-                SkillLoadWarningKind::UnavailableWorkspaceLink {
+                SkillLoadWarningKind::UnavailableWorkspaceAttachment {
                     reason: reason.clone(),
                 },
             ));
@@ -170,7 +171,7 @@ pub async fn resolve_linked_vfs_skill_roots(
 }
 
 pub fn configured_vfs_skill_root_specs(
-    links: &[ResolvedWorkspaceLink],
+    links: &[ResolvedWorkspaceAttachment],
     roots: Option<&[String]>,
 ) -> Result<Vec<VfsSkillRootSpec>, SkillVfsRootError> {
     let defaults;
@@ -201,7 +202,7 @@ pub fn configured_vfs_skill_root_specs(
             } else if link_for_root(links, &path).is_some_and(|link| {
                 matches!(
                     link.target,
-                    ResolvedWorkspaceLinkTarget::AvailableWorkspace { .. }
+                    ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { .. }
                 )
             }) {
                 SkillTrustLevel::Project
@@ -240,7 +241,7 @@ fn validate_specs(specs: &[VfsSkillRootSpec]) -> Result<(), SkillVfsRootError> {
 }
 
 async fn resolve_root(
-    links: &[ResolvedWorkspaceLink],
+    links: &[ResolvedWorkspaceAttachment],
     spec: VfsSkillRootSpec,
 ) -> Result<Option<SkillCatalogRoot>, SkillVfsRootError> {
     let link =
@@ -256,20 +257,20 @@ async fn resolve_root(
         }
     })?;
     let source = match &link.target {
-        ResolvedWorkspaceLinkTarget::AvailableSnapshot { snapshot_ref } => {
+        ResolvedWorkspaceAttachmentTarget::AvailableSnapshot { snapshot_ref } => {
             SkillCatalogRootSource::LinkedSnapshot {
                 snapshot_ref: snapshot_ref.clone(),
                 link_path: link.path.clone(),
             }
         }
-        ResolvedWorkspaceLinkTarget::AvailableWorkspace { workspace } => {
+        ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace } => {
             SkillCatalogRootSource::LinkedWorkspace {
                 workspace_id: workspace.workspace_id.clone(),
                 workspace_head_ref: workspace.head_snapshot_ref.clone(),
                 link_path: link.path.clone(),
             }
         }
-        ResolvedWorkspaceLinkTarget::Unavailable { .. } => return Ok(None),
+        ResolvedWorkspaceAttachmentTarget::Unavailable { .. } => return Ok(None),
     };
 
     Ok(Some(SkillCatalogRoot {
@@ -282,9 +283,9 @@ async fn resolve_root(
 }
 
 fn link_for_root<'a>(
-    links: &'a [ResolvedWorkspaceLink],
+    links: &'a [ResolvedWorkspaceAttachment],
     root_path: &VfsPath,
-) -> Option<&'a ResolvedWorkspaceLink> {
+) -> Option<&'a ResolvedWorkspaceAttachment> {
     links
         .iter()
         .find(|link| vfs_path_starts_with(root_path, &link.path))
@@ -305,11 +306,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use async_trait::async_trait;
-    use engine::{WorkspaceLinkAccess, WorkspaceLinkTarget, storage::InMemoryBlobStore};
+    use engine::{WorkspaceAccess, WorkspaceAttachmentTarget, storage::InMemoryBlobStore};
     use vfs::{
         CompareAndSetVfsWorkspaceHead, CreateInlineSnapshotRequest, CreateVfsWorkspaceRecord,
-        InlineFile, ResolvedWorkspaceLink, ResolvedWorkspaceLinkTarget, VfsCatalogError,
-        VfsWorkspaceRecord, create_inline_snapshot,
+        InlineFile, ResolvedWorkspaceAttachment, ResolvedWorkspaceAttachmentTarget,
+        VfsCatalogError, VfsWorkspaceRecord, create_inline_snapshot,
     };
 
     use super::*;
@@ -332,10 +333,10 @@ mod tests {
         .expect("snapshot");
         let links = vec![resolved_link(
             "/skills/system",
-            ResolvedWorkspaceLinkTarget::AvailableSnapshot {
+            ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
                 snapshot_ref: snapshot.snapshot_ref.clone(),
             },
-            WorkspaceLinkAccess::ReadOnly,
+            WorkspaceAccess::Read,
         )];
 
         let resolved = resolve_linked_vfs_skill_roots(
@@ -408,8 +409,8 @@ mod tests {
             .expect("workspace");
         let links = vec![resolved_link(
             "/workspace",
-            ResolvedWorkspaceLinkTarget::AvailableWorkspace { workspace },
-            WorkspaceLinkAccess::ReadWrite,
+            ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace },
+            WorkspaceAccess::Edit,
         )];
 
         let resolved = resolve_linked_vfs_skill_roots(
@@ -490,13 +491,13 @@ mod tests {
             Arc::new(TestWorkspaceStore::default()),
             vec![resolved_link(
                 "/skills/system",
-                ResolvedWorkspaceLinkTarget::Unavailable {
-                    declared_target: WorkspaceLinkTarget::Workspace {
+                ResolvedWorkspaceAttachmentTarget::Unavailable {
+                    declared_target: WorkspaceAttachmentTarget::Workspace {
                         workspace_id: "deleted".to_owned(),
                     },
                     reason: "workspace was deleted".to_owned(),
                 },
-                WorkspaceLinkAccess::ReadWrite,
+                WorkspaceAccess::Edit,
             )],
             vec![VfsSkillRootSpec::new(
                 "system",
@@ -512,7 +513,7 @@ mod tests {
         assert!(matches!(
             resolved.warnings(),
             [SkillLoadWarning {
-                kind: SkillLoadWarningKind::UnavailableWorkspaceLink { reason },
+                kind: SkillLoadWarningKind::UnavailableWorkspaceAttachment { reason },
                 ..
             }] if reason == "workspace was deleted"
         ));
@@ -523,10 +524,10 @@ mod tests {
         let links = ["/", "/workspace"].map(|path| {
             resolved_link(
                 path,
-                ResolvedWorkspaceLinkTarget::AvailableSnapshot {
+                ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
                     snapshot_ref: engine::BlobRef::from_bytes(b"snapshot"),
                 },
-                WorkspaceLinkAccess::ReadOnly,
+                WorkspaceAccess::Read,
             )
         });
         let defaults = configured_vfs_skill_root_specs(&links, None).unwrap();
@@ -557,13 +558,13 @@ mod tests {
     fn empty_configured_roots_do_not_infer_roots_from_links() {
         let links = vec![resolved_link(
             "/skills/system",
-            ResolvedWorkspaceLinkTarget::Unavailable {
-                declared_target: engine::WorkspaceLinkTarget::Workspace {
+            ResolvedWorkspaceAttachmentTarget::Unavailable {
+                declared_target: engine::WorkspaceAttachmentTarget::Workspace {
                     workspace_id: "skills".into(),
                 },
                 reason: "deleted".into(),
             },
-            WorkspaceLinkAccess::ReadOnly,
+            WorkspaceAccess::Read,
         )];
         assert!(
             configured_vfs_skill_root_specs(&links, Some(&[]))
@@ -596,10 +597,10 @@ mod tests {
 
     fn resolved_link(
         path: &str,
-        target: ResolvedWorkspaceLinkTarget,
-        access: WorkspaceLinkAccess,
-    ) -> ResolvedWorkspaceLink {
-        ResolvedWorkspaceLink {
+        target: ResolvedWorkspaceAttachmentTarget,
+        access: WorkspaceAccess,
+    ) -> ResolvedWorkspaceAttachment {
+        ResolvedWorkspaceAttachment {
             path: VfsPath::parse(path).unwrap(),
             target,
             access,

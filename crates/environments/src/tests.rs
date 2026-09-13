@@ -954,7 +954,7 @@ async fn registration_key_policy_gates_admission_without_touching_reconnects() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn registered_environments_group_by_key_and_access_policy_scopes_them() {
+async fn registered_environments_list_by_key() {
     let (_universe_id, store) = store().await;
     minted_key(
         &store,
@@ -972,29 +972,10 @@ async fn registered_environments_group_by_key_and_access_policy_scopes_them() {
         .create_registered_environment(register("rk-a", "env-a", &daemon_key(0x31), 2_000))
         .await
         .expect("a");
-    let b = store
+    store
         .create_registered_environment(register("rk-b", "env-b", &daemon_key(0x32), 2_000))
         .await
         .expect("b");
-    let provisioned = store
-        .create_environment(create("p", "env-p", "inc-p", 2_000))
-        .await
-        .expect("provisioned");
-    let external = store
-        .create_external_environment(CreateExternalEnvironment {
-            request_id: EnvironmentProvisionRequestId::new("ext"),
-            environment_id: EnvironmentId::new("env-x"),
-            incarnation_id: EnvironmentIncarnationId::new("inc-x"),
-            connection: EnvironmentConnectionSpec::new(
-                "ws://envd.internal:19091",
-                EnvironmentTransport::WebSocket,
-            ),
-            display_name: None,
-            metadata: BTreeMap::new(),
-            created_at_ms: 2_000,
-        })
-        .await
-        .expect("external");
 
     let by_key = store
         .list_environments(ListEnvironments {
@@ -1006,31 +987,6 @@ async fn registered_environments_group_by_key_and_access_policy_scopes_them() {
         .expect("list");
     assert_eq!(by_key.len(), 1);
     assert_eq!(by_key[0].environment_id, a.environment_id);
-
-    let open = EnvironmentAccessPolicy::ALLOW_ALL;
-    assert!(
-        open.allows(&a) && open.allows(&b) && open.allows(&provisioned) && open.allows(&external)
-    );
-
-    let keys_only =
-        EnvironmentAccessPolicy::new(None::<Vec<String>>, Some(vec!["rk-a".to_owned()]));
-    assert!(keys_only.allows(&a));
-    assert!(!keys_only.allows(&b));
-    assert!(keys_only.allows(&provisioned));
-    assert!(!keys_only.allows(&external));
-    assert!(keys_only.refusal(&b).contains("rk-b"));
-
-    let providers_only =
-        EnvironmentAccessPolicy::new(Some(vec!["incus-local".to_owned()]), None::<Vec<String>>);
-    assert!(providers_only.allows(&provisioned));
-    assert!(providers_only.allows(&a));
-    assert!(!providers_only.allows(&external));
-
-    let neither =
-        EnvironmentAccessPolicy::new(Some(vec!["other".to_owned()]), Some(Vec::<String>::new()));
-    assert!(!neither.allows(&provisioned));
-    assert!(!neither.allows(&a));
-    assert!(!neither.allows(&external));
 }
 
 /// The gateway stamps reserved entries on top of whatever a daemon sent, so

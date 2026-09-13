@@ -81,7 +81,7 @@ describe("generated universe tools", () => {
     expect(environments).toMatchObject({
       additionalProperties: { not: {} },
       properties: {
-        jobs: {
+        selection: {
           default: false,
           type: "boolean",
         },

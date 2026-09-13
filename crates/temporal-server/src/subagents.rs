@@ -342,9 +342,10 @@ impl SubagentService {
             Err(error) => return Err(api_projection::map_session_store_error(error)),
         }
         // The profile is applied inline so the child runs the revision that
-        // was pinned on its origin, not whatever the registry holds later.
-        // A profile that cannot be applied (an `inherit` without a parent
-        // environment, a missing binding, ...) is a rejected delegation the
+        // was pinned on its origin, not whatever the registry holds later,
+        // with any `inherit` attachment resolved against the parent
+        // environment captured at admission. A profile that cannot be
+        // applied (a missing binding, ...) is a rejected delegation the
         // parent must see, not an activity retry: a retried start finds the
         // child workflow already running and would skip the profile.
         if let Err(error) = self
@@ -355,7 +356,10 @@ impl SubagentService {
                     profile: Box::new(InlineAgentProfile {
                         display_name: profile.display_name.clone(),
                         description: profile.description.clone(),
-                        document: profile.document.clone(),
+                        document: resolve_inherited_environment(
+                            profile.document.clone(),
+                            context.parent_active_environment_id.as_deref(),
+                        ),
                     }),
                 },
             )
@@ -651,6 +655,48 @@ fn is_already_closed(error: &AgentApiError) -> bool {
     matches!(error.kind, api::AgentApiErrorKind::Rejected) && error.to_string().contains("closed")
 }
 
+/// Resolve an `inherit` attachment against the parent's active environment
+/// captured at admission, so the child's stored configuration names a
+/// concrete machine. An explicit attachment for the same machine wins and
+/// the inherit attachment is dropped; without a parent environment it is
+/// dropped as well, and a `default` on it activates nothing.
+pub(crate) fn resolve_inherited_environment(
+    mut document: api::ProfileDocument,
+    parent_environment_id: Option<&str>,
+) -> api::ProfileDocument {
+    let Some(environments) = document
+        .config
+        .as_mut()
+        .and_then(|config| config.features.as_mut())
+        .and_then(|features| features.environments.as_mut())
+    else {
+        return document;
+    };
+    let Some(index) = environments
+        .environments
+        .iter()
+        .position(|attachment| attachment.inherit)
+    else {
+        return document;
+    };
+    match parent_environment_id {
+        Some(parent)
+            if !environments
+                .environments
+                .iter()
+                .any(|attachment| attachment.environment_id.as_deref() == Some(parent)) =>
+        {
+            let attachment = &mut environments.environments[index];
+            attachment.inherit = false;
+            attachment.environment_id = Some(parent.to_owned());
+        }
+        _ => {
+            environments.environments.remove(index);
+        }
+    }
+    document
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -711,7 +757,6 @@ mod tests {
                         retention: None,
                         config: None,
                         instructions: None,
-                        environment: None,
                     },
                     created_at_ms: 1,
                     updated_at_ms: 1,
@@ -852,6 +897,7 @@ mod tests {
                     3,
                     admitted_agent.to_owned(),
                     limits,
+                    Some("environment-parent".to_owned()),
                 ))
                 .unwrap(),
             )
@@ -912,6 +958,93 @@ mod tests {
             }
             SubagentPrepareActivityResult::Prepared { .. } => panic!("expected a rejection"),
         }
+    }
+
+    #[test]
+    fn inherit_attachment_resolves_against_the_captured_parent_environment() {
+        fn document(attachments: Vec<api::EnvironmentAttachment>) -> ProfileDocument {
+            ProfileDocument {
+                config: Some(api::SessionConfig {
+                    features: Some(api::FeaturesConfig {
+                        environments: Some(api::EnvironmentsFeature {
+                            version: api::CURRENT_FEATURE_VERSION,
+                            selection: false,
+                            prompts: None,
+                            skills: None,
+                            environments: attachments,
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+        }
+        fn attachment(
+            id: Option<&str>,
+            inherit: bool,
+            default: bool,
+        ) -> api::EnvironmentAttachment {
+            api::EnvironmentAttachment {
+                environment_id: id.map(str::to_owned),
+                inherit,
+                default,
+                access: api::EnvironmentAccess::Exec,
+                working_directory: None,
+            }
+        }
+        fn attachments(document: &ProfileDocument) -> &[api::EnvironmentAttachment] {
+            &document
+                .config
+                .as_ref()
+                .unwrap()
+                .features
+                .as_ref()
+                .unwrap()
+                .environments
+                .as_ref()
+                .unwrap()
+                .environments
+        }
+
+        // Concrete: the inherit attachment becomes the parent's machine.
+        let resolved = resolve_inherited_environment(
+            document(vec![attachment(None, true, true)]),
+            Some("env_parent"),
+        );
+        let resolved = attachments(&resolved);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].environment_id.as_deref(), Some("env_parent"));
+        assert!(!resolved[0].inherit);
+        assert!(resolved[0].default);
+
+        // The explicit attachment for the same machine wins.
+        let explicit = resolve_inherited_environment(
+            document(vec![
+                attachment(Some("env_parent"), false, false),
+                attachment(None, true, true),
+            ]),
+            Some("env_parent"),
+        );
+        let explicit = attachments(&explicit);
+        assert_eq!(explicit.len(), 1);
+        assert_eq!(explicit[0].environment_id.as_deref(), Some("env_parent"));
+        assert!(!explicit[0].default);
+
+        // No parent environment: the inherit attachment is dropped.
+        let dropped = resolve_inherited_environment(
+            document(vec![
+                attachment(Some("env_other"), false, false),
+                attachment(None, true, true),
+            ]),
+            None,
+        );
+        assert_eq!(attachments(&dropped).len(), 1);
+        assert!(attachments(&dropped)[0].environment_id.as_deref() == Some("env_other"));
+
+        // Nothing to resolve leaves the document untouched.
+        let untouched = resolve_inherited_environment(ProfileDocument::default(), Some("x"));
+        assert_eq!(untouched, ProfileDocument::default());
     }
 
     #[tokio::test(flavor = "current_thread")]

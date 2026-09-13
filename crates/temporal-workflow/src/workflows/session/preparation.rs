@@ -473,10 +473,11 @@ async fn apply_profile(
     let original = SessionToolsetSource::from_state(drive.state()).unwrap();
     let mut source = original.clone();
     source.config = config.clone();
+    let environment = profile.environment_to_prepare(candidate.state());
     let request = crate::SessionProfilePreparationRequest {
         session_id: drive.session_id().clone(),
         instructions: profile.instructions,
-        environment: profile.environment,
+        environment,
         source: source.clone(),
     };
     let activity_ctx = ctx.clone();
@@ -508,9 +509,18 @@ async fn apply_profile(
             workflow_time_ms(ctx),
         )?;
     }
-    if let Some(environment_id) = prepared.environment_id {
-        summary.active_environment_changed =
-            candidate.state().environment.active_environment_id.as_ref() != Some(&environment_id);
+    // The default fills an empty pointer and never overrides a live
+    // selection. The configuration replacement above has already cleared a
+    // selection the new document no longer attaches, so the candidate state
+    // is the one to consult.
+    if let Some(environment_id) = prepared.environment_id
+        && candidate
+            .state()
+            .environment
+            .active_environment_id
+            .is_none()
+    {
+        summary.active_environment_changed = true;
         candidate.push(
             CoreAgentCommand::SetActiveEnvironment { environment_id },
             workflow_time_ms(ctx),

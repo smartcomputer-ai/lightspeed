@@ -127,28 +127,22 @@ impl JobRunArgs {
 #[serde(deny_unknown_fields)]
 pub struct JobSubmitExecutionContextV1 {
     pub version: u32,
+    /// The active attachment's working directory at admission.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
+    /// The active environment at admission; the executor has already
+    /// checked that its attachment grants durable jobs.
     pub environment_id: String,
-    pub allowed_provider_ids: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_registration_key_ids: Option<Vec<String>>,
 }
 
 impl JobSubmitExecutionContextV1 {
-    pub const VERSION: u32 = 1;
+    pub const VERSION: u32 = 2;
 
-    pub fn new(
-        environment_id: String,
-        allowed_provider_ids: Option<Vec<String>>,
-        allowed_registration_key_ids: Option<Vec<String>>,
-    ) -> Self {
+    pub fn new(environment_id: String, working_directory: Option<String>) -> Self {
         Self {
             version: Self::VERSION,
-            working_directory: None,
+            working_directory,
             environment_id,
-            allowed_provider_ids,
-            allowed_registration_key_ids,
         }
     }
 }
@@ -636,18 +630,12 @@ mod tests {
 
     #[test]
     fn job_submit_execution_context_is_versioned_and_runtime_owned() {
-        let context = JobSubmitExecutionContextV1::new(
-            "environment-active".to_owned(),
-            Some(vec!["provider-a".to_owned()]),
-            None,
-        );
+        let context =
+            JobSubmitExecutionContextV1::new("environment-active".to_owned(), Some("/srv".into()));
 
         assert_eq!(context.version, JobSubmitExecutionContextV1::VERSION);
         assert_eq!(context.environment_id, "environment-active");
-        assert_eq!(
-            context.allowed_provider_ids,
-            Some(vec!["provider-a".to_owned()])
-        );
+        assert_eq!(context.working_directory.as_deref(), Some("/srv"));
     }
 
     #[tokio::test(flavor = "current_thread")]

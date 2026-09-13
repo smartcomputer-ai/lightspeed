@@ -409,9 +409,12 @@ pub struct FeaturesConfig {
     pub mcp: Option<McpFeature>,
 }
 
-/// Grants the session virtual filesystem. Workspace links declare the
-/// session-visible namespace and the VFS catalog is surfaced. Sub-grants are independent; `{}` grants a VFS with
-/// no tools and no sourcing.
+/// Grants the session virtual filesystem. Workspace attachments declare the
+/// session-visible namespace and the VFS catalog is surfaced. The file tool
+/// surface is derived from the attachments: any attachment installs the read
+/// tools, any `edit` attachment adds the write tools, and with the
+/// environments feature granted the matching transfer tools appear. `{}`
+/// grants a VFS with no attachments, no tools, and no sourcing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VfsFeature {
@@ -420,56 +423,41 @@ pub struct VfsFeature {
     /// Absolute VFS tool working directory; absent uses /.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
-    /// Catalog resources exposed in the session's workspace namespace.
+    /// Catalog resources exposed in the session's workspace namespace at
+    /// disjoint absolute paths.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub workspace_links: Vec<WorkspaceLink>,
-    /// Agent-facing filesystem tool surface; absent = no fs tools. Per-path
-    /// writability is defined by each workspace link's own access.
-    /// With the environments feature granted, `readOnly` also exposes
-    /// `vfs_materialize`; `edit` additionally exposes `vfs_capture`.
-    /// Prompt/skill sourcing alone does not grant transfer tools.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tools: Option<VfsToolSurface>,
+    pub workspaces: Vec<WorkspaceAttachment>,
     /// Prompt-instruction sourcing from the VFS. Absent disables loading;
-    /// an empty block discovers conventional linked roots.
+    /// an empty block discovers conventional attached roots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompts: Option<VfsPromptsConfig>,
     /// Independent VFS skill discovery. Absent disables discovery and removes
-    /// its runtime catalog; an empty block discovers conventional linked roots.
+    /// its runtime catalog; an empty block discovers conventional attached roots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skills: Option<VfsSkillsConfig>,
 }
 
+/// One catalog resource mounted into the session namespace. Exactly one of
+/// `workspaceId` and `snapshotRef` names the resource; snapshots are
+/// immutable and must be attached with `read` access.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WorkspaceLink {
+pub struct WorkspaceAttachment {
     pub path: String,
-    pub target: WorkspaceLinkTarget,
-    pub access: WorkspaceLinkAccess,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_ref: Option<String>,
+    pub access: WorkspaceAccess,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
+/// Per-attachment VFS access; `edit` implies `read`.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
-pub enum WorkspaceLinkTarget {
-    Workspace { workspace_id: String },
-    Snapshot { snapshot_ref: String },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum WorkspaceLinkAccess {
-    ReadOnly,
-    ReadWrite,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum VfsToolSurface {
-    ReadOnly,
+pub enum WorkspaceAccess {
+    Read,
     Edit,
 }
 
@@ -477,8 +465,8 @@ pub enum VfsToolSurface {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VfsPromptsConfig {
     /// Absent searches .agents/prompts and .lightspeed/prompts beneath each
-    /// workspace link. Explicit roots replace these defaults and must be
-    /// non-empty absolute paths contained in workspace links.
+    /// workspace attachment. Explicit roots replace these defaults and must be
+    /// non-empty absolute paths contained in workspace attachments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roots: Option<Vec<String>>,
 }
@@ -487,8 +475,8 @@ pub struct VfsPromptsConfig {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VfsSkillsConfig {
     /// Absent searches .agents/skills and .lightspeed/skills beneath each
-    /// workspace link. Explicit roots replace these defaults and must be
-    /// non-empty absolute paths contained in workspace links.
+    /// workspace attachment. Explicit roots replace these defaults and must be
+    /// non-empty absolute paths contained in workspace attachments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
     pub roots: Option<Vec<String>>,
@@ -580,58 +568,74 @@ pub struct TimersFeature {
     pub version: u32,
 }
 
-/// Grants active session environments. Filesystem tools, commands, selection,
-/// durable jobs, prompts, and skills are independent, default-off sub-grants.
+/// Grants session environments. The `environments` list is the allowed set:
+/// the session can select, read, and run work only on a listed machine, each
+/// with its own access grant and working directory. The installed tool
+/// surface is the union of every attachment's grant; a call the active
+/// machine's grant does not cover fails at execution, so switching machines
+/// never changes the toolset. `{}` grants the feature with no reachable
+/// machine.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EnvironmentsFeature {
     #[serde(default = "default_feature_version")]
     pub version: u32,
-    /// Filesystem tool surface. Absent installs no filesystem tools; sources
-    /// remain independent. Read-only does not restrict commands or durable jobs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tools: Option<EnvironmentToolSurface>,
-    /// Grants command execution and process continuation. Commands may modify
-    /// files even when filesystem tools are read-only or disabled.
-    #[serde(default)]
-    pub commands: bool,
-    /// Absolute machine working directory for file tools, commands, jobs, and sources; absent uses the endpoint default.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub working_directory: Option<String>,
-    /// Absent means every registered provider is allowed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub providers: Option<Vec<EnvironmentProviderId>>,
-    /// Registration keys whose registered environments the session may
-    /// list and activate; absent means every key. Independent of
-    /// `providers`: each list scopes its own environment source, and
-    /// external environments pass only when neither list is set.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registration_keys: Option<Vec<EnvironmentRegistrationKeyId>>,
     /// Exposes `environment_list`, `environment_activate`, and
-    /// `environment_deactivate` to the model. `environment_read` is available
-    /// whenever environments are enabled, and external API/profile activation
-    /// remains available when this is false.
+    /// `environment_deactivate` over the attached environments.
+    /// `environment_read` is available whenever environments are enabled, and
+    /// external API/profile activation remains available when this is false.
     #[serde(default)]
-    pub selection_tools: bool,
-    /// Grants the advanced durable-job tool surface. The workflow binding is
-    /// installed for the session when granted; invocations still require an
-    /// active, ready environment with matching job capabilities.
-    #[serde(default)]
-    pub jobs: bool,
+    pub selection: bool,
     /// Independent environment prompt loading; absent disables sourced instructions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompts: Option<EnvironmentPromptsConfig>,
     /// Independent environment skill discovery. Absent disables discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skills: Option<EnvironmentSkillsConfig>,
+    /// The environments this session may use; unique ids, at most one
+    /// default, at most one `inherit` (profiles only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environments: Vec<EnvironmentAttachment>,
 }
 
-/// Agent-facing environment filesystem tools; independent of execution grants.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// One environment the session may use. Exactly one of `environmentId` and
+/// `inherit` identifies the machine. `inherit` is valid only in a profile
+/// document applied to a sub-agent: it resolves to the delegating parent's
+/// active environment at spawn and is stored on the child as a concrete id.
+/// If the parent's environment is also listed explicitly, the explicit
+/// attachment wins; if the parent has none, the inherit attachment is dropped.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EnvironmentAttachment {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<EnvironmentId>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inherit: bool,
+    /// Activated when a profile is applied while the session has no active
+    /// environment; creation is the trivial case. Never overrides a live
+    /// selection and never applies on a plain `session/config/put`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default: bool,
+    pub access: EnvironmentAccess,
+    /// Absolute machine working directory for file tools, commands, jobs,
+    /// and sources; absent uses the machine's advertised default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
+}
+
+/// Per-attachment environment access, an ordered ladder: `edit` adds file
+/// editing to `read`, `exec` adds processes, `jobs` adds durable jobs.
+/// Processes can write files regardless of the file-tool level, so
+/// read-only files with commands is deliberately not expressible.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
-pub enum EnvironmentToolSurface {
-    ReadOnly,
+pub enum EnvironmentAccess {
+    Read,
     Edit,
+    Exec,
+    Jobs,
 }
 
 /// Prompt loading scope resolved on the selected machine, never on the worker.
@@ -671,12 +675,18 @@ pub struct McpFeature {
     pub servers: Vec<McpServerLink>,
 }
 
-/// A selected universe MCP server. Its catalog record owns all connection and
-/// behavior configuration.
+/// A selected universe MCP server. Its catalog record owns connection,
+/// execution, exposure, approval, and auth; the link may only narrow the
+/// record's tool allowlist for this session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpServerLink {
     pub server_id: String,
+    /// Non-empty subset of the record's allowed tools exposed to this
+    /// session, under both injection and search; absent exposes the record's
+    /// full allowlist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

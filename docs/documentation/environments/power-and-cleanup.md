@@ -147,7 +147,8 @@ Every environment has a lifetime managed independently of sessions. Create
 machines through **New environment**, configure their credentials and idle
 policy on the Environments page, and close them explicitly when finished.
 Closing or deleting a session or bot never closes its selected environment.
-Profiles only select an existing environment or inherit a parent's selection.
+Profiles only attach existing environments or, for sub-agents, inherit a
+parent's selection.
 
 Session-owned job promises are canceled when the session closes. Standalone
 API jobs have no session promise, and ordinary remote processes may outlive

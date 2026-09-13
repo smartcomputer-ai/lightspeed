@@ -45,7 +45,7 @@ use tokio::sync::{Semaphore, mpsc, oneshot};
 use uuid::Uuid;
 
 use super::http::GatewayState;
-use crate::environment_gateway::{RouteKey, close_message};
+use crate::environments::gateway::{RouteKey, close_message};
 
 /// Interval between gateway pings on a control connection; each pong
 /// refreshes the environment's heartbeat stamp.
@@ -864,7 +864,7 @@ fn now_ms() -> i64 {
 pub fn data_url(public_base_url: &str) -> String {
     format!(
         "{}{DATA_PATH}",
-        crate::environment_gateway::websocket_base(public_base_url.trim_end_matches('/'))
+        crate::environments::gateway::websocket_base(public_base_url.trim_end_matches('/'))
     )
 }
 

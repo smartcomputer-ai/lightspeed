@@ -63,7 +63,7 @@ pub(super) fn skill_list_response(
                 .map(|warning| {
                     use tools::skills::SkillLoadWarningKind;
                     let message = match &warning.kind {
-                        SkillLoadWarningKind::UnavailableWorkspaceLink { reason } => {
+                        SkillLoadWarningKind::UnavailableWorkspaceAttachment { reason } => {
                             reason.as_str()
                         }
                         SkillLoadWarningKind::MissingSkillDoc => "missing SKILL.md",

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 use crate::api_client::HttpAgentApi;
 use crate::vfs_transfer::{
@@ -201,15 +201,28 @@ struct MountPutArgs {
     /// Workspace id to mount.
     #[arg(long, conflicts_with = "snapshot")]
     workspace: Option<String>,
-    /// Snapshot ref to mount read-only.
+    /// Snapshot ref to mount; snapshots are immutable and always `read`.
     #[arg(long, conflicts_with = "workspace")]
     snapshot: Option<String>,
-    /// Mount read-only.
-    #[arg(long = "read-only", conflicts_with = "read_write")]
-    read_only: bool,
-    /// Mount read-write. Only valid for workspace mounts.
-    #[arg(long = "read-write", conflicts_with = "read_only")]
-    read_write: bool,
+    /// Access granted on the attachment. Defaults to `edit` for workspaces
+    /// and `read` for snapshots; `edit` is invalid for snapshots.
+    #[arg(long, value_enum)]
+    access: Option<MountAccess>,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum MountAccess {
+    Read,
+    Edit,
+}
+
+impl From<MountAccess> for api::WorkspaceAccess {
+    fn from(access: MountAccess) -> Self {
+        match access {
+            MountAccess::Read => api::WorkspaceAccess::Read,
+            MountAccess::Edit => api::WorkspaceAccess::Edit,
+        }
+    }
 }
 
 #[derive(Args, Debug, Clone)]
@@ -395,34 +408,35 @@ async fn mount(args: MountArgs) -> Result<()> {
 }
 
 async fn mount_put(args: MountPutArgs) -> Result<()> {
-    let source = match (args.workspace, args.snapshot) {
-        (Some(workspace_id), None) => api::WorkspaceLinkTarget::Workspace { workspace_id },
-        (None, Some(snapshot_ref)) => api::WorkspaceLinkTarget::Snapshot { snapshot_ref },
+    let (workspace_id, snapshot_ref) = match (args.workspace, args.snapshot) {
+        (Some(workspace_id), None) => (Some(workspace_id), None),
+        (None, Some(snapshot_ref)) => (None, Some(snapshot_ref)),
         _ => anyhow::bail!("exactly one of --workspace or --snapshot is required"),
     };
-    let access = match (&source, args.read_only, args.read_write) {
-        (api::WorkspaceLinkTarget::Snapshot { .. }, false, true) => {
-            anyhow::bail!("snapshot workspace links cannot be read-write")
+    let access = match (
+        snapshot_ref.is_some(),
+        args.access.map(api::WorkspaceAccess::from),
+    ) {
+        (true, Some(api::WorkspaceAccess::Edit)) => {
+            anyhow::bail!("snapshot attachments cannot be edit; they are always read")
         }
-        (api::WorkspaceLinkTarget::Snapshot { .. }, _, _) => api::WorkspaceLinkAccess::ReadOnly,
-        (api::WorkspaceLinkTarget::Workspace { .. }, true, false) => {
-            api::WorkspaceLinkAccess::ReadOnly
-        }
-        (api::WorkspaceLinkTarget::Workspace { .. }, _, _) => api::WorkspaceLinkAccess::ReadWrite,
+        (true, _) => api::WorkspaceAccess::Read,
+        (false, access) => access.unwrap_or(api::WorkspaceAccess::Edit),
     };
     let api = HttpAgentApi::new(args.api_url);
-    let link = api::WorkspaceLink {
+    let attachment = api::WorkspaceAttachment {
         path: args.mount_path,
-        target: source,
+        workspace_id,
+        snapshot_ref,
         access,
     };
-    let response = put_workspace_link(&api, args.session, link.clone()).await?;
+    let response = put_workspace_attachment(&api, args.session, attachment.clone()).await?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
     }
 
-    print_workspace_link(&link);
+    print_workspace_attachment(&attachment);
     println!("session {}", response.session.id);
     Ok(())
 }
@@ -446,11 +460,11 @@ async fn mount_delete(args: MountDeleteArgs) -> Result<()> {
         .as_mut()
         .and_then(|features| features.vfs.as_mut())
         .ok_or_else(|| anyhow::anyhow!("session does not grant VFS"))?;
-    let before = vfs.workspace_links.len();
-    vfs.workspace_links
-        .retain(|link| link.path != args.mount_path);
-    if vfs.workspace_links.len() == before {
-        anyhow::bail!("workspace link not found at {}", args.mount_path);
+    let before = vfs.workspaces.len();
+    vfs.workspaces
+        .retain(|attachment| attachment.path != args.mount_path);
+    if vfs.workspaces.len() == before {
+        anyhow::bail!("workspace attachment not found at {}", args.mount_path);
     }
     let response = api
         .put_session_config(api::SessionConfigPutParams {
@@ -482,19 +496,19 @@ async fn mount_list(args: MountListArgs) -> Result<()> {
         .map_err(crate::api_client::api_error)?
         .result
         .session;
-    let links = session
+    let attachments = session
         .config
         .and_then(|config| config.features)
         .and_then(|features| features.vfs)
-        .map(|vfs| vfs.workspace_links)
+        .map(|vfs| vfs.workspaces)
         .unwrap_or_default();
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&links)?);
+        println!("{}", serde_json::to_string_pretty(&attachments)?);
         return Ok(());
     }
 
-    for link in &links {
-        print_workspace_link(link);
+    for attachment in &attachments {
+        print_workspace_attachment(attachment);
     }
     Ok(())
 }
@@ -520,23 +534,27 @@ pub(crate) async fn mount_workspace(
     session_id: String,
     mount_path: String,
     workspace_id: String,
+    access: api::WorkspaceAccess,
 ) -> Result<api::SessionConfigPutResponse> {
-    put_workspace_link(
+    put_workspace_attachment(
         api,
         session_id,
-        api::WorkspaceLink {
+        api::WorkspaceAttachment {
             path: mount_path,
-            target: api::WorkspaceLinkTarget::Workspace { workspace_id },
-            access: api::WorkspaceLinkAccess::ReadWrite,
+            workspace_id: Some(workspace_id),
+            snapshot_ref: None,
+            access,
         },
     )
     .await
 }
 
-async fn put_workspace_link(
+/// Workspace attachments are declarative session config: mount put/delete
+/// are sugar that read-modify-put `features.vfs.workspaces`.
+async fn put_workspace_attachment(
     api: &HttpAgentApi,
     session_id: String,
-    link: api::WorkspaceLink,
+    attachment: api::WorkspaceAttachment,
 ) -> Result<api::SessionConfigPutResponse> {
     let session = api
         .read_session(api::SessionReadParams {
@@ -555,9 +573,9 @@ async fn put_workspace_link(
         .as_mut()
         .and_then(|features| features.vfs.as_mut())
         .ok_or_else(|| anyhow::anyhow!("session does not grant VFS"))?;
-    vfs.workspace_links
-        .retain(|existing| existing.path != link.path);
-    vfs.workspace_links.push(link);
+    vfs.workspaces
+        .retain(|existing| existing.path != attachment.path);
+    vfs.workspaces.push(attachment);
     Ok(api
         .put_session_config(api::SessionConfigPutParams {
             session_id,
@@ -569,18 +587,19 @@ async fn put_workspace_link(
         .result)
 }
 
-fn print_workspace_link(link: &api::WorkspaceLink) {
-    let access = match link.access {
-        api::WorkspaceLinkAccess::ReadOnly => "readOnly",
-        api::WorkspaceLinkAccess::ReadWrite => "readWrite",
+fn print_workspace_attachment(attachment: &api::WorkspaceAttachment) {
+    let access = match attachment.access {
+        api::WorkspaceAccess::Read => "read",
+        api::WorkspaceAccess::Edit => "edit",
     };
-    match &link.target {
-        api::WorkspaceLinkTarget::Snapshot { snapshot_ref } => {
-            println!("{} snapshot {} {access}", link.path, snapshot_ref);
+    match (&attachment.workspace_id, &attachment.snapshot_ref) {
+        (Some(workspace_id), _) => {
+            println!("{} workspace {workspace_id} {access}", attachment.path);
         }
-        api::WorkspaceLinkTarget::Workspace { workspace_id } => {
-            println!("{} workspace {} {access}", link.path, workspace_id);
+        (None, Some(snapshot_ref)) => {
+            println!("{} snapshot {snapshot_ref} {access}", attachment.path);
         }
+        (None, None) => println!("{} (no resource) {access}", attachment.path),
     }
 }
 

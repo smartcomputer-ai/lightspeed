@@ -43,7 +43,36 @@ pub struct SessionToolsetPreparation {
 pub struct SessionProfileIntent {
     pub config: Option<SessionConfig>,
     pub instructions: Option<api::ProfileInstructions>,
-    pub environment: Option<api::ProfileEnvironment>,
+    /// The environment to activate when the session has none after the
+    /// configuration is applied: the config's default attachment, or a
+    /// creation-time override. Never overrides a live selection.
+    pub environment: Option<engine::EnvironmentId>,
+}
+
+impl SessionProfileIntent {
+    /// Only prepare a fill candidate when the proposed configuration will
+    /// leave no active environment. An unused default may be unavailable
+    /// without blocking an update that preserves the current selection.
+    pub(crate) fn environment_to_prepare(
+        &self,
+        state: &CoreAgentState,
+    ) -> Option<engine::EnvironmentId> {
+        let config = self.config.as_ref().or(state.lifecycle.config.as_ref());
+        let retains_active = state
+            .environment
+            .active_environment_id
+            .as_ref()
+            .is_some_and(|id| {
+                config
+                    .and_then(|config| config.features.environments.as_ref())
+                    .is_some_and(|environments| environments.is_attached(id.as_str()))
+            });
+        if retains_active {
+            None
+        } else {
+            self.environment.clone()
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,7 +181,9 @@ impl SessionOperationReceipts {
 pub struct SessionProfilePreparationRequest {
     pub session_id: SessionId,
     pub instructions: Option<api::ProfileInstructions>,
-    pub environment: Option<api::ProfileEnvironment>,
+    /// Candidate to fill an empty active pointer; must be attached in the
+    /// source configuration and selectable in the registry.
+    pub environment: Option<engine::EnvironmentId>,
     pub source: SessionToolsetSource,
 }
 
@@ -160,6 +191,7 @@ pub struct SessionProfilePreparationRequest {
 pub struct SessionProfilePreparation {
     pub toolset: SessionToolsetPreparation,
     pub instructions: BTreeMap<engine::ContextEntryKey, engine::ContextEntryInput>,
+    /// The validated fill candidate; applied only while nothing is active.
     pub environment_id: Option<engine::EnvironmentId>,
 }
 
@@ -192,6 +224,59 @@ pub fn session_toolset_patch(
 mod tests {
     use super::*;
     use engine::BlobRef;
+
+    #[test]
+    fn profile_preparation_omits_unused_defaults_and_prepares_replacements() {
+        let mut config = crate::default_session_config(engine::ModelSelection {
+            api_kind: engine::ProviderApiKind::OpenAiResponses,
+            provider_id: "openai".into(),
+            model: "test".into(),
+        });
+        config.features.environments = Some(engine::EnvironmentsFeature {
+            environments: ["active", "default"]
+                .into_iter()
+                .map(|id| engine::EnvironmentAttachment {
+                    environment_id: id.into(),
+                    default: id == "default",
+                    access: engine::EnvironmentAccess::Read,
+                    working_directory: None,
+                })
+                .collect(),
+            ..Default::default()
+        });
+        let mut state = CoreAgentState::new();
+        state.lifecycle.config = Some(config.clone());
+        state.environment.active_environment_id = Some(engine::EnvironmentId::new("active"));
+        let mut profile = SessionProfileIntent {
+            config: Some(config),
+            instructions: Some(api::ProfileInstructions::Text {
+                text: "updated instructions".into(),
+            }),
+            environment: Some(engine::EnvironmentId::new("default")),
+        };
+        // The preparation activity receives no candidate, so it cannot try
+        // to select a closed or missing default when the active item survives.
+        assert_eq!(profile.environment_to_prepare(&state), None);
+        let mut empty = state.clone();
+        empty.environment.active_environment_id = None;
+        assert_eq!(profile.environment_to_prepare(&empty), profile.environment);
+        profile
+            .config
+            .as_mut()
+            .unwrap()
+            .features
+            .environments
+            .as_mut()
+            .unwrap()
+            .environments
+            .retain(|attachment| attachment.default);
+        assert_eq!(profile.environment_to_prepare(&state), profile.environment);
+
+        profile.config = None;
+        assert_eq!(profile.environment_to_prepare(&state), None);
+        profile.environment = None;
+        assert_eq!(profile.environment_to_prepare(&empty), None);
+    }
 
     fn operation(id: usize, submitted_at_ms: u64) -> SessionOperationRequest {
         SessionOperationRequest {

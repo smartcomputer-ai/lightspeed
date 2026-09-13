@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
-import type { WorkspaceLinkDraft } from "@/api";
+import type { WorkspaceAttachmentDraft } from "@/api";
 import {
   ChevronDown,
   ChevronRight,
@@ -42,6 +42,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { supportsOpenAiProcessingTier } from "@/lib/sessions/run-options";
 import { cn } from "@/lib/utils";
+import { selectableEnvironments } from "@/lib/sessions/resource-features";
+import { McpToolSubsetField } from "./mcp-tool-subset-field";
 
 export type SessionConfig = Record<string, unknown>;
 type FeatureName = "vfs" | "web" | "subagents" | "timers" | "environments" | "mcp";
@@ -50,6 +52,7 @@ export type McpServerOption = {
   serverId: string;
   displayName?: string | null;
   status?: "active" | "needsAuthConfig" | "unverified" | "disabled";
+  allowedTools?: string[] | null;
 };
 
 export type WorkspaceOption = {
@@ -76,10 +79,13 @@ export type ProfileOption = {
   displayName?: string | null;
 };
 
-export type EnvironmentProviderOption = {
-  providerId: string;
+export type EnvironmentOption = {
+  environmentId: string;
   displayName?: string | null;
+  status?: string;
 };
+
+export type DiscoverMcpTools = (serverId: string) => Promise<string[]>;
 
 type Props = {
   value?: unknown;
@@ -90,7 +96,9 @@ type Props = {
   workspacesLoading?: boolean;
   models?: ModelOption[];
   profiles?: ProfileOption[];
-  environmentProviders?: EnvironmentProviderOption[];
+  environments?: EnvironmentOption[];
+  allowInherit?: boolean;
+  discoverMcpTools?: DiscoverMcpTools;
   featureDisableReasons?: Partial<Record<FeatureName, string>>;
   environmentSetup?: ReactNode;
   metadataSetup?: ReactNode;
@@ -273,32 +281,17 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
     const feature = record(sourceFeatures[name]);
     const next: RecordValue = {};
 
-    if (name === "vfs" || name === "environments") {
-      if (["readOnly", "edit"].includes(string(feature.tools))) next.tools = feature.tools;
-      if (string(feature.workingDirectory)) next.workingDirectory = feature.workingDirectory;
-    }
     if (name === "vfs") {
-      if (["readOnly", "edit"].includes(string(feature.tools))) next.tools = feature.tools;
-      if (Array.isArray(feature.workspaceLinks) && feature.workspaceLinks.length) {
-        next.workspaceLinks = feature.workspaceLinks.map((item) => {
-          const link = record(item);
-          const target = record(link.target);
-          const normalizedTarget: RecordValue = { type: string(target.type) || "workspace" };
-          if (normalizedTarget.type === "snapshot") {
-            normalizedTarget.snapshotRef = string(target.snapshotRef).trim();
-          } else {
-            normalizedTarget.type = "workspace";
-            normalizedTarget.workspaceId = string(target.workspaceId).trim();
-          }
-          return {
-            path: string(link.path).trim(),
-            access: ["readOnly", "readWrite"].includes(string(link.access))
-              ? link.access
-              : "readWrite",
-            target: normalizedTarget,
-          };
-        });
-      }
+      if (string(feature.workingDirectory)) next.workingDirectory = feature.workingDirectory;
+      next.workspaces = Array.isArray(feature.workspaces) ? feature.workspaces.map((item) => {
+        const attachment = record(item);
+        return {
+          path: string(attachment.path).trim(),
+          access: string(attachment.access) || ("snapshotRef" in attachment ? "read" : "edit"),
+          ...("workspaceId" in attachment ? { workspaceId: string(attachment.workspaceId).trim() } : {}),
+          ...("snapshotRef" in attachment ? { snapshotRef: string(attachment.snapshotRef).trim() } : {}),
+        };
+      }) : [];
       for (const key of ["prompts", "skills"] as const) {
         const roots = stringList(record(feature[key]).roots).filter(Boolean);
         if (feature[key] != null) {
@@ -332,11 +325,17 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
       }
     }
     if (name === "environments") {
-      const providers = stringList(feature.providers).filter(Boolean);
-      if (providers.length) next.providers = providers;
-      if (feature.selectionTools === true) next.selectionTools = true;
-      if (feature.commands === true) next.commands = true;
-      if (feature.jobs === true) next.jobs = true;
+      if (feature.selection === true) next.selection = true;
+      next.environments = Array.isArray(feature.environments) ? feature.environments.map((item) => {
+        const attachment = record(item);
+        return {
+          ...("environmentId" in attachment ? { environmentId: string(attachment.environmentId).trim() } : {}),
+          ...(attachment.inherit === true ? { inherit: true } : {}),
+          ...(attachment.default === true ? { default: true } : {}),
+          access: string(attachment.access) || "read",
+          ...(string(attachment.workingDirectory) ? { workingDirectory: string(attachment.workingDirectory) } : {}),
+        };
+      }) : [];
       for (const key of ["skills", "prompts"] as const) {
         if (feature[key] != null) {
           const source = record(feature[key]);
@@ -349,7 +348,7 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
         ? feature.servers.map((item) => {
               const server = record(item);
               const serverId = string(server.serverId).trim();
-              return { serverId };
+              return { serverId, ...(Array.isArray(server.tools) ? { tools: stringList(server.tools) } : {}) };
             })
         : [];
       // Keep an incomplete row while it is being edited. Validation prevents
@@ -367,7 +366,7 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
   return omitEmptyRecord(result);
 }
 
-function configError(config: SessionConfig | undefined, pinnedApiKind?: string): string | null {
+export function configError(config: SessionConfig | undefined, pinnedApiKind?: string, allowInherit = false): string | null {
   if (!config) return null;
   const model = record(config.model);
   if (Object.keys(model).length && !["providerId", "apiKind", "model"].every((key) => string(model[key]))) {
@@ -389,11 +388,23 @@ function configError(config: SessionConfig | undefined, pinnedApiKind?: string):
   if ("mcp" in record(config.features) && (!Array.isArray(mcp.servers) || mcp.servers.some((server) => !string(record(server).serverId)))) {
     return "Each enabled MCP server needs a server id.";
   }
+  const serverIds = new Set<string>();
+  for (const item of Array.isArray(mcp.servers) ? mcp.servers : []) {
+    const server = record(item);
+    const id = string(server.serverId);
+    if (serverIds.has(id)) return "Each MCP server may be attached only once.";
+    serverIds.add(id);
+    if (Array.isArray(server.tools)) {
+      if (!server.tools.length) return "Choose at least one tool for each MCP subset, or use all allowed tools.";
+      const names = stringList(server.tools);
+      if (names.length !== server.tools.length || names.some((name) => !name.trim()) || new Set(names).size !== names.length) return "MCP tool selections must contain distinct nonempty names.";
+    }
+  }
   const subagents = record(record(config.features).subagents);
   if ("subagents" in record(config.features) && !subagentProfileIds(subagents.agents).length) {
     return "Sub-agents require at least one agent profile.";
   }
-  const linkError = workspaceLinksError(workspaceLinksFromConfig(config));
+  const linkError = workspaceAttachmentsError(workspaceAttachmentsFromConfig(config));
   if (linkError) return linkError;
   const features = record(config.features);
   const vfs = record(features.vfs);
@@ -403,18 +414,35 @@ function configError(config: SessionConfig | undefined, pinnedApiKind?: string):
     const label = key === "skills" ? "VFS skill" : "VFS prompt";
     const roots = stringList(source.roots);
     if (!roots.length) return `${label} root overrides must not be empty; clear the override to use defaults.`;
-    const links = workspaceLinksFromConfig(config);
+    const links = workspaceAttachmentsFromConfig(config);
     if (roots.some((root) => !isCanonicalAbsolutePath(root)
       || !links.some((link) => link.path === "/" || root === link.path || root.startsWith(`${link.path}/`)))) {
-      return `${label} roots must be absolute paths inside workspace links.`;
+      return `${label} roots must be absolute paths inside workspace attachments.`;
     }
   }
   const vfsCwd = string(vfs.workingDirectory);
-  if (vfsCwd && (!isCanonicalAbsolutePath(vfsCwd) || (vfsCwd !== "/" && !workspaceLinksFromConfig(config).some((link) => link.path === "/" || vfsCwd === link.path || vfsCwd.startsWith(`${link.path}/`))))) {
-    return "VFS working directory must be / or an absolute path inside a workspace link.";
+  if (vfsCwd && (!isCanonicalAbsolutePath(vfsCwd) || (vfsCwd !== "/" && !workspaceAttachmentsFromConfig(config).some((link) => link.path === "/" || vfsCwd === link.path || vfsCwd.startsWith(`${link.path}/`))))) {
+    return "VFS working directory must be / or an absolute path inside a workspace attachment.";
   }
   const environment = record(features.environments);
-  if (string(environment.workingDirectory) && !string(environment.workingDirectory).startsWith("/")) return "Environment working directory must be absolute.";
+  const attachments = Array.isArray(environment.environments) ? environment.environments.map(record) : [];
+  const ids = new Set<string>();
+  let inherited = 0;
+  let defaults = 0;
+  for (const attachment of attachments) {
+    const id = string(attachment.environmentId);
+    if (attachment.inherit === true) {
+      if (!allowInherit) return "Inheriting an environment is only available in sub-agent profiles.";
+      if (attachment.environmentId != null || ++inherited > 1) return "Use at most one inherited environment, without an environment id.";
+    } else {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) return "Each environment attachment needs a valid environment id.";
+      if (ids.has(id)) return "Each environment may be attached only once.";
+      ids.add(id);
+    }
+    if (attachment.default === true && ++defaults > 1) return "Choose at most one default environment.";
+    if (!["read", "edit", "exec", "jobs"].includes(string(attachment.access))) return "Choose an access level for each environment.";
+    if (string(attachment.workingDirectory) && !string(attachment.workingDirectory).startsWith("/")) return "Environment working directory must be absolute.";
+  }
   for (const key of ["skills", "prompts"] as const) {
     const roots = record(environment[key]).roots;
     if (roots != null && !stringList(roots).length) return "Environment source root overrides must not be empty; clear the override to use defaults.";
@@ -422,32 +450,45 @@ function configError(config: SessionConfig | undefined, pinnedApiKind?: string):
   return null;
 }
 
-export function workspaceLinksFromConfig(config: unknown): WorkspaceLinkDraft[] {
-  const links = record(record(record(config).features).vfs).workspaceLinks;
+export function workspaceAttachmentsFromConfig(config: unknown): WorkspaceAttachmentDraft[] {
+  const links = record(record(record(config).features).vfs).workspaces;
   return Array.isArray(links)
-    ? structuredClone(links.filter((link) => link && typeof link === "object")) as WorkspaceLinkDraft[]
+    ? structuredClone(links.filter((link) => link && typeof link === "object")) as WorkspaceAttachmentDraft[]
     : [];
 }
 
-export function workspaceLinksError(links: WorkspaceLinkDraft[]): string | null {
+export function workspaceAttachmentsError(links: WorkspaceAttachmentDraft[]): string | null {
   const paths: string[] = [];
   for (const link of links) {
     const path = link.path?.trim() ?? "";
-    if (!path) return "Each workspace link needs a session path.";
+    if (!path) return "Each workspace attachment needs a session path.";
     if (!isCanonicalAbsolutePath(path)) {
-      return `Workspace link path must be canonical and absolute: ${path}`;
+      return `Workspace attachment path must be canonical and absolute: ${path}`;
     }
     if (paths.some((existing) => pathsOverlap(existing, path))) {
-      return `Workspace link paths cannot overlap: ${path}`;
+      return `Workspace attachment paths cannot overlap: ${path}`;
     }
     paths.push(path);
-    if (link.target?.type === "workspace") {
-      if (!link.target.workspaceId?.trim()) return `Workspace link ${path} needs a workspace.`;
-    } else if (link.target?.type === "snapshot") {
-      if (!link.target.snapshotRef?.trim()) return `Workspace link ${path} needs a snapshot ref.`;
-      if (link.access !== "readOnly") return `Snapshot link ${path} must be read only.`;
-    } else {
-      return `Workspace link ${path} needs a target.`;
+    if (("workspaceId" in link) === ("snapshotRef" in link)) return `Workspace attachment ${path} needs exactly one workspace or snapshot.`;
+    if ("workspaceId" in link && !link.workspaceId?.trim()) return `Workspace attachment ${path} needs a workspace.`;
+    if ("snapshotRef" in link) {
+      if (!/^sha256:[a-f0-9]{64}$/.test(link.snapshotRef ?? "")) return `Workspace attachment ${path} needs a valid snapshot ref.`;
+      if (link.access !== "read") return `Snapshot attachment ${path} must be read only.`;
+    }
+    if (link.access !== "read" && link.access !== "edit") return `Workspace attachment ${path} needs read or edit access.`;
+  }
+  return null;
+}
+
+export function mcpAttachmentError(config: unknown, servers: McpServerOption[]): string | null {
+  const links = record(record(record(config).features).mcp).servers;
+  for (const item of Array.isArray(links) ? links : []) {
+    const link = record(item);
+    const server = servers.find((server) => server.serverId === link.serverId);
+    if (server?.allowedTools != null && Array.isArray(link.tools)) {
+      const denied = link.tools.find((name) => !server.allowedTools!.includes(String(name)));
+      if (denied !== undefined)
+        return `Tool ${String(denied)} is not allowed by server ${server.serverId}.`;
     }
   }
   return null;
@@ -473,7 +514,9 @@ export function SessionConfigEditor({
   workspacesLoading = false,
   models = [],
   profiles = [],
-  environmentProviders = [],
+  environments = [],
+  allowInherit = false,
+  discoverMcpTools,
   featureDisableReasons = {},
   environmentSetup,
   metadataSetup,
@@ -484,7 +527,7 @@ export function SessionConfigEditor({
   className,
 }: Props) {
   const config = normalizeSessionConfig(value) ?? {};
-  const error = configError(config, pinnedApiKind);
+  const error = configError(config, pinnedApiKind, allowInherit) ?? mcpAttachmentError(config, mcpServers);
   const [manualModel, setManualModel] = useState(false);
 
   useEffect(() => onValidityChange?.(error), [error, onValidityChange]);
@@ -500,7 +543,7 @@ export function SessionConfigEditor({
     change((next) => {
       const nextFeatures = record(next.features);
       if (enabled) {
-        if (name === "vfs") nextFeatures.vfs = { tools: "edit", prompts: {}, skills: {} };
+        if (name === "vfs") nextFeatures.vfs = { workspaces: [], prompts: {}, skills: {} };
         else if (name === "web") nextFeatures.web = { search: {}, fetch: {} };
         else if (name === "mcp") {
           nextFeatures.mcp = { servers: [{ serverId: firstUsableMcpServerId(mcpServers) }] };
@@ -549,7 +592,8 @@ export function SessionConfigEditor({
               <EnvironmentFeatureEditor
                 key={name}
                 value={config}
-                providers={environmentProviders}
+                environments={environments}
+                allowInherit={allowInherit}
                 disableReason={featureDisableReasons.environments}
                 onChange={onChange}
               >
@@ -582,7 +626,7 @@ export function SessionConfigEditor({
                   />
                 )}
                 {name === "subagents" && <SubagentFields feature={record(features.subagents)} profiles={profiles} patch={(fn) => patchFeature("subagents", fn)} />}
-                {name === "mcp" && <McpFields feature={record(features.mcp)} servers={mcpServers} patch={(fn) => patchFeature("mcp", fn)} />}
+                {name === "mcp" && <McpFields feature={record(features.mcp)} servers={mcpServers} discoverTools={discoverMcpTools} patch={(fn) => patchFeature("mcp", fn)} />}
               </FeaturePanel>
             ))}
           {(metadataSetup || retentionSetup) && (
@@ -652,18 +696,20 @@ function ExpandableSetupPanel({
 }
 
 /**
- * The environment capability and the environment a session should use are
- * separate on the wire, but belong together in the editor.
+ * Environment attachments define access; the optional child controls manage
+ * the active selection of an existing session.
  */
 function EnvironmentFeatureEditor({
   value,
-  providers = [],
+  environments = [],
+  allowInherit = false,
   disableReason,
   children,
   onChange,
 }: {
   value?: unknown;
-  providers?: EnvironmentProviderOption[];
+  environments?: EnvironmentOption[];
+  allowInherit?: boolean;
   disableReason?: string;
   children?: ReactNode;
   onChange: (config: SessionConfig | undefined) => void;
@@ -678,7 +724,7 @@ function EnvironmentFeatureEditor({
   };
   const setEnabled = (nextEnabled: boolean) => change((next) => {
     const nextFeatures = record(next.features);
-    if (nextEnabled) nextFeatures.environments = { tools: "edit", commands: true, jobs: true, prompts: {}, skills: {} };
+    if (nextEnabled) nextFeatures.environments = { environments: [], prompts: {}, skills: {} };
     else delete nextFeatures.environments;
     if (Object.keys(nextFeatures).length) next.features = nextFeatures;
     else delete next.features;
@@ -702,7 +748,8 @@ function EnvironmentFeatureEditor({
       <div className="grid gap-4">
         <EnvironmentFields
           feature={record(features.environments)}
-          providers={providers}
+          environments={environments}
+          allowInherit={allowInherit}
           patch={patch}
         />
         {children && <div className="grid gap-3 border-t pt-4">{children}</div>}
@@ -1209,23 +1256,22 @@ function VfsFields({
   workspacesLoading: boolean;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
-  const links = Array.isArray(feature.workspaceLinks)
-    ? feature.workspaceLinks.map(record)
+  const links = Array.isArray(feature.workspaces)
+    ? feature.workspaces.map(record)
     : [];
   const workspaceOptions = new Map<string, WorkspaceOption>();
   for (const workspace of workspaces) workspaceOptions.set(workspace.workspaceId, workspace);
   for (const link of links) {
-    const target = record(link.target);
-    const workspaceId = string(target.workspaceId);
-    if (target.type === "workspace" && workspaceId && !workspaceOptions.has(workspaceId)) {
+    const workspaceId = string(link.workspaceId);
+    if ("workspaceId" in link && workspaceId && !workspaceOptions.has(workspaceId)) {
       workspaceOptions.set(workspaceId, { workspaceId });
     }
   }
   const options = [...workspaceOptions.values()];
   const updateLinks = (nextLinks: RecordValue[]) =>
     patch((next) => {
-      if (nextLinks.length) next.workspaceLinks = nextLinks;
-      else delete next.workspaceLinks;
+      if (nextLinks.length) next.workspaces = nextLinks;
+      else delete next.workspaces;
     });
   const updateLink = (index: number, mutate: (link: RecordValue) => void) =>
     updateLinks(
@@ -1236,38 +1282,13 @@ function VfsFields({
         return next;
       }),
     );
-  const nextPath = nextWorkspaceLinkPath(links);
+  const nextPath = nextWorkspaceAttachmentPath(links);
 
   return (
     <div className="grid gap-5">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field className="sm:col-span-2">
-          <FieldLabel>File tools</FieldLabel>
-          <Select
-            value={string(feature.tools) || "none"}
-            onValueChange={(value) => patch((next) => {
-              if (value === "none") delete next.tools;
-              else next.tools = value;
-            })}
-          >
-            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">No file tools</SelectItem>
-              <SelectItem value="readOnly">Read only</SelectItem>
-              <SelectItem value="edit">Edit files</SelectItem>
-            </SelectContent>
-          </Select>
-          <FieldDescription className="text-xs">
-            {!environmentsGranted
-              ? "Enable Environments to also transfer files between linked workspaces and a selected environment."
-              : feature.tools === "edit"
-                ? "Transfers into the environment require environment Edit files; capture requires environment read access and a writable workspace link."
-                : feature.tools === "readOnly"
-                  ? "Materialize also requires Edit files on the environment. Linked VFS files remain read only through these tools."
-                  : "Choose Read only or Edit files to enable workspace transfer tools. Prompt and skill sourcing alone does not enable transfers."}
-          </FieldDescription>
-        </Field>
-      </div>
+      <p className="text-xs text-muted-foreground">File tools follow each workspace’s access. {environmentsGranted
+        ? "Materialize requires environment edit access. Capture requires workspace edit access and environment read access."
+        : "Enable Environments to also transfer files between attached workspaces and an active environment."}</p>
 
       <SourceDiscoveryFields source="vfs-prompts" feature={feature} patch={patch} />
       <SourceDiscoveryFields source="vfs" feature={feature} patch={patch} />
@@ -1277,7 +1298,7 @@ function VfsFields({
       <div className="grid gap-3 border-t pt-4">
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm font-medium">Workspace links</p>
+            <p className="text-sm font-medium">Workspace attachments</p>
             <p className="text-xs text-muted-foreground">
               Expose catalog workspaces or pinned snapshots at session paths.
             </p>
@@ -1289,24 +1310,20 @@ function VfsFields({
               ...links,
               {
                 path: nextPath,
-                access: "readWrite",
-                target: {
-                  type: "workspace",
-                  workspaceId: workspaces[0]?.workspaceId ?? "",
-                },
+                access: "edit",
+                workspaceId: workspaces[0]?.workspaceId ?? "",
               },
             ])}
           >
             <Plus data-icon="inline-start" />
-            Add link
+            Add workspace
           </Button>
         </div>
         {links.length === 0 && (
-          <p className="text-xs text-muted-foreground">No workspace links.</p>
+          <p className="text-xs text-muted-foreground">No workspace attachments.</p>
         )}
         {links.map((link, index) => {
-          const target = record(link.target);
-          const targetType = string(target.type) || "workspace";
+          const targetType = "snapshotRef" in link ? "snapshot" : "workspace";
           return (
             <div
               key={index}
@@ -1319,14 +1336,13 @@ function VfsFields({
                     value={targetType}
                     onValueChange={(value) => updateLink(index, (next) => {
                       if (value === "snapshot") {
-                        next.target = { type: "snapshot", snapshotRef: "" };
-                        next.access = "readOnly";
+                        delete next.workspaceId;
+                        next.snapshotRef = "";
+                        next.access = "read";
                       } else {
-                        next.target = {
-                          type: "workspace",
-                          workspaceId: workspaces[0]?.workspaceId ?? "",
-                        };
-                        next.access = "readWrite";
+                        delete next.snapshotRef;
+                        next.workspaceId = workspaces[0]?.workspaceId ?? "";
+                        next.access = "edit";
                       }
                     })}
                   >
@@ -1342,9 +1358,9 @@ function VfsFields({
                     <FieldLabel>Snapshot ref</FieldLabel>
                     <Input
                       className="font-mono"
-                      value={string(target.snapshotRef)}
+                      value={string(link.snapshotRef)}
                       onChange={(event) => updateLink(index, (next) => {
-                        next.target = { ...record(next.target), type: "snapshot", snapshotRef: event.target.value };
+                        next.snapshotRef = event.target.value;
                       })}
                     />
                   </Field>
@@ -1353,10 +1369,10 @@ function VfsFields({
                     <FieldLabel>Workspace</FieldLabel>
                     {options.length || workspacesLoading ? (
                       <Select
-                        value={string(target.workspaceId)}
+                        value={string(link.workspaceId)}
                         disabled={workspacesLoading}
                         onValueChange={(workspaceId) => updateLink(index, (next) => {
-                          next.target = { ...record(next.target), type: "workspace", workspaceId };
+                          next.workspaceId = workspaceId;
                         })}
                       >
                         <SelectTrigger className="w-full">
@@ -1377,9 +1393,9 @@ function VfsFields({
                     ) : (
                       <Input
                         className="font-mono"
-                        value={string(target.workspaceId)}
+                        value={string(link.workspaceId)}
                         onChange={(event) => updateLink(index, (next) => {
-                          next.target = { ...record(next.target), type: "workspace", workspaceId: event.target.value };
+                          next.workspaceId = event.target.value;
                         })}
                         placeholder="workspace id"
                       />
@@ -1399,7 +1415,7 @@ function VfsFields({
                 <Field>
                   <FieldLabel>Access</FieldLabel>
                   <Select
-                    value={string(link.access) || "readWrite"}
+                    value={string(link.access) || "edit"}
                     disabled={targetType === "snapshot"}
                     onValueChange={(access) => updateLink(index, (next) => {
                       next.access = access;
@@ -1407,8 +1423,8 @@ function VfsFields({
                   >
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="readWrite">Read and write</SelectItem>
-                      <SelectItem value="readOnly">Read only</SelectItem>
+                      <SelectItem value="edit">Read and write</SelectItem>
+                      <SelectItem value="read">Read only</SelectItem>
                     </SelectContent>
                   </Select>
                 </Field>
@@ -1417,7 +1433,7 @@ function VfsFields({
                 variant="ghost"
                 size="icon-sm"
                 className="self-end text-destructive"
-                aria-label="Remove workspace link"
+                aria-label="Remove workspace attachment"
                 onClick={() => updateLinks(links.filter((_, linkIndex) => linkIndex !== index))}
               >
                 <Trash2 />
@@ -1430,7 +1446,7 @@ function VfsFields({
   );
 }
 
-function nextWorkspaceLinkPath(links: RecordValue[]): string {
+function nextWorkspaceAttachmentPath(links: RecordValue[]): string {
   const paths = new Set(links.map((link) => string(link.path)));
   if (!paths.has("/workspace")) return "/workspace";
   let suffix = 2;
@@ -1674,7 +1690,7 @@ function WorkingDirectoryField({ environment, feature, patch }: {
       })} />
     <FieldDescription className="text-xs">{environment
       ? "Absolute machine directory for file tools, commands, jobs, and discovery. Empty uses the environment default."
-      : "Absolute linked VFS directory for relative file paths. Empty uses /. Source discovery still searches every workspace link."}</FieldDescription>
+      : "Absolute linked VFS directory for relative file paths. Empty uses /. Source discovery still searches every workspace attachment."}</FieldDescription>
   </Field>;
 }
 
@@ -1743,10 +1759,10 @@ function SourceDiscoveryFields({ source, feature, patch }: {
                 update("roots", roots.length ? roots : undefined);
               }} />
             <FieldDescription className="text-xs">
-              {`Empty searches .agents/${configKey} and .lightspeed/${configKey} ${environment ? "under the working directory and execution user’s home" : "beneath each workspace link"}. `}
+              {`Empty searches .agents/${configKey} and .lightspeed/${configKey} ${environment ? "under the working directory and execution user’s home" : "beneath each workspace attachment"}. `}
               {environment
                 ? "Comma-separated overrides replace all defaults, including home. Paths may be absolute or relative to the working directory."
-                : "Comma-separated overrides replace all defaults and must be absolute paths inside workspace links."}
+                : "Comma-separated overrides replace all defaults and must be absolute paths inside workspace attachments."}
             </FieldDescription>
           </Field>
         </div>
@@ -1757,162 +1773,210 @@ function SourceDiscoveryFields({ source, feature, patch }: {
 
 function EnvironmentFields({
   feature,
-  providers,
+  environments,
+  allowInherit,
   patch,
 }: {
   feature: RecordValue;
-  providers: EnvironmentProviderOption[];
+  environments: EnvironmentOption[];
+  allowInherit: boolean;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
-  const jobsId = useId();
-  const commandsId = useId();
-  const filesId = useId();
-  const selectionToolsId = useId();
-  const value = stringList(feature.providers);
-  const providerMap = new Map(providers.map((provider) => [provider.providerId, provider]));
-  const items = [
-    ...new Set([...providers.map((provider) => provider.providerId), ...value]),
-  ].sort((left, right) =>
-    providerLabel(providerMap.get(left), left).localeCompare(
-      providerLabel(providerMap.get(right), right),
-    ),
-  );
+  const selectionId = useId();
+  const attachments = Array.isArray(feature.environments) ? feature.environments.map(record) : [];
+  const update = (index: number, mutate: (attachment: RecordValue) => void) =>
+    patch((next) => {
+      next.environments = attachments.map((attachment, position) => {
+        const value = { ...attachment };
+        if (position === index) mutate(value);
+        return value;
+      });
+    });
   return (
-    <div className="grid gap-4">
-      <Field>
-        <FieldLabel htmlFor={filesId}>File tools</FieldLabel>
-        <Select value={string(feature.tools) || "none"} onValueChange={(value) => patch((next) => {
-          if (value === "none") delete next.tools;
-          else next.tools = value;
-        })}>
-          <SelectTrigger id={filesId} aria-label="Environment file tools" className="w-full"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">No file tools</SelectItem>
-            <SelectItem value="readOnly">Read only</SelectItem>
-            <SelectItem value="edit">Edit files</SelectItem>
-          </SelectContent>
-        </Select>
-        <FieldDescription className="text-xs">Read only allows reading, listing, and searching. Edit also allows file changes and transfers into the environment. Prompts and skills are independent.</FieldDescription>
-      </Field>
-      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
-        <div className="grid min-w-0 gap-1">
-          <Label htmlFor={commandsId}>Command execution</Label>
-          <p className="text-xs text-muted-foreground">Run commands and continue processes. Commands can modify files regardless of the File tools setting.</p>
-        </div>
-        <Switch id={commandsId} aria-label="Environment command execution" checked={feature.commands === true}
-          onCheckedChange={(checked) => patch((next) => {
-            if (checked) next.commands = true;
-            else delete next.commands;
-          })} />
-      </div>
-      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
-        <div className="grid min-w-0 gap-1">
-          <Label htmlFor={jobsId}>Durable jobs</Label>
+    <div className="grid gap-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">Environment attachments</p>
           <p className="text-xs text-muted-foreground">
-            Run durable jobs independently of command execution. Jobs can modify files regardless of the File tools setting.
+            Access applies to the active environment. A default fills an empty selection when a
+            profile is applied.
           </p>
         </div>
-        <Switch
-          id={jobsId}
-          checked={feature.jobs === true}
-          onCheckedChange={(checked) => patch((next) => {
-            if (checked === true) next.jobs = true;
-            else delete next.jobs;
-          })}
-        />
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={() =>
+            patch((next) => {
+              const environment = selectableEnvironments(environments).find(
+                (candidate) =>
+                  !attachments.some((item) => item.environmentId === candidate.environmentId),
+              );
+              next.environments = [
+                ...attachments,
+                { environmentId: environment?.environmentId ?? "", access: "read" },
+              ];
+            })
+          }
+        >
+          <Plus data-icon="inline-start" />
+          Add environment
+        </Button>
       </div>
+      {!attachments.length && (
+        <p className="text-xs text-muted-foreground">No environments attached.</p>
+      )}
+      {attachments.map((attachment, index) => {
+        const id = string(attachment.environmentId);
+        const inherited = attachment.inherit === true;
+        const options = selectableEnvironments(environments, id).filter(
+          (candidate) =>
+            candidate.environmentId === id ||
+            !attachments.some((item) => item.environmentId === candidate.environmentId),
+        );
+        if (id && !options.some((candidate) => candidate.environmentId === id))
+          options.push({ environmentId: id, status: "unavailable" });
+        return (
+          <div key={index} className="grid gap-3 border-t pt-3">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+              <Field>
+                <FieldLabel>Environment</FieldLabel>
+                <Select
+                  value={inherited ? "__inherit__" : id}
+                  onValueChange={(value) =>
+                    update(index, (next) => {
+                      if (value === "__inherit__") {
+                        next.inherit = true;
+                        delete next.environmentId;
+                      } else {
+                        next.environmentId = value;
+                        delete next.inherit;
+                      }
+                    })
+                  }
+                >
+                  <SelectTrigger className="w-full" aria-label={`Environment ${index + 1}`}>
+                    <SelectValue placeholder="Select environment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allowInherit && (
+                      <SelectItem
+                        value="__inherit__"
+                        disabled={!inherited && attachments.some((item) => item.inherit === true)}
+                      >
+                        Inherit parent environment
+                      </SelectItem>
+                    )}
+                    {options.map((environment) => (
+                      <SelectItem key={environment.environmentId} value={environment.environmentId}>
+                        {environment.displayName
+                          ? `${environment.displayName} (${environment.environmentId})`
+                          : environment.environmentId}
+                        {environment.status && environment.status !== "ready"
+                          ? ` (${environment.status})`
+                          : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {inherited && (
+                  <FieldDescription className="text-xs">
+                    Uses the parent’s active environment captured when the sub-agent starts.
+                  </FieldDescription>
+                )}
+              </Field>
+              <Field>
+                <FieldLabel>Access</FieldLabel>
+                <Select
+                  value={string(attachment.access)}
+                  onValueChange={(access) =>
+                    update(index, (next) => {
+                      next.access = access;
+                    })
+                  }
+                >
+                  <SelectTrigger className="w-full" aria-label={`Environment ${index + 1} access`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="read">Read files</SelectItem>
+                    <SelectItem value="edit">Read and edit files</SelectItem>
+                    <SelectItem value="exec">Edit files and run commands</SelectItem>
+                    <SelectItem value="jobs">Commands and durable jobs</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="self-end text-destructive"
+                aria-label="Remove environment attachment"
+                onClick={() =>
+                  patch((next) => {
+                    next.environments = attachments.filter((_, position) => position !== index);
+                  })
+                }
+              >
+                <Trash2 />
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                aria-label={`Default environment ${index + 1}`}
+                checked={attachment.default === true}
+                onCheckedChange={(checked) =>
+                  patch((next) => {
+                    next.environments = attachments.map((item, position) => {
+                      const value = { ...item };
+                      if (position === index && checked === true) value.default = true;
+                      else if (position === index || checked === true) delete value.default;
+                      return value;
+                    });
+                  })
+                }
+              />
+              <span className="text-sm">Default environment</span>
+            </div>
+            <WorkingDirectoryField
+              environment
+              feature={attachment}
+              patch={(mutate) => update(index, mutate)}
+            />
+          </div>
+        );
+      })}
       <SourceDiscoveryFields source="environment-prompts" feature={feature} patch={patch} />
       <SourceDiscoveryFields source="environment" feature={feature} patch={patch} />
-      <div className="flex min-w-0 max-w-full items-start justify-between gap-4 rounded-lg border p-3">
-        <div className="grid min-w-0 gap-1">
-          <Label htmlFor={selectionToolsId}>Environment selection tools</Label>
+      <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+        <div className="grid gap-1">
+          <Label htmlFor={selectionId}>Environment selection tools</Label>
           <p className="text-xs text-muted-foreground">
-            Let the model list, activate, and deactivate allowed environments. Reading the active environment is always available.
+            Let the agent list, activate, and deactivate attached environments.
           </p>
         </div>
         <Switch
-          id={selectionToolsId}
-          checked={feature.selectionTools === true}
-          onCheckedChange={(checked) => patch((next) => {
-            if (checked === true) next.selectionTools = true;
-            else delete next.selectionTools;
-          })}
+          id={selectionId}
+          checked={feature.selection === true}
+          onCheckedChange={(checked) =>
+            patch((next) => {
+              if (checked) next.selection = true;
+              else delete next.selection;
+            })
+          }
         />
       </div>
-      <WorkingDirectoryField environment feature={feature} patch={patch} />
-      <Field>
-        <FieldLabel>Allowed providers</FieldLabel>
-        <Combobox
-          items={items}
-          multiple
-          value={value}
-          onValueChange={(nextValue) => patch((next) => {
-            if (nextValue.length) next.providers = nextValue;
-            else delete next.providers;
-          })}
-          itemToStringLabel={(providerId) =>
-            providerLabel(providerMap.get(providerId), providerId)
-          }
-          filter={(providerId, query) => {
-            const provider = providerMap.get(providerId);
-            const search = `${providerLabel(provider, providerId)} ${providerId}`.toLocaleLowerCase();
-            return search.includes(query.toLocaleLowerCase());
-          }}
-        >
-          <ComboboxChips>
-            <ComboboxValue>
-              {value.map((providerId) => (
-                <ComboboxChip key={providerId}>
-                  {providerLabel(providerMap.get(providerId), providerId)}
-                </ComboboxChip>
-              ))}
-            </ComboboxValue>
-            <ComboboxChipsInput
-              placeholder={value.length ? "Add provider" : "All registered providers"}
-            />
-          </ComboboxChips>
-          <ComboboxContent>
-            <ComboboxEmpty>No matching providers.</ComboboxEmpty>
-            <ComboboxList>
-              {(providerId: string) => (
-                <ComboboxItem key={providerId} value={providerId}>
-                  <span className="min-w-0">
-                    <span className="block truncate">
-                      {providerLabel(providerMap.get(providerId), providerId)}
-                    </span>
-                    {providerMap.get(providerId)?.displayName && (
-                      <span className="block truncate font-mono text-xs text-muted-foreground">
-                        {providerId}
-                      </span>
-                    )}
-                  </span>
-                </ComboboxItem>
-              )}
-            </ComboboxList>
-          </ComboboxContent>
-        </Combobox>
-        <FieldDescription className="text-xs">
-          Empty allows every registered provider. Selection resolves live universe environments.
-        </FieldDescription>
-      </Field>
     </div>
   );
-}
-
-function providerLabel(
-  provider: EnvironmentProviderOption | undefined,
-  providerId: string,
-): string {
-  return provider?.displayName || providerId;
 }
 
 function McpFields({
   feature,
   servers,
+  discoverTools,
   patch,
 }: {
   feature: RecordValue;
   servers: McpServerOption[];
+  discoverTools?: DiscoverMcpTools;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
   const links = Array.isArray(feature.servers) ? feature.servers.map(record) : [];
@@ -1942,7 +2006,7 @@ function McpFields({
     <div className="grid gap-3">
       <div className="flex min-w-0 items-center justify-between gap-3">
         <p className="min-w-0 text-xs text-muted-foreground">
-          Only declared servers can materialize remote tools.
+          Attach servers to make their tools available.
         </p>
         <Button
           variant="outline"
@@ -1964,7 +2028,7 @@ function McpFields({
               {serverOptions.length ? (
                 <Select
                   value={string(link.serverId)}
-                  onValueChange={(value) => updateLink(index, (next) => { next.serverId = value as string; })}
+                  onValueChange={(value) => updateLink(index, (next) => { next.serverId = value as string; delete next.tools; })}
                 >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -1983,10 +2047,13 @@ function McpFields({
                 <Input
                   className="font-mono"
                   value={string(link.serverId)}
-                  onChange={(e) => updateLink(index, (next) => { next.serverId = e.target.value; })}
+                  onChange={(e) => updateLink(index, (next) => { next.serverId = e.target.value; delete next.tools; })}
                 />
               )}
             </Field>
+            <McpToolSubsetField serverId={string(link.serverId)} allowedTools={options.get(string(link.serverId))?.allowedTools}
+              value={Array.isArray(link.tools) ? stringList(link.tools) : undefined} discoverTools={discoverTools}
+              onChange={(tools) => updateLink(index, (next) => { if (tools === undefined) delete next.tools; else next.tools = tools; })} />
           </div>
           <Button
             variant="ghost"

@@ -2098,66 +2098,71 @@ fn features_config_to_api(
             .environments
             .as_ref()
             .map(|environments| api::EnvironmentsFeature {
-                tools: environments.tools.map(|surface| match surface {
-                    engine::EnvironmentToolSurface::ReadOnly => {
-                        api::EnvironmentToolSurface::ReadOnly
-                    }
-                    engine::EnvironmentToolSurface::Edit => api::EnvironmentToolSurface::Edit,
-                }),
-                commands: environments.commands,
                 version: environments.version,
-                working_directory: environments.working_directory.clone(),
+                selection: environments.selection,
                 prompts: environments.prompts.as_ref().map(|source| {
                     api::EnvironmentPromptsConfig {
                         roots: source.roots.clone(),
                     }
                 }),
-                providers: environments.providers.clone(),
-                registration_keys: environments.registration_keys.clone(),
-                selection_tools: environments.selection_tools,
-                jobs: environments.jobs,
                 skills: environments
                     .skills
                     .as_ref()
                     .map(|skills| api::EnvironmentSkillsConfig {
                         roots: skills.roots.clone(),
                     }),
+                environments: environments
+                    .environments
+                    .iter()
+                    .map(|attachment| api::EnvironmentAttachment {
+                        environment_id: Some(attachment.environment_id.clone()),
+                        inherit: false,
+                        default: attachment.default,
+                        access: environment_access_to_api(attachment.access),
+                        working_directory: attachment.working_directory.clone(),
+                    })
+                    .collect(),
             }),
         mcp: features.mcp.as_ref().map(mcp_feature_to_api),
     })
+}
+
+pub fn environment_access_to_api(access: engine::EnvironmentAccess) -> api::EnvironmentAccess {
+    match access {
+        engine::EnvironmentAccess::Read => api::EnvironmentAccess::Read,
+        engine::EnvironmentAccess::Edit => api::EnvironmentAccess::Edit,
+        engine::EnvironmentAccess::Exec => api::EnvironmentAccess::Exec,
+        engine::EnvironmentAccess::Jobs => api::EnvironmentAccess::Jobs,
+    }
 }
 
 fn vfs_feature_to_api(vfs: &engine::VfsFeature) -> api::VfsFeature {
     api::VfsFeature {
         version: vfs.version,
         working_directory: vfs.working_directory.clone(),
-        workspace_links: vfs
-            .workspace_links
+        workspaces: vfs
+            .workspaces
             .iter()
-            .map(|link| api::WorkspaceLink {
-                path: link.path.clone(),
-                target: match &link.target {
-                    engine::WorkspaceLinkTarget::Workspace { workspace_id } => {
-                        api::WorkspaceLinkTarget::Workspace {
-                            workspace_id: workspace_id.clone(),
-                        }
+            .map(|link| {
+                let (workspace_id, snapshot_ref) = match &link.target {
+                    engine::WorkspaceAttachmentTarget::Workspace { workspace_id } => {
+                        (Some(workspace_id.clone()), None)
                     }
-                    engine::WorkspaceLinkTarget::Snapshot { snapshot_ref } => {
-                        api::WorkspaceLinkTarget::Snapshot {
-                            snapshot_ref: snapshot_ref.clone(),
-                        }
+                    engine::WorkspaceAttachmentTarget::Snapshot { snapshot_ref } => {
+                        (None, Some(snapshot_ref.clone()))
                     }
-                },
-                access: match link.access {
-                    engine::WorkspaceLinkAccess::ReadOnly => api::WorkspaceLinkAccess::ReadOnly,
-                    engine::WorkspaceLinkAccess::ReadWrite => api::WorkspaceLinkAccess::ReadWrite,
-                },
+                };
+                api::WorkspaceAttachment {
+                    path: link.path.clone(),
+                    workspace_id,
+                    snapshot_ref,
+                    access: match link.access {
+                        engine::WorkspaceAccess::Read => api::WorkspaceAccess::Read,
+                        engine::WorkspaceAccess::Edit => api::WorkspaceAccess::Edit,
+                    },
+                }
             })
             .collect(),
-        tools: vfs.tools.map(|tools| match tools {
-            engine::VfsToolSurface::ReadOnly => api::VfsToolSurface::ReadOnly,
-            engine::VfsToolSurface::Edit => api::VfsToolSurface::Edit,
-        }),
         prompts: vfs.prompts.as_ref().map(|prompts| api::VfsPromptsConfig {
             roots: prompts.roots.clone(),
         }),
@@ -2249,6 +2254,7 @@ fn mcp_feature_to_api(mcp: &engine::McpFeature) -> api::McpFeature {
             .iter()
             .map(|link| api::McpServerLink {
                 server_id: link.server_id.clone(),
+                tools: link.tools.clone(),
             })
             .collect(),
     }
@@ -4337,8 +4343,13 @@ mod tests {
                 vfs: Some(engine::VfsFeature {
                     working_directory: None,
                     version: engine::CURRENT_FEATURE_VERSION,
-                    workspace_links: Vec::new(),
-                    tools: Some(engine::VfsToolSurface::ReadOnly),
+                    workspaces: vec![engine::WorkspaceAttachment {
+                        path: "/workspace".to_owned(),
+                        target: engine::WorkspaceAttachmentTarget::Workspace {
+                            workspace_id: "ws_1".to_owned(),
+                        },
+                        access: engine::WorkspaceAccess::Read,
+                    }],
                     prompts: Some(engine::VfsPromptsConfig {
                         roots: Some(vec!["/prompts".to_owned()]),
                     }),
@@ -4368,14 +4379,19 @@ mod tests {
                 }),
                 timers: Some(engine::TimersFeature::default()),
                 environments: Some(engine::EnvironmentsFeature {
-                    tools: Some(engine::EnvironmentToolSurface::Edit),
-                    commands: true,
+                    environments: vec![engine::EnvironmentAttachment {
+                        environment_id: "env_1".to_owned(),
+                        default: true,
+                        access: engine::EnvironmentAccess::Exec,
+                        working_directory: Some("/srv".to_owned()),
+                    }],
                     ..Default::default()
                 }),
                 mcp: Some(engine::McpFeature {
                     version: engine::CURRENT_FEATURE_VERSION,
                     servers: vec![engine::McpServerLink {
                         server_id: "linear".to_owned(),
+                        tools: Some(vec!["search".to_owned()]),
                     }],
                 }),
             },
@@ -4414,8 +4430,12 @@ mod tests {
                     vfs: Some(api::VfsFeature {
                         working_directory: None,
                         version: api::CURRENT_FEATURE_VERSION,
-                        workspace_links: Vec::new(),
-                        tools: Some(api::VfsToolSurface::ReadOnly),
+                        workspaces: vec![api::WorkspaceAttachment {
+                            path: "/workspace".to_owned(),
+                            workspace_id: Some("ws_1".to_owned()),
+                            snapshot_ref: None,
+                            access: api::WorkspaceAccess::Read,
+                        }],
                         prompts: Some(api::VfsPromptsConfig {
                             roots: Some(vec!["/prompts".to_owned()]),
                         }),
@@ -4446,21 +4466,23 @@ mod tests {
                         version: api::CURRENT_FEATURE_VERSION,
                     }),
                     environments: Some(api::EnvironmentsFeature {
-                        tools: Some(api::EnvironmentToolSurface::Edit),
-                        commands: true,
-                        working_directory: None,
-                        prompts: None,
                         version: api::CURRENT_FEATURE_VERSION,
-                        providers: None,
-                        registration_keys: None,
-                        selection_tools: false,
-                        jobs: false,
+                        selection: false,
+                        prompts: None,
                         skills: None,
+                        environments: vec![api::EnvironmentAttachment {
+                            environment_id: Some("env_1".to_owned()),
+                            inherit: false,
+                            default: true,
+                            access: api::EnvironmentAccess::Exec,
+                            working_directory: Some("/srv".to_owned()),
+                        }],
                     }),
                     mcp: Some(api::McpFeature {
                         version: api::CURRENT_FEATURE_VERSION,
                         servers: vec![api::McpServerLink {
                             server_id: "linear".to_owned(),
+                            tools: Some(vec!["search".to_owned()]),
                         }],
                     }),
                 }),

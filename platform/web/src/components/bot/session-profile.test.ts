@@ -9,18 +9,16 @@ describe("bot session profile saves", () => {
       createdAtMs: 10,
       updatedAtMs: 20,
       description: "shared profile",
-      config: { features: { web: { search: {} } } },
-      environment: { type: "existing", environmentId: "old-box" },
+      config: { features: { environments: { environments: [{ environmentId: "old-box", access: "read", default: true }] } } },
       metadata: { owner: "ops" },
     }, {
-      environment: { type: "existing", environmentId: "new-box" },
+      config: { features: { environments: { environments: [{ environmentId: "new-box", access: "jobs", default: true }] } } },
       retention: { deleteAfterCloseMs: 86_400_000 },
     })).toEqual({
       profileId: "triage",
       revision: 4,
       description: "shared profile",
-      config: { features: { web: { search: {} } } },
-      environment: { type: "existing", environmentId: "new-box" },
+      config: { features: { environments: { environments: [{ environmentId: "new-box", access: "jobs", default: true }] } } },
       metadata: { owner: "ops" },
       retention: { deleteAfterCloseMs: 86_400_000 },
     });
@@ -31,11 +29,11 @@ describe("bot session profile saves", () => {
       profileId: "triage",
       revision: 2,
       instructions: { type: "text", text: "old" },
-      environment: { type: "existing", environmentId: "ops-box" },
+      config: { features: { environments: { environments: [{ environmentId: "ops-box", access: "exec", default: true }] } } },
       metadata: { team: "ops" },
     }, {
       instructions: undefined,
-      environment: undefined,
+      config: undefined,
     })).toEqual({
       profileId: "triage",
       revision: 2,

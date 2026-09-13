@@ -176,7 +176,7 @@ impl InlineToolRuntime {
         let requirements = tool.requirements();
         let vfs = if requirements.vfs {
             Some(self.vfs.as_ref().ok_or_else(|| ToolError::InvalidRequest {
-                message: "no_vfs_workspace_links".into(),
+                message: "no_vfs_workspace_attachments".into(),
             })?)
         } else {
             None
@@ -198,7 +198,7 @@ impl InlineToolRuntime {
                     .as_ref()
                     .map(BuiltinToolContext::Vfs)
                     .ok_or_else(|| ToolError::InvalidRequest {
-                        message: "no_vfs_workspace_links".to_owned(),
+                        message: "no_vfs_workspace_attachments".to_owned(),
                     })
             }
             BuiltinToolDomain::Environment => {
@@ -641,7 +641,7 @@ mod tests {
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             calls: vec![call],
         }
     }
@@ -959,7 +959,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
-                workspace_links: Vec::new(),
+                workspace_attachments: Vec::new(),
                 calls: vec![call(args_ref, "vfs_read_file")],
             },
         )

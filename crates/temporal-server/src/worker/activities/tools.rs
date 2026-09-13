@@ -712,7 +712,7 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
-                workspace_links: Vec::new(),
+                workspace_attachments: Vec::new(),
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,

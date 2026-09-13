@@ -184,23 +184,32 @@ async fn temporal_live_queued_runs_return_promptly_and_run_in_order() -> anyhow:
     .await
 }
 
-fn run_control_session_config(model: &ModelSelection) -> SessionConfig {
-    // The VFS read-only tool surface gives the fake model a function tool to
-    // call, so runs have a tool-call turn followed by a final turn.
+fn run_control_session_config(model: &ModelSelection, workspace_id: &str) -> SessionConfig {
+    // A read-only workspace attachment derives the VFS read tools, giving the
+    // fake model a function tool to call, so runs have a tool-call turn
+    // followed by a final turn.
     SessionConfig {
         model: Some(model_to_api(model)),
         features: Some(api::FeaturesConfig {
             vfs: Some(api::VfsFeature {
                 working_directory: None,
                 version: api::CURRENT_FEATURE_VERSION,
-                workspace_links: Vec::new(),
-                tools: Some(api::VfsToolSurface::ReadOnly),
+                workspaces: vec![read_only_workspace(workspace_id)],
                 prompts: None,
                 skills: None,
             }),
             ..api::FeaturesConfig::default()
         }),
         ..SessionConfig::default()
+    }
+}
+
+fn read_only_workspace(workspace_id: &str) -> api::WorkspaceAttachment {
+    api::WorkspaceAttachment {
+        path: "/workspace".to_owned(),
+        workspace_id: Some(workspace_id.to_owned()),
+        snapshot_ref: None,
+        access: api::WorkspaceAccess::Read,
     }
 }
 
@@ -217,7 +226,12 @@ async fn run_control_api(
         .with_default_model(model.clone())
         .build();
     let config = if with_tools {
-        run_control_session_config(&model)
+        let workspace = api
+            .create_vfs_workspace(api::VfsWorkspaceCreateParams::default())
+            .await?
+            .result
+            .workspace;
+        run_control_session_config(&model, &workspace.workspace_id)
     } else {
         SessionConfig {
             model: Some(model_to_api(&model)),
@@ -717,27 +731,19 @@ async fn run_parallel_tool_batch_live_client(
         .with_default_model(model.clone())
         .build();
 
-    // The VFS tool surface derives parallel-safe function tools (vfs reads),
-    // so the fake model's three calls form one concurrent per-call group.
+    // A read-only workspace attachment derives parallel-safe function tools
+    // (vfs reads), so the fake model's three calls form one concurrent
+    // per-call group.
+    let workspace = api
+        .create_vfs_workspace(api::VfsWorkspaceCreateParams::default())
+        .await?
+        .result
+        .workspace;
     api.start_session(SessionStartParams {
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfig {
-            model: Some(model_to_api(&model)),
-            features: Some(api::FeaturesConfig {
-                vfs: Some(api::VfsFeature {
-                    working_directory: None,
-                    version: api::CURRENT_FEATURE_VERSION,
-                    workspace_links: Vec::new(),
-                    tools: Some(api::VfsToolSurface::ReadOnly),
-                    prompts: None,
-                    skills: None,
-                }),
-                ..api::FeaturesConfig::default()
-            }),
-            ..SessionConfig::default()
-        }),
+        config: Some(run_control_session_config(&model, &workspace.workspace_id)),
         profile: None,
         environment: None,
         delete_after_close_ms: None,
@@ -1052,8 +1058,7 @@ async fn run_unbounded_hosted_run_live_client(
                 vfs: Some(api::VfsFeature {
                     working_directory: None,
                     version: api::CURRENT_FEATURE_VERSION,
-                    workspace_links: Vec::new(),
-                    tools: None,
+                    workspaces: Vec::new(),
                     prompts: None,
                     skills: None,
                 }),

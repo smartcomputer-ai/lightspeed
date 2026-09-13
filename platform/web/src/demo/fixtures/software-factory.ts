@@ -6,7 +6,7 @@
 /// steers a CI failure into the running task, pr-reviewer reviews, and
 /// release-scribe drafts the changelog. Everything the universe pages show
 /// is seeded here, with timestamps hung off boot time.
-import type { Environment, GitHubApp, ProfileEnvironment, SecretGrant, SessionOrigin, UniverseSetup } from "@/api";
+import type { Environment, GitHubApp, SecretGrant, SessionOrigin, UniverseSetup } from "@/api";
 import type { BotEventOutcome, ModelConfig, SessionSummaryView } from "@lightspeed-ai/agent-client";
 import { appendExchange, appendScriptedRun, closeSession, newSession } from "../engine";
 import type { DemoResponder, DemoStore, DemoToolCall, DemoTurn, SessionRecord, UniverseState } from "../store";
@@ -382,10 +382,10 @@ const GITHUB_IMPLEMENT_TOOLS = ["create_pull_request", "get_pull_request", "get_
 const GITHUB_CI_TOOLS = ["list_workflow_runs", "list_workflow_jobs", "get_job_logs", "create_issue", "add_issue_comment"];
 const GITHUB_SCRIBE_TOOLS = ["list_commits", "list_pull_requests", "get_pull_request", "list_tags", "create_pull_request", "create_or_update_file"];
 
-const link = (workspaceId: string, access: "readOnly" | "readWrite") => ({
+const link = (workspaceId: string, access: "read" | "edit") => ({
   path: `/${workspaceId}`,
   access,
-  target: { type: "workspace", workspaceId },
+  workspaceId,
 });
 
 const INTAKE_CONFIG: Record<string, unknown> = {
@@ -394,7 +394,7 @@ const INTAKE_CONFIG: Record<string, unknown> = {
   limits: { maxTurns: 12, maxToolRounds: 20 },
   features: {
     mcp: { servers: [{ serverId: "linear" }] },
-    vfs: { tools: "edit", workspaceLinks: [link(WORKSPACE.specs, "readWrite"), link(WORKSPACE.web, "readOnly")] },
+    vfs: { workspaces: [link(WORKSPACE.specs, "edit"), link(WORKSPACE.web, "read")] },
   },
 };
 
@@ -403,7 +403,7 @@ const PLANNER_CONFIG: Record<string, unknown> = {
   generation: { reasoningEffort: "high", maxOutputTokens: 16_000 },
   limits: { maxTurns: 12, maxToolRounds: 24 },
   features: {
-    vfs: { tools: "edit", workspaceLinks: [link(WORKSPACE.specs, "readWrite"), link(WORKSPACE.web, "readOnly")] },
+    vfs: { workspaces: [link(WORKSPACE.specs, "edit"), link(WORKSPACE.web, "read")] },
   },
 };
 
@@ -412,16 +412,11 @@ const IMPLEMENTER_CONFIG: Record<string, unknown> = {
   generation: { reasoningEffort: "high", maxOutputTokens: 32_000 },
   limits: { maxTurns: 40, maxToolRounds: 120 },
   features: {
-    environments: { selectionTools: false },
+    environments: { environments: [{ environmentId: ENV.taskC, default: true, access: "jobs" }] },
     mcp: { servers: [{ serverId: "github" }] },
     subagents: { agents: [{ profileId: PROFILE.explorer }, { profileId: PROFILE.tests }], ...SUBAGENT_LIMITS },
-    vfs: { tools: "readOnly", workspaceLinks: [link(WORKSPACE.specs, "readOnly")] },
+    vfs: { workspaces: [link(WORKSPACE.specs, "read")] },
   },
-};
-
-const IMPLEMENTER_ENVIRONMENT: ProfileEnvironment = {
-  type: "existing",
-  environmentId: ENV.taskC,
 };
 
 const EXPLORER_CONFIG: Record<string, unknown> = {
@@ -429,7 +424,7 @@ const EXPLORER_CONFIG: Record<string, unknown> = {
   generation: { reasoningEffort: "medium" },
   limits: { maxToolRounds: 60 },
   features: {
-    environments: { selectionTools: false },
+    environments: { environments: [{ inherit: true, default: true, access: "exec" }] },
     web: { fetch: {}, search: { allowedDomains: ["docs.github.com", "nodejs.org", "developer.mozilla.org", "hono.dev", "vitest.dev"] } },
   },
 };
@@ -439,7 +434,7 @@ const TEST_WRITER_CONFIG: Record<string, unknown> = {
   generation: { reasoningEffort: "medium", maxOutputTokens: 16_000 },
   limits: { maxToolRounds: 40 },
   features: {
-    environments: { selectionTools: false },
+    environments: { environments: [{ inherit: true, default: true, access: "exec" }] },
     subagents: { agents: [{ profileId: PROFILE.explorer }], ...SUBAGENT_LIMITS },
   },
 };
@@ -449,7 +444,7 @@ const REVIEWER_CONFIG: Record<string, unknown> = {
   generation: { reasoningEffort: "high", maxOutputTokens: 16_000 },
   limits: { maxTurns: 24, maxToolRounds: 40 },
   features: {
-    environments: {},
+    environments: { environments: [{ environmentId: ENV.ci, default: true, access: "exec" }] },
     mcp: { servers: [{ serverId: "github" }] },
     subagents: { agents: [{ profileId: PROFILE.explorer }], maxDepth: 1, maxDescendants: 4, maxConcurrent: 2, deadlineMs: 15 * MINUTE_MS },
     web: { fetch: {} },
@@ -462,7 +457,7 @@ const SCRIBE_CONFIG: Record<string, unknown> = {
   limits: { maxTurns: 12 },
   features: {
     mcp: { servers: [{ serverId: "github" }] },
-    vfs: { tools: "edit", workspaceLinks: [link(WORKSPACE.web, "readWrite")] },
+    vfs: { workspaces: [link(WORKSPACE.web, "edit")] },
     web: { fetch: {} },
   },
 };
@@ -529,7 +524,6 @@ function seedProfiles(universe: UniverseState): void {
       instructions: IMPLEMENTER_INSTRUCTIONS,
       config: IMPLEMENTER_CONFIG,
       metadata: IMPLEMENTER_PROFILE.metadata,
-      environment: IMPLEMENTER_ENVIRONMENT,
       revision: IMPLEMENTER_PROFILE.revision,
       createdAtMs: ago(30 * DAY_MS),
       updatedAtMs: ago(2 * DAY_MS),
@@ -540,7 +534,6 @@ function seedProfiles(universe: UniverseState): void {
       description: "Read-only sub-agent that answers repository questions with file:line citations in the environment it inherits.",
       instructions: EXPLORER_INSTRUCTIONS,
       config: EXPLORER_CONFIG,
-      environment: { type: "inherit" },
       revision: EXPLORER_PROFILE.revision,
       createdAtMs: ago(62 * DAY_MS),
       updatedAtMs: ago(12 * DAY_MS),
@@ -551,7 +544,6 @@ function seedProfiles(universe: UniverseState): void {
       description: "Sub-agent that writes vitest coverage for a change in the inherited sandbox and may ask repo-explorer about conventions.",
       instructions: TEST_WRITER_INSTRUCTIONS,
       config: TEST_WRITER_CONFIG,
-      environment: { type: "inherit" },
       revision: TEST_WRITER_PROFILE.revision,
       createdAtMs: ago(28 * DAY_MS),
       updatedAtMs: ago(12 * DAY_MS),
@@ -562,7 +554,6 @@ function seedProfiles(universe: UniverseState): void {
       description: "Reviews acme-web pull requests with the GitHub tools and the shared CI runner; delegates repo-wide questions to repo-explorer.",
       instructions: REVIEWER_INSTRUCTIONS,
       config: REVIEWER_CONFIG,
-      environment: { type: "existing", environmentId: ENV.ci },
       revision: REVIEWER_PROFILE.revision,
       createdAtMs: ago(65 * DAY_MS),
       updatedAtMs: ago(3 * DAY_MS),
@@ -1378,8 +1369,8 @@ function seedIntegrations(universe: UniverseState): void {
       serverUrl: "https://api.githubcopilot.com/mcp/",
       description: "GitHub's hosted MCP server, scoped to the acme organisation through the App installation.",
       allowedTools: [...new Set([...GITHUB_REVIEW_TOOLS, ...GITHUB_IMPLEMENT_TOOLS, ...GITHUB_CI_TOOLS, ...GITHUB_SCRIBE_TOOLS])],
-      approvalDefault: "never",
-      deferLoadingDefault: false,
+      approval: "never",
+      deferLoading: false,
       authPolicy: { type: "requiredBearer" },
       credential: { type: "authGrant", grantId: GRANT.github },
       status: "active",

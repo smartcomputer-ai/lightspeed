@@ -5,14 +5,14 @@
 //! Host filesystem access, materialization, and process execution live outside
 //! this crate.
 
+pub mod attachment;
 pub mod catalog;
-pub mod link;
 pub mod manifest;
 pub mod path;
 pub mod snapshot;
 
+pub use attachment::*;
 pub use catalog::*;
-pub use link::*;
 pub use manifest::*;
 pub use path::*;
 pub use snapshot::*;

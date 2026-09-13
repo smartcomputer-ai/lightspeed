@@ -1580,6 +1580,124 @@ fn closed_quiescent_workflow_can_complete() {
 }
 
 #[test]
+fn attachment_catalog_invalidation_tracks_selection_and_replays() {
+    fn append(
+        state: &mut CoreAgentState,
+        log: &mut Vec<CoreAgentEntry>,
+        command: CoreAgentCommand,
+    ) {
+        for proposal in engine::admit_command(state, command, 1).unwrap() {
+            let entry = CoreAgentEntry {
+                position: SessionPosition {
+                    seq: EventSeq::new(log.len() as u64 + 1),
+                },
+                observed_at_ms: 1,
+                joins: proposal.joins,
+                event: proposal.event,
+            };
+            engine::apply_event(state, &entry).unwrap();
+            log.push(entry);
+        }
+    }
+    fn publication(key: &str, origin: Option<String>) -> CoreAgentCommand {
+        CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: ContextEntryKey::new(key),
+            entry: ContextEntryInput {
+                origin,
+                kind: ContextEntryKind::Catalog {
+                    title: "Catalog".into(),
+                },
+                content: engine::ContentRef::text(BlobRef::from_bytes(b"catalog")),
+                preview: None,
+                provenance_ref: None,
+                token_estimate: None,
+            },
+        }
+    }
+    let mut state = CoreAgentState::new();
+    let mut log = Vec::new();
+    let mut config = agent_session_args_with_close_on_terminal(false).session_config;
+    config.features.environments = Some(engine::EnvironmentsFeature {
+        environments: ["first", "second"]
+            .into_iter()
+            .map(|id| engine::EnvironmentAttachment {
+                environment_id: id.into(),
+                default: false,
+                access: engine::EnvironmentAccess::Read,
+                working_directory: None,
+            })
+            .collect(),
+        ..Default::default()
+    });
+    append(
+        &mut state,
+        &mut log,
+        CoreAgentCommand::OpenSession { config },
+    );
+    append(
+        &mut state,
+        &mut log,
+        publication("runtime.catalog.vfs", None),
+    );
+    let vfs = engine::current_context_entry(&state, &ContextEntryKey::new("runtime.catalog.vfs"))
+        .unwrap()
+        .clone();
+    let tools = state.tooling.clone();
+    let key = ContextEntryKey::new("runtime.catalog.environments");
+    for next in [Some("first"), Some("second"), None] {
+        let current = state
+            .environment
+            .active_environment_id
+            .as_ref()
+            .map_or("", |id| id.as_str());
+        let observed = publication(
+            key.as_str(),
+            Some(format!("runtime.environments:{current}")),
+        );
+        assert!(!drive::environment_attachment_catalog_publication_is_obsolete(&state, &observed));
+        append(&mut state, &mut log, observed.clone());
+        assert!(drive::invalid_environment_attachment_catalog_command(&state).is_none());
+        let command = match next {
+            Some(id) => CoreAgentCommand::SetActiveEnvironment {
+                environment_id: engine::EnvironmentId::new(id),
+            },
+            None => CoreAgentCommand::ClearActiveEnvironment,
+        };
+        append(&mut state, &mut log, command);
+        assert!(drive::environment_attachment_catalog_publication_is_obsolete(&state, &observed));
+        let removal = drive::invalid_environment_attachment_catalog_command(&state).unwrap();
+        append(&mut state, &mut log, removal);
+        assert!(engine::current_context_entry(&state, &key).is_none());
+        assert_eq!(
+            engine::current_context_entry(&state, &ContextEntryKey::new("runtime.catalog.vfs")),
+            Some(&vfs)
+        );
+        assert_eq!(state.tooling, tools);
+    }
+    let unselected = publication(key.as_str(), Some("runtime.environments:".into()));
+    append(&mut state, &mut log, unselected.clone());
+    let mut config = state.lifecycle.config.clone().unwrap();
+    config.features.environments = None;
+    append(
+        &mut state,
+        &mut log,
+        CoreAgentCommand::ReplaceSessionConfig {
+            expected_revision: None,
+            config,
+        },
+    );
+    assert!(drive::environment_attachment_catalog_publication_is_obsolete(&state, &unselected));
+    let removal = drive::invalid_environment_attachment_catalog_command(&state).unwrap();
+    append(&mut state, &mut log, removal);
+    let mut replayed = CoreAgentState::new();
+    for entry in &log {
+        engine::apply_event(&mut replayed, entry).unwrap();
+    }
+    assert_eq!(state, replayed);
+}
+
+#[test]
 fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
     fn append(
         state: &mut CoreAgentState,
@@ -1604,6 +1722,15 @@ fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
     let mut config = agent_session_args_with_close_on_terminal(false).session_config;
     config.features.environments = Some(engine::EnvironmentsFeature {
         skills: Some(Default::default()),
+        environments: ["first", "second"]
+            .into_iter()
+            .map(|id| engine::EnvironmentAttachment {
+                environment_id: id.to_owned(),
+                default: false,
+                access: engine::EnvironmentAccess::Read,
+                working_directory: None,
+            })
+            .collect(),
         ..Default::default()
     });
     append(
@@ -1761,6 +1888,15 @@ fn environment_prompt_switch_removal_replays_without_mutating_vfs() {
     let mut config = agent_session_args_with_close_on_terminal(false).session_config;
     config.features.environments = Some(engine::EnvironmentsFeature {
         prompts: Some(Default::default()),
+        environments: ["first", "second"]
+            .into_iter()
+            .map(|id| engine::EnvironmentAttachment {
+                environment_id: id.to_owned(),
+                default: false,
+                access: engine::EnvironmentAccess::Read,
+                working_directory: None,
+            })
+            .collect(),
         ..Default::default()
     });
     append(
@@ -1919,12 +2055,12 @@ fn vfs_skill_revocation_is_source_scoped_and_replays() {
     let mut log = Vec::new();
     let mut config = agent_session_args_with_close_on_terminal(false).session_config;
     config.features.vfs = Some(engine::VfsFeature {
-        workspace_links: vec![engine::WorkspaceLink {
+        workspaces: vec![engine::WorkspaceAttachment {
             path: "/skills".into(),
-            target: engine::WorkspaceLinkTarget::Workspace {
+            target: engine::WorkspaceAttachmentTarget::Workspace {
                 workspace_id: "skills".into(),
             },
-            access: engine::WorkspaceLinkAccess::ReadOnly,
+            access: engine::WorkspaceAccess::Read,
         }],
         skills: Some(engine::VfsSkillsConfig::default()),
         ..Default::default()

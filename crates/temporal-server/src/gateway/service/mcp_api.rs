@@ -22,8 +22,8 @@ pub(super) fn put_mcp_server_record(
         allowed_tools: server.allowed_tools,
         execution: registry_execution(server.execution),
         exposure: registry_exposure(server.exposure),
-        approval_default: registry_approval(server.approval_default),
-        defer_loading_default: server.defer_loading_default,
+        approval: registry_approval(server.approval),
+        defer_loading: server.defer_loading,
         allow_private_network: server.allow_private_network,
         auth_policy: registry_auth_policy(server.auth_policy),
         auth_grant_id,
@@ -42,8 +42,8 @@ pub(super) fn mcp_server_view(record: mcp::McpServerRecord) -> api::McpServerVie
         allowed_tools: record.allowed_tools,
         execution: api_execution(record.execution),
         exposure: api_exposure(record.exposure),
-        approval_default: api_approval(record.approval_default),
-        defer_loading_default: record.defer_loading_default,
+        approval: api_approval(record.approval),
+        defer_loading: record.defer_loading,
         allow_private_network: record.allow_private_network,
         auth_policy: api_auth_policy(record.auth_policy),
         credential: record
@@ -138,7 +138,7 @@ pub(super) fn validate_mcp_server_credential(
 /// into the remote MCP tool spec. Shared by put-time validation and toolset
 /// reconciliation, so a config put fails fast when a link cannot resolve.
 pub(super) fn mcp_tool_from_config_link(
-    _link: &engine::McpServerLink,
+    link: &engine::McpServerLink,
     record: &mcp::McpServerRecord,
     grant: Option<&auth::AuthGrantRecord>,
 ) -> Result<engine::ToolSpec, AgentApiError> {
@@ -158,6 +158,20 @@ pub(super) fn mcp_tool_from_config_link(
         mcp::McpServerStatus::Active | mcp::McpServerStatus::Unverified => {}
     }
 
+    let allowed_tools = match &link.tools {
+        Some(tools) => {
+            if let Some(allowed) = &record.allowed_tools
+                && let Some(tool) = tools.iter().find(|tool| !allowed.contains(tool))
+            {
+                return Err(AgentApiError::invalid_request(format!(
+                    "MCP tool {tool} is outside the allowlist for server {}",
+                    record.server_id
+                )));
+            }
+            Some(tools.clone())
+        }
+        None => record.allowed_tools.clone(),
+    };
     let tool_name = default_mcp_tool_name(&record.default_server_label)?;
     let auth_ref = auth_ref_for_server(record, grant)?;
     Ok(engine::ToolSpec {
@@ -169,11 +183,11 @@ pub(super) fn mcp_tool_from_config_link(
             server_label: record.default_server_label.clone(),
             server_url: record.server_url.clone(),
             description_ref: None,
-            allowed_tools: record.allowed_tools.clone(),
+            allowed_tools,
             execution: engine_execution(record.execution),
             exposure: engine_exposure(record.exposure),
-            approval: engine_approval(api_approval(record.approval_default)),
-            defer_loading: record.defer_loading_default,
+            approval: engine_approval(api_approval(record.approval)),
+            defer_loading: record.defer_loading,
             auth_ref,
             auth_required: matches!(
                 record.auth_policy,

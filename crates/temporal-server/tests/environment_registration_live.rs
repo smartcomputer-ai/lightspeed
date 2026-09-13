@@ -280,7 +280,7 @@ async fn scenario(
     // Workers reach this test's gateway, not whatever the sourced dev
     // environment points LIGHTSPEED_ENVIRONMENT_GATEWAY_URL at; the route
     // bearer is the deployment token the gateway state checks.
-    let gateway = temporal_server::environment_gateway::EnvironmentGatewayClientConfig::new(
+    let gateway = temporal_server::environments::gateway::EnvironmentGatewayClientConfig::new(
         base_url,
         runtime.environment_gateway().deployment_token(),
     );

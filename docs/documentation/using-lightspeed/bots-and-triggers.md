@@ -145,10 +145,13 @@ next poll produces an event.
 
 An execution poll needs an existing, lasting execution environment and a
 command that prints JSON to stdout. The UI enables **Run a command** when the
-profile selects an existing environment. Enter one argument per line in the
+profile attaches a default environment. Enter one argument per line in the
 command form. Create and configure the machine independently before enabling
-the trigger. Leaving **Environment** blank is appropriate only when the
-profile already selects an existing machine.
+the trigger. Leaving **Environment** blank runs the poll on the profile's
+default attachment. The poll follows that default even when the bot's
+conversation has since switched to another attached machine, because a live
+selection is never overridden; name the environment explicitly when the poll
+must share the conversation's machine.
 
 Changing a poll specification resets its cursor and establishes a new
 baseline. Ten consecutive poll failures disable the trigger; fix the source

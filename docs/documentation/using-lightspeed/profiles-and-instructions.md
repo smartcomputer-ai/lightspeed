@@ -1,8 +1,8 @@
 # Profiles and instructions
 
 A profile is a reusable agent setup. It collects the model, instructions,
-capabilities, workspace links, and optional environment selection that a
-session needs. You can use the same profile for an interactive session, a
+capabilities, and the workspaces, environments, and MCP servers it attaches
+that a session needs. You can use the same profile for an interactive session, a
 bot, or a delegated sub-agent.
 
 For example, a release editor needs instructions about factual claims, a
@@ -49,9 +49,9 @@ report the uncertainty instead of filling in the gap.
 ```
 
 Select an explicit **Model** and enable the capabilities this job requires.
-For the reviewer, enable **Virtual File System: Files, Instructions, Skills**,
-set **File tools** to **Read only**, and link the `release-notes` workspace at
-`/workspace` with **Read only** access. Save the profile as `release-reviewer`.
+For the reviewer, enable **Virtual File System: Files, Instructions, Skills**
+and link the `release-notes` workspace at `/workspace` with **Read** access.
+Save the profile as `release-reviewer`.
 
 Create a session from it and ask it to compare `/workspace/changes.md` with
 `/workspace/release-notes.md`. Verify both the review and the tool activity.
@@ -67,30 +67,37 @@ the file-access boundary even if the model asks to write.
 
 The profile editor groups grants into VFS, Web, Sub-agents, Timers,
 Environments, and MCP Servers. Leaving a feature absent supplies no tools
-from that feature. Enabling one can require further choices, such as which
-workspace to link, which child profiles can be called, or which MCP server
-to expose.
+from that feature. Resource-backed features are lists of attachments, each
+naming a workspace, environment, or MCP server together with what the session
+may do with it: a workspace attachment carries `read` or `edit` access, an
+environment attachment carries `read`, `edit`, `exec`, or `jobs` (each level
+including the ones before it), and an MCP server entry can narrow the
+server's tool allowlist. The tools the agent sees follow from the union of
+those grants; there is no separate file-tool switch, and a call the active
+environment's own access does not cover is refused when it executes.
 
-VFS file tools and Environments together also grant
-[VFS transfer tools](../environments/vfs-transfer.md). **Read only** VFS tools
-enable materialize into the selected environment; **Edit files** additionally
-enable capture into writable workspace links. Prompt or skill sourcing without
-file tools does not enable transfers. These rules also apply in session settings.
+Workspace attachments and environment attachments together also grant
+[VFS transfer tools](../environments/vfs-transfer.md). Any workspace attachment plus
+an environment attached with `edit` or higher enables materialize into the
+active environment; an `edit` link plus any environment attachment enables
+capture into that workspace. A VFS or environment feature with no attachments
+enables neither. These rules also apply in session settings.
 
 VFS **Skill discovery** and **Prompt loading** are separate opt-in switches.
 Each enables its configuration block (`features.vfs.skills` or
 `features.vfs.prompts`); an empty block uses conventional directories beneath
-workspace links. Optional root overrides replace the defaults. Clearing an
-override restores defaults; switching off disables that source. File tools and
-links alone enable neither source. Environment skill discovery is configured
+workspace attachments. Optional root overrides replace the defaults. Clearing an
+override restores defaults; switching off disables that source. Links alone
+enable neither source. Environment skill discovery is configured
 independently under `features.environments.skills`; environment prompts use
 `features.environments.prompts` with the same enablement and override rules.
 
 Each domain has a **Working directory** setting: `features.vfs.workingDirectory`
-(default `/`) and `features.environments.workingDirectory` (default supplied by
-the selected machine). Configure `/workspace` explicitly if that is the desired
-VFS base. Environment file tools, commands, jobs, and discovery share the machine
-base; a per-command `cwd` override does not change the session setting.
+(default `/`) for the VFS, and `workingDirectory` on each environment
+attachment (default supplied by that machine). Configure `/workspace`
+explicitly if that is the desired VFS base. Environment file tools, commands,
+jobs, and discovery share the active attachment's base; a per-command `cwd`
+override does not change the session setting.
 
 Apply the same reasoning to delegated work. A parent that can call a powerful
 child profile can ask that child to use its capabilities. The child's setup
@@ -152,11 +159,11 @@ Applying a profile is not a deep merge of every field:
 
 | Profile content | Effect on an existing session |
 | --- | --- |
-| `config` present | Replaces the session configuration as a whole. Include the capabilities and links you intend to retain. |
+| `config` present | Replaces the session configuration as a whole. Include the capabilities and attachments you intend to retain. |
 | `config` absent | Leaves the current configuration in place. |
 | `instructions` present or absent | Replaces or clears the profile instruction layer. Sourced prompt files follow the resulting VFS setup. |
-| `environment` absent | Leaves the active environment unchanged. |
-| `environment` present | Applies the existing or inherited selection. |
+| The active environment is no longer attached | Clears the active environment. |
+| An environment attachment marked `default` | Activates it only when the session has no active environment afterwards; a live selection of a still-attached machine is left alone. |
 | Metadata and retention defaults | Remain creation defaults; applying the profile does not rewrite the existing session's metadata or retention. |
 
 Bots follow their named profile differently. Their Main conversation adopts
@@ -166,7 +173,7 @@ several bots; review its users before changing their grants or model. If a
 new API kind requires a fresh Main conversation, the controller creates a
 successor. See [Bots and triggers](bots-and-triggers.md).
 
-## Set limits and environment intent
+## Set limits and a default environment
 
 The advanced **Run limits** fields include **Max turns** and **Max tool
 rounds**. They bound a run's work under the selected defaults. API callers can
@@ -174,11 +181,15 @@ provide per-run overrides, so these fields should not be treated as hard
 authorization ceilings. Bot daily budgets and sub-agent tree limits govern
 different scopes.
 
-An environment intent selects an existing environment. A delegated child can
-also inherit its parent's active environment. Environments are created and
-managed independently: profiles never provision machines, bind credentials,
-or close them with the session. The profile must grant the relevant
-environment capability as well as select the machine. Read
+A profile activates a machine through its environment attachments. Mark one
+attachment `"default": true` and it is activated at session creation and
+whenever the profile is applied to a session that has no active environment.
+A sub-agent profile can instead attach `"inherit": true`, which resolves to
+the delegating parent's active environment when the child is spawned. A plain
+session configuration replacement never activates a default. Environments
+are created and managed independently: profiles never provision machines,
+bind credentials, or close them with the session. Attaching a machine both
+allows it and sets what the session may do there. Read
 [Environments](../environments/overview.md) before adding compute to a profile
 that currently needs only VFS files.
 
@@ -192,7 +203,7 @@ instructions to the agent.
 | Symptom | What to check |
 | --- | --- |
 | A saved profile change has no effect in an ordinary session | Apply it explicitly, edit session setup, or start a new session. |
-| The agent describes a tool it cannot call | Check the feature grant and its target configuration; instructions alone do not expose tools. |
+| The agent describes a tool it cannot call | Check the feature grant and its attachments' access; instructions alone do not expose tools. |
 | Applying a profile removes a previous capability | A supplied `config` replaces the whole configuration. Include all intended grants. |
 | Clearing custom instructions leaves instructions active | Check VFS prompt roots and their files. Those are a separate authored source. |
 | A bot thread still uses the previous setup | Main reconciles at idle, while an existing routed thread keeps its setup. Reset the appropriate conversation when ready. |

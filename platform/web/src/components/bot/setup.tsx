@@ -1,3 +1,4 @@
+import { defaultEnvironmentAttachment } from "@/lib/sessions/resource-features";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, ChevronRight, SlidersHorizontal } from "lucide-react";
@@ -15,7 +16,6 @@ import {
   type BotView,
   type Environment,
   type ProfileDocument,
-  type ProfileEnvironment,
   type ProfileSummary,
 } from "@/api";
 import {
@@ -42,7 +42,6 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { ProfileEnvironmentEditor } from "@/components/session/profile-environment-editor";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
 import { ProfileRetentionEditor } from "@/components/session/profile-retention-editor";
 import { SessionConfigEditor } from "@/components/session/session-config-editor";
@@ -103,14 +102,13 @@ export function BotSetup({
       api<{ triggers?: BotTriggerView[] }>("GET", `/api/v1/universes/${universeId}/bots/${bot.botId}/triggers`),
   });
   const accounts = useChannelAccounts(universeId);
+  const defaultEnvironmentId = defaultEnvironmentAttachment(profile.data?.config)?.environmentId;
   const env: BotEnvStatus =
     profile.isLoading || profile.isError || profile.data === undefined
       ? { kind: "unknown" }
-      : profile.data.environment == null
-        ? { kind: "none" }
-        : profile.data.environment.type === "existing"
-          ? { kind: "existing", environmentId: profile.data.environment.environmentId }
-          : { kind: "none" };
+      : defaultEnvironmentId
+        ? { kind: "existing", environmentId: defaultEnvironmentId }
+        : { kind: "none" };
   const triggerList = triggers.data?.triggers ?? [];
   const wakeups = triggerList.filter((trigger) => trigger.kind !== "bot");
   const triggersLine =
@@ -410,7 +408,6 @@ function SessionProfileSection({
 
   const [configDraft, setConfigDraft] = useState<Record<string, unknown> | undefined>();
   const [instructionsDraft, setInstructionsDraft] = useState("");
-  const [environmentDraft, setEnvironmentDraft] = useState<ProfileEnvironment | undefined>();
   const [metadataDraft, setMetadataDraft] = useState<Record<string, string> | undefined>();
   const [retentionDraft, setRetentionDraft] = useState<number | undefined>();
   const [configError, setConfigError] = useState<string | null>(null);
@@ -421,7 +418,6 @@ function SessionProfileSection({
     setConfigDraft(profile.config ? structuredClone(profile.config as Record<string, unknown>) : undefined);
     const instructions = profile.instructions as { type: "text"; text: string } | { type: "textRef" } | undefined;
     setInstructionsDraft(instructions?.type === "text" ? instructions.text : "");
-    setEnvironmentDraft(profile.environment ?? undefined);
     setMetadataDraft(profile.metadata ? structuredClone(profile.metadata) : undefined);
     setRetentionDraft(profile.retention?.deleteAfterCloseMs);
     // Re-sync on a new revision only; an unrelated refetch must not wipe edits.
@@ -435,8 +431,6 @@ function SessionProfileSection({
     ? ((profile?.instructions as { text: string }).text ?? "")
     : "";
   const instructionsDirty = profile !== undefined && instructionsDraft !== baseInstructions;
-  const environmentDirty =
-    profile !== undefined && JSON.stringify(environmentDraft ?? null) !== JSON.stringify(profile.environment ?? null);
   const metadataDirty =
     profile !== undefined && JSON.stringify(metadataDraft ?? null) !== JSON.stringify(profile.metadata ?? null);
   const retentionDirty =
@@ -458,12 +452,13 @@ function SessionProfileSection({
       ]);
     },
   });
-  const merged = { ...(profile ?? {}), config: configDraft, environment: environmentDraft };
+  const merged = { ...(profile ?? {}), config: configDraft };
   const closed = bot.closedAtMs != null;
   const readOnly = !manage || closed;
+  const defaultEnvironment = defaultEnvironmentAttachment(configDraft);
   const capabilities = capabilitySummary(profileConfig);
   const environment = hasSessionFeature(profileConfig, "environments")
-    ? environmentSummary(profile?.environment, environments.data)
+    ? environmentSummary(profileConfig, environments.data)
     : null;
   const textRef = (profile?.instructions as { type?: string } | undefined)?.type === "textRef";
 
@@ -507,31 +502,12 @@ function SessionProfileSection({
               workspacesLoading={options.workspacesLoading}
               models={options.models}
               profiles={options.profiles}
-              environmentProviders={options.environmentProviders}
+              environments={options.environments}
+              discoverMcpTools={options.discoverMcpTools}
               featureDisableReasons={resourceFeatureDisableReasons(merged)}
-              environmentSetup={(
-                <div className="grid gap-4">
-                  <ProfileEnvironmentEditor
-                    embedded
-                    value={environmentDraft}
-                    environments={environments.data}
-
-
-
-                    disabled={readOnly}
-                    description="Choose an existing environment shared by this bot's sessions. Manage its lifecycle on the Environments page."
-                    onChange={setEnvironmentDraft}
-                  />
-                  {environmentDraft?.type === "existing" && (
-                    <BotEnvironmentCard
-                      slug={slug}
-                      universeId={universeId}
-                      environmentId={environmentDraft.environmentId}
-                      manage={manage}
-                    />
-                  )}
-                </div>
-              )}
+              environmentSetup={defaultEnvironment?.environmentId ? (
+                <BotEnvironmentCard slug={slug} universeId={universeId} environmentId={defaultEnvironment.environmentId} manage={manage} />
+              ) : undefined}
               metadataSetup={(
                 <MetadataMapEditor value={metadataDraft} onChange={setMetadataDraft} disabled={readOnly} />
               )}
@@ -550,7 +526,7 @@ function SessionProfileSection({
             />
             {manage && (
               <SaveRow
-                dirty={configDirty || instructionsDirty || environmentDirty || metadataDirty || retentionDirty}
+                dirty={configDirty || instructionsDirty || metadataDirty || retentionDirty}
                 pending={save.isPending}
                 error={configError ? `Config: ${configError}` : retentionError ? `Retention: ${retentionError}` : save.error?.message}
                 disabled={closed || configError !== null || retentionError !== null}
@@ -569,7 +545,6 @@ function SessionProfileSection({
                       ...(retentionDirty
                         ? { retention: retentionDraft === undefined ? undefined : { deleteAfterCloseMs: retentionDraft } }
                         : {}),
-                      ...(environmentDirty ? { environment: environmentDraft } : {}),
                     },
                   })
                 }

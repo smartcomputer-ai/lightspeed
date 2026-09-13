@@ -13,8 +13,8 @@ use api::{
     AgentApiError, AgentApiErrorKind, AuthGrantLeaseParams, BotEventDocument,
     BotTriggerDisabledReason, BotTriggerId, BotTriggerKind, BotTriggerSpec,
     EnvironmentJobCancelParams, EnvironmentJobCreateParams, EnvironmentJobReadParams,
-    PollCursorSpec, PollCursorState, PollHttpAuth, PollHttpMethod, PollSource, ProfileEnvironment,
-    ProfileId, ProfileReadParams, SessionJobCancelScopeView, SessionJobHandleInput,
+    PollCursorSpec, PollCursorState, PollHttpAuth, PollHttpMethod, PollSource, ProfileId,
+    ProfileReadParams, SessionJobCancelScopeView, SessionJobHandleInput,
     SessionJobOutputStreamView, SessionJobStartSpecInput, SessionJobStatusView,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -689,8 +689,10 @@ async fn fetch_http_payload(
 // ── Exec sources ────────────────────────────────────────────────────────────
 
 /// The environment an exec poll without an explicit `environmentId` runs
-/// in: the `existing` environment of the bot's profile. A profile with
-/// another intent (none or inherit) cannot run such a
+/// in: the default attachment of the bot's profile. This is resolved from
+/// the profile, not the bot session's live selection, so the two can differ
+/// once the session has switched; a poll that must share the session's
+/// machine names it. A profile without a concrete default cannot run such a
 /// poll — a configuration error, not a transient failure.
 async fn resolve_bot_profile_environment(
     api: &GatewayAgentApi,
@@ -706,10 +708,23 @@ async fn resolve_bot_profile_environment(
         })?
         .result
         .profile;
-    match profile.document.environment {
-        Some(ProfileEnvironment::Existing { environment_id }) => Ok(environment_id),
-        _ => Err(PollFetchError::Failed(format!(
-            "the poll names no environment and profile {profile_id} does not activate an existing one: set environmentId on the trigger, or point the profile at an existing environment"
+    let default = profile
+        .document
+        .config
+        .as_ref()
+        .and_then(|config| config.features.as_ref())
+        .and_then(|features| features.environments.as_ref())
+        .and_then(|environments| {
+            environments
+                .environments
+                .iter()
+                .find(|attachment| attachment.default)
+        })
+        .and_then(|attachment| attachment.environment_id.clone());
+    match default {
+        Some(environment_id) => Ok(environment_id),
+        None => Err(PollFetchError::Failed(format!(
+            "the poll names no environment and profile {profile_id} has no default environment attachment: set environmentId on the trigger, or mark one attached environment as the default"
         ))),
     }
 }

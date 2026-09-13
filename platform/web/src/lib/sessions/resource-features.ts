@@ -1,28 +1,32 @@
+import type { EnvironmentAttachment } from "@lightspeed-ai/agent-client";
+
 export type ResourceFeature = "vfs" | "environments";
 
-export function resourceFeatureDisableReasons(
-  setup: unknown,
-): Partial<Record<ResourceFeature, string>> {
-  const document = record(setup);
-  const workspaceLinkCount = arrayLength(
-    record(record(record(document.config).features).vfs).workspaceLinks,
-  );
-  const hasEnvironmentIntent = hasProfileEnvironment(document);
-  return {
-    ...(workspaceLinkCount > 0
-      ? { vfs: removeFirstMessage(workspaceLinkCount, "workspace link", "VFS") }
-      : {}),
-    ...(hasEnvironmentIntent
-      ? { environments: "Clear the profile environment before disabling the Environments feature." }
-      : {}),
-  };
+export function environmentAttachments(config: unknown): EnvironmentAttachment[] {
+  const value = record(record(record(config).features).environments).environments;
+  return Array.isArray(value) ? value.filter((item) => item && typeof item === "object") as EnvironmentAttachment[] : [];
 }
 
-/// True when the profile document names an environment intent (`existing`
-/// or `inherit`); absence leaves a session's selection unchanged.
-export function hasProfileEnvironment(document: Record<string, unknown>): boolean {
-  const environment = record(document.environment);
-  return environment.type === "existing" || environment.type === "inherit";
+export function defaultEnvironmentAttachment(config: unknown): EnvironmentAttachment | undefined {
+  return environmentAttachments(config).find((attachment) => attachment.default === true);
+}
+
+export function isEnvironmentAttached(config: unknown, environmentId: string): boolean {
+  return environmentAttachments(config).some((attachment) => attachment.environmentId === environmentId);
+}
+
+export function attachedEnvironments<T extends { environmentId: string }>(config: unknown, environments: T[]): T[] {
+  return environments.filter((environment) => isEnvironmentAttached(config, environment.environmentId));
+}
+
+export function resourceFeatureDisableReasons(setup: unknown): Partial<Record<ResourceFeature, string>> {
+  const features = record(record(record(setup).config).features);
+  const result: Partial<Record<ResourceFeature, string>> = {};
+  for (const [name, field] of [["vfs", "workspaces"], ["environments", "environments"]] as const) {
+    const attachments = record(features[name])[field];
+    if (Array.isArray(attachments) && attachments.length) result[name] = `Remove the ${name === "vfs" ? "workspace" : "environment"} attachments before disabling this feature.`;
+  }
+  return result;
 }
 
 export function hasSessionFeature(config: unknown, name: ResourceFeature): boolean {
@@ -30,31 +34,26 @@ export function hasSessionFeature(config: unknown, name: ResourceFeature): boole
 }
 
 export function setupResourceFeatureError(setup: unknown): string | null {
-  const document = record(setup);
-  if (hasProfileEnvironment(document) && !hasSessionFeature(document.config, "environments")) {
-    return "A profile environment requires the Environments feature to be enabled.";
+  const attachments = environmentAttachments(record(setup).config);
+  const ids = new Set<string>();
+  let inherited = 0;
+  let defaults = 0;
+  for (const attachment of attachments) {
+    if (attachment.default && ++defaults > 1) return "Choose at most one default environment.";
+    if (attachment.inherit) {
+      if (attachment.environmentId != null || ++inherited > 1) return "Use at most one inherited environment without an environment id.";
+    } else {
+      const id = attachment.environmentId;
+      if (!id || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) return "Select an environment for each attachment.";
+      if (ids.has(id)) return "Each environment may be attached only once.";
+      ids.add(id);
+    }
   }
-  const environment = record(document.environment);
-  if (environment.type === "existing" && !environment.environmentId) {
-    return "Select an existing environment or clear the environment mode.";
-  }
-
   return null;
 }
 
-function arrayLength(value: unknown): number {
-  return Array.isArray(value) ? value.length : 0;
-}
-
-function removeFirstMessage(count: number, resource: string, feature: string): string {
-  const resources = count === 1 ? `the ${resource}` : `all ${count} ${resource}s`;
-  return `Remove ${resources} before disabling ${feature}.`;
-}
-
 function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 /// Environments a session may still select. Closed and closing environments
@@ -70,11 +69,11 @@ export function selectableEnvironments<T extends { environmentId: string; status
 }
 
 export function isTerminalEnvironmentStatus(status: string | undefined): boolean {
-  return status === "closed" || status === "closing";
+  return status === "closed" || status === "closing" || status === "failed";
 }
 
-/// Statuses in which activation is admitted: ready now, or
-/// provisioning/booting with tools waiting until the environment is reachable.
+/// Selection admits nonterminal records; the runtime waits for readiness
+/// when the environment is used.
 export function isActivatableEnvironmentStatus(status: string | undefined): boolean {
-  return status === "ready" || status === "provisioning" || status === "booting";
+  return status !== undefined && !isTerminalEnvironmentStatus(status);
 }

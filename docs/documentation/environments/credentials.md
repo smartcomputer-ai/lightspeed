@@ -78,8 +78,8 @@ authenticate the model used by the Lightspeed session. See
 ## Share credentials through an environment
 
 Configure credential bindings directly on the Environments page. Profiles may
-select an existing environment or inherit a parent's selection, but they do
-not create machines or initialize credentials. Sessions using the same machine
+attach existing environments or, for sub-agents, inherit a parent's
+selection, but they do not create machines or initialize credentials. Sessions using the same machine
 receive the same environment bindings. Create separate environments when work
 requires different credential access.
 

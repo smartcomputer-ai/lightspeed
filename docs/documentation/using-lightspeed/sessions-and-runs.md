@@ -32,7 +32,7 @@ Report any mismatch, but leave the files unchanged.
 
 When the answer arrives, send a follow-up in the same session. The agent can
 use the earlier conversation and its linked files. Starting a new session
-from the same profile gives you a fresh conversation; workspace links may
+from the same profile gives you a fresh conversation; workspace attachments may
 still point to the same shared files.
 
 ## Queue, steer, or stop work

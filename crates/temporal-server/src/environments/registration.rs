@@ -55,8 +55,8 @@ pub(crate) fn registered_sweep_action(
 
 use super::*;
 use super::{
-    environment_lifecycle::parse_registration_key_id,
-    environment_providers::{identity_mode_view, registry_identity_mode},
+    lifecycle::parse_registration_key_id,
+    providers::{identity_mode_view, registry_identity_mode},
 };
 
 impl EnvironmentService {

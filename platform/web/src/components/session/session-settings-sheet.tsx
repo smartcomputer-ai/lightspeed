@@ -1,3 +1,4 @@
+import { attachedEnvironments, isEnvironmentAttached } from "@/lib/sessions/resource-features";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -17,8 +18,8 @@ import { SetupEditorSection } from "@/components/session/setup-editor-section";
 import {
   normalizeSessionConfig,
   SessionConfigEditor,
-  workspaceLinksError,
-  workspaceLinksFromConfig,
+  workspaceAttachmentsError,
+  workspaceAttachmentsFromConfig,
   type SessionConfig,
 } from "@/components/session/session-config-editor";
 import { Button } from "@/components/ui/button";
@@ -171,7 +172,7 @@ function LiveSessionSetup({
     setError(null);
   }, [instructions.data]);
 
-  const nextWorkspaceLinks = workspaceLinksFromConfig(configDraft);
+  const nextWorkspaceAttachments = workspaceAttachmentsFromConfig(configDraft);
   const configDirty = !sameConfig(configDraft, originalConfig);
   const instructionsDirty = instructionsDraft !== undefined
     && originalInstructions !== undefined
@@ -197,8 +198,8 @@ function LiveSessionSetup({
   const save = useMutation({
     mutationFn: async () => {
       if (!session) throw new Error("Session is still loading.");
-      const linkError = workspaceLinksError(nextWorkspaceLinks);
-      if (linkError) throw new Error(linkError);
+      const attachmentError = workspaceAttachmentsError(nextWorkspaceAttachments);
+      if (attachmentError) throw new Error(attachmentError);
       const desiredConfig = normalizeSessionConfig(configDraft) ?? {};
       const selectionError = activeEnvironmentSelectionError(
         desiredConfig,
@@ -320,7 +321,7 @@ function LiveSessionSetup({
               value={configDraft}
               onChange={(config) => {
                 setConfigDraft(config);
-                if (!hasSessionFeature(config, "environments")) setActiveEnvironmentDraft(null);
+                if (activeEnvironmentDraft && !isEnvironmentAttached(config, activeEnvironmentDraft)) setActiveEnvironmentDraft(null);
               }}
               onValidityChange={setConfigError}
               mcpServers={options.mcpServers}
@@ -328,7 +329,8 @@ function LiveSessionSetup({
               workspacesLoading={options.workspacesLoading}
               models={options.models}
               profiles={options.profiles}
-              environmentProviders={options.environmentProviders}
+              environments={options.environments}
+              discoverMcpTools={options.discoverMcpTools}
               featureDisableReasons={resourceFeatureDisableReasons({
                 config: configDraft,
               })}
@@ -373,7 +375,7 @@ function LiveSessionSetup({
                 <ActiveEnvironmentEditor
                   embedded
                   value={activeEnvironmentDraft}
-                  environments={environments.data ?? []}
+                  environments={attachedEnvironments(configDraft, environments.data ?? [])}
                   loading={environments.isLoading}
                   disabled={!hasSessionFeature(configDraft, "environments")}
                   onChange={setActiveEnvironmentDraft}
@@ -542,6 +544,7 @@ function activeEnvironmentSelectionError(
   if (!hasSessionFeature(config, "environments")) {
     return "An active environment requires the Environments feature.";
   }
+  if (!isEnvironmentAttached(config, environmentId)) return `Attach environment ${environmentId} before activating it.`;
   const environment = environments.find((candidate) => candidate.environmentId === environmentId);
   if (!environment) {
     return environmentId === originalEnvironmentId
@@ -550,16 +553,6 @@ function activeEnvironmentSelectionError(
   }
   if (environmentId !== originalEnvironmentId && !isActivatableEnvironmentStatus(environment.status)) {
     return `Environment is not currently selectable: ${environmentId} (${environment.status})`;
-  }
-  const allowedProviders = record(record(record(config).features).environments).providers;
-  const providerId = environment.source.type === "provisioned"
-    ? environment.source.providerId
-    : null;
-  if (Array.isArray(allowedProviders) && allowedProviders.length
-    && (!providerId || !allowedProviders.includes(providerId))) {
-    return providerId
-      ? `Environment provider is not allowed by the session config: ${providerId}`
-      : "External environments are not allowed by this provider-restricted session config.";
   }
   return null;
 }

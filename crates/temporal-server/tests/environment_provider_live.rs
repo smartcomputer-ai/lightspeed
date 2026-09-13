@@ -476,16 +476,17 @@ async fn run_environment_power_live_client(
             model: Some(model_to_api(&model)),
             features: Some(api::FeaturesConfig {
                 environments: Some(api::EnvironmentsFeature {
-                    tools: Some(api::EnvironmentToolSurface::Edit),
-                    commands: true,
-                    working_directory: None,
-                    prompts: None,
                     version: api::CURRENT_FEATURE_VERSION,
-                    providers: None,
-                    registration_keys: None,
-                    selection_tools: false,
-                    jobs: false,
+                    selection: false,
+                    prompts: None,
                     skills: None,
+                    environments: vec![api::EnvironmentAttachment {
+                        environment_id: Some(environment_id.clone()),
+                        inherit: false,
+                        default: false,
+                        access: api::EnvironmentAccess::Exec,
+                        working_directory: None,
+                    }],
                 }),
                 ..api::FeaturesConfig::default()
             }),

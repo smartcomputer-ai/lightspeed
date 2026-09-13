@@ -295,7 +295,6 @@ fn resolve_bot_profile(profile: &AgentProfile, instructions: String) -> InlineAg
             retention: profile.document.retention.clone(),
             config: profile.document.config.clone(),
             instructions: Some(ProfileInstructions::Text { text: instructions }),
-            environment: profile.document.environment.clone(),
         },
     }
 }

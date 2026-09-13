@@ -199,18 +199,29 @@ fn vfs_skills_support_default_roots_and_nonempty_overrides() {
     assert!(validator.is_valid(&enabled));
     let config: api::VfsSkillsConfig = serde_json::from_value(enabled.clone()).unwrap();
     assert_eq!(serde_json::to_value(config).unwrap(), enabled);
-    let feature: api::VfsFeature = serde_json::from_value(json!({"tools": "edit"})).unwrap();
+    let feature: api::VfsFeature = serde_json::from_value(json!({
+        "workspaces": [{"path": "/workspace", "workspaceId": "ws_1", "access": "edit"}]
+    }))
+    .unwrap();
     assert!(feature.skills.is_none());
+    assert_eq!(feature.workspaces[0].access, api::WorkspaceAccess::Edit);
+    assert!(serde_json::from_value::<api::VfsFeature>(json!({"tools": "edit"})).is_err());
 }
 
 #[test]
-fn environment_sources_use_domain_directory_and_reject_old_scope_fields() {
+fn environment_sources_use_attachment_directory_and_reject_old_scope_fields() {
     let bundle = api::export_schemas().schema_bundle;
-    let config =
-        json!({"workingDirectory":"/project", "skills":{}, "prompts":{"roots":["./prompts"]}});
+    let config = json!({
+        "skills":{},
+        "prompts":{"roots":["./prompts"]},
+        "environments":[{"environmentId":"env_a","access":"exec","workingDirectory":"/project"}]
+    });
     assert_validates(&bundle, "EnvironmentsFeature", &config);
     let feature: api::EnvironmentsFeature = serde_json::from_value(config).unwrap();
-    assert_eq!(feature.working_directory.as_deref(), Some("/project"));
+    assert_eq!(
+        feature.environments[0].working_directory.as_deref(),
+        Some("/project")
+    );
     assert!(feature.skills.unwrap().roots.is_none());
     assert_eq!(feature.prompts.unwrap().roots.unwrap(), vec!["./prompts"]);
     for name in ["EnvironmentPromptsConfig", "EnvironmentSkillsConfig"] {
@@ -225,21 +236,75 @@ fn environment_sources_use_domain_directory_and_reject_old_scope_fields() {
         assert!(serde_json::from_value::<api::EnvironmentPromptsConfig>(old.clone()).is_err());
         assert!(serde_json::from_value::<api::EnvironmentSkillsConfig>(old).is_err());
     }
+    for old in [
+        json!({"workingDirectory":"/project"}),
+        json!({"tools":"edit"}),
+        json!({"commands":true}),
+        json!({"jobs":true}),
+        json!({"selectionTools":true}),
+        json!({"providers":["incus"]}),
+        json!({"registrationKeys":["key"]}),
+    ] {
+        assert!(serde_json::from_value::<api::EnvironmentsFeature>(old).is_err());
+    }
 }
 
 #[test]
-fn environment_tool_grants_are_explicit_and_independent() {
+fn environment_attachments_carry_access_default_and_inherit() {
     let bundle = api::export_schemas().schema_bundle;
     let empty: api::EnvironmentsFeature = serde_json::from_value(json!({})).unwrap();
-    assert!(empty.tools.is_none());
-    assert!(!empty.commands);
-    for surface in ["readOnly", "edit"] {
-        let value = json!({"tools":surface,"commands":true,"jobs":false,"prompts":{},"skills":{}});
-        assert_validates(&bundle, "EnvironmentsFeature", &value);
-        let config: api::EnvironmentsFeature = serde_json::from_value(value).unwrap();
-        assert!(config.commands);
-        assert!(!config.jobs);
-        assert!(config.prompts.is_some());
-        assert!(config.skills.is_some());
+    assert!(!empty.selection);
+    assert!(empty.environments.is_empty());
+    let value = json!({
+        "version": api::CURRENT_FEATURE_VERSION,
+        "selection": true,
+        "environments": [
+            {"environmentId":"env_a","default":true,"access":"jobs","workingDirectory":"/srv"},
+            {"inherit":true,"access":"read"}
+        ]
+    });
+    assert_validates(&bundle, "EnvironmentsFeature", &value);
+    let config: api::EnvironmentsFeature = serde_json::from_value(value.clone()).unwrap();
+    assert!(config.selection);
+    assert!(config.environments[0].default);
+    assert_eq!(config.environments[0].access, api::EnvironmentAccess::Jobs);
+    assert!(config.environments[1].inherit);
+    assert!(config.environments[1].environment_id.is_none());
+    assert_eq!(serde_json::to_value(config).unwrap(), value);
+    for access in ["read", "edit", "exec", "jobs"] {
+        assert_validates(
+            &bundle,
+            "EnvironmentAttachment",
+            &json!({"environmentId":"env_a","access":access}),
+        );
     }
+    assert!(
+        serde_json::from_value::<api::EnvironmentAttachment>(
+            json!({"environmentId":"env_a","access":"write"})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn mcp_links_may_narrow_tools_and_profiles_carry_no_environment_intent() {
+    let bundle = api::export_schemas().schema_bundle;
+    let value = json!({
+        "version": api::CURRENT_FEATURE_VERSION,
+        "servers":[{"serverId":"github"},{"serverId":"notion","tools":["search"]}]
+    });
+    assert_validates(&bundle, "McpFeature", &value);
+    let feature: api::McpFeature = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(feature.servers[0].tools, None);
+    assert_eq!(
+        feature.servers[1].tools.as_deref(),
+        Some(&["search".to_owned()][..])
+    );
+    assert_eq!(serde_json::to_value(feature).unwrap(), value);
+    assert!(
+        serde_json::from_value::<api::ProfileDocument>(
+            json!({"environment":{"type":"existing","environmentId":"env_a"}})
+        )
+        .is_err()
+    );
 }

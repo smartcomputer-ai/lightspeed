@@ -28,8 +28,9 @@ The model-configuration editor groups capabilities by what the agent can do:
 | **Environments** | Working with execution environments and their processes. See [Environments](../environments/overview.md). |
 | **MCP Servers** | Calling tools supplied by registered external MCP servers. |
 
-Each feature has its own settings. A file-tool grant still needs workspace
-links, and process access needs an environment. After changing the profile,
+Each feature has its own settings. VFS tools come from linked workspaces,
+and process access needs an environment attached with `exec` access. After
+changing the profile,
 create a new session or [apply the setup](profiles-and-instructions.md#apply-changes-deliberately)
 to an existing idle one.
 
@@ -106,10 +107,14 @@ the registered **Server**. Save and start a session from that profile. Ask it
 to perform a small read-only lookup against a known object, then inspect the
 arguments and returned result in the transcript.
 
-The profile references the server ID. The universe record owns its endpoint,
-credential, execution path, exposure, tool selection, and approval policy.
-Changes to that shared record can affect every profile using it; it is not
-copied into each profile as an independent connection.
+The profile references the server ID and may narrow the server's allowlist
+further for that session. In JSON, `features.mcp.servers` is a list such as
+`[{ "serverId": "tracker", "tools": ["search_issues", "get_issue"] }]`; the
+optional `tools` subset must fall within the record's allowlist and narrows
+both up-front injection and search-on-demand. The universe record owns its
+endpoint, credential, execution path, exposure, allowlist, deferral, and
+approval policy. Changes to that shared record can affect every profile using
+it; it is not copied into each profile as an independent connection.
 
 ## Choose how MCP executes
 
@@ -169,8 +174,8 @@ return documents.
 
 ## Require approval for tool calls
 
-The server's **Advanced options → Tool approval** defaults to **Never require
-approval**. Choose **Always require approval** to pause proposed calls for a
+The server's **Advanced options → Tool approval** (the record's `approval`
+field) defaults to **Never require approval**. Choose **Always require approval** to pause proposed calls for a
 decision. The transcript shows each pending operation and its arguments;
 choose **Approve** to allow it or **Reject** to refuse it. A batch continues
 after all pending decisions are supplied.
@@ -199,7 +204,7 @@ already completed.
 | Calls cannot reach a private endpoint | Check native execution, runtime network access, server egress permission, and the deployment allowlist. |
 | A run is waiting without another model response | Look for pending approvals and decide every call in the batch. |
 | A provider rejects MCP or web configuration | Check its API kind and execution mode against the compatibility rules above. |
-| The server advertises a tool but calls are refused | Check the tool allowlist, credential scopes, and remote service's own permissions. |
+| The server advertises a tool but calls are refused | Check the record's tool allowlist, the profile's `tools` subset for that server, credential scopes, and the remote service's own permissions. |
 
 This guide connects external tools to Lightspeed agents. To let another MCP
 client manage Lightspeed itself, use

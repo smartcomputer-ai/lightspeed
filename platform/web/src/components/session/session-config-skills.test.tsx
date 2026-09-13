@@ -52,7 +52,7 @@ async function input(label: string, value: string) {
   });
 }
 it("shares the environment working directory while source overrides remain independent", async () => {
-  await setup({ features: { environments: { jobs: true }, vfs: { tools: "edit" } } });
+  await setup({ features: { environments: { environments: [{ environmentId: "runner", access: "jobs" }] }, vfs: { workspaces: [] } } });
   await input("Environment working directory", "relative");
   expect(error).toContain("absolute");
   await input("Environment working directory", "/project");
@@ -63,27 +63,27 @@ it("shares the environment working directory while source overrides remain indep
   await expand("Environment prompt loading");
   await input("Environment skill roots", "./skills, /team/skills");
   await input("Environment prompt roots", "./prompts");
-  expect(current).toMatchObject({ features: { environments: { workingDirectory: "/project", jobs: true, skills: { roots: ["./skills", "/team/skills"] }, prompts: { roots: ["./prompts"] } } } });
+  expect(current).toMatchObject({ features: { environments: { environments: [{ environmentId: "runner", access: "jobs", workingDirectory: "/project" }], skills: { roots: ["./skills", "/team/skills"] }, prompts: { roots: ["./prompts"] } } } });
   await input("Environment skill roots", "");
   expect(current).toHaveProperty("features.environments.skills", {});
   await toggle("Environment skill discovery");
   expect(current).not.toHaveProperty("features.environments.skills");
   expect(current).toHaveProperty("features.environments.prompts.roots", ["./prompts"]);
-  expect(current).toHaveProperty("features.environments.workingDirectory", "/project");
+  expect(current).toHaveProperty("features.environments.environments.0.workingDirectory", "/project");
 });
 it.each([
   ["skills", "VFS skill discovery", "VFS skill roots"],
   ["prompts", "VFS prompt loading", "VFS prompt roots"],
 ])("enables %s defaults, validates overrides, and restores defaults when cleared", async (key, switchName, label) => {
   await setup({ features: { environments: { skills: {} }, vfs: {
-    workspaceLinks: [{ path: "/workspace", access: "readOnly", target: { type: "workspace", workspaceId: "workspace_1" } }],
+    workspaces: [{ path: "/workspace", access: "read", workspaceId: "workspace_1"  }],
   } } });
   await toggle(switchName);
   expect(error).toBeNull();
   expect(current).toHaveProperty(`features.vfs.${key}`, {});
   await expand(switchName);
   await input(label, "/outside/custom");
-  expect(error).toContain("inside workspace links");
+  expect(error).toContain("inside workspace attachments");
   await input(label, "/workspace/custom");
   expect(error).toBeNull();
   expect(current).toHaveProperty(`features.vfs.${key}.roots`, ["/workspace/custom"]);
@@ -101,14 +101,14 @@ it("allows both VFS sources to be enabled without links", async () => {
   await toggle("VFS skill discovery");
   await toggle("VFS prompt loading");
   expect(error).toBeNull();
-  expect(current).toEqual({ features: { vfs: { skills: {}, prompts: {} } } });
+  expect(current).toEqual({ features: { vfs: { workspaces: [], skills: {}, prompts: {} } } });
 });
 
 it("uses explicit VFS directory settings without inferring /workspace", async () => {
-  await setup({features:{vfs:{workspaceLinks:[{path:"/workspace",access:"readOnly",target:{type:"workspace",workspaceId:"workspace_1"}}]}}});
+  await setup({features:{vfs:{workspaces:[{path:"/workspace",access:"read",workspaceId:"workspace_1"}]}}});
   expect(current).not.toHaveProperty("features.vfs.workingDirectory");
   await input("VFS working directory", "/outside");
-  expect(error).toContain("workspace link");
+  expect(error).toContain("workspace attachment");
   await input("VFS working directory", "/workspace");
   expect(error).toBeNull();
   await input("VFS working directory", "");
@@ -192,34 +192,40 @@ it("preserves exclusive domain filter behavior when customized", async () => {
   expect(current).toHaveProperty("features.web.search", {});
 });
 
-it("configures environment file tools and commands independently of sources and jobs", async () => {
-  await setup({ features: { environments: { tools: "readOnly", jobs: true, skills: {}, prompts: {} } } });
-  expect(current).not.toHaveProperty("features.environments.commands");
-  await toggle("Environment command execution");
-  expect(current).toHaveProperty("features.environments.commands", true);
-  expect(current).toHaveProperty("features.environments.tools", "readOnly");
-  expect(container.querySelector('[aria-label="Environment file tools"]')?.textContent).toContain("Read only");
-  await toggle("Environment command execution");
-  expect(current).toEqual({ features: { environments: { tools: "readOnly", jobs: true, skills: {}, prompts: {} } } });
+it("selects a single default without changing access or source grants", async () => {
+  await setup({ features: { environments: { environments: [
+    { environmentId: "logs", access: "read", default: true },
+    { environmentId: "runner", access: "jobs" },
+  ], skills: {}, prompts: {} } } });
+  const checkbox = container.querySelector<HTMLButtonElement>('[role="checkbox"][aria-label="Default environment 2"]');
+  expect(checkbox).not.toBeNull();
+  await act(async () => checkbox!.click());
+  expect(current).toHaveProperty("features.environments.environments", [
+    { environmentId: "logs", access: "read" },
+    { environmentId: "runner", access: "jobs", default: true },
+  ]);
+  expect(current).toHaveProperty("features.environments.skills", {});
+  expect(current).toHaveProperty("features.environments.prompts", {});
+  expect(error).toBeNull();
 });
 
-it("enables environments with ergonomic grants and places selection after discovery", async () => {
+it("enables environments with an empty attachment list and places selection after discovery", async () => {
   await setup({});
   await toggle("Enable Environments");
   expect(current).toEqual({ features: { environments: {
-    tools: "edit", commands: true, jobs: true, prompts: {}, skills: {},
+    environments: [], prompts: {}, skills: {},
   } } });
   const text = container.textContent!;
   expect(text.indexOf("Environment selection tools")).toBeGreaterThan(text.indexOf("Skill discovery"));
-  expect(container.querySelector('[aria-label="Environment command execution"]')?.getAttribute("aria-checked")).toBe("true");
+  expect(container.textContent).toContain("No environments attached.");
   await toggle("Enable Environments");
   expect(current ?? {}).not.toHaveProperty("features.environments");
 });
 
-it("enables VFS with editing and default prompt and skill discovery", async () => {
+it("enables VFS with an empty attachment list and source discovery", async () => {
   await setup({});
   await toggle("Enable Virtual File System: Files, Instructions, Skills");
-  expect(current).toEqual({ features: { vfs: { tools: "edit", prompts: {}, skills: {} } } });
+  expect(current).toEqual({ features: { vfs: { workspaces: [], prompts: {}, skills: {} } } });
   expect(container.querySelector('[aria-label="VFS prompt loading"]')?.getAttribute("aria-checked")).toBe("true");
   expect(container.querySelector('[aria-label="VFS skill discovery"]')?.getAttribute("aria-checked")).toBe("true");
   await toggle("Enable Virtual File System: Files, Instructions, Skills");

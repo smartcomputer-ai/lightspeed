@@ -5,9 +5,8 @@
 use std::sync::Arc;
 
 use environments::{
-    EnvironmentAccessPolicy, EnvironmentId, EnvironmentProviderStore, EnvironmentRecord,
-    EnvironmentRegistryError, EnvironmentSource, EnvironmentStatus, EnvironmentStore,
-    ListEnvironments, PowerState, SetEnvironmentPower,
+    EnvironmentId, EnvironmentProviderStore, EnvironmentRecord, EnvironmentRegistryError,
+    EnvironmentSource, EnvironmentStatus, EnvironmentStore, PowerState, SetEnvironmentPower,
 };
 use store_pg::PgStore;
 use thiserror::Error;
@@ -16,7 +15,7 @@ use thiserror::Error;
 pub(crate) struct EnvironmentResolver {
     environments: Arc<dyn EnvironmentStore>,
     providers: Arc<dyn EnvironmentProviderStore>,
-    gateway: Option<crate::environment_gateway::EnvironmentGatewayClientConfig>,
+    gateway: Option<crate::environments::gateway::EnvironmentGatewayClientConfig>,
     universe_id: uuid::Uuid,
 }
 
@@ -45,37 +44,19 @@ impl EnvironmentResolver {
 
     pub(crate) fn with_gateway(
         mut self,
-        gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
+        gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
     ) -> Self {
         self.gateway = Some(gateway);
         self
     }
 
-    pub(crate) async fn list_allowed(
-        &self,
-        policy: &EnvironmentAccessPolicy,
-    ) -> Result<Vec<EnvironmentRecord>, EnvironmentResolveError> {
-        let mut environments = self
-            .environments
-            .list_environments(ListEnvironments::default())
-            .await?;
-        environments.retain(|environment| policy.allows(environment));
-        Ok(environments)
-    }
-
-    pub(crate) async fn read_allowed(
+    /// The registry record. Whether a session may use the environment is a
+    /// membership check against its attachment list, made by the caller.
+    pub(crate) async fn read(
         &self,
         environment_id: &EnvironmentId,
-        policy: &EnvironmentAccessPolicy,
     ) -> Result<EnvironmentRecord, EnvironmentResolveError> {
-        let environment = self.environments.read_environment(environment_id).await?;
-        if !policy.allows(&environment) {
-            return Err(EnvironmentResolveError::NotAllowed {
-                environment_id: environment.environment_id.to_string(),
-                reason: policy.refusal(&environment),
-            });
-        }
-        Ok(environment)
+        Ok(self.environments.read_environment(environment_id).await?)
     }
 
     /// Validate selection using registry state only. Selecting or reselecting
@@ -83,9 +64,8 @@ impl EnvironmentResolver {
     pub(crate) async fn selectable(
         &self,
         environment_id: &EnvironmentId,
-        policy: &EnvironmentAccessPolicy,
     ) -> Result<EnvironmentRecord, EnvironmentResolveError> {
-        let environment = self.read_allowed(environment_id, policy).await?;
+        let environment = self.read(environment_id).await?;
         match environment.status {
             EnvironmentStatus::Failed => Err(EnvironmentResolveError::Failed {
                 environment_id: environment.environment_id.to_string(),
@@ -109,12 +89,9 @@ impl EnvironmentResolver {
     pub(crate) async fn ready_for_use(
         &self,
         environment_id: &EnvironmentId,
-        policy: &EnvironmentAccessPolicy,
         now_ms: i64,
     ) -> Result<EnvironmentRecord, EnvironmentResolveError> {
-        let environment = self
-            .resolve_for_connection(environment_id, policy, now_ms)
-            .await?;
+        let environment = self.resolve_for_connection(environment_id, now_ms).await?;
         if let Some(gateway) = &self.gateway {
             let connection = gateway.connection_for(self.universe_id, &environment);
             if let Ok(mut client) = environment_client::EnvironmentDataClient::connect(
@@ -139,10 +116,9 @@ impl EnvironmentResolver {
     pub(crate) async fn resolve_for_connection(
         &self,
         environment_id: &EnvironmentId,
-        policy: &EnvironmentAccessPolicy,
         now_ms: i64,
     ) -> Result<EnvironmentRecord, EnvironmentResolveError> {
-        let environment = self.selectable(environment_id, policy).await?;
+        let environment = self.selectable(environment_id).await?;
         if let Some(provider_id) = environment.provider_id() {
             self.providers.read_provider(provider_id).await?;
         }
@@ -199,12 +175,6 @@ impl EnvironmentResolver {
 pub(crate) enum EnvironmentResolveError {
     #[error(transparent)]
     Store(#[from] EnvironmentRegistryError),
-
-    #[error("environment {environment_id} is not allowed by session config: {reason}")]
-    NotAllowed {
-        environment_id: String,
-        reason: String,
-    },
 
     #[error("environment is unavailable: {environment_id} ({status})")]
     EnvironmentUnavailable {
@@ -340,7 +310,7 @@ mod tests {
         let skill_path = root.join(".agents/skills/review/SKILL.md");
         std::fs::write(&skill_path, doc).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let gateway = crate::environment_gateway::EnvironmentGatewayClientConfig::new(
+        let gateway = crate::environments::gateway::EnvironmentGatewayClientConfig::new(
             format!("http://{}", listener.local_addr().unwrap()),
             "test",
         );
@@ -466,10 +436,16 @@ mod tests {
         let session_id = engine::SessionId::new(uuid::Uuid::new_v4().to_string());
         let feature = engine::EnvironmentsFeature {
             skills: Some(Default::default()),
+            environments: vec![engine::EnvironmentAttachment {
+                environment_id: environment_id.as_str().to_owned(),
+                default: false,
+                access: engine::EnvironmentAccess::Read,
+                working_directory: None,
+            }],
             ..Default::default()
         };
         let refresh = async |current| {
-            crate::environment_sources::refresh(
+            crate::environments::sources::refresh(
                 &blobs,
                 Some(&resolver),
                 Some(&gateway),
@@ -536,7 +512,7 @@ mod tests {
             tools::prompts::environment::ENVIRONMENT_PROMPT_CONTEXT_KEY,
         );
         let refresh_sources = async |config, current| {
-            crate::environment_sources::refresh(
+            crate::environments::sources::refresh(
                 &blobs,
                 Some(&resolver),
                 Some(&gateway),
@@ -568,6 +544,7 @@ mod tests {
         let before = counts();
         let prompts_only = engine::EnvironmentsFeature {
             prompts: Some(Default::default()),
+            environments: feature.environments.clone(),
             ..Default::default()
         };
         let result = refresh_sources(&prompts_only, None).await;
@@ -710,7 +687,7 @@ mod tests {
             EnvironmentSkillAvailability::Available
         );
         // Deselection removes only this catalog key.
-        let cleared = crate::environment_sources::refresh(
+        let cleared = crate::environments::sources::refresh(
             &blobs,
             Some(&resolver),
             Some(&gateway),
@@ -725,9 +702,9 @@ mod tests {
             matches!(cleared.skill_command, Some(CoreAgentCommand::RemoveContext { key, .. }) if key.as_str() == "runtime.catalog.skills.environment")
         );
         let mut denied = feature.clone();
-        denied.providers = Some(vec!["not-granted".into()]);
+        denied.environments.clear();
         let denied_entry = entry(
-            crate::environment_sources::refresh(
+            crate::environments::sources::refresh(
                 &blobs,
                 Some(&resolver),
                 Some(&gateway),
@@ -777,41 +754,18 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn provider_filter_applies_to_list_read_and_selection() {
-        let (resolver, environment_id) = resolver().await;
-        let denied =
-            EnvironmentAccessPolicy::new(Some(vec!["other".to_owned()]), None::<Vec<String>>);
-        assert!(resolver.list_allowed(&denied).await.unwrap().is_empty());
-        assert!(matches!(
-            resolver.read_allowed(&environment_id, &denied).await,
-            Err(EnvironmentResolveError::NotAllowed { .. })
-        ));
-        assert!(matches!(
-            resolver.selectable(&environment_id, &denied).await,
-            Err(EnvironmentResolveError::NotAllowed { .. })
-        ));
-    }
-
-    #[tokio::test(flavor = "current_thread")]
     async fn offline_environment_without_gateway_is_unavailable_but_readable() {
         let (resolver, environment_id) = resolver().await;
+        assert!(resolver.read(&environment_id).await.is_ok());
         assert!(
             resolver
-                .read_allowed(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL)
-                .await
-                .is_ok()
-        );
-        assert!(
-            resolver
-                .resolve_for_connection(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL, 111)
+                .resolve_for_connection(&environment_id, 111)
                 .await
                 .is_ok(),
             "execution resolution should defer reachability to the real connection"
         );
         assert!(matches!(
-            resolver
-                .ready_for_use(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL, 111)
-                .await,
+            resolver.ready_for_use(&environment_id, 111).await,
             Err(EnvironmentResolveError::EnvironmentUnavailable { .. })
         ));
     }
@@ -850,7 +804,7 @@ mod tests {
             let before = store.read_environment(&environment_id).await.unwrap();
             for _ in 0..2 {
                 let selected = resolver
-                    .selectable(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL)
+                    .selectable(&environment_id)
                     .await
                     .expect("selection requires only valid registry state");
                 assert_eq!(selected, before);
@@ -863,25 +817,12 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn reselection_checks_current_access_and_terminal_status() {
+    async fn reselection_checks_terminal_status() {
         let (resolver, environment_id) = resolver().await;
         let store = resolver.environments.clone();
-        resolver
-            .selectable(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL)
-            .await
-            .unwrap();
-        let denied = EnvironmentAccessPolicy::new(Some(vec!["other".into()]), None::<Vec<String>>);
+        resolver.selectable(&environment_id).await.unwrap();
         assert!(matches!(
-            resolver.selectable(&environment_id, &denied).await,
-            Err(EnvironmentResolveError::NotAllowed { .. })
-        ));
-        assert!(matches!(
-            resolver
-                .selectable(
-                    &EnvironmentId::new("missing"),
-                    &EnvironmentAccessPolicy::ALLOW_ALL
-                )
-                .await,
+            resolver.selectable(&EnvironmentId::new("missing")).await,
             Err(EnvironmentResolveError::Store(
                 EnvironmentRegistryError::NotFound { .. }
             ))
@@ -895,9 +836,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(
-            resolver
-                .selectable(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL)
-                .await,
+            resolver.selectable(&environment_id).await,
             Err(EnvironmentResolveError::Failed { .. })
         ));
         store
@@ -908,9 +847,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(
-            resolver
-                .selectable(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL)
-                .await,
+            resolver.selectable(&environment_id).await,
             Err(EnvironmentResolveError::Closed { .. })
         ));
     }
@@ -940,7 +877,7 @@ mod tests {
             .expect("pause intent");
 
         let resolved = resolver
-            .resolve_for_connection(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL, 30)
+            .resolve_for_connection(&environment_id, 30)
             .await
             .expect("a ready environment resolves for use");
         assert_eq!(resolved.status, EnvironmentStatus::Ready);
@@ -985,9 +922,7 @@ mod tests {
         // Using a paused environment requests a wake and reports it as
         // not ready instead of probing an unreachable daemon.
         assert!(matches!(
-            resolver
-                .ready_for_use(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL, 30)
-                .await,
+            resolver.ready_for_use(&environment_id, 30).await,
             Err(EnvironmentResolveError::NotReady {
                 status: EnvironmentStatus::Paused,
                 ..
@@ -998,7 +933,7 @@ mod tests {
         assert!(woken.power_diverges());
         // Activation admits it as intent.
         let record = resolver
-            .selectable(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL)
+            .selectable(&environment_id)
             .await
             .expect("activation admits a paused environment");
         assert_eq!(record.status, EnvironmentStatus::Paused);
@@ -1007,9 +942,7 @@ mod tests {
         // path applies (no gateway here → unavailable, not NotReady).
         observe(EnvironmentStatus::Ready, 40).await;
         assert!(matches!(
-            resolver
-                .ready_for_use(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL, 50)
-                .await,
+            resolver.ready_for_use(&environment_id, 50).await,
             Err(EnvironmentResolveError::EnvironmentUnavailable { .. })
         ));
 
@@ -1026,9 +959,7 @@ mod tests {
             .await
             .expect("observe offline without power control");
         assert!(matches!(
-            resolver
-                .ready_for_use(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL, 70)
-                .await,
+            resolver.ready_for_use(&environment_id, 70).await,
             Err(EnvironmentResolveError::EnvironmentUnavailable { .. })
         ));
         assert_eq!(
@@ -1066,9 +997,7 @@ mod tests {
         // probe and reported as not ready.
         observe(EnvironmentStatus::Provisioning).await;
         assert!(matches!(
-            resolver
-                .ready_for_use(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL, 30)
-                .await,
+            resolver.ready_for_use(&environment_id, 30).await,
             Err(EnvironmentResolveError::NotReady {
                 status: EnvironmentStatus::Provisioning,
                 ..
@@ -1076,16 +1005,14 @@ mod tests {
         ));
         observe(EnvironmentStatus::Booting).await;
         assert!(matches!(
-            resolver
-                .ready_for_use(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL, 30)
-                .await,
+            resolver.ready_for_use(&environment_id, 30).await,
             Err(EnvironmentResolveError::NotReady {
                 status: EnvironmentStatus::Booting,
                 ..
             })
         ));
         let record = resolver
-            .selectable(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL)
+            .selectable(&environment_id)
             .await
             .expect("activation admits a booting environment");
         assert_eq!(record.status, EnvironmentStatus::Booting);
@@ -1099,7 +1026,7 @@ mod tests {
             .await
             .expect("fail");
         assert!(matches!(
-            resolver.ready_for_use(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL, 50).await,
+            resolver.ready_for_use(&environment_id, 50).await,
             Err(EnvironmentResolveError::Failed { message, .. }) if message == "no capacity"
         ));
 
@@ -1111,9 +1038,7 @@ mod tests {
             .await
             .expect("close");
         assert!(matches!(
-            resolver
-                .ready_for_use(&environment_id, &EnvironmentAccessPolicy::ALLOW_ALL, 70)
-                .await,
+            resolver.ready_for_use(&environment_id, 70).await,
             Err(EnvironmentResolveError::Closed { .. })
         ));
     }

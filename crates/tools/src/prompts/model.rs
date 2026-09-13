@@ -1,4 +1,4 @@
-use engine::{BlobRef, ContextEntryKey, WorkspaceLinkAccess};
+use engine::{BlobRef, ContextEntryKey, WorkspaceAccess};
 use serde::{Deserialize, Serialize};
 use vfs::{VfsPath, VfsWorkspaceId};
 
@@ -139,7 +139,7 @@ impl PromptWarning {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PromptWarningKind {
-    UnavailableWorkspaceLink { reason: String },
+    UnavailableWorkspaceAttachment { reason: String },
     Filesystem { message: String },
     InvalidPath { message: String },
     InvalidUtf8 { message: String },
@@ -167,7 +167,7 @@ pub struct PromptRoot {
     pub root_id: String,
     pub root_path: FsPath,
     pub source: PromptRootSource,
-    pub access: WorkspaceLinkAccess,
+    pub access: WorkspaceAccess,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

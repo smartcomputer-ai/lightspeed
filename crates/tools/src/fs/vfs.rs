@@ -177,13 +177,13 @@ pub struct LinkedVfsFileSystem {
     blobs: Arc<dyn BlobStore>,
     blob_graph: Option<Arc<dyn BlobGraphStore>>,
     workspace_store: Arc<dyn ::vfs::VfsWorkspaceStore>,
-    links: Arc<Vec<::vfs::ResolvedWorkspaceLink>>,
+    links: Arc<Vec<::vfs::ResolvedWorkspaceAttachment>>,
     effects: ToolEffectLog,
 }
 
 #[derive(Clone, Debug)]
-struct RoutedWorkspaceLink {
-    link: ::vfs::ResolvedWorkspaceLink,
+struct RoutedWorkspaceAttachment {
+    link: ::vfs::ResolvedWorkspaceAttachment,
     inner_path: FsPath,
 }
 
@@ -215,7 +215,7 @@ impl LinkedVfsFileSystem {
     pub fn new(
         blobs: Arc<dyn BlobStore>,
         workspace_store: Arc<dyn ::vfs::VfsWorkspaceStore>,
-        mut links: Vec<::vfs::ResolvedWorkspaceLink>,
+        mut links: Vec<::vfs::ResolvedWorkspaceAttachment>,
     ) -> FsResult<Self> {
         validate_links(&links)?;
         links.sort_by(|left, right| {
@@ -241,15 +241,15 @@ impl LinkedVfsFileSystem {
         self
     }
 
-    pub fn links(&self) -> &[::vfs::ResolvedWorkspaceLink] {
+    pub fn links(&self) -> &[::vfs::ResolvedWorkspaceAttachment] {
         self.links.as_slice()
     }
 
-    fn route_link(&self, path: &FsPath) -> FsResult<Option<RoutedWorkspaceLink>> {
+    fn route_attachment(&self, path: &FsPath) -> FsResult<Option<RoutedWorkspaceAttachment>> {
         let vfs_path = fs_path_to_vfs_path(path)?;
         for link in self.links.iter() {
             if vfs_path_starts_with(&vfs_path, &link.path) {
-                return Ok(Some(RoutedWorkspaceLink {
+                return Ok(Some(RoutedWorkspaceAttachment {
                     link: link.clone(),
                     inner_path: vfs_path_to_fs_path(&strip_link_path(&vfs_path, &link.path)?)?,
                 }));
@@ -260,17 +260,17 @@ impl LinkedVfsFileSystem {
 
     async fn file_system_for_link(
         &self,
-        link: &::vfs::ResolvedWorkspaceLink,
+        link: &::vfs::ResolvedWorkspaceAttachment,
         request_path: &FsPath,
     ) -> FsResult<Box<dyn FileSystem>> {
         match &link.target {
-            ::vfs::ResolvedWorkspaceLinkTarget::AvailableSnapshot { snapshot_ref } => {
+            ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot { snapshot_ref } => {
                 let fs = VfsSnapshotFileSystem::new(self.blobs.clone(), snapshot_ref.clone())
                     .await
                     .map_err(|error| map_vfs_error(error, request_path))?;
                 Ok(Box::new(fs))
             }
-            ::vfs::ResolvedWorkspaceLinkTarget::AvailableWorkspace { workspace } => {
+            ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace } => {
                 Ok(Box::new(VfsWorkspaceFileSystem::with_effect_log(
                     self.blobs.clone(),
                     self.blob_graph.clone(),
@@ -279,7 +279,7 @@ impl LinkedVfsFileSystem {
                     self.effects.clone(),
                 )))
             }
-            ::vfs::ResolvedWorkspaceLinkTarget::Unavailable { reason, .. } => {
+            ::vfs::ResolvedWorkspaceAttachmentTarget::Unavailable { reason, .. } => {
                 Err(FsError::Unavailable {
                     path: request_path.clone(),
                     message: reason.clone(),
@@ -290,7 +290,7 @@ impl LinkedVfsFileSystem {
 
     fn writable_workspace_for_link(
         &self,
-        link: &::vfs::ResolvedWorkspaceLink,
+        link: &::vfs::ResolvedWorkspaceAttachment,
         request_path: &FsPath,
     ) -> FsResult<VfsWorkspaceFileSystem> {
         if !link.is_writable() {
@@ -299,7 +299,7 @@ impl LinkedVfsFileSystem {
             });
         }
         match &link.target {
-            ::vfs::ResolvedWorkspaceLinkTarget::AvailableWorkspace { workspace } => {
+            ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace } => {
                 Ok(VfsWorkspaceFileSystem::with_effect_log(
                     self.blobs.clone(),
                     self.blob_graph.clone(),
@@ -308,12 +308,12 @@ impl LinkedVfsFileSystem {
                     self.effects.clone(),
                 ))
             }
-            ::vfs::ResolvedWorkspaceLinkTarget::AvailableSnapshot { .. } => {
+            ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot { .. } => {
                 Err(FsError::PermissionDenied {
                     path: request_path.clone(),
                 })
             }
-            ::vfs::ResolvedWorkspaceLinkTarget::Unavailable { reason, .. } => {
+            ::vfs::ResolvedWorkspaceAttachmentTarget::Unavailable { reason, .. } => {
                 Err(FsError::Unavailable {
                     path: request_path.clone(),
                     message: reason.clone(),
@@ -663,7 +663,7 @@ impl FileSystem for VfsWorkspaceFileSystem {
 impl FileSystem for LinkedVfsFileSystem {
     async fn export_vfs(&self, path: &FsPath) -> FsResult<::vfs::VfsEntry> {
         let route = self
-            .route_link(path)?
+            .route_attachment(path)?
             .ok_or_else(|| FsError::InvalidInput {
                 message: "select one linked VFS workspace or snapshot".into(),
             })?;
@@ -678,7 +678,7 @@ impl FileSystem for LinkedVfsFileSystem {
         replace: bool,
     ) -> FsResult<Box<dyn crate::fs::VfsCaptureTarget>> {
         let route = self
-            .route_link(path)?
+            .route_attachment(path)?
             .ok_or_else(|| FsError::InvalidInput {
                 message: "select one linked VFS workspace".into(),
             })?;
@@ -696,7 +696,7 @@ impl FileSystem for LinkedVfsFileSystem {
     }
 
     async fn read_file(&self, path: &FsPath) -> FsResult<Vec<u8>> {
-        if let Some(resolved) = self.route_link(path)? {
+        if let Some(resolved) = self.route_attachment(path)? {
             let fs = self.file_system_for_link(&resolved.link, path).await?;
             return fs.read_file(&resolved.inner_path).await;
         }
@@ -709,7 +709,7 @@ impl FileSystem for LinkedVfsFileSystem {
     }
 
     async fn write_file(&self, path: &FsPath, contents: Vec<u8>) -> FsResult<()> {
-        let Some(resolved) = self.route_link(path)? else {
+        let Some(resolved) = self.route_attachment(path)? else {
             return Err(FsError::PermissionDenied { path: path.clone() });
         };
         let fs = self.writable_workspace_for_link(&resolved.link, path)?;
@@ -721,7 +721,7 @@ impl FileSystem for LinkedVfsFileSystem {
         path: &FsPath,
         options: CreateDirectoryOptions,
     ) -> FsResult<()> {
-        if let Some(resolved) = self.route_link(path)? {
+        if let Some(resolved) = self.route_attachment(path)? {
             let fs = self.writable_workspace_for_link(&resolved.link, path)?;
             return fs.create_directory(&resolved.inner_path, options).await;
         }
@@ -736,7 +736,7 @@ impl FileSystem for LinkedVfsFileSystem {
     }
 
     async fn get_metadata(&self, path: &FsPath) -> FsResult<FileMetadata> {
-        if let Some(resolved) = self.route_link(path)? {
+        if let Some(resolved) = self.route_attachment(path)? {
             let fs = self.file_system_for_link(&resolved.link, path).await?;
             return fs.get_metadata(&resolved.inner_path).await;
         }
@@ -747,7 +747,7 @@ impl FileSystem for LinkedVfsFileSystem {
     }
 
     async fn read_directory(&self, path: &FsPath) -> FsResult<Vec<ReadDirectoryEntry>> {
-        if let Some(resolved) = self.route_link(path)? {
+        if let Some(resolved) = self.route_attachment(path)? {
             let fs = self.file_system_for_link(&resolved.link, path).await?;
             return fs.read_directory(&resolved.inner_path).await;
         }
@@ -759,7 +759,7 @@ impl FileSystem for LinkedVfsFileSystem {
     }
 
     async fn remove(&self, path: &FsPath, options: RemoveOptions) -> FsResult<()> {
-        let Some(resolved) = self.route_link(path)? else {
+        let Some(resolved) = self.route_attachment(path)? else {
             return Err(FsError::PermissionDenied { path: path.clone() });
         };
         let fs = self.writable_workspace_for_link(&resolved.link, path)?;
@@ -773,8 +773,8 @@ impl FileSystem for LinkedVfsFileSystem {
         options: CopyOptions,
     ) -> FsResult<()> {
         if let (Some(source), Some(destination)) = (
-            self.route_link(source_path)?,
-            self.route_link(destination_path)?,
+            self.route_attachment(source_path)?,
+            self.route_attachment(destination_path)?,
         ) && source.link.path == destination.link.path
         {
             let fs = self.writable_workspace_for_link(&destination.link, destination_path)?;
@@ -831,29 +831,32 @@ fn strip_link_path(path: &::vfs::VfsPath, link_path: &::vfs::VfsPath) -> FsResul
         .as_str()
         .strip_prefix(link_path.as_str())
         .ok_or_else(|| FsError::InvalidInput {
-            message: format!("path {path} is not under workspace link {link_path}"),
+            message: format!("path {path} is not under workspace attachment {link_path}"),
         })?;
     ::vfs::VfsPath::parse(suffix).map_err(|error| FsError::InvalidInput {
         message: error.to_string(),
     })
 }
 
-fn validate_links(links: &[::vfs::ResolvedWorkspaceLink]) -> FsResult<()> {
+fn validate_links(links: &[::vfs::ResolvedWorkspaceAttachment]) -> FsResult<()> {
     let mut seen = BTreeSet::new();
     for link in links {
         if !seen.insert(link.path.clone()) {
             return Err(FsError::InvalidInput {
-                message: format!("duplicate workspace link path: {}", link.path),
+                message: format!("duplicate workspace attachment path: {}", link.path),
             });
         }
         if link.is_writable()
             && matches!(
                 link.target,
-                ::vfs::ResolvedWorkspaceLinkTarget::AvailableSnapshot { .. }
+                ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot { .. }
             )
         {
             return Err(FsError::InvalidInput {
-                message: format!("snapshot workspace link cannot be writable: {}", link.path),
+                message: format!(
+                    "snapshot workspace attachment cannot be writable: {}",
+                    link.path
+                ),
             });
         }
     }
@@ -866,7 +869,7 @@ fn validate_links(links: &[::vfs::ResolvedWorkspaceLink]) -> FsResult<()> {
             {
                 return Err(FsError::InvalidInput {
                     message: format!(
-                        "nested workspace links are not supported: {} and {}",
+                        "nested workspace attachments are not supported: {} and {}",
                         left.path, right.path
                     ),
                 });
@@ -1350,10 +1353,10 @@ mod tests {
 
     fn resolved_link(
         path: &str,
-        target: ::vfs::ResolvedWorkspaceLinkTarget,
-        access: engine::WorkspaceLinkAccess,
-    ) -> ::vfs::ResolvedWorkspaceLink {
-        ::vfs::ResolvedWorkspaceLink {
+        target: ::vfs::ResolvedWorkspaceAttachmentTarget,
+        access: engine::WorkspaceAccess,
+    ) -> ::vfs::ResolvedWorkspaceAttachment {
+        ::vfs::ResolvedWorkspaceAttachment {
             path: ::vfs::VfsPath::parse(path).unwrap(),
             target,
             access,
@@ -1394,15 +1397,15 @@ mod tests {
             vec![
                 resolved_link(
                     "/skills/rust",
-                    ::vfs::ResolvedWorkspaceLinkTarget::AvailableSnapshot {
+                    ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
                         snapshot_ref: skill_snapshot.snapshot_ref,
                     },
-                    engine::WorkspaceLinkAccess::ReadOnly,
+                    engine::WorkspaceAccess::Read,
                 ),
                 resolved_link(
                     "/workspace",
-                    ::vfs::ResolvedWorkspaceLinkTarget::AvailableWorkspace { workspace },
-                    engine::WorkspaceLinkAccess::ReadWrite,
+                    ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace },
+                    engine::WorkspaceAccess::Edit,
                 ),
             ],
         )
@@ -1715,7 +1718,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
-                workspace_links: Vec::new(),
+                workspace_attachments: Vec::new(),
                 calls: vec![ToolInvocationRequest {
                     builtin: Some(engine::BuiltinToolCallRuntime {
                         spec: match &toolset.tools[&ToolName::new("vfs.write_file")].kind {
@@ -1968,15 +1971,15 @@ mod tests {
         let duplicate = vec![
             resolved_link(
                 "/workspace",
-                ::vfs::ResolvedWorkspaceLinkTarget::AvailableWorkspace {
+                ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableWorkspace {
                     workspace: workspace.clone(),
                 },
-                engine::WorkspaceLinkAccess::ReadWrite,
+                engine::WorkspaceAccess::Edit,
             ),
             resolved_link(
                 "/workspace",
-                ::vfs::ResolvedWorkspaceLinkTarget::AvailableWorkspace { workspace },
-                engine::WorkspaceLinkAccess::ReadWrite,
+                ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace },
+                engine::WorkspaceAccess::Edit,
             ),
         ];
         assert!(matches!(
@@ -1987,17 +1990,17 @@ mod tests {
         let nested = vec![
             resolved_link(
                 "/skills",
-                ::vfs::ResolvedWorkspaceLinkTarget::AvailableSnapshot {
+                ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
                     snapshot_ref: snapshot_ref.clone(),
                 },
-                engine::WorkspaceLinkAccess::ReadOnly,
+                engine::WorkspaceAccess::Read,
             ),
             resolved_link(
                 "/skills/rust",
-                ::vfs::ResolvedWorkspaceLinkTarget::AvailableSnapshot {
+                ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
                     snapshot_ref: snapshot_ref.clone(),
                 },
-                engine::WorkspaceLinkAccess::ReadOnly,
+                engine::WorkspaceAccess::Read,
             ),
         ];
         assert!(matches!(
@@ -2007,8 +2010,8 @@ mod tests {
 
         let writable_snapshot = vec![resolved_link(
             "/skills/rust",
-            ::vfs::ResolvedWorkspaceLinkTarget::AvailableSnapshot { snapshot_ref },
-            engine::WorkspaceLinkAccess::ReadWrite,
+            ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot { snapshot_ref },
+            engine::WorkspaceAccess::Edit,
         )];
         assert!(matches!(
             LinkedVfsFileSystem::new(blobs, store, writable_snapshot),

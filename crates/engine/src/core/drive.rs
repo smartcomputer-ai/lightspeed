@@ -884,20 +884,19 @@ pub fn next_tool_batch_request(
             .as_ref()
             .and_then(|config| config.features.vfs.as_ref())
             .and_then(|vfs| vfs.working_directory.clone()),
-        workspace_links: state
+        workspace_attachments: state
             .lifecycle
             .config
             .as_ref()
             .and_then(|config| config.features.vfs.as_ref())
-            .map(|vfs| vfs.workspace_links.clone())
+            .map(|vfs| vfs.workspaces.clone())
             .unwrap_or_default(),
         active_environment_id: state.environment.active_environment_id.clone(),
         environment_policy: state
             .lifecycle
             .config
             .as_ref()
-            .and_then(|config| config.features.environments.as_ref())
-            .map(crate::EnvironmentPolicyRuntime::from_feature),
+            .and_then(|config| config.features.environments.clone()),
         subagents_policy: state
             .lifecycle
             .config
@@ -2534,11 +2533,17 @@ mod tests {
         let session_id = SessionId::new("session-environment-runtime");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
         let mut session_config = config();
-        session_config.features.environments = Some(crate::EnvironmentsFeature {
-            providers: Some(vec!["provider-a".to_owned(), "provider-b".to_owned()]),
-            selection_tools: true,
+        let environments = crate::EnvironmentsFeature {
+            selection: true,
+            environments: vec![crate::EnvironmentAttachment {
+                environment_id: "environment-a".to_owned(),
+                default: false,
+                access: crate::EnvironmentAccess::Exec,
+                working_directory: Some("/srv".to_owned()),
+            }],
             ..crate::EnvironmentsFeature::default()
-        });
+        };
+        session_config.features.environments = Some(environments.clone());
         session_config.features.subagents = Some(test_subagents_feature());
         open_session_with_config(&mut drive, session_config);
         let set_active = drive
@@ -2559,14 +2564,90 @@ mod tests {
             request.active_environment_id,
             Some(crate::EnvironmentId::new("environment-a"))
         );
-        assert_eq!(
-            request.environment_policy,
-            Some(crate::EnvironmentPolicyRuntime::new(
-                Some(vec!["provider-a".to_owned(), "provider-b".to_owned()]),
-                None,
-            ))
-        );
+        assert_eq!(request.environment_policy, Some(environments));
         assert_eq!(request.subagents_policy, Some(test_subagents_feature()));
+    }
+
+    #[test]
+    fn config_replace_clears_an_active_environment_that_is_no_longer_attached() {
+        let session_id = SessionId::new("session-environment-detach");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let attachment = |id: &str| crate::EnvironmentAttachment {
+            environment_id: id.to_owned(),
+            default: false,
+            access: crate::EnvironmentAccess::Read,
+            working_directory: None,
+        };
+        let mut session_config = config();
+        session_config.features.environments = Some(crate::EnvironmentsFeature {
+            environments: vec![attachment("environment-a"), attachment("environment-b")],
+            ..crate::EnvironmentsFeature::default()
+        });
+        open_session_with_config(&mut drive, session_config.clone());
+
+        let unlisted = drive.admit_command(
+            CoreAgentCommand::SetActiveEnvironment {
+                environment_id: crate::EnvironmentId::new("environment-c"),
+            },
+            10,
+        );
+        assert!(
+            unlisted.is_err(),
+            "an unattached environment cannot be activated"
+        );
+        let set_active = drive
+            .admit_command(
+                CoreAgentCommand::SetActiveEnvironment {
+                    environment_id: crate::EnvironmentId::new("environment-a"),
+                },
+                11,
+            )
+            .expect("set active environment");
+        commit_action(&mut drive, set_active);
+
+        // Dropping the default only: the live selection is untouched.
+        let mut narrowed = session_config.clone();
+        narrowed
+            .features
+            .environments
+            .as_mut()
+            .unwrap()
+            .environments[1]
+            .default = true;
+        let replace = drive
+            .admit_command(
+                CoreAgentCommand::ReplaceSessionConfig {
+                    expected_revision: None,
+                    config: narrowed.clone(),
+                },
+                12,
+            )
+            .expect("replace config keeping the active attachment");
+        commit_action(&mut drive, replace);
+        assert_eq!(
+            drive.state().environment.active_environment_id,
+            Some(crate::EnvironmentId::new("environment-a"))
+        );
+
+        // Removing the active attachment clears the pointer in the same batch.
+        narrowed
+            .features
+            .environments
+            .as_mut()
+            .unwrap()
+            .environments
+            .remove(0);
+        let replace = drive
+            .admit_command(
+                CoreAgentCommand::ReplaceSessionConfig {
+                    expected_revision: None,
+                    config: narrowed,
+                },
+                13,
+            )
+            .expect("replace config dropping the active attachment");
+        commit_action(&mut drive, replace);
+        assert_eq!(drive.state().environment.active_environment_id, None);
     }
 
     fn test_subagents_feature() -> crate::SubagentsFeature {
@@ -7789,7 +7870,7 @@ mod tests {
             turn_id: TurnId::new(1),
             batch_id: ToolBatchId::new(1),
             promise_id_base: 1,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
@@ -8143,7 +8224,7 @@ mod tests {
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
         let mut session_config = config();
         session_config.features.environments = Some(crate::EnvironmentsFeature {
-            selection_tools: true,
+            selection: true,
             ..crate::EnvironmentsFeature::default()
         });
         let request = two_call_tool_batch(&mut drive, session_config);

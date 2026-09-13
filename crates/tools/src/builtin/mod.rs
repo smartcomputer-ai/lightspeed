@@ -133,7 +133,7 @@ impl<'a> BuiltinToolContext<'a> {
         match self {
             Self::Vfs(vfs) | Self::Transfer { vfs, .. } => Ok(vfs),
             Self::Environment(_) => Err(ToolError::InvalidRequest {
-                message: "no_vfs_workspace_links".into(),
+                message: "no_vfs_workspace_attachments".into(),
             }),
         }
     }

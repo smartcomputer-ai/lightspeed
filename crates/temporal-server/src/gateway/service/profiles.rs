@@ -144,27 +144,51 @@ impl GatewayAgentApi {
         })
     }
 
+    /// With `apply_config`, the profile's own configuration is applied and
+    /// its default attachment is the environment fill candidate. Without it
+    /// (session start), the caller has merged the effective configuration
+    /// and sets the candidate itself.
     pub(super) fn profile_intent(
         &self,
         profile: &ProfileDocument,
         apply_config: bool,
     ) -> Result<temporal_workflow::SessionProfileIntent, AgentApiError> {
+        let config = if apply_config {
+            profile
+                .config
+                .clone()
+                .map(|config| engine_session_config_from_api(config, self.default_model.clone()))
+                .transpose()?
+        } else {
+            None
+        };
+        let environment = config
+            .as_ref()
+            .map(|config| default_environment_id(&config.features))
+            .transpose()?
+            .flatten();
         Ok(temporal_workflow::SessionProfileIntent {
-            config: if apply_config {
-                profile
-                    .config
-                    .clone()
-                    .map(|config| {
-                        engine_session_config_from_api(config, self.default_model.clone())
-                    })
-                    .transpose()?
-            } else {
-                None
-            },
+            config,
             instructions: profile.instructions.clone(),
-            environment: profile.environment.clone(),
+            environment,
         })
     }
+}
+
+/// The attachment a profile activates when the session has no active
+/// environment.
+pub(super) fn default_environment_id(
+    features: &engine::FeaturesConfig,
+) -> Result<Option<engine::EnvironmentId>, AgentApiError> {
+    features
+        .environments
+        .as_ref()
+        .and_then(|environments| environments.default_attachment())
+        .map(|attachment| {
+            engine::EnvironmentId::try_new(attachment.environment_id.clone())
+                .map_err(|error| AgentApiError::invalid_request(error.to_string()))
+        })
+        .transpose()
 }
 
 pub(super) fn map_profile_error(error: ProfileError) -> AgentApiError {
@@ -190,6 +214,30 @@ pub(super) fn map_profile_error(error: ProfileError) -> AgentApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_environment_ids_are_fallible_even_before_config_validation() {
+        let mut features = engine::FeaturesConfig::default();
+        assert_eq!(default_environment_id(&features).unwrap(), None);
+        features.environments = Some(engine::EnvironmentsFeature {
+            environments: vec![engine::EnvironmentAttachment {
+                environment_id: "env_ok".into(),
+                default: true,
+                access: engine::EnvironmentAccess::Read,
+                working_directory: None,
+            }],
+            ..Default::default()
+        });
+        assert_eq!(
+            default_environment_id(&features).unwrap(),
+            Some(engine::EnvironmentId::new("env_ok"))
+        );
+        for invalid in ["".to_owned(), "env/bad".into(), "a".repeat(129)] {
+            features.environments.as_mut().unwrap().environments[0].environment_id = invalid;
+            let error = default_environment_id(&features).unwrap_err();
+            assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+        }
+    }
 
     #[test]
     fn explicit_start_metadata_overrides_profile_defaults() {

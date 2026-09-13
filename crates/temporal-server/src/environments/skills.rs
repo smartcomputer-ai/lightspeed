@@ -1,5 +1,5 @@
 //! Workflow activity discovery at eligible idle boundaries. Never wakes a machine.
-use crate::environment_sources::{Discovery, PhaseTimer};
+use crate::environments::sources::{Discovery, PhaseTimer};
 use engine::{
     ContextEntryInput, CoreAgentCommand, SessionId,
     storage::{BlobStore, BlobStoreError},

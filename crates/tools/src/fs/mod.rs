@@ -45,7 +45,7 @@ pub enum FsError {
     #[error("filesystem permission denied for path: {path}")]
     PermissionDenied { path: FsPath },
 
-    #[error("workspace link unavailable for path {path}: {message}")]
+    #[error("workspace attachment unavailable for path {path}: {message}")]
     Unavailable { path: FsPath, message: String },
 
     #[error("filesystem operation unsupported: {message}")]

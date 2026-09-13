@@ -299,8 +299,8 @@ impl PgStore {
         .bind(record.allowed_tools.as_deref())
         .bind(execution_to_str(record.execution))
         .bind(exposure_to_str(record.exposure))
-        .bind(approval_policy_to_str(record.approval_default))
-        .bind(record.defer_loading_default)
+        .bind(approval_policy_to_str(record.approval))
+        .bind(record.defer_loading)
         .bind(record.allow_private_network)
         .bind(auth_policy)
         .bind(auth_metadata_json)
@@ -387,8 +387,8 @@ impl PgStore {
         .bind(replaced.allowed_tools.as_deref())
         .bind(execution_to_str(replaced.execution))
         .bind(exposure_to_str(replaced.exposure))
-        .bind(approval_policy_to_str(replaced.approval_default))
-        .bind(replaced.defer_loading_default)
+        .bind(approval_policy_to_str(replaced.approval))
+        .bind(replaced.defer_loading)
         .bind(replaced.allow_private_network)
         .bind(auth_policy)
         .bind(auth_metadata_json)
@@ -418,7 +418,7 @@ fn server_record_from_row(
     let transport: String = row
         .try_get("transport")
         .map_err(|error| mcp_sql_error("decode mcp transport", error))?;
-    let approval_default: String = row
+    let approval: String = row
         .try_get("approval_default")
         .map_err(|error| mcp_sql_error("decode mcp approval default", error))?;
     let execution: String = row
@@ -465,8 +465,8 @@ fn server_record_from_row(
             .map_err(|error| mcp_sql_error("decode mcp allowed tools", error))?,
         execution: execution_from_str(&execution)?,
         exposure: exposure_from_str(&exposure)?,
-        approval_default: approval_policy_from_str(&approval_default)?,
-        defer_loading_default: row
+        approval: approval_policy_from_str(&approval)?,
+        defer_loading: row
             .try_get("defer_loading_default")
             .map_err(|error| mcp_sql_error("decode mcp defer loading default", error))?,
         allow_private_network: row

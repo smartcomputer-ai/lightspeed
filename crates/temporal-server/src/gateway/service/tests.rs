@@ -516,10 +516,11 @@ fn declared_mcp_link_materializes_remote_tool() {
     let mut record = test_mcp_server_record("durable-crm-server", mcp::McpServerStatus::Active);
     record.default_server_label = "crm".to_owned();
     record.allowed_tools = Some(vec!["lookup_customer".to_owned()]);
-    record.approval_default = mcp::McpApprovalPolicy::Never;
-    record.defer_loading_default = Some(true);
+    record.approval = mcp::McpApprovalPolicy::Never;
+    record.defer_loading = Some(true);
     let link = engine::McpServerLink {
         server_id: "durable-crm-server".to_owned(),
+        tools: None,
     };
 
     let tool = mcp_api::mcp_tool_from_config_link(&link, &record, None)
@@ -537,6 +538,46 @@ fn declared_mcp_link_materializes_remote_tool() {
     assert_eq!(spec.allowed_tools, Some(vec!["lookup_customer".to_owned()]));
     assert_eq!(spec.approval, engine::RemoteMcpApprovalPolicy::Never);
     assert_eq!(spec.defer_loading, Some(true));
+}
+
+#[test]
+fn mcp_attachment_subsets_constrain_every_execution_and_exposure_mode() {
+    for (execution, exposure) in [
+        (mcp::McpExecution::Provider, mcp::McpExposure::Inject),
+        (mcp::McpExecution::Native, mcp::McpExposure::Inject),
+        (mcp::McpExecution::Native, mcp::McpExposure::Search),
+    ] {
+        let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
+        record.execution = execution;
+        record.exposure = exposure;
+        record.allowed_tools = Some(vec!["search".into(), "delete_customer".into()]);
+        let link = engine::McpServerLink {
+            server_id: "crm".into(),
+            tools: Some(vec!["search".into()]),
+        };
+        for allowlist in [record.allowed_tools.clone(), None] {
+            record.allowed_tools = allowlist;
+            let tool = mcp_api::mcp_tool_from_config_link(&link, &record, None).unwrap();
+            let engine::ToolKind::RemoteMcp(spec) = tool.kind else {
+                panic!("expected remote MCP tool");
+            };
+            assert_eq!(spec.allowed_tools, Some(vec!["search".into()]));
+        }
+        // Record edits must not let a retained session link restore revoked tools.
+        record.allowed_tools = Some(vec!["delete_customer".into()]);
+        let error = mcp_api::mcp_tool_from_config_link(&link, &record, None).unwrap_err();
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+
+        let unrestricted_link = engine::McpServerLink {
+            tools: None,
+            ..link
+        };
+        let tool = mcp_api::mcp_tool_from_config_link(&unrestricted_link, &record, None).unwrap();
+        let engine::ToolKind::RemoteMcp(spec) = tool.kind else {
+            panic!("expected remote MCP tool");
+        };
+        assert_eq!(spec.allowed_tools, record.allowed_tools);
+    }
 }
 
 fn test_auth_grant_record(
@@ -585,6 +626,7 @@ fn grant_leases_require_creation_time_retrievable_exposure() {
 fn mcp_config_link() -> engine::McpServerLink {
     engine::McpServerLink {
         server_id: "crm".to_owned(),
+        tools: None,
     }
 }
 
@@ -1202,41 +1244,80 @@ fn features_default_off_for_sessions() {
     assert!(config.features.vfs.is_none());
 }
 
+fn environments_feature(attachments: Vec<api::EnvironmentAttachment>) -> api::EnvironmentsFeature {
+    api::EnvironmentsFeature {
+        version: api::CURRENT_FEATURE_VERSION,
+        selection: true,
+        prompts: None,
+        skills: None,
+        environments: attachments,
+    }
+}
+
+fn environment_attachment(id: Option<&str>, inherit: bool) -> api::EnvironmentAttachment {
+    api::EnvironmentAttachment {
+        environment_id: id.map(str::to_owned),
+        inherit,
+        default: false,
+        access: api::EnvironmentAccess::Jobs,
+        working_directory: Some("/srv".to_owned()),
+    }
+}
+
 #[test]
-fn environment_tool_subgrants_are_default_off_and_map_explicit_opt_in() {
+fn environment_attachments_map_to_grants_and_reject_inherit_in_session_config() {
     let default_feature: api::EnvironmentsFeature =
         serde_json::from_value(serde_json::json!({})).expect("empty environment feature");
-    assert!(!default_feature.selection_tools);
-    assert!(!default_feature.jobs);
-    assert!(!default_feature.commands);
-    assert!(default_feature.tools.is_none());
+    assert!(!default_feature.selection);
+    assert!(default_feature.environments.is_empty());
 
     let config = engine_session_config_from_api(
         api::SessionConfig {
             features: Some(api::FeaturesConfig {
-                environments: Some(api::EnvironmentsFeature {
-                    tools: Some(api::EnvironmentToolSurface::Edit),
-                    commands: true,
-                    working_directory: None,
-                    prompts: None,
-                    version: api::CURRENT_FEATURE_VERSION,
-                    providers: None,
-                    registration_keys: None,
-                    selection_tools: true,
-                    jobs: true,
-                    skills: None,
-                }),
+                environments: Some(environments_feature(vec![environment_attachment(
+                    Some("env_a"),
+                    false,
+                )])),
                 ..api::FeaturesConfig::default()
             }),
             ..api::SessionConfig::default()
         },
         openai_model(),
     )
-    .expect("map environment jobs grant");
-
+    .expect("map environment attachment");
     let environments = config.features.environments.expect("environment feature");
-    assert!(environments.selection_tools);
-    assert!(environments.jobs);
+    assert!(environments.selection);
+    assert_eq!(
+        environments.tool_access(),
+        Some(engine::EnvironmentAccess::Jobs)
+    );
+    assert_eq!(
+        environments
+            .attachment("env_a")
+            .unwrap()
+            .working_directory
+            .as_deref(),
+        Some("/srv")
+    );
+
+    for attachment in [
+        environment_attachment(None, true),
+        environment_attachment(Some("env_a"), true),
+        environment_attachment(None, false),
+    ] {
+        let error = engine_session_config_from_api(
+            api::SessionConfig {
+                features: Some(api::FeaturesConfig {
+                    environments: Some(environments_feature(vec![attachment])),
+                    ..api::FeaturesConfig::default()
+                }),
+                ..api::SessionConfig::default()
+            },
+            openai_model(),
+        )
+        .expect_err("inherit and malformed attachments are rejected in session config");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+    }
 }
 
 #[test]
@@ -1331,76 +1412,85 @@ fn web_search_accepts_anthropic_messages() {
 }
 
 #[test]
-fn vfs_feature_grant_maps_tool_surfaces() {
-    for (api_surface, engine_surface) in [
-        (
-            api::VfsToolSurface::ReadOnly,
-            engine::VfsToolSurface::ReadOnly,
-        ),
-        (api::VfsToolSurface::Edit, engine::VfsToolSurface::Edit),
-    ] {
-        let config = engine_session_config_from_api(
-            api::SessionConfig {
-                features: Some(api::FeaturesConfig {
-                    vfs: Some(api::VfsFeature {
-                        working_directory: None,
-                        version: api::CURRENT_FEATURE_VERSION,
-                        workspace_links: Vec::new(),
-                        tools: Some(api_surface),
-                        prompts: None,
-                        skills: None,
-                    }),
-                    ..api::FeaturesConfig::default()
-                }),
-                ..api::SessionConfig::default()
-            },
-            openai_model(),
-        )
-        .expect("map config");
-
-        assert_eq!(
-            config.features.vfs.expect("vfs feature").tools,
-            Some(engine_surface)
-        );
-    }
-
-    // A VFS grant without tools yields a VFS with no fs tool surface.
-    let config = engine_session_config_from_api(
+fn vfs_attachments_derive_the_tool_surface() {
+    fn vfs(workspaces: Vec<api::WorkspaceAttachment>) -> api::SessionConfig {
         api::SessionConfig {
             features: Some(api::FeaturesConfig {
                 vfs: Some(api::VfsFeature {
                     working_directory: None,
                     version: api::CURRENT_FEATURE_VERSION,
-                    workspace_links: Vec::new(),
-                    tools: None,
+                    workspaces,
                     prompts: None,
                     skills: None,
                 }),
                 ..api::FeaturesConfig::default()
             }),
             ..api::SessionConfig::default()
-        },
-        openai_model(),
-    )
-    .expect("map config");
+        }
+    }
+    fn attachment(path: &str, access: api::WorkspaceAccess) -> api::WorkspaceAttachment {
+        api::WorkspaceAttachment {
+            path: path.to_owned(),
+            workspace_id: Some("ws_1".to_owned()),
+            snapshot_ref: None,
+            access,
+        }
+    }
+    for (workspaces, expected) in [
+        (vec![], None),
+        (
+            vec![attachment("/ref", api::WorkspaceAccess::Read)],
+            Some(engine::WorkspaceAccess::Read),
+        ),
+        (
+            vec![
+                attachment("/ref", api::WorkspaceAccess::Read),
+                attachment("/workspace", api::WorkspaceAccess::Edit),
+            ],
+            Some(engine::WorkspaceAccess::Edit),
+        ),
+    ] {
+        let config =
+            engine_session_config_from_api(vfs(workspaces), openai_model()).expect("map config");
+        assert_eq!(
+            config.features.vfs.expect("vfs feature").tool_access(),
+            expected
+        );
+    }
 
-    assert_eq!(config.features.vfs.expect("vfs feature").tools, None);
+    let both = api::WorkspaceAttachment {
+        snapshot_ref: Some(format!("sha256:{}", "a".repeat(64))),
+        ..attachment("/both", api::WorkspaceAccess::Read)
+    };
+    let neither = api::WorkspaceAttachment {
+        workspace_id: None,
+        ..attachment("/neither", api::WorkspaceAccess::Read)
+    };
+    for invalid in [both, neither] {
+        let error = engine_session_config_from_api(vfs(vec![invalid]), openai_model())
+            .expect_err("an attachment names exactly one resource");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+    }
 }
 
 #[test]
 fn profile_and_session_grants_derive_vfs_transfer_tools() {
     for environments in [false, true] {
-        for surface in [None, Some("none"), Some("readOnly"), Some("edit")] {
+        for surface in [None, Some("none"), Some("read"), Some("edit")] {
             let mut features = serde_json::json!({});
             if let Some(surface) = surface {
                 features["vfs"] = serde_json::json!({});
                 if surface != "none" {
-                    features["vfs"]["tools"] = serde_json::json!(surface);
+                    features["vfs"]["workspaces"] = serde_json::json!([
+                        {"path":"/workspace","workspaceId":"ws_1","access":surface}
+                    ]);
                 }
             }
             if environments {
-                // Selection tools and jobs are independent of transfer availability.
-                features["environments"] = serde_json::json!({"tools":"edit"});
+                // Selection and jobs are independent of transfer availability.
+                features["environments"] = serde_json::json!({
+                    "environments":[{"environmentId":"env_a","access":"edit"}]
+                });
             }
             let profile: api::ProfileDocument =
                 serde_json::from_value(serde_json::json!({"config": {"features": features}}))
@@ -1413,7 +1503,7 @@ fn profile_and_session_grants_derive_vfs_transfer_tools() {
             for (id, expected) in [
                 (
                     "vfs.materialize",
-                    environments && matches!(surface, Some("readOnly" | "edit")),
+                    environments && matches!(surface, Some("read" | "edit")),
                 ),
                 ("vfs.capture", environments && surface == Some("edit")),
             ] {
@@ -2129,8 +2219,8 @@ fn test_mcp_server_put(server_id: &str, status: mcp::McpServerStatus) -> mcp::Pu
         allowed_tools: None,
         execution: mcp::McpExecution::Provider,
         exposure: mcp::McpExposure::Inject,
-        approval_default: mcp::McpApprovalPolicy::Never,
-        defer_loading_default: None,
+        approval: mcp::McpApprovalPolicy::Never,
+        defer_loading: None,
         allow_private_network: false,
         auth_policy: mcp::McpServerAuthPolicy::None,
         auth_grant_id: None,
@@ -2638,47 +2728,72 @@ async fn skill_list_reads_latest_structured_provenance() {
 }
 
 #[test]
-fn environment_filesystem_and_commands_are_independent_grants() {
-    for surface in [None, Some("readOnly"), Some("edit")] {
-        for commands in [false, true] {
-            let mut features = serde_json::json!({"vfs":{"tools":"edit"},"environments":{"commands":commands,"jobs":true,"skills":{},"prompts":{}}});
-            if let Some(surface) = surface {
-                features["environments"]["tools"] = serde_json::json!(surface);
-            }
-            let config = engine_session_config_from_api(
-                serde_json::from_value(serde_json::json!({"features":features})).unwrap(),
-                openai_model(),
-            )
-            .unwrap();
-            let registered = tools::toolset::register_toolset(
-                &GatewayAgentApi::session_toolset_config(&config, true, false),
-            )
-            .unwrap();
-            for (id, granted) in [
-                ("env.read_file", surface.is_some()),
-                ("env.grep", surface.is_some()),
-                ("env.glob", surface.is_some()),
-                ("env.list_dir", surface.is_some()),
-                ("env.write_file", surface == Some("edit")),
-                ("env.edit_file", surface == Some("edit")),
-                ("env.apply_patch", surface == Some("edit")),
-                ("env.run_process", commands),
-                ("env.continue_process", commands),
-                ("vfs.materialize", surface == Some("edit")),
-                ("vfs.capture", surface.is_some()),
-            ] {
-                assert_eq!(
-                    registered.tools.contains_key(&ToolName::new(id)),
-                    granted,
-                    "{id}, {surface:?}, commands={commands}"
-                );
-            }
-            let absent = tools::toolset::register_toolset(
-                &GatewayAgentApi::session_toolset_config(&config, false, false),
-            )
-            .unwrap();
-            assert!(!absent.tools.contains_key(&ToolName::new("env.read_file")));
-            assert!(!absent.tools.contains_key(&ToolName::new("env.run_process")));
-        }
+fn environment_access_ladder_derives_the_union_tool_surface() {
+    fn config_for(attachments: serde_json::Value) -> engine::SessionConfig {
+        let features = serde_json::json!({
+            "vfs":{"workspaces":[{"path":"/workspace","workspaceId":"ws_1","access":"edit"}]},
+            "environments":{"skills":{},"prompts":{},"environments":attachments}
+        });
+        engine_session_config_from_api(
+            serde_json::from_value(serde_json::json!({"features":features})).unwrap(),
+            openai_model(),
+        )
+        .unwrap()
     }
+    fn assert_surface(config: &engine::SessionConfig, access: Option<engine::EnvironmentAccess>) {
+        let registered = tools::toolset::register_toolset(
+            &GatewayAgentApi::session_toolset_config(config, true, false),
+        )
+        .unwrap();
+        let edit = access.is_some_and(|access| access.allows_edit());
+        let exec = access.is_some_and(|access| access.allows_exec());
+        for (id, granted) in [
+            ("env.read_file", access.is_some()),
+            ("env.grep", access.is_some()),
+            ("env.glob", access.is_some()),
+            ("env.list_dir", access.is_some()),
+            ("env.write_file", edit),
+            ("env.edit_file", edit),
+            ("env.apply_patch", edit),
+            ("env.run_process", exec),
+            ("env.continue_process", exec),
+            ("vfs.materialize", edit),
+            ("vfs.capture", access.is_some()),
+        ] {
+            assert_eq!(
+                registered.tools.contains_key(&ToolName::new(id)),
+                granted,
+                "{id} under {access:?}"
+            );
+        }
+        let absent = tools::toolset::register_toolset(&GatewayAgentApi::session_toolset_config(
+            config, false, false,
+        ))
+        .unwrap();
+        assert!(!absent.tools.contains_key(&ToolName::new("env.read_file")));
+        assert!(!absent.tools.contains_key(&ToolName::new("env.run_process")));
+    }
+
+    // No attachment: the feature is granted but installs no machine tools.
+    assert_surface(&config_for(serde_json::json!([])), None);
+    for (access, level) in [
+        ("read", engine::EnvironmentAccess::Read),
+        ("edit", engine::EnvironmentAccess::Edit),
+        ("exec", engine::EnvironmentAccess::Exec),
+        ("jobs", engine::EnvironmentAccess::Jobs),
+    ] {
+        assert_surface(
+            &config_for(serde_json::json!([{"environmentId":"env_a","access":access}])),
+            Some(level),
+        );
+    }
+    // Two attachments install the union; the narrower one is enforced at
+    // execution, not by hiding tools.
+    assert_surface(
+        &config_for(serde_json::json!([
+            {"environmentId":"env_a","access":"read"},
+            {"environmentId":"env_b","access":"exec"}
+        ])),
+        Some(engine::EnvironmentAccess::Exec),
+    );
 }

@@ -22,7 +22,7 @@ use crate::{
     ContextEntryKind, EnvironmentId, LlmGenerationFacts, LlmGenerationStatus, LlmRequest,
     PromiseId, PromiseOwnership, PromiseScope, PromiseStatus, RunId, SessionId, ToolBatchId,
     ToolCallId, ToolCallStatus, ToolExecutionSpec, ToolName, TurnId, WorkflowToolBinding,
-    WorkspaceLink,
+    WorkspaceAttachment,
 };
 
 #[async_trait]
@@ -98,12 +98,15 @@ pub struct ToolInvocationBatchRequest {
     pub turn_id: TurnId,
     pub batch_id: ToolBatchId,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub workspace_links: Vec<WorkspaceLink>,
+    pub workspace_attachments: Vec<WorkspaceAttachment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vfs_working_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_environment_id: Option<EnvironmentId>,
-    pub environment_policy: Option<EnvironmentPolicyRuntime>,
+    /// The admitted environments grant for this tool batch: the allowed
+    /// attachments and their access. Executors look up the active
+    /// attachment for execution-time denial and working directory.
+    pub environment_policy: Option<crate::EnvironmentsFeature>,
     /// Admitted sub-agent grant for this tool batch. Runtime executors pin
     /// it into sub-agent invocations instead of reconstructing the owning
     /// session.
@@ -115,53 +118,6 @@ pub struct ToolInvocationBatchRequest {
     /// slot (`base + call index`) and may create at most one promise.
     pub promise_id_base: u64,
     pub calls: Vec<ToolInvocationRequest>,
-}
-
-/// Admitted session policy needed while resolving live environment resources.
-///
-/// This is transient runtime input recorded on the activity request, not a
-/// durable session document. Environment records and provider observations
-/// remain live resolver reads.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnvironmentPolicyRuntime {
-    pub version: u32,
-    #[serde(default)]
-    pub tools: Option<crate::EnvironmentToolSurface>,
-    #[serde(default)]
-    pub commands: bool,
-    pub allowed_provider_ids: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub working_directory: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_registration_key_ids: Option<Vec<String>>,
-}
-
-impl EnvironmentPolicyRuntime {
-    pub const VERSION: u32 = 2;
-
-    pub fn new(
-        allowed_provider_ids: Option<Vec<String>>,
-        allowed_registration_key_ids: Option<Vec<String>>,
-    ) -> Self {
-        Self {
-            version: Self::VERSION,
-            tools: None,
-            commands: false,
-            allowed_provider_ids,
-            working_directory: None,
-            allowed_registration_key_ids,
-        }
-    }
-
-    /// Lower the session's environments grant into the runtime policy.
-    pub fn from_feature(feature: &crate::EnvironmentsFeature) -> Self {
-        Self {
-            working_directory: feature.working_directory.clone(),
-            tools: feature.tools,
-            commands: feature.commands,
-            ..Self::new(feature.providers.clone(), feature.registration_keys.clone())
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -354,12 +310,12 @@ pub struct ToolInvocationCallRequest {
     pub turn_id: TurnId,
     pub batch_id: ToolBatchId,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub workspace_links: Vec<WorkspaceLink>,
+    pub workspace_attachments: Vec<WorkspaceAttachment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vfs_working_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_environment_id: Option<EnvironmentId>,
-    pub environment_policy: Option<EnvironmentPolicyRuntime>,
+    pub environment_policy: Option<crate::EnvironmentsFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagents_policy: Option<crate::SubagentsFeature>,
     /// The one promise id this call may mint: the batch base plus the
@@ -391,7 +347,7 @@ impl ToolInvocationCallRequest {
             run_id: self.run_id,
             turn_id: self.turn_id,
             batch_id: self.batch_id,
-            workspace_links: self.workspace_links,
+            workspace_attachments: self.workspace_attachments,
             vfs_working_directory: self.vfs_working_directory,
             active_environment_id: self.active_environment_id,
             environment_policy: self.environment_policy,
@@ -428,7 +384,7 @@ impl ToolInvocationBatchRequest {
             run_id: self.run_id,
             turn_id: self.turn_id,
             batch_id: self.batch_id,
-            workspace_links: self.workspace_links.clone(),
+            workspace_attachments: self.workspace_attachments.clone(),
             vfs_working_directory: self.vfs_working_directory.clone(),
             active_environment_id: self.active_environment_id.clone(),
             environment_policy: self.environment_policy.clone(),
@@ -668,9 +624,9 @@ mod tests {
             turn_id: TurnId::new(2),
             batch_id: ToolBatchId::new(3),
             promise_id_base: 1,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             active_environment_id: Some(EnvironmentId::new("environment-a")),
-            environment_policy: Some(EnvironmentPolicyRuntime::new(None, None)),
+            environment_policy: Some(crate::EnvironmentsFeature::default()),
             subagents_policy: None,
             calls: call_ids
                 .iter()
@@ -793,7 +749,7 @@ mod promise_base_tests {
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
             batch_id: ToolBatchId::new(1),
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,

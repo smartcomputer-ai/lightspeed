@@ -4,8 +4,8 @@
 //! This crate owns the runtime registry/store boundary around those DTOs.
 
 use api::{
-    AgentProfile, AgentProfileInput, AgentProfileSummary, InlineAgentProfile, ProfileDocument,
-    ProfileEnvironment, ProfileId, ProfileInstructions, ProfileSource,
+    AgentProfile, AgentProfileInput, AgentProfileSummary, EnvironmentAttachment,
+    InlineAgentProfile, ProfileDocument, ProfileId, ProfileInstructions, ProfileSource,
 };
 use async_trait::async_trait;
 use thiserror::Error;
@@ -181,19 +181,43 @@ pub fn validate_profile_document(document: &ProfileDocument) -> Result<(), Profi
     if let Some(instructions) = &document.instructions {
         validate_profile_instructions(instructions)?;
     }
-    if let Some(environment) = &document.environment {
-        validate_profile_environment(environment)?;
+    if let Some(attachments) = document
+        .config
+        .as_ref()
+        .and_then(|config| config.features.as_ref())
+        .and_then(|features| features.environments.as_ref())
+        .map(|environments| environments.environments.as_slice())
+    {
+        validate_environment_attachments(attachments)?;
     }
     Ok(())
 }
 
-fn validate_profile_environment(environment: &ProfileEnvironment) -> Result<(), ProfileError> {
-    match environment {
-        ProfileEnvironment::Existing { environment_id } => {
-            validate_nonempty_string("environment.environmentId", environment_id)
+/// The profile-level attachment rules: each attachment names exactly one
+/// machine (an id or `inherit`) and at most one attachment inherits. The
+/// engine validates the concrete list (unique ids, one default, absolute
+/// working directories) once the document is applied to a session.
+pub fn validate_environment_attachments(
+    attachments: &[EnvironmentAttachment],
+) -> Result<(), ProfileError> {
+    let mut inherits = 0;
+    for attachment in attachments {
+        match (&attachment.environment_id, attachment.inherit) {
+            (Some(_), true) | (None, false) => {
+                return Err(ProfileError::InvalidInput {
+                    message: "each environment attachment must set exactly one of environmentId and inherit".to_owned(),
+                });
+            }
+            (None, true) => inherits += 1,
+            (Some(_), false) => {}
         }
-        ProfileEnvironment::Inherit {} => Ok(()),
     }
+    if inherits > 1 {
+        return Err(ProfileError::InvalidInput {
+            message: "at most one environment attachment may inherit".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_inline_profile(profile: &InlineAgentProfile) -> Result<(), ProfileError> {
@@ -259,17 +283,51 @@ mod tests {
     }
 
     #[test]
-    fn document_validation_rejects_empty_existing_environment_id() {
-        let empty_environment = ProfileDocument {
-            environment: Some(ProfileEnvironment::Existing {
-                environment_id: String::new(),
-            }),
-            ..ProfileDocument::default()
-        };
-        assert!(matches!(
-            validate_profile_document(&empty_environment),
-            Err(ProfileError::InvalidInput { message }) if message.contains("environment.environmentId")
-        ));
+    fn document_validation_checks_environment_attachment_identity() {
+        fn document(environments: Vec<EnvironmentAttachment>) -> ProfileDocument {
+            ProfileDocument {
+                config: Some(api::SessionConfig {
+                    features: Some(api::FeaturesConfig {
+                        environments: Some(api::EnvironmentsFeature {
+                            version: api::CURRENT_FEATURE_VERSION,
+                            selection: false,
+                            prompts: None,
+                            skills: None,
+                            environments,
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..ProfileDocument::default()
+            }
+        }
+        fn attachment(id: Option<&str>, inherit: bool) -> EnvironmentAttachment {
+            EnvironmentAttachment {
+                environment_id: id.map(str::to_owned),
+                inherit,
+                default: false,
+                access: api::EnvironmentAccess::Read,
+                working_directory: None,
+            }
+        }
+        assert!(
+            validate_profile_document(&document(vec![
+                attachment(Some("env_a"), false),
+                attachment(None, true),
+            ]))
+            .is_ok()
+        );
+        for invalid in [
+            vec![attachment(Some("env_a"), true)],
+            vec![attachment(None, false)],
+            vec![attachment(None, true), attachment(None, true)],
+        ] {
+            assert!(matches!(
+                validate_profile_document(&document(invalid)),
+                Err(ProfileError::InvalidInput { .. })
+            ));
+        }
     }
 
     #[test]
@@ -311,16 +369,6 @@ mod tests {
             validate_profile_document(&zero),
             Err(ProfileError::InvalidInput { message }) if message.contains("deleteAfterCloseMs")
         ));
-    }
-
-    #[test]
-    fn profile_provision_intents_are_rejected() {
-        assert!(
-            serde_json::from_value::<ProfileEnvironment>(serde_json::json!({
-                "type": "provision", "providerId": "incus", "templateId": "dev"
-            }))
-            .is_err()
-        );
     }
 
     #[test]

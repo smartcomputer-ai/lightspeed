@@ -1,10 +1,11 @@
+import { defaultEnvironmentAttachment, environmentAttachments, isEnvironmentAttached } from "@/lib/sessions/resource-features";
 /// Session routes over the engine simulation: the sessions browser, the
 /// transcript's long-poll tail, run control, and the settings sheet. Shapes
 /// and status codes follow the platform server's gateway so the UI cannot
 /// tell the difference.
 import { Hono, type Context } from "hono";
 import type { Environment, ProfileSessionRetention, ProfileSource, SessionView } from "@/api";
-import type { ProfileEnvironment, ProfileInstructions } from "@lightspeed-ai/agent-client";
+import type { ProfileInstructions } from "@lightspeed-ai/agent-client";
 import {
   DEFAULT_MODEL,
   PROFILE_INSTRUCTIONS_KEY,
@@ -30,7 +31,6 @@ interface ResolvedProfile {
   retention: ProfileSessionRetention | null;
   config: Record<string, unknown>;
   instructions: ProfileInstructions | null;
-  environment: ProfileEnvironment | null;
 }
 
 /// `?metadata=key` or `?metadata=key=value`, repeatable. Empty values request
@@ -101,12 +101,9 @@ export function sessionRoutes(store: DemoStore): Hono {
     if (!body.profile) return badRequest(c, "profile is required");
     const profile = resolveProfile(universe, body.profile);
     if (!profile) return notFound(c, "not found in engine");
-    if (body.environment) {
-      profile.environment = body.environment.type === "none" ? null : body.environment;
-    }
     const config = sessionConfig(profile.config);
     const sessionId = store.nextId("session");
-    const resolved = resolveEnvironment(universe, profile);
+    const resolved = resolveEnvironment(universe, profile, body.environment);
     if ("error" in resolved) return conflict(c, `engine conflict: ${resolved.error}`);
     const session = newSession(store, universe, {
       id: sessionId,
@@ -263,6 +260,7 @@ export function sessionRoutes(store: DemoStore): Hono {
     }
     const config = sessionConfig(body.config);
     session.view.config = config;
+    if (session.view.activeEnvironmentId && !isEnvironmentAttached(config, session.view.activeEnvironmentId)) session.view.activeEnvironmentId = null;
     session.view.configRevision += 1;
     pushEvent(session, {
       type: "sessionConfigChanged",
@@ -324,6 +322,7 @@ export function sessionRoutes(store: DemoStore): Hono {
         `engine conflict: environment is ${environment.status}: ${environment.environmentId}`,
       );
     }
+    if (!isEnvironmentAttached(session.view.config, environment.environmentId)) return conflict(c, "engine conflict: environment is not attached to the session");
     session.view.activeEnvironmentId = environment.environmentId;
     session.view.updatedAtMs = Date.now();
     return c.json(session.view);
@@ -448,7 +447,6 @@ function resolveProfile(universe: UniverseState, source: ProfileSource): Resolve
       retention: profile.retention ?? null,
       config: isRecord(profile.config) ? profile.config : {},
       instructions: profile.instructions ?? null,
-      environment: profile.environment ?? null,
     };
   }
   const document = universe.profiles.get(source.profileId);
@@ -460,7 +458,6 @@ function resolveProfile(universe: UniverseState, source: ProfileSource): Resolve
     retention: document.retention ?? null,
     config: isRecord(document.config) ? document.config : {},
     instructions: isRecord(instructions) ? (instructions as unknown as ProfileInstructions) : null,
-    environment: document.environment ?? null,
   };
 }
 
@@ -480,13 +477,16 @@ function instructionText(store: DemoStore, instructions: ProfileInstructions | n
 function resolveEnvironment(
   universe: UniverseState,
   profile: ResolvedProfile,
+  override?: { type: "none" } | { type: "existing"; environmentId: string },
 ): { environmentId: string | null } | { error: string } {
-  const intent = profile.environment;
-  if (!intent || intent.type === "inherit") return { environmentId: null };
-  const environment = universe.environments.get(intent.environmentId);
-  if (!environment) return { error: `environment not found: ${intent.environmentId}` };
-  if (!usable(environment)) return { error: `environment is ${environment.status}: ${intent.environmentId}` };
-  return { environmentId: intent.environmentId };
+  if (environmentAttachments(profile.config).some((attachment) => attachment.inherit)) return { error: "inherited environments require a parent session" };
+  const environmentId = override?.type === "none" ? null : override?.environmentId ?? defaultEnvironmentAttachment(profile.config)?.environmentId;
+  if (!environmentId) return { environmentId: null };
+  if (!isEnvironmentAttached(profile.config, environmentId)) return { error: `environment is not attached: ${environmentId}` };
+  const environment = universe.environments.get(environmentId);
+  if (!environment) return { error: `environment not found: ${environmentId}` };
+  if (!usable(environment)) return { error: `environment is ${environment.status}: ${environmentId}` };
+  return { environmentId };
 }
 
 /// Provisioning and booting are valid activation targets; a terminal or

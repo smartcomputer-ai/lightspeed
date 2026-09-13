@@ -5,7 +5,6 @@ import { slugify } from "@lightspeed/platform-shared";
 import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import {
   api,
-  type Environment,
   type ProfileDocument,
   type ProfileSummary,
 } from "@/api";
@@ -24,7 +23,6 @@ import { Button } from "@/components/ui/button";
 import {
   MetadataMapEditor,
 } from "@/components/session/metadata-editor";
-import { ProfileEnvironmentEditor } from "@/components/session/profile-environment-editor";
 import { ProfileRetentionEditor } from "@/components/session/profile-retention-editor";
 import { SessionConfigEditor } from "@/components/session/session-config-editor";
 import {
@@ -531,11 +529,6 @@ function ConfigSection({
   onRetentionValidityChange: (message: string | null) => void;
 }) {
   const options = useSessionConfigEditorOptions(universeId);
-  const environments = useQuery({
-    queryKey: ["environments", universeId],
-    queryFn: () =>
-      api<Environment[]>("GET", `/api/v1/universes/${universeId}/environments`),
-  });
   return (
     <Section
       title="Model configuration"
@@ -543,12 +536,14 @@ function ConfigSection({
     >
       <SessionConfigEditor
         value={draft.config}
+        allowInherit
         mcpServers={options.mcpServers}
         workspaces={options.workspaces}
         workspacesLoading={options.workspacesLoading}
         models={options.models}
         profiles={options.profiles}
-        environmentProviders={options.environmentProviders}
+        environments={options.environments}
+        discoverMcpTools={options.discoverMcpTools}
         featureDisableReasons={resourceFeatureDisableReasons(draft)}
         metadataSetup={(
           <MetadataMapEditor
@@ -578,23 +573,6 @@ function ConfigSection({
           />
         )}
         retentionDescription="Default automatic deletion for new root sessions created from this profile."
-        environmentSetup={(
-          <ProfileEnvironmentEditor
-            embedded
-            value={draft.environment}
-            environments={environments.data}
-
-
-
-            description="How a session obtains its active environment when this profile is applied. Absence leaves an existing session's selection unchanged."
-            onChange={(environment) =>
-              mutate((document) => {
-                if (environment) document.environment = environment;
-                else delete document.environment;
-              })
-            }
-          />
-        )}
         onValidityChange={onValidityChange}
         onChange={(config) =>
           mutate((document) => {

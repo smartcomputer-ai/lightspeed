@@ -123,8 +123,8 @@ within its limits. Removing this local file does not revoke that key.
 Open a session with a working model, such as the one from the
 [first-agent walkthrough](../getting-started/first-agent.md). When the session
 is idle, open the sliders button labeled **Session settings**. Enable
-**Environments**, choose **My workstation** under **Active environment**, and
-choose **Apply setup**.
+**Environments**, attach **My workstation** with **Exec** access, choose it
+under **Active environment**, and choose **Apply setup**.
 
 You do not need to enable model-driven selection or background jobs to use
 this selected machine. Send:

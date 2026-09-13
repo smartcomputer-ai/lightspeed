@@ -480,7 +480,7 @@ Sources, in this order: Zendesk metrics for the week, /postmortems for incidents
 
 Format: one page. Headline numbers first (conversations, tickets, median first response, escalations to engineering, issues filed), then the top issues as a table with counts and the KB page that answers each, then three bullets on what changed and why, then open action items with owners. Plain language, no adjectives. Flag any topic with more than five tickets that has no KB page.`;
 
-const KB_LINK = { path: "/kb", access: "readOnly", target: { type: "workspace", workspaceId: WORKSPACE.kb } };
+const KB_LINK = { path: "/kb", access: "read", workspaceId: WORKSPACE.kb };
 
 const SUPPORT_PROFILE: ProfileInit = {
   profileId: PROFILE.support,
@@ -491,12 +491,11 @@ const SUPPORT_PROFILE: ProfileInit = {
     model: SONNET,
     generation: { reasoningEffort: "low" },
     features: {
-      vfs: { tools: "readOnly", workspaceLinks: [KB_LINK] },
-      environments: {},
+      vfs: { workspaces: [KB_LINK] },
+      environments: { environments: [{ environmentId: ENV_SUPPORT_TOOLS, default: true, access: "exec" }] },
       mcp: { servers: [{ serverId: MCP.zendesk }] },
     },
   },
-  environment: { type: "existing", environmentId: ENV_SUPPORT_TOOLS },
   revision: 9,
   createdAtMs: ago(44 * DAY_MS),
   updatedAtMs: at(1, 16, 20),
@@ -511,13 +510,12 @@ const TRIAGE_PROFILE: ProfileInit = {
     model: GPT,
     generation: { reasoningEffort: "medium" },
     features: {
-      environments: {},
+      environments: { environments: [{ environmentId: ENV_SUPPORT_TOOLS, default: true, access: "exec" }] },
       web: { fetch: {} },
       mcp: { servers: [{ serverId: MCP.statuspage }, { serverId: MCP.pagerduty }] },
     },
     limits: { maxToolRounds: 12 },
   },
-  environment: { type: "existing", environmentId: ENV_SUPPORT_TOOLS },
   revision: 4,
   createdAtMs: ago(31 * DAY_MS),
   updatedAtMs: ago(3 * DAY_MS),
@@ -532,7 +530,7 @@ const ESCALATION_PROFILE: ProfileInit = {
     model: OPUS,
     generation: { reasoningEffort: "high" },
     features: {
-      vfs: { tools: "readOnly", workspaceLinks: [KB_LINK] },
+      vfs: { workspaces: [KB_LINK] },
       mcp: {
         servers: [{ serverId: MCP.github }],
       },
@@ -554,10 +552,9 @@ const DIGEST_PROFILE: ProfileInit = {
     generation: { reasoningEffort: "high", maxOutputTokens: 16_000 },
     features: {
       vfs: {
-        tools: "readOnly",
-        workspaceLinks: [
+        workspaces: [
           KB_LINK,
-          { path: "/postmortems", access: "readOnly", target: { type: "workspace", workspaceId: WORKSPACE.postmortems } },
+          { path: "/postmortems", access: "read", workspaceId: WORKSPACE.postmortems },
         ],
       },
       mcp: { servers: [{ serverId: MCP.zendesk }] },
@@ -575,7 +572,7 @@ const KB_AUTHOR_CONFIG: Record<string, unknown> = {
   model: SONNET,
   generation: { reasoningEffort: "medium" },
   features: {
-    vfs: { tools: "readWrite", workspaceLinks: [{ ...KB_LINK, access: "readWrite" }] },
+    vfs: { workspaces: [{ ...KB_LINK, access: "edit" }] },
   },
 };
 
@@ -784,8 +781,8 @@ function seedIntegrations(universe: UniverseState): void {
       serverUrl: "https://northwind-dev.zendesk.com/mcp",
       description: "Tickets, requesters, and weekly metrics for the developer helpdesk.",
       allowedTools: ["search_tickets", "get_ticket", "create_ticket", "add_ticket_comment", "close_ticket", "get_ticket_metrics"],
-      approvalDefault: "never",
-      deferLoadingDefault: false,
+      approval: "never",
+      deferLoading: false,
       authPolicy: { type: "requiredOAuth", resource: "https://northwind-dev.zendesk.com/mcp" },
       credential: { type: "authGrant", grantId: GRANT.zendesk },
       status: "active",
@@ -798,7 +795,7 @@ function seedIntegrations(universe: UniverseState): void {
       displayName: "Statuspage",
       serverUrl: `${STATUS_PAGE_URL}/mcp`,
       description: "Incident and component state from the public status page.",
-      deferLoadingDefault: true,
+      deferLoading: true,
       authPolicy: { type: "requiredBearer" },
       credential: { type: "authGrant", grantId: GRANT.statuspage },
       status: "unverified",
@@ -811,7 +808,7 @@ function seedIntegrations(universe: UniverseState): void {
       serverUrl: "https://api.githubcopilot.com/mcp/",
       description: "GitHub's hosted MCP server, scoped to the northwind organisation through the App installation.",
       allowedTools: ["search_issues", "get_issue", "create_issue", "add_issue_comment", "list_issues"],
-      approvalDefault: "never",
+      approval: "never",
       authPolicy: { type: "gitHubApp", providerId: "github" },
       credential: { type: "authGrant", grantId: GRANT.github },
       status: "active",
@@ -825,7 +822,7 @@ function seedIntegrations(universe: UniverseState): void {
       serverUrl: "https://mcp.pagerduty.com/mcp",
       description: "Incidents on the Northwind API service: acknowledge, list, trigger.",
       allowedTools: ["list_incidents", "get_incident", "acknowledge", "trigger"],
-      approvalDefault: "never",
+      approval: "never",
       authPolicy: { type: "requiredBearer" },
       credential: { type: "authGrant", grantId: GRANT.pagerdutyApi },
       status: "active",

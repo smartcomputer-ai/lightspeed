@@ -313,7 +313,8 @@ mod tests {
             "/workspace",
             "--workspace",
             "workspace_1",
-            "--read-write",
+            "--access",
+            "edit",
         ])
         .expect("parse vfs mount put");
         assert!(matches!(cli.command, Command::Vfs(_)));

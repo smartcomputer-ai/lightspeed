@@ -4,11 +4,7 @@
 //! environments are universe-scoped, and provider target facts live on an
 //! environment incarnation rather than on stable environment identity.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-    str::FromStr,
-};
+use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use async_trait::async_trait;
 use auth::{AuthGrantId, AuthProviderId, SecretId, SecretValue};
@@ -708,74 +704,6 @@ impl EnvironmentRecord {
             return invalid(format!("{kind} environments have no power control"));
         }
         Ok(())
-    }
-}
-
-/// Which environments a session may list, read, and activate, lowered from
-/// the session's environments grant. Each list is independent: an absent
-/// list allows every environment of that source kind. Provider-less
-/// environments that are also key-less (external) pass only when nothing is
-/// restricted at all.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct EnvironmentAccessPolicy {
-    pub providers: Option<BTreeSet<String>>,
-    pub registration_keys: Option<BTreeSet<String>>,
-}
-
-impl EnvironmentAccessPolicy {
-    pub const ALLOW_ALL: Self = Self {
-        providers: None,
-        registration_keys: None,
-    };
-
-    pub fn new(
-        providers: Option<impl IntoIterator<Item = String>>,
-        registration_keys: Option<impl IntoIterator<Item = String>>,
-    ) -> Self {
-        Self {
-            providers: providers.map(|ids| ids.into_iter().collect()),
-            registration_keys: registration_keys.map(|ids| ids.into_iter().collect()),
-        }
-    }
-
-    pub fn is_unrestricted(&self) -> bool {
-        self.providers.is_none() && self.registration_keys.is_none()
-    }
-
-    pub fn allows(&self, environment: &EnvironmentRecord) -> bool {
-        match &environment.source {
-            EnvironmentSource::Provisioned { provider_id, .. } => self
-                .providers
-                .as_ref()
-                .is_none_or(|allowed| allowed.contains(provider_id.as_str())),
-            EnvironmentSource::Registered {
-                registration_key_id,
-                ..
-            } => self
-                .registration_keys
-                .as_ref()
-                .is_none_or(|allowed| allowed.contains(registration_key_id.as_str())),
-            EnvironmentSource::External { .. } => self.is_unrestricted(),
-        }
-    }
-
-    /// Why `allows` refused, for typed rejections.
-    pub fn refusal(&self, environment: &EnvironmentRecord) -> String {
-        match &environment.source {
-            EnvironmentSource::Provisioned { provider_id, .. } => format!(
-                "environment provider {provider_id} is not allowed by features.environments.providers"
-            ),
-            EnvironmentSource::Registered {
-                registration_key_id,
-                ..
-            } => format!(
-                "registration key {registration_key_id} is not allowed by features.environments.registrationKeys"
-            ),
-            EnvironmentSource::External { .. } => {
-                "external environments are not allowed by a restricted environments grant"
-                    .to_owned()
-            }
-        }
     }
 }
 

@@ -175,18 +175,12 @@ pub struct AgentProfileSummary {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProfileDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<SessionConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instructions: Option<ProfileInstructions>,
-    /// How the session obtains its active environment when this profile is
-    /// applied: select an existing environment or inherit the parent's
-    /// selection. Absence leaves the session's current
-    /// active environment unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment: Option<ProfileEnvironment>,
     /// Descriptive metadata defaults copied to a session when it is created
     /// from this profile. Explicit `session/start` metadata wins key by key.
     /// Applying the profile to an existing session does not change metadata.
@@ -206,25 +200,6 @@ pub struct ProfileSessionRetention {
     /// Positive close-relative automatic-deletion duration.
     #[schemars(range(min = 1, max = 3153600000000_u64))]
     pub delete_after_close_ms: u64,
-}
-
-/// Environment intent carried by a profile document.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
-pub enum ProfileEnvironment {
-    /// Activate an existing universe environment. The profile never closes
-    /// it.
-    Existing { environment_id: EnvironmentId },
-    /// Activate the delegating parent's active environment. Resolved at
-    /// sub-agent spawn, shared not copied, never closed by the
-    /// child; rejected on a session without a delegation origin or whose
-    /// parent has no active environment.
-    Inherit {},
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

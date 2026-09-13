@@ -464,9 +464,7 @@ pub(super) fn runtime_projection_request(
             .and_then(|config| config.features.environments.clone()),
         active_environment_id: state.environment.active_environment_id.clone(),
         session_id: session_id.clone(),
-        workspace_links: vfs
-            .map(|vfs| vfs.workspace_links.clone())
-            .unwrap_or_default(),
+        workspace_attachments: vfs.map(|vfs| vfs.workspaces.clone()).unwrap_or_default(),
         vfs_catalog_enabled,
         vfs_prompts_enabled,
         vfs_prompt_roots,

@@ -6,7 +6,7 @@
 //! (or a close). Activity is never persisted: the daemon owns the clock and
 //! reports a monotonic idle duration; Lightspeed only decides.
 
-use super::environment_providers::map_environments_error;
+use super::providers::map_environments_error;
 use super::*;
 
 use ::environments::{

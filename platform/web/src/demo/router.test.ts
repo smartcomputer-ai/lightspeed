@@ -1,3 +1,4 @@
+import { defaultEnvironmentAttachment } from "@/lib/sessions/resource-features";
 import { describe, expect, it } from "vitest";
 import { createDemoStore } from "./fixtures";
 import { createDemoRouter } from "./router";
@@ -316,7 +317,8 @@ describe("demo router", () => {
     const { call } = await boot();
     const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     const environments = (await call("GET", `${base}/environments`)).json as Environment[];
-    const existing = environments.find((environment) => environment.status !== "closed");
+    const profile = (await call("GET", `${base}/profiles/implementer`)).json as { config: unknown };
+    const existing = environments.find((environment) => environment.environmentId === defaultEnvironmentAttachment(profile.config)?.environmentId);
     expect(existing).toBeDefined();
 
     const withoutEnvironment = await call("POST", `${base}/sessions`, {
@@ -349,7 +351,8 @@ describe("demo router", () => {
     const { call } = await boot();
     const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     const before = (await call("GET", `${base}/environments`)).json as Environment[];
-    const existing = before.find((environment) => environment.status === "ready")!;
+    const profile = (await call("GET", `${base}/profiles/implementer`)).json as { config: unknown };
+    const existing = before.find((environment) => environment.environmentId === defaultEnvironmentAttachment(profile.config)?.environmentId)!;
     expect(existing).toBeDefined();
     const created = await call("POST", `${base}/sessions`, {
       profile: { kind: "named", profileId: "implementer" },
@@ -363,6 +366,27 @@ describe("demo router", () => {
     expect((await call("DELETE", `${base}/sessions/${session.id}`)).status).toBe(200);
     const after = (await call("GET", `${base}/environments`)).json as Environment[];
     expect(after.find((env) => env.environmentId === existing.environmentId)).toEqual(existing);
+  });
+
+  it("rejects unlisted activation and clears removed selections without filling defaults", async () => {
+    const { call } = await boot();
+    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const profile = (await call("GET", `${base}/profiles/implementer`)).json as { config: Record<string, unknown> };
+    const defaultId = defaultEnvironmentAttachment(profile.config)!.environmentId!;
+    const environments = (await call("GET", `${base}/environments`)).json as Environment[];
+    const other = environments.find((environment) => environment.environmentId !== defaultId && environment.status === "ready")!;
+    expect(other).toBeDefined();
+    const rejected = await call("POST", `${base}/sessions`, { profile: { kind: "named", profileId: "implementer" }, environment: { type: "existing", environmentId: other.environmentId } });
+    expect(rejected.status).toBe(409);
+    const created = (await call("POST", `${base}/sessions`, { profile: { kind: "named", profileId: "implementer" } })).json as SessionView;
+    expect(created.activeEnvironmentId).toBe(defaultId);
+    expect((await call("POST", `${base}/sessions/${created.id}/environments/${other.environmentId}/activate`, {})).status).toBe(409);
+    const config = { ...profile.config, features: { environments: { environments: [{ environmentId: other.environmentId, access: "read", default: true }] } } };
+    const changed = await call("PUT", `${base}/sessions/${created.id}/config`, { config, expectedConfigRevision: created.configRevision });
+    expect(changed.status).toBe(200);
+    const session = (await call("GET", `${base}/sessions/${created.id}`)).json as SessionView;
+    expect(session.activeEnvironmentId).toBeNull();
+    expect((await call("POST", `${base}/sessions/${created.id}/environments/${other.environmentId}/activate`, {})).status).toBe(200);
   });
 
   it("sets and clears session-tree retention through the web routes", async () => {

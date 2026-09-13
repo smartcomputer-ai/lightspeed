@@ -70,11 +70,11 @@ function materialize(
       allowedTools: allowedTools.length > 0 ? allowedTools : null,
       execution: input.execution === "native" ? "native" : "provider",
       exposure: input.execution === "native" && input.exposure === "search" ? "search" : "inject",
-      approvalDefault: typeof input.approvalDefault === "string" && APPROVALS.has(input.approvalDefault)
-        ? (input.approvalDefault as McpServer["approvalDefault"])
+      approval: typeof input.approval === "string" && APPROVALS.has(input.approval)
+        ? (input.approval as McpServer["approval"])
         : "never",
-      deferLoadingDefault: typeof input.deferLoadingDefault === "boolean"
-        ? input.deferLoadingDefault
+      deferLoading: typeof input.deferLoading === "boolean"
+        ? input.deferLoading
         : null,
       allowPrivateNetwork: input.allowPrivateNetwork === true,
       authPolicy,

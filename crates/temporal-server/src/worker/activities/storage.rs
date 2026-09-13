@@ -1292,7 +1292,15 @@ mod tests {
         let open = CoreAgentCommand::OpenSession {
             config: config.clone(),
         };
-        config.features.environments = Some(EnvironmentsFeature::default());
+        config.features.environments = Some(EnvironmentsFeature {
+            environments: vec![engine::EnvironmentAttachment {
+                environment_id: "existing".to_owned(),
+                default: false,
+                access: engine::EnvironmentAccess::Read,
+                working_directory: None,
+            }],
+            ..EnvironmentsFeature::default()
+        });
         let mut staged =
             CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
         let mut events = Vec::new();

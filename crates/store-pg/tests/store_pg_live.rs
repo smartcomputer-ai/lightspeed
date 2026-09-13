@@ -1920,7 +1920,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
     let mut replacement = put_mcp_server("crm", McpServerStatus::Disabled);
     replacement.server_url = "https://crm2.example.com/mcp".to_owned();
     replacement.description = None;
-    replacement.approval_default = McpApprovalPolicy::Always;
+    replacement.approval = McpApprovalPolicy::Always;
     replacement.auth_policy = McpServerAuthPolicy::OptionalBearer;
     replacement.auth_grant_id = Some(AuthGrantId::new("authgrant_mcp_crm"));
     replacement.now_ms = created.updated_at_ms + 5;
@@ -1931,7 +1931,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
     assert_eq!(replaced.revision, 2);
     assert_eq!(replaced.server_url, "https://crm2.example.com/mcp");
     assert_eq!(replaced.description, None);
-    assert_eq!(replaced.approval_default, McpApprovalPolicy::Always);
+    assert_eq!(replaced.approval, McpApprovalPolicy::Always);
     assert_eq!(
         replaced.auth_grant_id,
         Some(AuthGrantId::new("authgrant_mcp_crm"))
@@ -3160,8 +3160,8 @@ fn put_mcp_server(server_id: &str, status: McpServerStatus) -> PutMcpServerRecor
         allowed_tools: Some(vec!["lookup_customer".to_owned()]),
         execution: mcp::McpExecution::Provider,
         exposure: mcp::McpExposure::Inject,
-        approval_default: McpApprovalPolicy::Never,
-        defer_loading_default: Some(true),
+        approval: McpApprovalPolicy::Never,
+        defer_loading: Some(true),
         allow_private_network: false,
         auth_policy: McpServerAuthPolicy::None,
         auth_grant_id: None,

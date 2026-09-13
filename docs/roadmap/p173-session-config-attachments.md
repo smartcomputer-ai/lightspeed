@@ -1,6 +1,7 @@
 # P173 — Session config attachments
 
-**Status:** Proposed 2026-09-13, after the workflow-owned preparation work in
+**Status:** Implemented across Rust, web consumers, Configurator MCP, and demo
+fixtures, 2026-09-13. Follows the workflow-owned preparation work in
 [P172](p172-workflow-owned-toolset-reconciliation.md). Greenfield: wire shapes,
 engine config types, and stored `ConfigChanged` payloads change in place;
 sessions are reset and contracts regenerated. No compatibility aliases.
@@ -103,6 +104,8 @@ implies `exec`. Lists are always arrays on the wire; the editor hides that.
   run on B. That is the price of never overriding a live selection and is
   documented rather than reconciled; a poll that must share the session's
   machine names it with `environmentId`.
+  Preparation validates the default's registry state only when it will fill
+  the pointer; an unavailable unused default does not block profile updates.
 - `inherit: true` is an item kind for sub-agent profiles: the parent's active
   environment at spawn, with the item's own grant. At most one per list.
   Spawning has two stages: the batch executor admits the call and writes a
@@ -148,6 +151,9 @@ implies `exec`. Lists are always arrays on the wire; the editor hides that.
   with no discovery, in the same projection step as the sub-agent menu, and
   shares the `Catalog { title }` shape. `environment_list` and
   `environment_read` results carry the same access line.
+  The catalog records its observed selection. Activation, switching,
+  deactivation, or removal of the feature invalidates a stale catalog before
+  another turn can use it; the next idle runtime projection rebuilds it.
 
 ### VFS
 
@@ -160,7 +166,7 @@ implies `exec`. Lists are always arrays on the wire; the editor hides that.
 
 ### MCP
 
-- Items become `{ serverId, tools? }`. `tools` must be a subset of the
+- Items become `{ serverId, tools? }`. `tools` must be a nonempty subset of the
   record's allowlist and narrows both injection and search. Execution,
   exposure, deferral, approval, and auth remain on the record.
 - Rename `approvalDefault` and `deferLoadingDefault` on the record to
@@ -270,28 +276,36 @@ Never re-propose without new evidence:
 
 ## Implementation
 
-1. Engine config types and validation: attachment lists, ladders, uniqueness,
-   one `default`, one `inherit` (profiles only), snapshot links read-only.
-   Config replacement clears an active environment that is no longer listed.
-   Replay vectors for the new `ConfigChanged` payloads.
-2. Runtime policy: per-batch environment policy derived from the active item;
-   tool reconciler derives VFS, environment, and transfer surfaces from grant
-   unions; denial messages name the active machine's access; durable job
-   tools gate on the active item's `jobs` grant before invocation;
-   explicit-id tools check membership; MCP materialization applies the item subset;
-   environment catalog projection.
-3. Setup and selection: membership-only `selectable`, fill-if-empty default
-   at creation and profile application, `parentActiveEnvironmentId` on the
-   sub-agent execution context with inherit resolved from it in preparation
-   (parent checkpoint reread deleted), bot fire path reads the
-   default item, start override validates membership.
-4. API: DTO renames, MCP record field renames, contract export, TypeScript
-   clients, Configurator reference data.
-5. Editor: attachment rows with an access picker per row; environment rows
-   carry default and working directory; MCP rows carry an optional tool
-   subset loaded from discovery.
-6. Docs: tools-and-mcp, workspaces-and-skills, profiles-and-instructions,
-   environments overview, CLI help.
+- [x] Consolidate hosted environment lifecycle, gateway, resolver, runtime, and
+  source discovery modules under `crates/temporal-server/src/environments/`.
+
+- [x] Engine config types and validation: attachment lists, ladders, uniqueness,
+  one `default`, one `inherit` (profiles only), snapshot links read-only.
+  Config replacement clears an active environment that is no longer listed.
+  Replay vectors for the new `ConfigChanged` payloads.
+- [x] Runtime policy: per-batch environment policy derived from the active item;
+  tool reconciler derives VFS, environment, and transfer surfaces from grant
+  unions; denial messages name the active machine's access; durable job
+  tools gate on the active item's `jobs` grant before invocation;
+  explicit-id tools check membership; MCP materialization applies the item subset;
+  environment catalog projection.
+- [x] Setup and selection: membership-only `selectable`, fill-if-empty default
+  at creation and profile application, `parentActiveEnvironmentId` on the
+  sub-agent execution context with inherit resolved from it in preparation
+  (parent checkpoint reread deleted), bot fire path reads the
+  default item, start override validates membership.
+- [x] API: DTO renames, MCP record field renames, contract export, TypeScript
+  clients, Configurator reference data.
+- [x] Editor: attachment rows with an access picker per row; environment rows
+  carry default and working directory; MCP rows carry an optional tool
+  subset loaded from discovery.
+- [x] Web consumers: profile and bot forms use config attachments; session
+  activation and creation overrides offer only attached environments. MCP
+  forms and gateway mappings use the renamed record fields. Demo profiles
+  use the new shapes, reject unlisted activation, and clear removed active
+  selections without filling a default on config put.
+- [x] Docs: tools-and-mcp, workspaces-and-skills, profiles-and-instructions,
+  environments overview, CLI help.
 
 ## Acceptance
 
@@ -321,5 +335,25 @@ Never re-propose without new evidence:
   record allowlist is rejected at put.
 - No session config, profile validation, or runtime path reads providers or
   registration keys.
+- Review regressions cover MCP subset materialization for provider injection,
+  native injection, and native search; invalid environment IDs returning
+  errors; skipping unused default validation; and catalog invalidation,
+  stale-publication rejection, and replay across selection changes.
 - Contracts regenerated; engine, tools, temporal-workflow, temporal-server,
-  profiles, api, and platform checks green; live suites on request.
+  profiles, api, and platform checks green.
+
+Review fixes passed 933 unit tests across engine, temporal-server,
+temporal-workflow, and tools (one ignored), plus
+`cargo check --workspace --all-targets`.
+
+The authorized live run passed 67 ordinary Temporal tests, 43 PostgreSQL
+tests, and four OpenAI/Anthropic prompt and skill tests. The Temporal and
+PostgreSQL runs preceded the final Rust module reorganization; the provider
+tests completed afterward. The VFS sourcing fixture now uses read access on
+both attachments. MCP fixtures needed loopback access enabled for the test
+process. The separate long-running timeout suite was not rerun.
+
+Web consumer validation passed `npm run check`, including 333 web tests,
+TypeScript checks, generated-artifact checks, and live/demo production builds.
+Browser verification covered environment attachment rows and MCP discovery,
+selection, and the resulting config document.

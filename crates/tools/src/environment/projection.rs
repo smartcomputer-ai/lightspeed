@@ -3,12 +3,12 @@
 use std::collections::BTreeSet;
 
 use engine::{
-    BlobRef, ContextEntryInput, CoreAgentCommand, WorkspaceLinkAccess, WorkspaceLinkTarget,
+    BlobRef, ContextEntryInput, CoreAgentCommand, WorkspaceAccess, WorkspaceAttachmentTarget,
     storage::{BlobGraphStore, BlobStore, BlobStoreError, record_contains_edges},
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use vfs::{ResolvedWorkspaceLink, ResolvedWorkspaceLinkTarget};
+use vfs::{ResolvedWorkspaceAttachment, ResolvedWorkspaceAttachmentTarget};
 
 use crate::catalog::{VFS_CATALOG_CONTEXT_KEY, catalog_context_input, catalog_publication_command};
 use crate::fs::FsPath;
@@ -56,11 +56,11 @@ pub enum FsRouteAccess {
     ReadWrite,
 }
 
-impl From<WorkspaceLinkAccess> for FsRouteAccess {
-    fn from(value: WorkspaceLinkAccess) -> Self {
+impl From<WorkspaceAccess> for FsRouteAccess {
+    fn from(value: WorkspaceAccess) -> Self {
         match value {
-            WorkspaceLinkAccess::ReadOnly => Self::ReadOnly,
-            WorkspaceLinkAccess::ReadWrite => Self::ReadWrite,
+            WorkspaceAccess::Read => Self::ReadOnly,
+            WorkspaceAccess::Edit => Self::ReadWrite,
         }
     }
 }
@@ -125,12 +125,12 @@ pub fn vfs_catalog_blob_refs(catalog: &VfsCatalog) -> BTreeSet<BlobRef> {
         .collect()
 }
 
-pub fn vfs_catalog_from_workspace_links(
-    links: &[ResolvedWorkspaceLink],
+pub fn vfs_catalog_from_workspace_attachments(
+    attachments: &[ResolvedWorkspaceAttachment],
 ) -> Result<VfsCatalog, EnvironmentProjectionError> {
-    let mut routes = links
+    let mut routes = attachments
         .iter()
-        .map(fs_route_from_workspace_link)
+        .map(fs_route_from_workspace_attachment)
         .collect::<Result<Vec<_>, _>>()?;
     routes.sort_by(|left, right| left.path.cmp(&right.path));
     let revision = stable_revision(&encode_json(&routes)?);
@@ -151,43 +151,47 @@ pub async fn vfs_catalog_context_input(
     .await
 }
 
-fn fs_route_from_workspace_link(
-    link: &ResolvedWorkspaceLink,
+fn fs_route_from_workspace_attachment(
+    attachment: &ResolvedWorkspaceAttachment,
 ) -> Result<FsRoute, EnvironmentProjectionError> {
-    let path = FsPath::new(link.path.as_str()).map_err(|error| {
+    let path = FsPath::new(attachment.path.as_str()).map_err(|error| {
         EnvironmentProjectionError::InvalidPath {
-            path: link.path.as_str().to_owned(),
+            path: attachment.path.as_str().to_owned(),
             message: error.to_string(),
         }
     })?;
-    let (source, availability) = match &link.target {
-        ResolvedWorkspaceLinkTarget::AvailableSnapshot { snapshot_ref } => (
+    let (source, availability) = match &attachment.target {
+        ResolvedWorkspaceAttachmentTarget::AvailableSnapshot { snapshot_ref } => (
             FsRouteSource::VfsSnapshot {
                 snapshot_ref: snapshot_ref.clone(),
             },
             FsRouteAvailability::Available,
         ),
-        ResolvedWorkspaceLinkTarget::AvailableWorkspace { workspace } => (
+        ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace } => (
             FsRouteSource::VfsWorkspace {
                 workspace_id: workspace.workspace_id.as_str().to_owned(),
             },
             FsRouteAvailability::Available,
         ),
-        ResolvedWorkspaceLinkTarget::Unavailable {
+        ResolvedWorkspaceAttachmentTarget::Unavailable {
             declared_target,
             reason,
         } => {
             let source = match declared_target {
-                WorkspaceLinkTarget::Snapshot { snapshot_ref } => FsRouteSource::VfsSnapshot {
-                    snapshot_ref: BlobRef::parse(snapshot_ref.clone()).map_err(|error| {
-                        EnvironmentProjectionError::Encode {
-                            message: error.to_string(),
-                        }
-                    })?,
-                },
-                WorkspaceLinkTarget::Workspace { workspace_id } => FsRouteSource::VfsWorkspace {
-                    workspace_id: workspace_id.clone(),
-                },
+                WorkspaceAttachmentTarget::Snapshot { snapshot_ref } => {
+                    FsRouteSource::VfsSnapshot {
+                        snapshot_ref: BlobRef::parse(snapshot_ref.clone()).map_err(|error| {
+                            EnvironmentProjectionError::Encode {
+                                message: error.to_string(),
+                            }
+                        })?,
+                    }
+                }
+                WorkspaceAttachmentTarget::Workspace { workspace_id } => {
+                    FsRouteSource::VfsWorkspace {
+                        workspace_id: workspace_id.clone(),
+                    }
+                }
             };
             (
                 source,
@@ -200,7 +204,7 @@ fn fs_route_from_workspace_link(
     Ok(FsRoute {
         path,
         source_path: None,
-        access: link.access.into(),
+        access: attachment.access.into(),
         source,
         availability,
     })
@@ -226,8 +230,10 @@ fn stable_revision(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use engine::{WorkspaceLinkAccess, storage::InMemoryBlobStore};
-    use vfs::{ResolvedWorkspaceLink, ResolvedWorkspaceLinkTarget, VfsPath, VfsWorkspaceId};
+    use engine::{WorkspaceAccess, storage::InMemoryBlobStore};
+    use vfs::{
+        ResolvedWorkspaceAttachment, ResolvedWorkspaceAttachmentTarget, VfsPath, VfsWorkspaceId,
+    };
 
     use super::*;
 
@@ -300,10 +306,10 @@ mod tests {
     }
 
     #[test]
-    fn vfs_catalog_from_workspace_links_projects_routes() {
-        let link = workspace_link();
+    fn vfs_catalog_from_workspace_attachments_projects_routes() {
+        let attachment = workspace_attachment();
 
-        let catalog = vfs_catalog_from_workspace_links(&[link]).expect("catalog");
+        let catalog = vfs_catalog_from_workspace_attachments(&[attachment]).expect("catalog");
 
         assert_ne!(catalog.revision, 0);
         assert_eq!(catalog.routes.len(), 1);
@@ -315,10 +321,10 @@ mod tests {
         ));
     }
 
-    fn workspace_link() -> ResolvedWorkspaceLink {
-        ResolvedWorkspaceLink {
-            path: VfsPath::parse("/workspace").expect("link path"),
-            target: ResolvedWorkspaceLinkTarget::AvailableWorkspace {
+    fn workspace_attachment() -> ResolvedWorkspaceAttachment {
+        ResolvedWorkspaceAttachment {
+            path: VfsPath::parse("/workspace").expect("attachment path"),
+            target: ResolvedWorkspaceAttachmentTarget::AvailableWorkspace {
                 workspace: vfs::VfsWorkspaceRecord {
                     workspace_id: VfsWorkspaceId::new("workspace_1"),
                     display_name: None,
@@ -330,7 +336,7 @@ mod tests {
                     updated_at_ms: 1,
                 },
             },
-            access: WorkspaceLinkAccess::ReadWrite,
+            access: WorkspaceAccess::Edit,
         }
     }
 }

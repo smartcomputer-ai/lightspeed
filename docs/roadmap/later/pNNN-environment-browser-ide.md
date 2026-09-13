@@ -100,7 +100,7 @@ Verified against the repository when this proposal was written:
   already provides filesystem operations, search, process execution, and PTYs.
   A full code-server integration uses its own backend for IDE operations;
   these existing methods continue serving agent tools.
-- The [environment gateway](../../../crates/temporal-server/src/environment_gateway.rs)
+- The [environment gateway](../../../crates/temporal-server/src/environments/gateway.rs)
   routes by universe, environment, and incarnation. Registered daemons can
   serve envd traffic through reverse-dialed data sockets. Those sockets carry
   the envd protocol today, not arbitrary application HTTP or TCP traffic.

@@ -17,16 +17,14 @@ describe("profile and session transfer availability", () => {
   });
 
   it.each([
-    ["edit", false, "Enable Environments to also transfer files"],
-    ["readOnly", true, "Materialize also requires Edit files on the environment."],
-    ["edit", true, "capture requires environment read access and a writable workspace link"],
-    [undefined, true, "Prompt and skill sourcing alone does not enable transfers"],
-  ] as const)("explains tools=%s and environments=%s", async (tools, environments, expected) => {
+    [false, "Enable Environments to also transfer files"],
+    [true, "Capture requires workspace edit access and environment read access."],
+  ] as const)("explains attachment grants with environments=%s", async (environments, expected) => {
     document.body.append(container);
     root = createRoot(container);
     await act(async () => {
       root!.render(<SessionConfigEditor
-        value={{ features: { vfs: { tools }, ...(environments ? { environments: {} } : {}) } }}
+        value={{ features: { vfs: { workspaces: [{ workspaceId: "files", path: "/workspace", access: "edit" }] }, ...(environments ? { environments: {} } : {}) } }}
         onChange={() => {}}
       />);
     });

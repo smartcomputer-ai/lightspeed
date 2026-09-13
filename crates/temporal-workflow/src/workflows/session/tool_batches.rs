@@ -543,7 +543,7 @@ mod tests {
             turn_id: engine::TurnId::new(1),
             batch_id: engine::ToolBatchId::new(1),
             promise_id_base: 1,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,

@@ -1,9 +1,8 @@
-import type { ProfileDocument, ProfileEnvironment, ProfileSessionRetention } from "@/api";
+import type { ProfileDocument, ProfileSessionRetention } from "@/api";
 
 export type SessionProfileFields = {
   config?: Record<string, unknown> | undefined;
   instructions?: { type: "text"; text: string } | undefined;
-  environment?: ProfileEnvironment | undefined;
   metadata?: Record<string, string> | undefined;
   retention?: ProfileSessionRetention | undefined;
 };

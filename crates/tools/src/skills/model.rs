@@ -190,7 +190,7 @@ impl SkillLoadWarning {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SkillLoadWarningKind {
-    UnavailableWorkspaceLink { reason: String },
+    UnavailableWorkspaceAttachment { reason: String },
     MissingSkillDoc,
     InvalidSkillDoc { message: String },
     Filesystem { message: String },

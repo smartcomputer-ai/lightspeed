@@ -27,7 +27,7 @@ continuity between the two tasks.
 
 A **session** is that continuing conversation and execution state. A **run**
 is one admitted task within it. Completing a run does not discard the session;
-another task can use the same configuration, workspace links, and accumulated
+another task can use the same configuration, workspace attachments, and accumulated
 context. A **profile** supplies reusable setup when creating or configuring a
 session. It is resolved by the hosted runtime, outside the deterministic core.
 
@@ -55,10 +55,13 @@ committed batch, so a lost append response cannot apply the change twice.
 
 Environments have independent lifecycles. Their service owns provisioning,
 registration, credentials, power, and cleanup; environment runtime roles run
-reconciliation. Session setup only selects an existing environment or inherits
-the parent's selection. Session closure and deletion never close environments.
-Selection validates registry existence, access, and lifecycle without waking or
-probing the machine. Readiness checks and wake-on-use happen during actual use.
+reconciliation. Session configuration attaches the environments a session may
+use, each with its own access level; setup only activates one of them, filling
+an empty active pointer from a profile's default attachment or, for
+sub-agents, from the parent's active machine resolved at spawn. Session
+closure and deletion never close environments. Selection validates attachment
+membership and a nonterminal registry record without waking or probing the
+machine. Readiness checks and wake-on-use happen during actual use.
 
 The core represents a session as events reduced into state. Admission checks
 whether a command is valid against that state. Planning decides which fact or

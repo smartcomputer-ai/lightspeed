@@ -684,7 +684,9 @@ async fn dispatch_json_rpc_routes_session_config_put() {
                     "generation": { "reasoningEffort": "high" },
                     "features": {
                         "timers": {},
-                        "vfs": { "tools": "edit" }
+                        "vfs": { "workspaces": [
+                            { "path": "/workspace", "workspaceId": "ws_1", "access": "edit" }
+                        ] }
                     }
                 }
             })),
@@ -1183,10 +1185,7 @@ fn mcp_server_put_params_default_approval_is_never_and_revision_optional() {
     }))
     .expect("params");
 
-    assert_eq!(
-        params.server.approval_default,
-        RemoteMcpApprovalPolicy::Never
-    );
+    assert_eq!(params.server.approval, RemoteMcpApprovalPolicy::Never);
     assert_eq!(params.expected_revision, None);
     assert_eq!(params.server.credential, None);
 }
@@ -3112,7 +3111,6 @@ fn test_profile(profile_id: ProfileId) -> AgentProfile {
             instructions: Some(ProfileInstructions::Text {
                 text: "Be concise.".to_owned(),
             }),
-            environment: None,
         },
         created_at_ms: 1,
         updated_at_ms: 2,
@@ -3311,8 +3309,8 @@ fn test_mcp_server(server_id: String) -> McpServerView {
         allowed_tools: None,
         execution: RemoteMcpExecution::Provider,
         exposure: RemoteMcpExposure::Inject,
-        approval_default: RemoteMcpApprovalPolicy::Never,
-        defer_loading_default: None,
+        approval: RemoteMcpApprovalPolicy::Never,
+        defer_loading: None,
         allow_private_network: false,
         auth_policy: McpServerAuthPolicy::None,
         credential: None,

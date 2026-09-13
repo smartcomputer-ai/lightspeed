@@ -7,9 +7,9 @@ mod bots_api;
 mod catalogs;
 pub(crate) mod channels_api;
 mod common;
-pub(crate) use crate::environment_service::environment_lifecycle;
-pub(crate) use crate::environment_service::environment_power;
-pub(crate) use crate::environment_service::environment_providers;
+pub(crate) use crate::environments::lifecycle as environment_lifecycle;
+pub(crate) use crate::environments::power as environment_power;
+pub(crate) use crate::environments::providers as environment_providers;
 mod environments;
 mod errors;
 mod event_history;
@@ -21,7 +21,7 @@ mod models_api;
 mod oauth_api;
 mod parse;
 mod profiles;
-pub(crate) use crate::environment_service::provider_controllers;
+pub(crate) use crate::environments::provider_controllers;
 mod session_jobs;
 pub(crate) mod session_preparation;
 mod skills;
@@ -544,7 +544,7 @@ pub struct GatewayAgentApiBuilder {
     model_discovery_openai: Option<Arc<openai::Client>>,
     model_discovery_anthropic: Option<Arc<anthropic::Client>>,
     provider_controller_connector: Arc<dyn ProviderControllerConnector>,
-    environment_gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
+    environment_gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
 }
 
 impl GatewayAgentApiBuilder {
@@ -621,7 +621,7 @@ impl GatewayAgentApiBuilder {
 
     pub fn with_environment_gateway(
         mut self,
-        gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
+        gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
     ) -> Self {
         self.environment_gateway = gateway;
         self
@@ -776,12 +776,12 @@ pub struct GatewayAgentApi {
     github_api: Arc<dyn GitHubApiClient>,
     model_discovery: ModelDiscoveryService,
     provider_controller_connector: Arc<dyn ProviderControllerConnector>,
-    pub(crate) environment_gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
+    pub(crate) environment_gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
 }
 
 impl GatewayAgentApi {
     pub fn builder(client: Client, store: Arc<PgStore>) -> GatewayAgentApiBuilder {
-        let environment_gateway = crate::environment_gateway::EnvironmentGatewayClientConfig::new(
+        let environment_gateway = crate::environments::gateway::EnvironmentGatewayClientConfig::new(
             DEFAULT_PUBLIC_BASE_URL,
             format!("local-{}", uuid::Uuid::new_v4()),
         );
@@ -1165,31 +1165,10 @@ impl GatewayAgentApi {
                 Err(error) => return Err(map_workflow_interaction_error(error)),
             }
         }
-        let mut resolved_profile = match profile {
+        let resolved_profile = match profile {
             Some(source) => Some(self.resolve_profile_source(source).await?),
             None => None,
         };
-        if let Some(environment) = environment {
-            let environment = match environment {
-                SessionEnvironmentOverride::None {} => None,
-                SessionEnvironmentOverride::Existing { environment_id } => {
-                    Some(ProfileEnvironment::Existing { environment_id })
-                }
-            };
-            ::profiles::validate_profile_document(&ProfileDocument {
-                environment: environment.clone(),
-                ..Default::default()
-            })
-            .map_err(profiles::map_profile_error)?;
-            if let Some(profile) = resolved_profile.as_mut() {
-                profile.environment = environment;
-            } else if environment.is_some() {
-                resolved_profile = Some(ProfileDocument {
-                    environment,
-                    ..Default::default()
-                });
-            }
-        }
         let effective_metadata = profiles::merge_profile_start_metadata(
             resolved_profile.as_ref().map(|profile| &profile.metadata),
             metadata,
@@ -1210,6 +1189,28 @@ impl GatewayAgentApi {
             config,
         );
         let session_config = self.session_config_for_start(start_config).await?;
+        // The creation-time environment: an explicit override must be an
+        // attachment of the effective configuration; otherwise the default
+        // attachment, if any, is activated at setup.
+        let setup_environment = match environment {
+            Some(SessionEnvironmentOverride::None {}) => None,
+            Some(SessionEnvironmentOverride::Existing { environment_id }) => {
+                let environment_id = engine::EnvironmentId::try_new(environment_id)
+                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+                let attached = session_config
+                    .features
+                    .environments
+                    .as_ref()
+                    .is_some_and(|environments| environments.is_attached(environment_id.as_str()));
+                if !attached {
+                    return Err(AgentApiError::invalid_request(format!(
+                        "environment {environment_id} is not attached in the session configuration"
+                    )));
+                }
+                Some(environment_id)
+            }
+            None => profiles::default_environment_id(&session_config.features)?,
+        };
 
         if let Some(workflow_tools) = workflow_tools.as_ref() {
             self.validate_managed_session_materialization(&session_config, workflow_tools)
@@ -1225,10 +1226,18 @@ impl GatewayAgentApi {
             close_on_terminal,
             auto_reject_approvals,
         );
-        args.setup = resolved_profile
-            .as_ref()
-            .map(|profile| self.profile_intent(profile, false))
-            .transpose()?;
+        args.setup = match resolved_profile.as_ref() {
+            Some(profile) => {
+                let mut intent = self.profile_intent(profile, false)?;
+                intent.environment = setup_environment;
+                Some(intent)
+            }
+            None => setup_environment.map(|environment| temporal_workflow::SessionProfileIntent {
+                config: None,
+                instructions: None,
+                environment: Some(environment),
+            }),
+        };
         self.refresh_input_blob_grace(&args).await?;
         let started = self
             .client
@@ -2432,7 +2441,7 @@ impl AgentApiService for GatewayAgentApi {
         // Declared MCP links must resolve (catalog record, grant/policy
         // compatibility) before the document enters the session log.
         self.desired_mcp_tools(&config.features).await?;
-        self.validate_workspace_link_targets(&config.features)
+        self.validate_workspace_attachment_targets(&config.features)
             .await?;
         self.validate_subagent_agents(&config.features).await?;
         validate_subagent_deadline_for_existing_bindings(&loaded.state, &config.features)?;
@@ -4566,8 +4575,8 @@ pub(crate) fn cimd_document_for(public_base_url: &str) -> serde_json::Value {
 }
 
 impl GatewayAgentApi {
-    pub(crate) fn environment_service(&self) -> crate::environment_service::EnvironmentService {
-        crate::environment_service::EnvironmentService {
+    pub(crate) fn environment_service(&self) -> crate::environments::EnvironmentService {
+        crate::environments::EnvironmentService {
             store: self.store.clone(),
             environment_gateway: self.environment_gateway.clone(),
             provider_controller_connector: self.provider_controller_connector.clone(),

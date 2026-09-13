@@ -9,7 +9,6 @@ import type {
   EnvironmentRegistrationKeyView,
   EnvironmentTemplateView,
   EnvironmentView,
-  ProfileEnvironment as ProfileEnvironmentView,
   ProfileSessionRetention as ProfileSessionRetentionView,
   SessionEnvironmentOverride as SessionEnvironmentOverrideView,
   SessionEventView,
@@ -154,7 +153,6 @@ export interface ProfileSummary {
   updatedAtMs: number;
 }
 
-export type ProfileEnvironment = ProfileEnvironmentView;
 export type ProfileSessionRetention = ProfileSessionRetentionView;
 export type SessionEnvironmentOverride = SessionEnvironmentOverrideView;
 
@@ -162,7 +160,6 @@ export type ProfileDocument = {
   profileId: string;
   metadata?: Record<string, string>;
   retention?: ProfileSessionRetention | null;
-  environment?: ProfileEnvironment | null;
   revision?: number;
   createdAtMs?: number;
   updatedAtMs?: number;
@@ -175,7 +172,6 @@ export type InlineProfile = {
   instructions?:
     | { type: "text"; text: string }
     | { type: "textRef"; blobRef: string };
-  environment?: ProfileEnvironment | null;
 };
 
 export type ProfileSource =
@@ -331,8 +327,8 @@ export interface McpServer {
   allowedTools?: string[] | null;
   execution: "provider" | "native";
   exposure: "inject" | "search";
-  approvalDefault: "always" | "never";
-  deferLoadingDefault?: boolean | null;
+  approval: "always" | "never";
+  deferLoading?: boolean | null;
   allowPrivateNetwork: boolean;
   authPolicy: { type: string } & Record<string, unknown>;
   credential?: { type: "authGrant"; grantId: string } | null;
@@ -488,24 +484,11 @@ export interface SessionView {
 export type SessionRunView = RunSummaryView;
 export type SessionRunStatus = RunStatus;
 
-export type WorkspaceLinkTarget =
-  | { type: "workspace"; workspaceId: string }
-  | { type: "snapshot"; snapshotRef: string };
-
-export interface WorkspaceLink {
-  path: string;
-  access: "readOnly" | "readWrite";
-  target: WorkspaceLinkTarget;
-}
-
-export type WorkspaceLinkDraft = {
+export type WorkspaceAttachmentDraft = {
   path?: string;
   access?: string;
-  target?: {
-    type?: string;
-    workspaceId?: string;
-    snapshotRef?: string;
-  } & Record<string, unknown>;
+  workspaceId?: string;
+  snapshotRef?: string;
 } & Record<string, unknown>;
 
 export interface SessionInstructionState {

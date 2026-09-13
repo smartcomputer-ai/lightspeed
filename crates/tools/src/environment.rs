@@ -10,6 +10,7 @@ use crate::{
     limits::ToolLimits,
 };
 
+pub mod attachments;
 pub(crate) mod catalog_text;
 pub mod control;
 pub mod jobs;

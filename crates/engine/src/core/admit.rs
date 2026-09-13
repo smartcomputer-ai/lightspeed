@@ -155,13 +155,36 @@ pub fn admit_command(
                         "config revision exhausted".to_owned(),
                     ))
                 })?;
-            Ok(vec![CoreAgentEventProposal::new(
+            // The attachment list is the allowed set: an active environment
+            // the new document no longer attaches is cleared in the same
+            // batch so no batch runs against an unlisted machine. The
+            // pointer is never filled here; defaults apply at profile
+            // application only.
+            let clears_active = state
+                .environment
+                .active_environment_id
+                .as_ref()
+                .is_some_and(|active| {
+                    !config
+                        .features
+                        .environments
+                        .as_ref()
+                        .is_some_and(|environments| environments.is_attached(active.as_str()))
+                });
+            let mut proposals = vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
                 CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::ConfigChanged {
                     config,
                     revision,
                 }),
-            )])
+            )];
+            if clears_active {
+                proposals.push(CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEvent::Environment(crate::EnvironmentEvent::ActiveEnvironmentCleared),
+                ));
+            }
+            Ok(proposals)
         }
         CoreAgentCommand::RequestRun(request) => {
             // Duplicate detection precedes every other check so a retried
@@ -795,16 +818,21 @@ pub fn admit_command(
         }
         CoreAgentCommand::SetActiveEnvironment { environment_id } => {
             require_open(state)?;
-            if state
+            let Some(environments) = state
                 .lifecycle
                 .config
                 .as_ref()
                 .and_then(|config| config.features.environments.as_ref())
-                .is_none()
-            {
+            else {
                 return reject(
                     CommandRejectionKind::InvalidConfiguration,
                     "active environment requires the environments feature",
+                );
+            };
+            if !environments.is_attached(environment_id.as_str()) {
+                return reject(
+                    CommandRejectionKind::InvalidConfiguration,
+                    format!("environment {environment_id} is not attached to this session"),
                 );
             }
             if state.environment.active_environment_id.as_ref() == Some(&environment_id) {

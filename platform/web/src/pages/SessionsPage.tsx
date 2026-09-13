@@ -1,3 +1,4 @@
+import { attachedEnvironments } from "@/lib/sessions/resource-features";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   type InfiniteData,
@@ -52,7 +53,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ProfileEnvironmentEditor } from "@/components/session/profile-environment-editor";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
 import { SessionMenuIdentity, SessionMenuMetadata } from "@/components/session/session-menu-details";
 import { SessionMenuPreferences } from "@/components/session/session-menu-preferences";
@@ -1084,7 +1084,7 @@ function NewSessionDialog({
                     <SelectContent>
                       <SelectItem value="profile">Use profile default</SelectItem>
                       <SelectItem value="none">No active environment</SelectItem>
-                      {selectableEnvironments(environments.data ?? []).map((environment) => (
+                      {selectableEnvironments(attachedEnvironments(selectedProfile.data?.config, environments.data ?? [])).map((environment) => (
                         <SelectItem
                           key={environment.environmentId}
                           value={`existing:${environment.environmentId}`}
@@ -1135,7 +1135,6 @@ function NewSessionDialog({
               <InlineSetupEditor
                 value={inlineProfile ?? {}}
                 options={editorOptions}
-                environments={environments.data}
                 onValidityChange={setConfigError}
                 onRetentionValidityChange={setRetentionError}
                 onChange={setInlineProfile}
@@ -1178,14 +1177,12 @@ function NewSessionDialog({
 function InlineSetupEditor({
   value,
   options,
-  environments,
   onValidityChange,
   onRetentionValidityChange,
   onChange,
 }: {
   value: InlineProfile;
   options: ReturnType<typeof useSessionConfigEditorOptions>;
-  environments: Environment[] | undefined;
   onValidityChange: (message: string | null) => void;
   onRetentionValidityChange: (message: string | null) => void;
   onChange: (profile: InlineProfile) => void;
@@ -1226,7 +1223,8 @@ function InlineSetupEditor({
           workspacesLoading={options.workspacesLoading}
           models={options.models}
           profiles={options.profiles}
-          environmentProviders={options.environmentProviders}
+          environments={options.environments}
+          discoverMcpTools={options.discoverMcpTools}
           featureDisableReasons={resourceFeatureDisableReasons(value)}
           metadataSetup={(
             <MetadataMapEditor
@@ -1249,20 +1247,6 @@ function InlineSetupEditor({
             />
           )}
           retentionDescription="Automatic deletion for this new root session after it closes."
-          environmentSetup={(
-            <ProfileEnvironmentEditor
-              embedded
-              value={value.environment}
-              environments={environments}
-
-
-
-              onChange={(environment) => change((next) => {
-                if (environment) next.environment = environment;
-                else delete next.environment;
-              })}
-            />
-          )}
           onValidityChange={onValidityChange}
           onChange={(config) => change((next) => {
             if (config) next.config = config;
@@ -1280,7 +1264,6 @@ function inlineProfileFromDocument(document: ProfileDocument): InlineProfile {
   if (document.retention) profile.retention = structuredClone(document.retention);
   if (isRecord(document.config)) profile.config = structuredClone(document.config);
   if (isRecord(document.instructions)) profile.instructions = structuredClone(document.instructions) as InlineProfile["instructions"];
-  if (document.environment) profile.environment = structuredClone(document.environment);
   return profile;
 }
 

@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use engine::{
     ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
     CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus, SessionConfig,
-    SessionId, WorkspaceLink, WorkspaceLinkAccess, WorkspaceLinkTarget,
+    SessionId, WorkspaceAccess, WorkspaceAttachment, WorkspaceAttachmentTarget,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::anthropic::messages::{Client, Config};
@@ -240,12 +240,12 @@ async fn anthropic_messages_live_uses_vfs_prompt_instructions() {
     })
     .await
     .expect("create workspace");
-    let workspace_links = vec![WorkspaceLink {
+    let workspace_attachments = vec![WorkspaceAttachment {
         path: "/workspace".to_owned(),
-        target: WorkspaceLinkTarget::Workspace {
+        target: WorkspaceAttachmentTarget::Workspace {
             workspace_id: workspace_id.to_string(),
         },
-        access: WorkspaceLinkAccess::ReadWrite,
+        access: WorkspaceAccess::Edit,
     }];
 
     let model = ModelSelection {
@@ -270,7 +270,7 @@ async fn anthropic_messages_live_uses_vfs_prompt_instructions() {
             session_id: session_id.clone(),
             observed_at_ms: 10,
             command: CoreAgentCommand::OpenSession {
-                config: session_config(model, workspace_links),
+                config: session_config(model, workspace_attachments),
             },
             max_steps: None,
         })
@@ -336,7 +336,10 @@ async fn anthropic_messages_live_uses_vfs_prompt_instructions() {
     );
 }
 
-fn session_config(model: ModelSelection, workspace_links: Vec<WorkspaceLink>) -> SessionConfig {
+fn session_config(
+    model: ModelSelection,
+    workspace_attachments: Vec<WorkspaceAttachment>,
+) -> SessionConfig {
     SessionConfig {
         model,
         generation: engine::GenerationConfig {
@@ -350,7 +353,7 @@ fn session_config(model: ModelSelection, workspace_links: Vec<WorkspaceLink>) ->
         context: ContextConfig { compaction: None },
         features: engine::FeaturesConfig {
             vfs: Some(engine::VfsFeature {
-                workspace_links,
+                workspaces: workspace_attachments,
                 prompts: Some(engine::VfsPromptsConfig::default()),
                 ..engine::VfsFeature::default()
             }),

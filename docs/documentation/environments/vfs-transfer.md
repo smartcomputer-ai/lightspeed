@@ -28,20 +28,25 @@ during preparation and may remain if a transfer fails; VFS parents are published
 with the captured content in one workspace commit. There is no merging or
 automatic sync.
 
-The session needs both environment access and VFS tools. Materialize requires
-read access to its VFS source; capture requires an editable workspace link.
-Snapshot links are read-only. A selected VFS path must belong to one linked
+The session needs both a workspace attachment and an environment attachment.
+Materialize requires read access to its VFS source and an environment
+attachment with `edit` or higher; capture requires an `edit` workspace attachment
+and any environment attachment. Snapshot links are read-only. A selected VFS path must belong to one linked
 workspace or snapshot, rather than a synthetic directory spanning several
 links. Ordinary VFS operations do not require a selected environment.
 
-Profiles and session settings use the same grants. Under **Virtual File System**,
-**Read only** file tools plus **Environments** enable materialize; **Edit files**
-plus **Environments** enable both directions. A VFS configured only to source
-prompts or skills enables neither transfer tool. Read-only VFS access allows
-materialization to write the environment while preserving the VFS source.
-Environment selection tools are optional: a profile or API can select the machine.
-The tool catalog stays stable while environments change; calls check current
-readiness and daemon support when they execute.
+Profiles and session settings use the same grants, and the transfer tools
+follow the union of attachment access in both domains: any workspace attachment
+plus an environment attached with `edit` or higher installs materialize; an
+`edit` link plus any environment attachment installs capture. A VFS or
+environment feature with no attachments installs neither. A call runs against
+the active environment and is refused when that machine's own access does
+not cover it. Read-level VFS access allows materialization to write the
+environment while preserving the VFS source. Command execution (`exec`) is
+not needed for either transfer. Environment selection tools are optional: a
+profile or API can select the machine. The tool catalog stays stable while
+environments change; calls check current readiness and daemon support when
+they execute.
 
 Capture saves an immutable snapshot first, with the selected node at
 `/selection`. It then publishes to the workspace using the revision read before
@@ -50,11 +55,6 @@ retains the captured snapshot reference for recovery. It does not merge or
 replace concurrent workspace edits.
 The recorded tool result retains that snapshot and its file blobs even when
 workspace publication fails.
-
-Environment permissions also apply: materialize requires environment **Edit files**;
-capture requires environment **Read only** or **Edit files**. VFS read access
-is required for materialize, and a writable VFS link plus VFS editing tools for
-capture. Command execution is not needed for either transfer.
 
 ## Content reuse and large files
 

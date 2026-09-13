@@ -1,7 +1,9 @@
+import { useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
-  type EnvironmentProviderBinding,
+  type Environment,
+  type McpToolDiscovery,
   type ModelListResponse,
   type ProfileSummary,
 } from "@/api";
@@ -33,32 +35,23 @@ export function useSessionConfigEditorOptions(universeId: string, enabled = true
     queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
     enabled,
   });
-  const environmentProviders = useQuery({
-    queryKey: ["environment-provider-bindings", universeId],
-    queryFn: () =>
-      api<EnvironmentProviderBinding[]>(
-        "GET",
-        `/api/v1/universes/${universeId}/environment-provider-bindings`,
-      ),
+  const environments = useQuery({
+    queryKey: ["environments", universeId],
+    queryFn: () => api<Environment[]>("GET", `/api/v1/universes/${universeId}/environments`),
     enabled,
   });
+  const discoverMcpTools = useCallback(async (serverId: string) => {
+    const result = await api<McpToolDiscovery>("POST", `/api/v1/universes/${universeId}/mcp-servers/${encodeURIComponent(serverId)}/tools/discover`);
+    if (result.status === "failure") throw new Error(result.message);
+    return result.tools.map((tool) => tool.name);
+  }, [universeId]);
   return {
     mcpServers: servers.data,
     workspaces: workspaces.data,
     workspacesLoading: workspaces.isLoading,
     models: models.data?.models,
     profiles: profiles.data,
-    environmentProviders: environmentProviderOptions(environmentProviders.data ?? []),
+    environments: environments.data,
+    discoverMcpTools,
   };
-}
-
-export function environmentProviderOptions(bindings: EnvironmentProviderBinding[]) {
-  return [...new Map(
-    bindings
-      .filter((binding) => binding.status === "enabled")
-      .map((binding) => [binding.providerId, {
-        providerId: binding.providerId,
-        displayName: binding.metadata?.displayName,
-      }]),
-  ).values()].sort((left, right) => left.providerId.localeCompare(right.providerId));
 }

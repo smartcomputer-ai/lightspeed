@@ -113,8 +113,8 @@ describe("MCP OAuth completion", () => {
       allowedTools: ["search"],
       execution: "provider",
       exposure: "inject",
-      approvalDefault: "never",
-      deferLoadingDefault: true,
+      approval: "never",
+      deferLoading: true,
       allowPrivateNetwork: false,
       authPolicy: {
         type: "requiredOAuth",

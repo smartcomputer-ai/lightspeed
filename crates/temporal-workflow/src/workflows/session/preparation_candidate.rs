@@ -38,6 +38,7 @@ impl PreparationCandidate {
         for invalidation in [
             drive::invalid_environment_prompt_command,
             drive::invalid_environment_catalog_command,
+            drive::invalid_environment_attachment_catalog_command,
             drive::invalid_vfs_skill_catalog_command,
         ] {
             if let Some(command) = invalidation(self.state()) {
@@ -50,6 +51,7 @@ impl PreparationCandidate {
     fn push_command(&mut self, command: CoreAgentCommand, now: u64) -> Result<(), AgentApiError> {
         if drive::environment_prompt_publication_is_obsolete(self.state(), &command)
             || drive::environment_catalog_publication_is_obsolete(self.state(), &command)
+            || drive::environment_attachment_catalog_publication_is_obsolete(self.state(), &command)
             || drive::vfs_skill_catalog_publication_is_obsolete(self.state(), &command)
         {
             return Err(AgentApiError::conflict(
@@ -209,6 +211,15 @@ mod tests {
         }
     }
 
+    fn attachment(id: &str) -> engine::EnvironmentAttachment {
+        engine::EnvironmentAttachment {
+            environment_id: id.to_owned(),
+            default: false,
+            access: engine::EnvironmentAccess::Read,
+            working_directory: None,
+        }
+    }
+
     fn proposed(live: &CoreAgentDrive) -> PreparationCandidate {
         let mut candidate = PreparationCandidate::new(live);
         let tool = engine::ToolSpec {
@@ -236,7 +247,10 @@ mod tests {
             )
             .unwrap();
         let mut config = live.state().lifecycle.config.clone().unwrap();
-        config.features.environments = Some(engine::EnvironmentsFeature::default());
+        config.features.environments = Some(engine::EnvironmentsFeature {
+            environments: vec![attachment("selected")],
+            ..Default::default()
+        });
         config.generation.tool_choice = Some(engine::ToolChoice::Specific {
             tool_name: engine::ToolName::new("new_tool"),
         });
@@ -377,6 +391,7 @@ mod tests {
         let mut config = live.state().lifecycle.config.clone().unwrap();
         config.features.environments = Some(engine::EnvironmentsFeature {
             prompts: Some(Default::default()),
+            environments: vec![attachment("old"), attachment("new")],
             ..Default::default()
         });
         initial
@@ -400,6 +415,19 @@ mod tests {
             origin: Some("runtime.environment:old".into()),
             ..instructions("old machine prompt")
         };
+        let catalog_key = ContextEntryKey::new("runtime.catalog.environments");
+        let old_catalog = CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: catalog_key.clone(),
+            entry: ContextEntryInput {
+                origin: Some("runtime.environments:old".into()),
+                kind: ContextEntryKind::Catalog {
+                    title: "Environments".into(),
+                },
+                ..instructions("old selection")
+            },
+        };
+        initial.push(old_catalog.clone(), 2).unwrap();
         initial
             .push(
                 CoreAgentCommand::ReplaceContextPrefix {
@@ -431,10 +459,15 @@ mod tests {
         );
         assert!(drive::invalid_environment_prompt_command(candidate.state()).is_none());
         let batch = candidate.finish(&live).unwrap();
-        assert_eq!(batch.events.len(), 2);
+        assert_eq!(batch.events.len(), 3);
         commit(&mut live, batch);
         assert!(drive::invalid_environment_prompt_command(live.state()).is_none());
+        assert!(engine::current_context_entry(live.state(), &catalog_key).is_none());
         let mut candidate = PreparationCandidate::new(&live);
+        assert_eq!(
+            candidate.push(old_catalog, 4).unwrap_err().kind,
+            api::AgentApiErrorKind::Conflict
+        );
         let error = candidate
             .push(
                 CoreAgentCommand::ReplaceContextPrefix {

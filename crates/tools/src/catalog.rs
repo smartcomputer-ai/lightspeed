@@ -6,6 +6,7 @@ use engine::{BlobRef, ContextEntryInput, ContextEntryKey, ContextEntryKind, Core
 pub const VFS_CATALOG_CONTEXT_KEY: &str = "runtime.catalog.vfs";
 pub const SKILL_CATALOG_CONTEXT_KEY: &str = "runtime.catalog.skills.vfs";
 pub const SUBAGENT_CATALOG_CONTEXT_KEY: &str = "runtime.catalog.subagents";
+pub const ENVIRONMENT_CATALOG_CONTEXT_KEY: &str = "runtime.catalog.environments";
 
 /// Store the provider-neutral body once. The structured source remains a
 /// separate durable root through provenance; its writer owns any nested edges.

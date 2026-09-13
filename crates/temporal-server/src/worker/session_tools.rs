@@ -16,10 +16,7 @@ use environment_protocol::{
     },
     shared::{CURRENT_PROTOCOL_VERSION, EnvironmentDataConnection, EnvironmentTransport},
 };
-use environments::{
-    EnvironmentAccessPolicy, EnvironmentId, EnvironmentRecord, EnvironmentRegistryError,
-    EnvironmentStore,
-};
+use environments::{EnvironmentId, EnvironmentRecord, EnvironmentRegistryError, EnvironmentStore};
 use store_pg::PgStore;
 use tools::{
     builtin::BuiltinToolRequirements,
@@ -29,9 +26,8 @@ use tools::{
         detach_promises_model_visible_text, is_concurrency_tool, sleep_model_visible_text,
     },
     environment::control::{
-        DEFAULT_ENVIRONMENT_LIST_LIMIT, EnvironmentActivateArgs, EnvironmentDeactivateArgs,
-        EnvironmentListArgs, EnvironmentReadArgs, MAX_ENVIRONMENT_LIST_LIMIT,
-        is_environment_control_tool, is_environment_selection_tool,
+        EnvironmentActivateArgs, EnvironmentDeactivateArgs, EnvironmentListArgs,
+        EnvironmentReadArgs, is_environment_control_tool, is_environment_selection_tool,
     },
     environment::jobs::{
         JOB_RUN_WORKFLOW_SEMANTIC_TYPE, JOB_RUN_WORKFLOW_TOOL_ID,
@@ -47,11 +43,13 @@ use tools::{
     subagents::{AgentCallArgs, SubagentExecutionContextV1, SubagentToolKind},
     workflow_tool::invoke_workflow_tool,
 };
-use vfs::{ResolvedWorkspaceLink, VfsCatalogError, VfsWorkspaceStore};
+use vfs::{ResolvedWorkspaceAttachment, VfsCatalogError, VfsWorkspaceStore};
 
 use crate::{
     credential_injection::EnvironmentCredentialResolver,
-    environment::{ActiveEnvironmentBlocker, RuntimeEnvironment, SessionEnvironmentManager},
+    environments::runtime::{
+        ActiveEnvironmentBlocker, RuntimeEnvironment, SessionEnvironmentManager,
+    },
     subagents::await_spec_from_args,
 };
 
@@ -62,10 +60,9 @@ pub struct SessionTools {
     workspace_store: Arc<dyn VfsWorkspaceStore>,
     environments: SessionEnvironmentManager,
     environment_store: Option<Arc<dyn EnvironmentStore>>,
-    registration_keys: Option<Arc<dyn environments::EnvironmentRegistrationKeyStore>>,
-    environment_resolver: Option<crate::environment_resolver::EnvironmentResolver>,
+    environment_resolver: Option<crate::environments::resolver::EnvironmentResolver>,
     environment_credentials: Option<EnvironmentCredentialResolver>,
-    environment_gateway: Option<crate::environment_gateway::EnvironmentGatewayClientConfig>,
+    environment_gateway: Option<crate::environments::gateway::EnvironmentGatewayClientConfig>,
 }
 
 impl SessionTools {
@@ -77,7 +74,6 @@ impl SessionTools {
             workspace_store,
             environments,
             environment_store: None,
-            registration_keys: None,
             environment_resolver: None,
             environment_credentials: None,
             environment_gateway: None,
@@ -89,19 +85,9 @@ impl SessionTools {
         self
     }
 
-    /// Registration keys name the groups registered environments belong to;
-    /// the model sees the group name, never the key.
-    pub fn with_registration_key_store(
-        mut self,
-        registration_keys: Arc<dyn environments::EnvironmentRegistrationKeyStore>,
-    ) -> Self {
-        self.registration_keys = Some(registration_keys);
-        self
-    }
-
     pub(crate) fn with_environment_resolver(
         mut self,
-        resolver: crate::environment_resolver::EnvironmentResolver,
+        resolver: crate::environments::resolver::EnvironmentResolver,
     ) -> Self {
         self.environment_resolver = Some(resolver);
         self
@@ -118,7 +104,7 @@ impl SessionTools {
     /// Route environment calls through this deployment's gateway.
     pub fn with_environment_gateway(
         mut self,
-        gateway: crate::environment_gateway::EnvironmentGatewayClientConfig,
+        gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
     ) -> Self {
         if let Some(resolver) = self.environment_resolver.take() {
             self.environment_resolver = Some(resolver.with_gateway(gateway.clone()));
@@ -137,15 +123,12 @@ impl SessionTools {
         let blob_graph: Arc<dyn BlobGraphStore> = store.clone();
         let workspace_store: Arc<dyn VfsWorkspaceStore> = store.clone();
         let environments: Arc<dyn EnvironmentStore> = store.clone();
-        let registration_keys: Arc<dyn environments::EnvironmentRegistrationKeyStore> =
-            store.clone();
         let credentials = EnvironmentCredentialResolver::from_pg_store(store.clone());
         let resolver =
-            crate::environment_resolver::EnvironmentResolver::from_pg_store(store.clone());
+            crate::environments::resolver::EnvironmentResolver::from_pg_store(store.clone());
         Self::new(blobs, workspace_store)
             .with_blob_graph(blob_graph)
             .with_environment_store(environments)
-            .with_registration_key_store(registration_keys)
             .with_environment_resolver(resolver)
             .with_environment_credentials(credentials)
     }
@@ -419,6 +402,7 @@ impl SessionTools {
                     .read_environment_jobs(
                         &request.session_id,
                         request.active_environment_id.as_ref(),
+                        request.environment_policy.as_ref(),
                         environments,
                         args.jobs,
                         args.output_bytes,
@@ -444,6 +428,7 @@ impl SessionTools {
         &self,
         session_id: &SessionId,
         active_environment_id: Option<&EnvironmentId>,
+        policy: Option<&engine::EnvironmentsFeature>,
         environments: &SessionEnvironmentManager,
         handles: Vec<JobHandleArg>,
         output_bytes: Option<usize>,
@@ -469,6 +454,15 @@ impl SessionTools {
                     continue;
                 }
             };
+            // A handle may name a machine other than the active one (a job
+            // started before a switch), but only an attached one.
+            if !policy.is_some_and(|policy| policy.is_attached(environment_id.as_str())) {
+                entries.push(model_job_error(
+                    Some(resolved),
+                    format!("environment {environment_id} is not attached to this session"),
+                ));
+                continue;
+            }
             let (environment, close_after_read) = if let Some(environment) =
                 environments.environment(environment_id.as_str()).cloned()
             {
@@ -603,18 +597,34 @@ impl SessionTools {
                 )
                 .await;
             };
+            // Durable job tools are installed for the union of attachment
+            // grants; the active attachment decides whether this call may
+            // start work, before any workflow invocation is emitted.
             let policy = supplied_environment_policy(request)?;
-            let mut context = JobSubmitExecutionContextV1::new(
+            let Some(attachment) = policy.attachment(environment_id.as_str()) else {
+                return failed_result(
+                    self.blobs.as_ref(),
+                    call.call_id.clone(),
+                    format!("active environment {environment_id} is not attached to this session"),
+                )
+                .await;
+            };
+            if !attachment.access.allows_jobs() {
+                return failed_result(
+                    self.blobs.as_ref(),
+                    call.call_id.clone(),
+                    format!(
+                        "{} requires jobs access on the active environment {environment_id}, which grants {}",
+                        binding.definition.tool.name,
+                        attachment.access.describe()
+                    ),
+                )
+                .await;
+            }
+            let context = JobSubmitExecutionContextV1::new(
                 environment_id.as_str().to_owned(),
-                policy.providers.map(|ids| ids.into_iter().collect()),
-                policy
-                    .registration_keys
-                    .map(|ids| ids.into_iter().collect()),
+                attachment.working_directory.clone(),
             );
-            context.working_directory = request
-                .environment_policy
-                .as_ref()
-                .and_then(|policy| policy.working_directory.clone());
             Some(
                 self.blobs
                     .put_bytes(serde_json::to_vec(&context).map_err(io_error)?)
@@ -679,6 +689,10 @@ impl SessionTools {
                 request.run_id.as_u64(),
                 args.agent,
                 policy.limits,
+                request
+                    .active_environment_id
+                    .as_ref()
+                    .map(|id| id.as_str().to_owned()),
             );
             Some(
                 self.blobs
@@ -847,48 +861,42 @@ impl SessionTools {
             )
             .await;
         };
-        let allowed = supplied_environment_policy(request)?;
+        let policy = supplied_environment_policy(request)?;
         let active = request.active_environment_id.as_ref();
         match call.tool_id.as_ref().map(|id| id.as_str()) {
             Some("environment.list") => {
-                let args: EnvironmentListArgs = self.read_tool_args(call).await?;
-                let limit = args
-                    .limit
-                    .unwrap_or(DEFAULT_ENVIRONMENT_LIST_LIMIT)
-                    .clamp(1, MAX_ENVIRONMENT_LIST_LIMIT);
-                let mut environments = match resolver.list_allowed(&allowed).await {
-                    Ok(environments) => environments,
-                    Err(error) => {
-                        return failed_result(
-                            self.blobs.as_ref(),
-                            call.call_id.clone(),
-                            error.to_string(),
-                        )
-                        .await;
-                    }
-                };
-                let groups = self.environment_groups(&environments).await;
-                if let Some(group) = args.group.as_deref() {
-                    environments.retain(|environment| {
-                        group_of(environment, &groups)
-                            .is_some_and(|name| name.eq_ignore_ascii_case(group))
-                    });
+                let _: EnvironmentListArgs = self.read_tool_args(call).await?;
+                let mut environments = Vec::with_capacity(policy.environments.len());
+                for attachment in &policy.environments {
+                    let environment_id =
+                        match EnvironmentId::try_new(attachment.environment_id.clone()) {
+                            Ok(id) => id,
+                            Err(error) => {
+                                return failed_result(
+                                    self.blobs.as_ref(),
+                                    call.call_id.clone(),
+                                    error.to_string(),
+                                )
+                                .await;
+                            }
+                        };
+                    let record = match resolver.read(&environment_id).await {
+                        Ok(record) => Some(record),
+                        Err(crate::environments::resolver::EnvironmentResolveError::Store(
+                            EnvironmentRegistryError::NotFound { .. },
+                        )) => None,
+                        Err(error) => {
+                            return failed_result(
+                                self.blobs.as_ref(),
+                                call.call_id.clone(),
+                                error.to_string(),
+                            )
+                            .await;
+                        }
+                    };
+                    environments.push(environment_model_view(attachment, record.as_ref(), active));
                 }
-                if let Some(cursor) = args.cursor.as_deref() {
-                    environments.retain(|environment| environment.environment_id.as_str() > cursor);
-                }
-                let has_more = environments.len() > limit;
-                environments.truncate(limit);
-                let next_cursor = has_more
-                    .then(|| environments.last())
-                    .flatten()
-                    .map(|environment| environment.environment_id.as_str().to_owned());
-                let output = serde_json::json!({
-                    "environments": environments.iter().map(|environment| {
-                        environment_model_view(environment, active, group_of(environment, &groups))
-                    }).collect::<Vec<_>>(),
-                    "next_cursor": next_cursor,
-                });
+                let output = serde_json::json!({ "environments": environments });
                 self.succeeded_tool_result(
                     call,
                     &output,
@@ -914,7 +922,15 @@ impl SessionTools {
                             .await;
                     }
                 };
-                let environment = match resolver.read_allowed(&environment_id, &allowed).await {
+                let Some(attachment) = policy.attachment(environment_id.as_str()) else {
+                    return failed_result(
+                        self.blobs.as_ref(),
+                        call.call_id.clone(),
+                        unattached_message(&environment_id, policy),
+                    )
+                    .await;
+                };
+                let environment = match resolver.read(&environment_id).await {
                     Ok(environment) => environment,
                     Err(error) => {
                         return failed_result(
@@ -925,12 +941,8 @@ impl SessionTools {
                         .await;
                     }
                 };
-                let groups = self
-                    .environment_groups(std::slice::from_ref(&environment))
-                    .await;
-                let mut output =
-                    environment_model_view(&environment, active, group_of(&environment, &groups));
-                if crate::environment_resolver::wake_on_use_applies(&environment) {
+                let mut output = environment_model_view(attachment, Some(&environment), active);
+                if crate::environments::resolver::wake_on_use_applies(&environment) {
                     output["status_message"] = serde_json::json!(format!(
                         "Environment is {}. Tools that use this environment will automatically wake it and wait until it is ready. You can proceed normally.",
                         format!("{:?}", environment.status).to_lowercase(),
@@ -956,7 +968,15 @@ impl SessionTools {
                         .await;
                     }
                 };
-                let environment = match resolver.selectable(&environment_id, &allowed).await {
+                let Some(attachment) = policy.attachment(environment_id.as_str()) else {
+                    return failed_result(
+                        self.blobs.as_ref(),
+                        call.call_id.clone(),
+                        unattached_message(&environment_id, policy),
+                    )
+                    .await;
+                };
+                let environment = match resolver.selectable(&environment_id).await {
                     Ok(environment) => environment,
                     Err(error) => {
                         return failed_result(
@@ -973,13 +993,20 @@ impl SessionTools {
                     "active": true,
                     "ready": ready,
                     "status": format!("{:?}", environment.status).to_lowercase(),
+                    "access": attachment.access.describe(),
+                    "working_directory": attachment.working_directory,
                 });
                 let summary = if ready {
-                    format!("Active environment set to {}.", environment.environment_id)
+                    format!(
+                        "Active environment set to {} (access: {}).",
+                        environment.environment_id,
+                        attachment.access.describe()
+                    )
                 } else {
                     format!(
-                        "Active environment set to {} (currently {}; availability is checked when an environment tool uses it).",
+                        "Active environment set to {} (access: {}; currently {}; availability is checked when an environment tool uses it).",
                         environment.environment_id,
+                        attachment.access.describe(),
                         format!("{:?}", environment.status).to_lowercase()
                     )
                 };
@@ -1017,13 +1044,19 @@ impl SessionTools {
         let Some(environment_id) = request.active_environment_id.as_ref() else {
             return Ok(environments);
         };
-        let allowed = supplied_environment_policy(request)?;
+        let policy = supplied_environment_policy(request)?;
+        let Some(attachment) = policy.attachment(environment_id.as_str()) else {
+            return Ok(
+                environments.with_active_blocker(ActiveEnvironmentBlocker::Unavailable {
+                    message: format!(
+                        "active environment {environment_id} is not attached to this session"
+                    ),
+                }),
+            );
+        };
+        let working_directory = attachment.working_directory.as_deref();
         if let Some(environment) = environments.environment(environment_id.as_str()).cloned() {
-            if let Some(cwd) = request
-                .environment_policy
-                .as_ref()
-                .and_then(|policy| policy.working_directory.as_deref())
-            {
+            if let Some(cwd) = working_directory {
                 let environment = environment
                     .with_working_directory(FsPath::new(cwd).map_err(io_error)?)
                     .await
@@ -1036,17 +1069,16 @@ impl SessionTools {
             match resolver
                 .resolve_for_connection(
                     environment_id,
-                    &allowed,
                     i64::try_from(now_unix_ms()?)
                         .map_err(|_| io_error("current timestamp does not fit in i64"))?,
                 )
                 .await
             {
                 Ok(resource) => resource,
-                Err(crate::environment_resolver::EnvironmentResolveError::Store(
+                Err(crate::environments::resolver::EnvironmentResolveError::Store(
                     environments::EnvironmentRegistryError::Store { message },
                 )) => return Err(io_error(message)),
-                Err(crate::environment_resolver::EnvironmentResolveError::NotReady {
+                Err(crate::environments::resolver::EnvironmentResolveError::NotReady {
                     environment_id,
                     status,
                 }) => {
@@ -1070,27 +1102,16 @@ impl SessionTools {
                 .environment_store
                 .as_ref()
                 .ok_or_else(|| io_error("environment store is not configured on this runtime"))?;
-            let resource = match store.read_environment(environment_id).await {
+            match store.read_environment(environment_id).await {
                 Ok(resource) => resource,
                 Err(environments::EnvironmentRegistryError::Store { message }) => {
                     return Err(io_error(message));
                 }
                 Err(_) => return Ok(environments),
-            };
-            if !allowed.allows(&resource) {
-                return Ok(environments);
             }
-            resource
         };
         let environment = match self
-            .runtime_environment_for_resource(
-                &request.session_id,
-                resource,
-                request
-                    .environment_policy
-                    .as_ref()
-                    .and_then(|policy| policy.working_directory.as_deref()),
-            )
+            .runtime_environment_for_resource(&request.session_id, resource, working_directory)
             .await
         {
             Ok(environment) => environment,
@@ -1104,31 +1125,6 @@ impl SessionTools {
         };
         environments.insert_environment(environment);
         Ok(environments)
-    }
-
-    /// Registration-key display names for the registered environments in a
-    /// listing, keyed by key id. A key that fails to load simply yields no
-    /// group; the listing itself is never blocked by it.
-    async fn environment_groups(
-        &self,
-        environments: &[EnvironmentRecord],
-    ) -> BTreeMap<String, String> {
-        let mut groups = BTreeMap::new();
-        let Some(registration_keys) = self.registration_keys.as_ref() else {
-            return groups;
-        };
-        for key_id in environments
-            .iter()
-            .filter_map(|environment| environment.registration_key_id())
-        {
-            if groups.contains_key(key_id.as_str()) {
-                continue;
-            }
-            if let Ok(key) = registration_keys.read_registration_key(key_id).await {
-                groups.insert(key_id.to_string(), key.display_name);
-            }
-        }
-        groups
     }
 
     async fn runtime_environment_for_resource(
@@ -1173,7 +1169,7 @@ impl SessionTools {
             .await
             .map_err(map_environment_client_error)?;
         let cwd = if response.capabilities.filesystem_read {
-            match crate::environment_sources::working_directory(
+            match crate::environments::sources::working_directory(
                 &mut client,
                 working_directory,
                 response.default_cwd.as_deref(),
@@ -1217,7 +1213,7 @@ impl SessionTools {
 
     async fn runtime_for_domains(
         &self,
-        links: Vec<ResolvedWorkspaceLink>,
+        links: Vec<ResolvedWorkspaceAttachment>,
         environments: &SessionEnvironmentManager,
         active_environment_id: Option<&EnvironmentId>,
         vfs_working_directory: Option<&str>,
@@ -1259,32 +1255,45 @@ struct EnvironmentJobRead {
     entries: Vec<ModelJobResult>,
 }
 
+/// One attached environment as the model sees it: the attachment's grant
+/// joined with the registry record, which may be missing.
 fn environment_model_view(
-    environment: &EnvironmentRecord,
+    attachment: &engine::EnvironmentAttachment,
+    environment: Option<&EnvironmentRecord>,
     active: Option<&EnvironmentId>,
-    group: Option<&str>,
 ) -> serde_json::Value {
     serde_json::json!({
-        "environment_id": environment.environment_id.as_str(),
-        "provider_id": environment.provider_id().map(|id| id.as_str()),
-        "group": group,
-        "display_name": environment.display_name,
-        "status": format!("{:?}", environment.status).to_lowercase(),
-        "active": active == Some(&environment.environment_id),
-        "observed_at_ms": environment.observed_at_ms(),
+        "environment_id": attachment.environment_id,
+        "provider_id": environment.and_then(|environment| environment.provider_id().map(|id| id.as_str())),
+        "display_name": environment.and_then(|environment| environment.display_name.clone()),
+        "status": environment.map(|environment| format!("{:?}", environment.status).to_lowercase()),
+        "access": attachment.access.describe(),
+        "default": attachment.default,
+        "working_directory": attachment.working_directory,
+        "active": active.is_some_and(|active| active.as_str() == attachment.environment_id),
+        "observed_at_ms": environment.map(|environment| environment.observed_at_ms()),
     })
 }
 
-/// The group name of a registered environment: its registration key's
-/// display name, when the key resolved.
-fn group_of<'a>(
-    environment: &EnvironmentRecord,
-    groups: &'a BTreeMap<String, String>,
-) -> Option<&'a str> {
-    environment
-        .registration_key_id()
-        .and_then(|id| groups.get(id.as_str()))
-        .map(String::as_str)
+fn unattached_message(
+    environment_id: &EnvironmentId,
+    policy: &engine::EnvironmentsFeature,
+) -> String {
+    let attached = policy
+        .environments
+        .iter()
+        .map(|attachment| attachment.environment_id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if attached.is_empty() {
+        format!(
+            "environment {environment_id} is not attached to this session (no environments are attached)"
+        )
+    } else {
+        format!(
+            "environment {environment_id} is not attached to this session (attached: {attached})"
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1306,56 +1315,54 @@ fn environment_read_target(
     }
 }
 
-/// Reject ungranted operations before connecting to or waking a machine.
+/// Reject operations the active attachment does not grant before
+/// connecting to or waking a machine. Tools are installed for the union of
+/// attachment grants, so this is where the active machine's own access
+/// applies. Without an active environment the environment-required path
+/// reports that instead.
 fn environment_tool_denial(
-    policy: Option<&engine::EnvironmentPolicyRuntime>,
+    policy: Option<&engine::EnvironmentsFeature>,
+    active: Option<&EnvironmentId>,
     call: &engine::ToolInvocationRequest,
-) -> Option<&'static str> {
+) -> Option<String> {
     let id = call.tool_id.as_ref()?.as_str();
-    let surface = policy.and_then(|policy| policy.tools);
-    match id {
-        "env.read_file" | "env.grep" | "env.glob" | "env.list_dir" | "vfs.capture"
-            if surface.is_none() =>
-        {
-            Some("environment filesystem read tools are not granted")
+    let required = match id {
+        "env.read_file" | "env.grep" | "env.glob" | "env.list_dir" | "vfs.capture" => {
+            engine::EnvironmentAccess::Read
         }
-        "env.write_file" | "env.edit_file" | "env.apply_patch" | "vfs.materialize"
-            if surface != Some(engine::EnvironmentToolSurface::Edit) =>
-        {
-            Some("environment filesystem editing is not granted")
+        "env.write_file" | "env.edit_file" | "env.apply_patch" | "vfs.materialize" => {
+            engine::EnvironmentAccess::Edit
         }
-        "env.run_process" | "env.continue_process"
-            if !policy.is_some_and(|policy| policy.commands) =>
-        {
-            Some("environment command execution is not granted")
-        }
-        _ => None,
+        "env.run_process" | "env.continue_process" => engine::EnvironmentAccess::Exec,
+        _ => return None,
+    };
+    let active = active?;
+    match policy.and_then(|policy| policy.attachment(active.as_str())) {
+        None => Some(format!(
+            "active environment {active} is not attached to this session"
+        )),
+        Some(attachment) if attachment.access >= required => None,
+        Some(attachment) => Some(format!(
+            "{} requires {} access on the active environment {active}, which grants {}",
+            call.tool_name,
+            match required {
+                engine::EnvironmentAccess::Read => "read",
+                engine::EnvironmentAccess::Edit => "edit",
+                engine::EnvironmentAccess::Exec => "exec",
+                engine::EnvironmentAccess::Jobs => "jobs",
+            },
+            attachment.access.describe()
+        )),
     }
 }
 
 fn supplied_environment_policy(
     request: &ToolInvocationBatchRequest,
-) -> Result<EnvironmentAccessPolicy, CoreAgentIoError> {
-    let policy = request
+) -> Result<&engine::EnvironmentsFeature, CoreAgentIoError> {
+    request
         .environment_policy
         .as_ref()
-        .ok_or_else(|| io_error("environment runtime policy is missing"))?;
-    if policy.version != engine::EnvironmentPolicyRuntime::VERSION {
-        return Err(io_error(format!(
-            "unsupported environment runtime policy version {}",
-            policy.version
-        )));
-    }
-    Ok(access_policy_from_runtime(policy))
-}
-
-fn access_policy_from_runtime(
-    policy: &engine::EnvironmentPolicyRuntime,
-) -> EnvironmentAccessPolicy {
-    EnvironmentAccessPolicy::new(
-        policy.allowed_provider_ids.clone(),
-        policy.allowed_registration_key_ids.clone(),
-    )
+        .ok_or_else(|| io_error("environment grant is missing from the batch request"))
 }
 
 async fn job_read_entry_from_response(
@@ -1496,9 +1503,11 @@ impl CoreAgentTools for SessionTools {
             // setup entirely.
             let mut results = Vec::with_capacity(request.calls.len());
             for call in &request.calls {
-                if let Some(message) =
-                    environment_tool_denial(request.environment_policy.as_ref(), call)
-                {
+                if let Some(message) = environment_tool_denial(
+                    request.environment_policy.as_ref(),
+                    request.active_environment_id.as_ref(),
+                    call,
+                ) {
                     results.push(
                         failed_result(self.blobs.as_ref(), call.call_id.clone(), message).await?,
                     );
@@ -1534,7 +1543,13 @@ impl CoreAgentTools for SessionTools {
         }
 
         let has_vfs_call = request.calls.iter().any(|call| {
-            if environment_tool_denial(request.environment_policy.as_ref(), call).is_some() {
+            if environment_tool_denial(
+                request.environment_policy.as_ref(),
+                request.active_environment_id.as_ref(),
+                call,
+            )
+            .is_some()
+            {
                 return false;
             }
             call.tool_id
@@ -1542,7 +1557,13 @@ impl CoreAgentTools for SessionTools {
                 .is_some_and(|id| BuiltinToolRequirements::for_id(id).vfs)
         });
         let has_environment_call = request.calls.iter().any(|call| {
-            if environment_tool_denial(request.environment_policy.as_ref(), call).is_some() {
+            if environment_tool_denial(
+                request.environment_policy.as_ref(),
+                request.active_environment_id.as_ref(),
+                call,
+            )
+            .is_some()
+            {
                 return false;
             }
             call.tool_id
@@ -1554,10 +1575,10 @@ impl CoreAgentTools for SessionTools {
                     .is_some_and(|id| id.as_str() == "env.job_read")
         });
         let links = if has_vfs_call {
-            vfs::resolve_workspace_links(
+            vfs::resolve_workspace_attachments(
                 self.blobs.clone(),
                 self.workspace_store.clone(),
-                &request.workspace_links,
+                &request.workspace_attachments,
             )
             .await
             .map_err(map_catalog_error)?
@@ -1581,9 +1602,11 @@ impl CoreAgentTools for SessionTools {
 
             let mut results = Vec::with_capacity(request.calls.len());
             for call in &request.calls {
-                if let Some(message) =
-                    environment_tool_denial(request.environment_policy.as_ref(), call)
-                {
+                if let Some(message) = environment_tool_denial(
+                    request.environment_policy.as_ref(),
+                    request.active_environment_id.as_ref(),
+                    call,
+                ) {
                     results.push(
                         failed_result(self.blobs.as_ref(), call.call_id.clone(), message).await?,
                     );
@@ -1699,7 +1722,11 @@ impl SessionTools {
         request: engine::ToolInvocationCallRequest,
     ) -> Result<ToolCallExecution, CoreAgentIoError> {
         let call = request.call.clone();
-        if let Some(message) = environment_tool_denial(request.environment_policy.as_ref(), &call) {
+        if let Some(message) = environment_tool_denial(
+            request.environment_policy.as_ref(),
+            request.active_environment_id.as_ref(),
+            &call,
+        ) {
             return failed_result(self.blobs.as_ref(), call.call_id, message)
                 .await
                 .map(ToolCallExecution::Completed);
@@ -1793,10 +1820,10 @@ impl SessionTools {
             return outcome;
         }
         let links = if is_vfs_call {
-            vfs::resolve_workspace_links(
+            vfs::resolve_workspace_attachments(
                 self.blobs.clone(),
                 self.workspace_store.clone(),
-                &batch_request.workspace_links,
+                &batch_request.workspace_attachments,
             )
             .await
             .map_err(map_catalog_error)?
@@ -1847,25 +1874,20 @@ impl SessionTools {
                 };
             }
         };
-        let allowed = request
-            .environment_policy
-            .as_ref()
-            .map(access_policy_from_runtime)
-            .unwrap_or_default();
         let mut last_status;
         loop {
             heartbeat();
             let now = i64::try_from(now_unix_ms().unwrap_or_default()).unwrap_or(i64::MAX);
-            match resolver.ready_for_use(&environment_id, &allowed, now).await {
+            match resolver.ready_for_use(&environment_id, now).await {
                 Ok(_) => return Outcome::Ready,
-                Err(crate::environment_resolver::EnvironmentResolveError::NotReady {
+                Err(crate::environments::resolver::EnvironmentResolveError::NotReady {
                     status,
                     ..
                 }) => {
                     last_status = format!("{status:?}").to_lowercase();
                 }
                 Err(
-                    crate::environment_resolver::EnvironmentResolveError::EnvironmentUnavailable {
+                    crate::environments::resolver::EnvironmentResolveError::EnvironmentUnavailable {
                         status,
                         ..
                     },
@@ -1875,7 +1897,7 @@ impl SessionTools {
                     // be coming up.
                     last_status = status;
                 }
-                Err(crate::environment_resolver::EnvironmentResolveError::Store(
+                Err(crate::environments::resolver::EnvironmentResolveError::Store(
                     environments::EnvironmentRegistryError::Store { message },
                 )) => {
                     // Transient store trouble: keep polling.
@@ -2056,12 +2078,12 @@ mod tests {
     use tools::concurrency::AWAIT_TOOL_NAME;
     use tools::environment::control::ENVIRONMENT_LIST_TOOL_NAME;
 
-    use crate::environment::RuntimeEnvironment;
+    use crate::environments::runtime::RuntimeEnvironment;
     use engine::{
         BlobRef, ContextEntryKind, FunctionToolSpec, RunId, SessionId, ToolBatchId, ToolCallId,
         ToolKind, ToolName, ToolParallelism, ToolSpec, TurnId, WorkflowEndpointRef,
-        WorkflowToolDefinition, WorkflowToolId, WorkspaceLink, WorkspaceLinkAccess,
-        WorkspaceLinkTarget,
+        WorkflowToolDefinition, WorkflowToolId, WorkspaceAccess, WorkspaceAttachment,
+        WorkspaceAttachmentTarget,
         storage::{
             AppendSessionEvents, CreateSession, InMemoryBlobStore, InMemorySessionStore,
             SessionStore,
@@ -2136,87 +2158,93 @@ mod tests {
         }
     }
 
-    fn test_environment_policy(
-        providers: Option<Vec<String>>,
-        keys: Option<Vec<String>>,
-    ) -> engine::EnvironmentPolicyRuntime {
-        engine::EnvironmentPolicyRuntime {
-            tools: Some(engine::EnvironmentToolSurface::Edit),
-            commands: true,
-            ..engine::EnvironmentPolicyRuntime::new(providers, keys)
+    /// An environments grant attaching `attached` with jobs access and
+    /// selection tools: the widest grant, so tests exercise policy through
+    /// the active attachment rather than the tool surface.
+    fn test_environment_policy(attached: &[&str]) -> engine::EnvironmentsFeature {
+        test_environment_policy_with_access(attached, engine::EnvironmentAccess::Jobs)
+    }
+
+    fn test_environment_policy_with_access(
+        attached: &[&str],
+        access: engine::EnvironmentAccess,
+    ) -> engine::EnvironmentsFeature {
+        engine::EnvironmentsFeature {
+            selection: true,
+            environments: attached
+                .iter()
+                .map(|id| engine::EnvironmentAttachment {
+                    environment_id: (*id).to_owned(),
+                    default: false,
+                    access,
+                    working_directory: None,
+                })
+                .collect(),
+            ..engine::EnvironmentsFeature::default()
         }
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn ungranted_environment_operations_fail_before_resolving_domains() {
-        for tools_grant in [
-            None,
-            Some(engine::EnvironmentToolSurface::ReadOnly),
-            Some(engine::EnvironmentToolSurface::Edit),
+        use engine::EnvironmentAccess;
+        let active = EnvironmentId::new("environment-active");
+        for access in [
+            EnvironmentAccess::Read,
+            EnvironmentAccess::Edit,
+            EnvironmentAccess::Exec,
+            EnvironmentAccess::Jobs,
         ] {
-            for commands in [false, true] {
-                let policy = engine::EnvironmentPolicyRuntime {
-                    tools: tools_grant,
-                    commands,
-                    ..engine::EnvironmentPolicyRuntime::new(None, None)
-                };
-                for (id, allowed) in [
-                    ("env.read_file", tools_grant.is_some()),
-                    ("env.grep", tools_grant.is_some()),
-                    ("env.glob", tools_grant.is_some()),
-                    ("env.list_dir", tools_grant.is_some()),
-                    (
-                        "env.write_file",
-                        tools_grant == Some(engine::EnvironmentToolSurface::Edit),
-                    ),
-                    (
-                        "env.edit_file",
-                        tools_grant == Some(engine::EnvironmentToolSurface::Edit),
-                    ),
-                    (
-                        "env.apply_patch",
-                        tools_grant == Some(engine::EnvironmentToolSurface::Edit),
-                    ),
-                    (
-                        "vfs.materialize",
-                        tools_grant == Some(engine::EnvironmentToolSurface::Edit),
-                    ),
-                    ("vfs.capture", tools_grant.is_some()),
-                    ("env.run_process", commands),
-                    ("env.continue_process", commands),
-                ] {
-                    let blobs = Arc::new(InMemoryBlobStore::new());
-                    let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
-                    let mut request = per_call_request("read_file", b"{}", &[]);
-                    request.call.tool_id = Some(ToolName::new(id));
-                    request.environment_policy = Some(policy.clone());
-                    assert_eq!(
-                        environment_tool_denial(Some(&policy), &request.call).is_none(),
-                        allowed,
-                        "{id}"
+            // Tools are installed for the union of grants; the active
+            // attachment's own access decides at execution.
+            let policy = test_environment_policy_with_access(&["environment-active"], access);
+            for (id, allowed) in [
+                ("env.read_file", true),
+                ("env.grep", true),
+                ("env.glob", true),
+                ("env.list_dir", true),
+                ("env.write_file", access.allows_edit()),
+                ("env.edit_file", access.allows_edit()),
+                ("env.apply_patch", access.allows_edit()),
+                ("vfs.materialize", access.allows_edit()),
+                ("vfs.capture", true),
+                ("env.run_process", access.allows_exec()),
+                ("env.continue_process", access.allows_exec()),
+            ] {
+                let blobs = Arc::new(InMemoryBlobStore::new());
+                let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
+                let mut request = per_call_request("read_file", b"{}", &[]);
+                request.call.tool_id = Some(ToolName::new(id));
+                request.active_environment_id = Some(active.clone());
+                request.environment_policy = Some(policy.clone());
+                let denial = environment_tool_denial(Some(&policy), Some(&active), &request.call);
+                assert_eq!(denial.is_none(), allowed, "{id} under {access:?}");
+                if let Some(message) = &denial {
+                    assert!(
+                        message.contains("environment-active") && message.contains("grants"),
+                        "{message}"
                     );
-                    if allowed {
-                        continue;
-                    }
-                    // No active environment, workspace links, or argument blob: refusal
-                    // must happen before resolving any of these effectful resources.
-                    let call = tools.invoke_call(request.clone()).await.unwrap();
-                    let batch = tools
-                        .invoke_batch(request.into_batch_request())
-                        .await
-                        .unwrap()
-                        .completed_result()
-                        .unwrap();
-                    for result in [call, batch.results[0].clone()] {
-                        assert_eq!(result.status, ToolCallStatus::Failed);
-                        assert!(
-                            blobs
-                                .read_text(result.error_ref.as_ref().unwrap())
-                                .await
-                                .unwrap()
-                                .contains("not granted")
-                        );
-                    }
+                }
+                if allowed {
+                    continue;
+                }
+                // No resolver, workspace attachments, or argument blob: refusal
+                // must happen before resolving any of these effectful resources.
+                let call = tools.invoke_call(request.clone()).await.unwrap();
+                let batch = tools
+                    .invoke_batch(request.into_batch_request())
+                    .await
+                    .unwrap()
+                    .completed_result()
+                    .unwrap();
+                for result in [call, batch.results[0].clone()] {
+                    assert_eq!(result.status, ToolCallStatus::Failed);
+                    assert!(
+                        blobs
+                            .read_text(result.error_ref.as_ref().unwrap())
+                            .await
+                            .unwrap()
+                            .contains("grants")
+                    );
                 }
             }
         }
@@ -2228,7 +2256,7 @@ mod tests {
         let mut request =
             per_call_request("vfs_read_file", br#"{"path":"/workspace/README.md"}"#, &[]);
         request.session_id = session_id;
-        request.workspace_links = links;
+        request.workspace_attachments = links;
         request.call.arguments_ref = blobs
             .put_bytes(br#"{"path":"/workspace/README.md"}"#.to_vec())
             .await
@@ -2237,6 +2265,11 @@ mod tests {
         denied.call_id = ToolCallId::new("denied");
         denied.tool_id = Some(ToolName::new("env.write_file"));
         let mut batch = request.into_batch_request();
+        batch.active_environment_id = Some(EnvironmentId::new("environment-active"));
+        batch.environment_policy = Some(test_environment_policy_with_access(
+            &["environment-active"],
+            engine::EnvironmentAccess::Read,
+        ));
         batch.calls.push(denied);
         let results = tools
             .invoke_batch(batch)
@@ -2252,7 +2285,7 @@ mod tests {
                 .read_text(results[1].error_ref.as_ref().unwrap())
                 .await
                 .unwrap()
-                .contains("not granted")
+                .contains("requires edit access")
         );
     }
 
@@ -2268,7 +2301,7 @@ mod tests {
             turn_id: TurnId::new(1),
             batch_id: ToolBatchId::new(1),
             promise_id_base: 1,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
@@ -2615,7 +2648,7 @@ mod tests {
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             calls,
         };
         let retry_request = request.clone();
@@ -2781,19 +2814,13 @@ mod tests {
             batch_id: ToolBatchId::new(1),
             promise_id_base: 1,
             active_environment_id: Some(EnvironmentId::new("environment-original")),
-            environment_policy: Some(engine::EnvironmentPolicyRuntime::new(
-                Some(vec!["provider-b".to_owned(), "provider-a".to_owned()]),
-                None,
-            )),
+            environment_policy: Some(test_environment_policy(&["environment-original"])),
             subagents_policy: None,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             calls: vec![call.clone()],
         };
-        request
-            .environment_policy
-            .as_mut()
-            .unwrap()
-            .working_directory = Some("/project".into());
+        request.environment_policy.as_mut().unwrap().environments[0].working_directory =
+            Some("/project".into());
         let tools = SessionTools::new(blobs.clone(), catalog);
 
         let first = tools
@@ -2825,10 +2852,6 @@ mod tests {
         .expect("decode execution context");
         assert_eq!(context.environment_id, "environment-original");
         assert_eq!(context.working_directory.as_deref(), Some("/project"));
-        assert_eq!(
-            context.allowed_provider_ids,
-            Some(vec!["provider-a".to_owned(), "provider-b".to_owned()])
-        );
         let retried = tools
             .invoke_batch(request)
             .await
@@ -2846,10 +2869,10 @@ mod tests {
                 batch_id: ToolBatchId::new(1),
                 promise_id_base: 1,
                 active_environment_id: None,
-                environment_policy: Some(engine::EnvironmentPolicyRuntime::new(None, None)),
+                environment_policy: Some(test_environment_policy(&[])),
                 subagents_policy: None,
-                workspace_links: Vec::new(),
-                calls: vec![call],
+                workspace_attachments: Vec::new(),
+                calls: vec![call.clone()],
             })
             .await
             .expect("invoke job_submit without active environment")
@@ -2942,7 +2965,7 @@ mod tests {
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: policy,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             calls: vec![engine::ToolInvocationRequest {
                 builtin: Some(test_builtin_runtime()),
                 call_id: ToolCallId::new("call-agent-run"),
@@ -3087,7 +3110,8 @@ mod tests {
                 "session-parent".to_owned(),
                 7,
                 "reviewer".to_owned(),
-                limits
+                limits,
+                None
             )
         );
         assert_eq!(context.version, SubagentExecutionContextV1::VERSION);
@@ -3246,7 +3270,7 @@ mod tests {
         Arc<InMemoryBlobStore>,
         SessionTools,
         SessionId,
-        Vec<WorkspaceLink>,
+        Vec<WorkspaceAttachment>,
     ) {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let catalog = Arc::new(TestCatalog::default());
@@ -3272,15 +3296,15 @@ mod tests {
             })
             .await
             .expect("workspace");
-        let workspace_links = vec![WorkspaceLink {
+        let workspace_attachments = vec![WorkspaceAttachment {
             path: "/workspace".to_owned(),
-            target: WorkspaceLinkTarget::Workspace {
+            target: WorkspaceAttachmentTarget::Workspace {
                 workspace_id: workspace_id.to_string(),
             },
-            access: WorkspaceLinkAccess::ReadWrite,
+            access: WorkspaceAccess::Edit,
         }];
         let tools = SessionTools::new(blobs.clone(), catalog);
-        (blobs, tools, session_id, workspace_links)
+        (blobs, tools, session_id, workspace_attachments)
     }
 
     fn test_environment(
@@ -3397,7 +3421,7 @@ mod tests {
                     ProviderApiKind::AnthropicMessages,
                     ProviderApiKind::OpenAiCompletions,
                 ] {
-                    let (blobs, tools, session_id, workspace_links) =
+                    let (blobs, tools, session_id, workspace_attachments) =
                         session_tools_with_readme_link().await;
                     let root = tempfile::tempdir().unwrap();
                     let fs = environment_daemon::filesystem::LocalFileSystem::new(
@@ -3424,9 +3448,9 @@ mod tests {
                     .unwrap();
                     let mut request = per_call_request("vfs_materialize", &args, &[]);
                     request.session_id = session_id;
-                    request.workspace_links = workspace_links.clone();
+                    request.workspace_attachments = workspace_attachments.clone();
                     request.active_environment_id = Some(EnvironmentId::new("test"));
-                    request.environment_policy = Some(test_environment_policy(None, None));
+                    request.environment_policy = Some(test_environment_policy(&["test"]));
                     request.call.arguments_ref = blobs.put_bytes(args).await.unwrap();
                     let builtin = request.call.builtin.as_mut().unwrap();
                     builtin.model.api_kind = api_kind;
@@ -3513,17 +3537,17 @@ mod tests {
                     // Link permissions are enforced even if a call has an admitted
                     // editing-tool identity.
                     capture.call.call_id = ToolCallId::new("capture-readonly");
-                    capture.workspace_links[0].access = WorkspaceLinkAccess::ReadOnly;
+                    capture.workspace_attachments[0].access = WorkspaceAccess::Read;
                     assert_eq!(
                         dispatch(&tools, capture, batch).await.status,
                         ToolCallStatus::Failed
                     );
-                    request.workspace_links.clear();
+                    request.workspace_attachments.clear();
                     assert_eq!(
                         dispatch(&tools, request.clone(), batch).await.status,
                         ToolCallStatus::Failed
                     );
-                    request.workspace_links = workspace_links;
+                    request.workspace_attachments = workspace_attachments;
                     request.active_environment_id = None;
                     assert_eq!(
                         dispatch(&tools, request, batch).await.status,
@@ -3658,7 +3682,7 @@ mod tests {
                 .await
                 .expect("observe status and power support");
             let resolver =
-                crate::environment_resolver::EnvironmentResolver::new(registry.clone(), registry);
+                crate::environments::resolver::EnvironmentResolver::new(registry.clone(), registry);
             let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()))
                 .with_environment_resolver(resolver);
             blobs.put_bytes(b"{}".to_vec()).await.expect("arguments");
@@ -3666,10 +3690,10 @@ mod tests {
             for tool_name in ["environment_read", "environment_list"] {
                 let mut request = per_call_request(tool_name, b"{}", &[]);
                 request.active_environment_id = Some(environment_id.clone());
-                request.environment_policy = Some(test_environment_policy(
-                    Some(vec!["allowed".to_owned()]),
-                    None,
-                ));
+                request.environment_policy = Some(test_environment_policy(&[
+                    "environment-allowed-1",
+                    "environment-allowed-2",
+                ]));
                 let result = tools.invoke_call(request).await.expect("invoke tool");
                 assert_eq!(result.status, ToolCallStatus::Succeeded);
                 let output: serde_json::Value = serde_json::from_str(
@@ -3706,7 +3730,7 @@ mod tests {
         let registry = Arc::new(InMemoryEnvironmentRegistryStore::new());
         register_test_environment_provider(registry.as_ref(), "allowed").await;
         observe_test_environment(registry.as_ref(), "environment-allowed-1", "allowed", 10).await;
-        let resolver = crate::environment_resolver::EnvironmentResolver::new(
+        let resolver = crate::environments::resolver::EnvironmentResolver::new(
             registry.clone(),
             registry.clone(),
         );
@@ -3722,12 +3746,12 @@ mod tests {
             turn_id: TurnId::new(1),
             batch_id: ToolBatchId::new(1),
             promise_id_base: 1,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             active_environment_id: Some(EnvironmentId::new("environment-allowed-1")),
-            environment_policy: Some(test_environment_policy(
-                Some(vec!["allowed".to_owned()]),
-                None,
-            )),
+            environment_policy: Some(test_environment_policy(&[
+                "environment-allowed-1",
+                "environment-allowed-2",
+            ])),
             subagents_policy: None,
             call: engine::ToolInvocationRequest {
                 builtin: Some(test_builtin_runtime()),
@@ -3781,7 +3805,7 @@ mod tests {
             })
             .await
             .expect("create environment");
-        let resolver = crate::environment_resolver::EnvironmentResolver::new(
+        let resolver = crate::environments::resolver::EnvironmentResolver::new(
             registry.clone(),
             registry.clone(),
         );
@@ -3797,9 +3821,9 @@ mod tests {
             turn_id: TurnId::new(1),
             batch_id: ToolBatchId::new(1),
             promise_id_base: 1,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             active_environment_id: Some(EnvironmentId::new("environment-pending")),
-            environment_policy: Some(test_environment_policy(None, None)),
+            environment_policy: Some(test_environment_policy(&["environment-pending"])),
             subagents_policy: None,
             call: engine::ToolInvocationRequest {
                 builtin: Some(test_builtin_runtime()),
@@ -3887,7 +3911,7 @@ mod tests {
             })
             .await
             .expect("fail environment");
-        let resolver = crate::environment_resolver::EnvironmentResolver::new(
+        let resolver = crate::environments::resolver::EnvironmentResolver::new(
             registry.clone(),
             registry.clone(),
         );
@@ -3926,7 +3950,7 @@ mod tests {
             turn_id: TurnId::new(1),
             batch_id: ToolBatchId::new(1),
             promise_id_base: 1,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
@@ -3955,7 +3979,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn environment_list_uses_supplied_policy_and_live_resolver_state_without_session_store() {
+    async fn environment_list_shows_attachments_with_live_registry_state() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let catalog = Arc::new(TestCatalog::default());
         let registry = Arc::new(InMemoryEnvironmentRegistryStore::new());
@@ -3963,7 +3987,7 @@ mod tests {
         register_test_environment_provider(registry.as_ref(), "denied").await;
         observe_test_environment(registry.as_ref(), "environment-allowed-1", "allowed", 10).await;
         observe_test_environment(registry.as_ref(), "environment-denied", "denied", 10).await;
-        let resolver = crate::environment_resolver::EnvironmentResolver::new(
+        let resolver = crate::environments::resolver::EnvironmentResolver::new(
             registry.clone(),
             registry.clone(),
         );
@@ -3980,12 +4004,12 @@ mod tests {
             batch_id: ToolBatchId::new(1),
             promise_id_base: 1,
             active_environment_id: Some(EnvironmentId::new("environment-allowed-1")),
-            environment_policy: Some(test_environment_policy(
-                Some(vec!["allowed".to_owned()]),
-                None,
-            )),
+            environment_policy: Some(test_environment_policy(&[
+                "environment-allowed-1",
+                "environment-allowed-2",
+            ])),
             subagents_policy: None,
-            workspace_links: Vec::new(),
+            workspace_attachments: Vec::new(),
             calls: vec![engine::ToolInvocationRequest {
                 builtin: Some(test_builtin_runtime()),
                 call_id: ToolCallId::new("call-environment-list"),
@@ -4014,12 +4038,26 @@ mod tests {
         let first_environments = first_output["environments"]
             .as_array()
             .expect("first environments");
-        assert_eq!(first_environments.len(), 1);
+        // Every attachment is listed, never an unattached registry record;
+        // a missing record shows as unknown status rather than vanishing.
+        assert_eq!(first_environments.len(), 2);
         assert_eq!(
             first_environments[0]["environment_id"],
             "environment-allowed-1"
         );
         assert_eq!(first_environments[0]["active"], true);
+        assert_eq!(first_environments[0]["access"], "read, edit, exec, jobs");
+        assert_eq!(first_environments[0]["status"], "offline");
+        assert_eq!(
+            first_environments[1]["environment_id"],
+            "environment-allowed-2"
+        );
+        assert_eq!(first_environments[1]["status"], serde_json::Value::Null);
+        assert!(
+            !first_environments
+                .iter()
+                .any(|environment| environment["environment_id"] == "environment-denied")
+        );
 
         observe_test_environment(registry.as_ref(), "environment-allowed-2", "allowed", 20).await;
         let second = tools
@@ -4040,13 +4078,11 @@ mod tests {
                 .expect("read second output"),
         )
         .expect("decode second output");
-        assert_eq!(
-            second_output["environments"]
-                .as_array()
-                .expect("second environments")
-                .len(),
-            2
-        );
+        let second_environments = second_output["environments"]
+            .as_array()
+            .expect("second environments");
+        assert_eq!(second_environments.len(), 2);
+        assert_eq!(second_environments[1]["status"], "offline");
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -4055,7 +4091,7 @@ mod tests {
             let (blobs, tools, session_id, links) = session_tools_with_readme_link().await;
             let mut request = per_call_request("vfs_read_file", br#"{"path":"README.md"}"#, &[]);
             request.session_id = session_id;
-            request.workspace_links = links;
+            request.workspace_attachments = links;
             request.vfs_working_directory = cwd.map(String::from);
             request.call.arguments_ref = blobs
                 .put_bytes(br#"{"path":"README.md"}"#.to_vec())
@@ -4076,8 +4112,9 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn session_tools_read_vfs_workspace_link() {
-        let (blobs, tools, session_id, workspace_links) = session_tools_with_readme_link().await;
+    async fn session_tools_read_vfs_workspace_attachment() {
+        let (blobs, tools, session_id, workspace_attachments) =
+            session_tools_with_readme_link().await;
         let arguments_ref = blobs
             .put_bytes(br#"{"path":"README.md","offset":1,"limit":10}"#.to_vec())
             .await
@@ -4094,7 +4131,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
-                workspace_links,
+                workspace_attachments,
                 calls: vec![engine::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),
                     call_id: ToolCallId::new("call_1"),
@@ -4121,7 +4158,8 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn session_tools_accept_claude_style_vfs_read_tool() {
-        let (blobs, tools, session_id, workspace_links) = session_tools_with_readme_link().await;
+        let (blobs, tools, session_id, workspace_attachments) =
+            session_tools_with_readme_link().await;
         let arguments_ref = blobs
             .put_bytes(br#"{"file_path":"README.md","offset":1,"limit":10}"#.to_vec())
             .await
@@ -4138,7 +4176,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
-                workspace_links,
+                workspace_attachments,
                 calls: vec![engine::ToolInvocationRequest {
                     builtin: Some(engine::BuiltinToolCallRuntime {
                         spec: engine::BuiltinToolSpec::default(),
@@ -4172,7 +4210,8 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn session_tools_route_vfs_file_tools_and_environment_process_tools_separately() {
-        let (blobs, tools, session_id, workspace_links) = session_tools_with_readme_link().await;
+        let (blobs, tools, session_id, workspace_attachments) =
+            session_tools_with_readme_link().await;
         let process = Arc::new(RecordingProcessExecutor::default());
         let tools = tools.with_environment(test_environment(blobs.clone(), process.clone()));
         let read_args = blobs
@@ -4193,9 +4232,9 @@ mod tests {
                 batch_id: ToolBatchId::new(1),
                 promise_id_base: 1,
                 active_environment_id: Some(EnvironmentId::new("test")),
-                environment_policy: Some(test_environment_policy(None, None)),
+                environment_policy: Some(test_environment_policy(&["test"])),
                 subagents_policy: None,
-                workspace_links,
+                workspace_attachments,
                 calls: vec![
                     engine::ToolInvocationRequest {
                         builtin: Some(test_builtin_runtime()),
@@ -4331,7 +4370,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
-                workspace_links: Vec::new(),
+                workspace_attachments: Vec::new(),
                 calls: vec![
                     engine::ToolInvocationRequest {
                         builtin: Some(test_builtin_runtime()),
@@ -4436,7 +4475,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
-                workspace_links: Vec::new(),
+                workspace_attachments: Vec::new(),
                 calls: vec![engine::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),
                     call_id: ToolCallId::new("call_wait"),
@@ -4487,7 +4526,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
-                workspace_links: Vec::new(),
+                workspace_attachments: Vec::new(),
                 calls: vec![engine::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),
                     call_id: ToolCallId::new("call_cancel"),
@@ -4543,7 +4582,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
-                workspace_links: Vec::new(),
+                workspace_attachments: Vec::new(),
                 calls: vec![engine::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),
                     call_id: ToolCallId::new("call_detach"),
@@ -4617,7 +4656,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
-                workspace_links: Vec::new(),
+                workspace_attachments: Vec::new(),
                 calls: vec![sleep_call("call_sleep_a"), sleep_call("call_sleep_b")],
             })
             .await
@@ -4685,7 +4724,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn session_tools_fail_vfs_tool_without_workspace_links() {
+    async fn session_tools_fail_vfs_tool_without_workspace_attachments() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let catalog = Arc::new(TestCatalog::default());
         let tools = SessionTools::new(blobs.clone(), catalog);
@@ -4702,7 +4741,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
-                workspace_links: Vec::new(),
+                workspace_attachments: Vec::new(),
                 calls: vec![engine::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),
                     call_id: ToolCallId::new("call_1"),
@@ -4724,7 +4763,7 @@ mod tests {
             .read_text(result.results[0].error_ref.as_ref().expect("error ref"))
             .await
             .expect("error");
-        assert!(error.contains("no_vfs_workspace_links"));
+        assert!(error.contains("no_vfs_workspace_attachments"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -4748,7 +4787,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
-                workspace_links: Vec::new(),
+                workspace_attachments: Vec::new(),
                 calls: vec![engine::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),
                     call_id: ToolCallId::new("call_1"),
@@ -4771,6 +4810,6 @@ mod tests {
             .await
             .expect("error");
         assert!(error.contains("non-public"));
-        assert!(!error.contains("no_vfs_workspace_links"));
+        assert!(!error.contains("no_vfs_workspace_attachments"));
     }
 }

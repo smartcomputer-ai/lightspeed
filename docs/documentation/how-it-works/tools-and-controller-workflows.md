@@ -259,7 +259,9 @@ promise, and closes the child. Cancellation and deadline paths also close it.
 
 The child receives its brief and its own profile. It does not automatically
 inherit the parent's transcript or every capability. Workspace sharing and
-environment inheritance require the relevant grants. Root-scoped limits
+environment inheritance require the relevant attachments; an `inherit`
+environment attachment is resolved against the parent's active machine
+captured at admission and stored on the child as a concrete id. Root-scoped limits
 constrain depth, total descendants, concurrent open descendants, and deadlines.
 These policies live around normal session execution; the engine does not
 need a delegation-specific transport.
@@ -281,7 +283,10 @@ The job still runs on a real machine. Durable orchestration does not make its
 operating-system process replayable, and a daemon restart has different
 consequences from a session worker restart. VFS tools also remain separate
 from environment file and process tools: one operates on CAS-backed workspace files,
-the other on the batch's selected machine. [Processes and jobs](../environments/processes-and-jobs.md)
+the other on the batch's selected machine. The installed environment tools
+are the union of the configuration's attachments; a call the active machine's
+own access does not cover is refused at execution rather than removed from
+the toolset, so switching machines never changes the advertised tools. [Processes and jobs](../environments/processes-and-jobs.md)
 describes those execution limits.
 
 The common structure is now visible. A session records an admitted operation,

@@ -292,6 +292,10 @@ struct McpLinkArgs {
     session: String,
     /// Registered MCP server id to link.
     server_id: String,
+    /// Comma-separated subset of the server's allowed tools to expose;
+    /// omitted exposes the record's full allowlist.
+    #[arg(long, value_delimiter = ',')]
+    tools: Vec<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -519,8 +523,8 @@ fn server_input_from_view(server: &api::McpServerView) -> api::McpServerInput {
         allowed_tools: server.allowed_tools.clone(),
         execution: server.execution,
         exposure: server.exposure,
-        approval_default: server.approval_default,
-        defer_loading_default: server.defer_loading_default,
+        approval: server.approval,
+        defer_loading: server.defer_loading,
         allow_private_network: server.allow_private_network,
         auth_policy: server.auth_policy.clone(),
         credential: server.credential.clone(),
@@ -610,8 +614,8 @@ async fn server_put(args: McpServerPutArgs) -> Result<()> {
                 allowed_tools: nonempty_vec(args.allowed_tools),
                 execution: args.execution.into(),
                 exposure: args.exposure.into(),
-                approval_default: args.approval.into(),
-                defer_loading_default: defer_loading_arg(args.defer_loading, args.no_defer_loading),
+                approval: args.approval.into(),
+                defer_loading: defer_loading_arg(args.defer_loading, args.no_defer_loading),
                 allow_private_network: args.allow_private_network,
                 auth_policy,
                 credential: args
@@ -711,6 +715,7 @@ async fn link(args: McpLinkArgs) -> Result<()> {
     mcp.servers.retain(|link| link.server_id != args.server_id);
     mcp.servers.push(api::McpServerLink {
         server_id: args.server_id.clone(),
+        tools: (!args.tools.is_empty()).then_some(args.tools.clone()),
     });
     features.mcp = Some(mcp);
     config.features = Some(features);
@@ -844,10 +849,7 @@ fn print_server(server: &api::McpServerView) {
     println!("serverId {}", server.server_id);
     println!("serverUrl {}", server.server_url);
     println!("label {}", server.default_server_label);
-    println!(
-        "approvalDefault {}",
-        approval_label(server.approval_default)
-    );
+    println!("approval {}", approval_label(server.approval));
     println!("status {}", status_label(server.status));
     println!("revision {}", server.revision);
     print_auth_policy(&server.auth_policy);
@@ -863,7 +865,7 @@ fn print_server(server: &api::McpServerView) {
     if let Some(allowed_tools) = &server.allowed_tools {
         println!("allowedTools {}", allowed_tools.join(","));
     }
-    if let Some(defer_loading) = server.defer_loading_default {
+    if let Some(defer_loading) = server.defer_loading {
         println!("deferLoading {}", defer_loading);
     }
 }

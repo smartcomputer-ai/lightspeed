@@ -14,9 +14,9 @@ pub struct McpServerView {
     pub allowed_tools: Option<Vec<String>>,
     pub execution: RemoteMcpExecution,
     pub exposure: RemoteMcpExposure,
-    pub approval_default: RemoteMcpApprovalPolicy,
+    pub approval: RemoteMcpApprovalPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub defer_loading_default: Option<bool>,
+    pub defer_loading: Option<bool>,
     pub allow_private_network: bool,
     pub auth_policy: McpServerAuthPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -215,10 +215,12 @@ pub struct McpServerInput {
     pub execution: RemoteMcpExecution,
     #[serde(default)]
     pub exposure: RemoteMcpExposure,
+    /// Approval policy for every session linking this server.
     #[serde(default)]
-    pub approval_default: RemoteMcpApprovalPolicy,
+    pub approval: RemoteMcpApprovalPolicy,
+    /// Provider-side deferred loading of tool definitions where supported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub defer_loading_default: Option<bool>,
+    pub defer_loading: Option<bool>,
     #[serde(default)]
     pub allow_private_network: bool,
     #[serde(default)]

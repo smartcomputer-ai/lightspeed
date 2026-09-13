@@ -36,11 +36,12 @@ pub(super) async fn admit_and_append_command(
     let submission_id = command_submission_id(&command);
     if environment_prompt_publication_is_obsolete(drive.state(), &command)
         || environment_catalog_publication_is_obsolete(drive.state(), &command)
+        || environment_attachment_catalog_publication_is_obsolete(drive.state(), &command)
         || vfs_skill_catalog_publication_is_obsolete(drive.state(), &command)
     {
         let rejection = engine::CommandRejection::new(
             engine::CommandRejectionKind::ActiveWork,
-            "skill catalog observation no longer matches an idle configured source",
+            "context observation no longer matches the configured source",
         );
         return Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
             preparation_error: None,
@@ -373,6 +374,9 @@ pub(super) async fn append_events(
     if let Some(command) = invalid_environment_catalog_command(drive.state()) {
         Box::pin(append_command(ctx, drive, command)).await?;
     }
+    if let Some(command) = invalid_environment_attachment_catalog_command(drive.state()) {
+        Box::pin(append_command(ctx, drive, command)).await?;
+    }
     if let Some(command) = invalid_vfs_skill_catalog_command(drive.state()) {
         Box::pin(append_command(ctx, drive, command)).await?;
     }
@@ -669,6 +673,48 @@ pub(super) fn environment_prompt_publication_is_obsolete(
         || ((state.runs.active.is_some() || !state.runs.queued.is_empty())
             && engine::current_context_entry(state, &ContextEntryKey::new(ENVIRONMENT_PROMPT_KEY))
                 .is_none_or(|current| current.content != entry.content))
+}
+
+const ENVIRONMENT_ATTACHMENT_CATALOG_KEY: &str = "runtime.catalog.environments";
+
+fn environment_attachment_catalog_matches(state: &CoreAgentState, origin: Option<&str>) -> bool {
+    state
+        .lifecycle
+        .config
+        .as_ref()
+        .is_some_and(|config| config.features.environments.is_some())
+        && origin.and_then(|origin| origin.strip_prefix("runtime.environments:"))
+            == Some(
+                state
+                    .environment
+                    .active_environment_id
+                    .as_ref()
+                    .map_or("", |id| id.as_str()),
+            )
+}
+
+/// Drop the attachment catalog as soon as its recorded selection is stale.
+/// A later runtime projection rebuilds it; switching performs no discovery.
+pub(super) fn invalid_environment_attachment_catalog_command(
+    state: &CoreAgentState,
+) -> Option<CoreAgentCommand> {
+    let key = ContextEntryKey::new(ENVIRONMENT_ATTACHMENT_CATALOG_KEY);
+    let entry = engine::current_context_entry(state, &key)?;
+    (state.lifecycle.status == CoreAgentStatus::Open
+        && !environment_attachment_catalog_matches(state, entry.origin.as_deref()))
+    .then_some(CoreAgentCommand::RemoveContext {
+        expected_revision: None,
+        key,
+    })
+}
+
+pub(super) fn environment_attachment_catalog_publication_is_obsolete(
+    state: &CoreAgentState,
+    command: &CoreAgentCommand,
+) -> bool {
+    matches!(command, CoreAgentCommand::UpsertContext { key, entry, .. }
+        if key.as_str() == ENVIRONMENT_ATTACHMENT_CATALOG_KEY
+            && !environment_attachment_catalog_matches(state, entry.origin.as_deref()))
 }
 
 pub(super) fn invalid_environment_catalog_command(

@@ -11,7 +11,9 @@ use tools::subagents::{
     SubagentCatalogAgent, SubagentCatalogSnapshot, prepare_subagent_catalog_publication,
 };
 use tools::{
-    environment::projection::{prepare_vfs_catalog_publication, vfs_catalog_from_workspace_links},
+    environment::projection::{
+        prepare_vfs_catalog_publication, vfs_catalog_from_workspace_attachments,
+    },
     prompts::{
         PromptAssemblyLimits, configured_vfs_prompt_root_specs,
         prepare_prompt_instructions_publication_with_warnings, resolve_linked_vfs_prompt_roots,
@@ -24,7 +26,7 @@ use tools::{
 
 use super::{common::activity_error, state::RuntimeProjectionActivityDeps};
 
-pub(super) async fn refresh_runtime_projection(
+pub(super) async fn refresh_context(
     deps: Option<&RuntimeProjectionActivityDeps>,
     request: RuntimeProjectionRefreshActivityRequest,
 ) -> Result<RuntimeProjectionRefreshActivityResult, ActivityError> {
@@ -34,10 +36,10 @@ pub(super) async fn refresh_runtime_projection(
         });
     };
 
-    let links = vfs::resolve_workspace_links(
+    let links = vfs::resolve_workspace_attachments(
         deps.blobs.clone(),
         deps.workspace_store.clone(),
-        &request.workspace_links,
+        &request.workspace_attachments,
     )
     .await
     .map_err(activity_error)?;
@@ -50,8 +52,11 @@ pub(super) async fn refresh_runtime_projection(
     let current_subagents = request
         .active_catalogs
         .get(&ContextEntryKey::new(SUBAGENT_CATALOG_CONTEXT_KEY));
+    let current_environments = request.active_catalogs.get(&ContextEntryKey::new(
+        tools::catalog::ENVIRONMENT_CATALOG_CONTEXT_KEY,
+    ));
     let mut commands = Vec::new();
-    let environment_sources = crate::environment_sources::refresh(
+    let environment_sources = crate::environments::sources::refresh(
         deps.blobs.as_ref(),
         deps.environment_resolver.as_ref(),
         deps.environment_gateway.as_ref(),
@@ -69,7 +74,7 @@ pub(super) async fn refresh_runtime_projection(
     }
 
     if request.vfs_catalog_enabled {
-        let catalog = vfs_catalog_from_workspace_links(&links).map_err(activity_error)?;
+        let catalog = vfs_catalog_from_workspace_attachments(&links).map_err(activity_error)?;
         if let Some(command) = prepare_vfs_catalog_publication(
             deps.blobs.as_ref(),
             deps.blob_graph.as_deref(),
@@ -109,6 +114,39 @@ pub(super) async fn refresh_runtime_projection(
             if let Some(command) =
                 clear_catalog_command(current_subagents, SUBAGENT_CATALOG_CONTEXT_KEY)
             {
+                commands.push(command);
+            }
+        }
+    }
+
+    // Environment catalog: the attachment list with this session's access on
+    // each machine, joined with registry names and status. Built from the
+    // grant and records only; it never connects to or wakes a machine.
+    match request.environments.as_ref() {
+        Some(environments) => {
+            let snapshot = environment_catalog_snapshot(
+                deps.environment_resolver.as_ref(),
+                environments,
+                request.active_environment_id.as_ref(),
+            )
+            .await;
+            if let Some(command) =
+                tools::environment::attachments::prepare_environment_catalog_publication(
+                    deps.blobs.as_ref(),
+                    current_environments,
+                    &snapshot,
+                )
+                .await
+                .map_err(activity_error)?
+            {
+                commands.push(command);
+            }
+        }
+        None => {
+            if let Some(command) = clear_catalog_command(
+                current_environments,
+                tools::catalog::ENVIRONMENT_CATALOG_CONTEXT_KEY,
+            ) {
                 commands.push(command);
             }
         }
@@ -271,6 +309,39 @@ fn append_optional(
 /// Join the grant's allowlist with the current profile records. A missing
 /// profile keeps its id in the menu with no revision, so the model learns
 /// it is unavailable instead of silently losing the option.
+pub async fn environment_catalog_snapshot(
+    resolver: Option<&crate::environments::resolver::EnvironmentResolver>,
+    environments: &engine::EnvironmentsFeature,
+    active_environment_id: Option<&engine::EnvironmentId>,
+) -> tools::environment::attachments::EnvironmentCatalogSnapshot {
+    use tools::environment::attachments::{EnvironmentCatalogRecord, EnvironmentCatalogSnapshot};
+    let mut records: std::collections::BTreeMap<String, EnvironmentCatalogRecord> =
+        std::collections::BTreeMap::new();
+    if let Some(resolver) = resolver {
+        for attachment in &environments.environments {
+            let Ok(environment_id) =
+                environments::EnvironmentId::try_new(attachment.environment_id.clone())
+            else {
+                continue;
+            };
+            if let Ok(record) = resolver.read(&environment_id).await {
+                records.insert(
+                    attachment.environment_id.clone(),
+                    EnvironmentCatalogRecord {
+                        display_name: record.display_name.clone(),
+                        status: Some(format!("{:?}", record.status).to_lowercase()),
+                    },
+                );
+            }
+        }
+    }
+    EnvironmentCatalogSnapshot::new(
+        environments,
+        active_environment_id.map(|id| id.as_str()),
+        |id| records.get(id).cloned().unwrap_or_default(),
+    )
+}
+
 pub async fn subagent_catalog_snapshot(
     profiles: Option<&dyn ::profiles::ProfileStore>,
     subagents: &engine::SubagentsFeature,

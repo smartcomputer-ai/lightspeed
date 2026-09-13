@@ -127,16 +127,23 @@ pub struct SubagentExecutionContextV1 {
     /// The parent's grant limits at admission; the prepare activity
     /// attenuates them by the parent's own origin.
     pub grant_limits: SubagentLimits,
+    /// The parent's active environment at admission, or its absence. An
+    /// `inherit` attachment in the child's profile resolves against this
+    /// captured value, so a parent switch after admission or an activity
+    /// retry never changes what the child inherits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_active_environment_id: Option<String>,
 }
 
 impl SubagentExecutionContextV1 {
-    pub const VERSION: u32 = 1;
+    pub const VERSION: u32 = 2;
 
     pub fn new(
         parent_session_id: String,
         parent_run_id: u64,
         agent_profile_id: String,
         grant_limits: SubagentLimits,
+        parent_active_environment_id: Option<String>,
     ) -> Self {
         Self {
             version: Self::VERSION,
@@ -144,6 +151,7 @@ impl SubagentExecutionContextV1 {
             parent_run_id,
             agent_profile_id,
             grant_limits,
+            parent_active_environment_id,
         }
     }
 }

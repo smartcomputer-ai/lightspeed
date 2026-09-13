@@ -362,7 +362,7 @@ async function ensureMcpServer(
     description: "Configure and operate this Lightspeed universe through its generated API.",
     execution: "native",
     exposure: "search",
-    approvalDefault: "never",
+    approval: "never",
     allowPrivateNetwork,
     ...auth,
     status: "active",

@@ -414,22 +414,16 @@ async fn run_fake_live_client(
     enabled_features.vfs = Some(api::VfsFeature {
         working_directory: None,
         version: api::CURRENT_FEATURE_VERSION,
-        workspace_links: Vec::new(),
-        tools: None,
+        workspaces: Vec::new(),
         prompts: None,
         skills: None,
     });
     enabled_features.environments = Some(api::EnvironmentsFeature {
-        tools: Some(api::EnvironmentToolSurface::Edit),
-        commands: true,
-        working_directory: None,
-        prompts: None,
         version: api::CURRENT_FEATURE_VERSION,
-        providers: None,
-        registration_keys: None,
-        selection_tools: false,
-        jobs: false,
+        selection: false,
+        prompts: None,
         skills: None,
+        environments: Vec::new(),
     });
     enabled_config.features = Some(enabled_features);
     let enabled = api
@@ -476,7 +470,7 @@ async fn run_fake_live_client(
         .as_mut()
         .and_then(|features| features.environments.as_mut())
         .expect("environment feature")
-        .selection_tools = true;
+        .selection = true;
     let selection_enabled = api
         .put_session_config(SessionConfigPutParams {
             session_id: session_id.as_str().to_owned(),

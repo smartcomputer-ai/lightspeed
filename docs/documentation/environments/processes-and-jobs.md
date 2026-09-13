@@ -12,15 +12,16 @@ commands manage environments rather than execute commands. You can use the
 CLI's chat interface with the same session and capabilities.
 
 Start with [an active environment](using-environments.md) and a model that
-can call its process tools. Enable **Command execution** under **Environments**
-in the profile or session setup (`features.environments.commands: true`). This
-is independent of **Durable jobs**, which keeps its own grant. The first exercise needs a POSIX shell and common
+can call its process tools. Attach the machine under **Environments** in the
+profile or session setup with **Exec** access (`"access": "exec"`), which
+includes file reading and editing; **Jobs** access adds durable jobs on top.
+The first exercise needs a POSIX shell and common
 utilities such as `grep`. The example Incus image supplies them.
 
 ## Run a check against a file
 
 Use the release notes from [Build your first agent](../getting-started/first-agent.md).
-Set environment **File tools** to **Edit files** for this exercise, then ask the
+The `exec` attachment already includes environment file editing, so ask the
 agent to prepare a separate machine copy:
 
 ```text
@@ -80,10 +81,9 @@ above. Replace the directory with the absolute path created by the agent:
 
 `argv` is an argument array. It does not interpret pipes, redirection, or other
 shell syntax by itself; use a shell explicitly when the command needs them.
-The working directory is on the environment machine. The session's
-`features.environments.workingDirectory` supplies the default for file tools,
-commands, jobs, and prompt/skill discovery; when unset, the endpoint's default
-is used. A per-command `cwd` overrides this base and relative overrides resolve
+The working directory is on the environment machine. The active attachment's
+`workingDirectory` supplies the default for file tools, commands, jobs, and
+prompt/skill discovery; when unset, the machine's default is used. A per-command `cwd` overrides this base and relative overrides resolve
 against it. A shell `cd` does not persist into later tool calls. VFS has a
 separate `features.vfs.workingDirectory`, defaulting to `/`.
 
@@ -133,8 +133,11 @@ agent to execute the same side-effecting command again.
 
 ## Submit jobs with dependencies
 
-In the profile or idle session setup, enable **Environments → Durable jobs**.
-The environment must advertise job support too. The agent receives:
+In the profile or idle session setup, give the environment attachment
+**Jobs** access (`"access": "jobs"`). The environment must advertise job
+support too. Because the toolset is the union of every attachment's access,
+the job tools can be visible while a lower-access machine is active; `job_run`
+and `job_submit` are then refused before any job starts. The agent receives:
 
 | Tool | Use |
 | --- | --- |
@@ -205,8 +208,9 @@ same promise controls are explained in
 [Sub-agents and federation](../using-lightspeed/subagents-and-federation.md#join-a-result-or-use-a-promise).
 
 Job handles include their originating environment ID. Unlike ordinary process
-continuation, reading a job by its handle still targets that machine after the
-session selects another active environment.
+continuation, reading or canceling a job by its handle still targets that
+machine after the session selects another active environment, as long as that
+machine remains attached in the session's configuration.
 
 ## Know what survives a restart
 

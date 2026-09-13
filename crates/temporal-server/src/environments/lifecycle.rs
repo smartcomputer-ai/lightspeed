@@ -1,4 +1,4 @@
-use super::environment_providers::{
+use super::providers::{
     binding_context, environment_view, map_environments_error,
     parse_environment_provider_binding_id, registry_idle_policy, registry_lifecycle_status,
     registry_power_state,

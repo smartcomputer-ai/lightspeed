@@ -26,7 +26,7 @@ use crate::worker::mcp::{McpPrivateNetworkPolicy, NativeMcpInventoryResolver, Na
 use crate::{
     config::pg_store_from_env,
     credential_injection::EnvironmentCredentialResolver,
-    environment_gateway::EnvironmentGatewayClientConfig,
+    environments::gateway::EnvironmentGatewayClientConfig,
     subagents::{SubagentChildRuntime, SubagentService},
     worker::{BrokerSecretResolver, SessionTools, StoredProviderKeyResolver},
 };
@@ -66,7 +66,7 @@ pub struct ToolActivityDeps {
 
 #[derive(Clone)]
 pub struct RuntimeProjectionActivityDeps {
-    pub(super) environment_resolver: Option<crate::environment_resolver::EnvironmentResolver>,
+    pub(super) environment_resolver: Option<crate::environments::resolver::EnvironmentResolver>,
     pub(super) environment_gateway: Option<EnvironmentGatewayClientConfig>,
     pub(super) blobs: Arc<dyn BlobStore>,
     /// Records catalog-, report-, and projection-to-child edges.
@@ -235,7 +235,7 @@ impl ActivityState {
             .with_profile_store(profile_store);
         if let Some(projection) = state.runtime_projection.as_mut() {
             projection.environment_resolver = Some(
-                crate::environment_resolver::EnvironmentResolver::from_pg_store(store.clone()),
+                crate::environments::resolver::EnvironmentResolver::from_pg_store(store.clone()),
             );
         }
         state.environment_jobs = Some(EnvironmentJobActivityDeps {

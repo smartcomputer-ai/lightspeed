@@ -112,21 +112,8 @@ pub(super) async fn prepare_workflow_tool(
     }
     let environment_id =
         EnvironmentId::try_new(execution_context.environment_id).map_err(activity_error)?;
-    let instance = deps
-        .environments
-        .read_environment(&environment_id)
-        .await
-        .map_err(activity_error)?;
-    let policy = environments::EnvironmentAccessPolicy::new(
-        execution_context.allowed_provider_ids,
-        execution_context.allowed_registration_key_ids,
-    );
-    if !policy.allows(&instance) {
-        return Err(activity_error(anyhow::anyhow!(
-            "environment is not allowed for this session: {}",
-            policy.refusal(&instance)
-        )));
-    }
+    // The executor admitted this call against the session's attachment
+    // grant; the context names the machine it admitted.
     let request_id = format!(
         "jobreq:{}:{}:{}:{}",
         start.invocation.run_id.as_u64(),
@@ -545,7 +532,7 @@ pub(super) async fn cancel(
 
 async fn initialized_client(
     connection: &EnvironmentDataConnection,
-    gateway: &crate::environment_gateway::EnvironmentGatewayClientConfig,
+    gateway: &crate::environments::gateway::EnvironmentGatewayClientConfig,
 ) -> Result<
     (
         EnvironmentDataClient<environment_client::WebSocketTransport>,

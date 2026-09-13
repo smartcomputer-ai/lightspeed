@@ -1,17 +1,25 @@
-//! Shared environment service for environment APIs and background reconciliation.
-use crate::environment_gateway::EnvironmentGatewayClientConfig;
+//! Environment lifecycle management, connectivity, runtime resolution, and source discovery.
+use crate::environments::gateway::EnvironmentGatewayClientConfig;
 use api::*;
-use environment_lifecycle::parse_registry_environment_id;
-use environment_providers::{map_environments_error, parse_environment_provider_id};
+use lifecycle::parse_registry_environment_id;
 use provider_controllers::{ProviderControllerConnector, finish_provider_controller};
+use providers::{map_environments_error, parse_environment_provider_id};
 use std::{collections::BTreeMap, sync::Arc};
 use store_pg::PgStore;
-pub(crate) mod environment_credentials;
-pub(crate) mod environment_lifecycle;
-pub(crate) mod environment_power;
-pub(crate) mod environment_providers;
-pub(crate) mod environment_registration;
+pub(crate) mod credentials;
+pub(crate) mod lifecycle;
+pub(crate) mod power;
 pub(crate) mod provider_controllers;
+pub(crate) mod providers;
+pub(crate) mod registration;
+
+pub mod gateway;
+pub(crate) mod prompts;
+pub(crate) mod resolver;
+pub mod runtime;
+pub(crate) mod skills;
+pub(crate) mod sources;
+
 #[derive(Clone)]
 pub(crate) struct EnvironmentService {
     pub(crate) store: Arc<PgStore>,

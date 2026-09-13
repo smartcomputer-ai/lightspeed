@@ -116,18 +116,16 @@ describe("wizard helpers", () => {
     expect(botOwnedProfileDocument({
       profileId: "triage",
       displayName: "Triage",
-      config: { features: { environments: {} } },
+      config: { features: { environments: { environments: [{ environmentId: "ops-box", access: "exec", default: true }] } } },
       baseInstructions: "Always cite the incident.",
-      environment: { type: "existing", environmentId: "ops-box" },
       metadata: { team: "ops" },
       retention: 604_800_000,
     })).toEqual({
       profileId: "triage",
       displayName: "Triage",
       description: "Setup of bot triage",
-      config: { features: { environments: {} } },
+      config: { features: { environments: { environments: [{ environmentId: "ops-box", access: "exec", default: true }] } } },
       instructions: { type: "text", text: "Always cite the incident." },
-      environment: { type: "existing", environmentId: "ops-box" },
       metadata: { team: "ops" },
       retention: { deleteAfterCloseMs: 604_800_000 },
     });

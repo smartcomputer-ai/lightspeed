@@ -10,21 +10,10 @@ pub const ENVIRONMENT_LIST_TOOL_NAME: &str = "environment_list";
 pub const ENVIRONMENT_READ_TOOL_NAME: &str = "environment_read";
 pub const ENVIRONMENT_ACTIVATE_TOOL_NAME: &str = "environment_activate";
 pub const ENVIRONMENT_DEACTIVATE_TOOL_NAME: &str = "environment_deactivate";
-pub const DEFAULT_ENVIRONMENT_LIST_LIMIT: usize = 20;
-pub const MAX_ENVIRONMENT_LIST_LIMIT: usize = 100;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub struct EnvironmentListArgs {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<usize>,
-    /// Only environments in this group (the registration key that admitted
-    /// them, by display name).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group: Option<String>,
-}
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentListArgs {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -58,23 +47,23 @@ pub fn is_environment_selection_tool(tool_id: &ToolName) -> bool {
 }
 
 pub fn environment_control_tool_definitions(
-    selection_tools: bool,
+    selection: bool,
 ) -> ToolResult<Vec<crate::runtime::FunctionDefinition>> {
     let mut tools = vec![(
         ENVIRONMENT_READ_TOOL_NAME,
-        "Read live details for an environment. Omit environment_id to inspect this session's active environment; provide a known id to inspect another environment allowed by the session.",
+        "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide the id of another environment attached to this session to inspect it.",
         optional_environment_id_schema(),
     )];
-    if selection_tools {
+    if selection {
         tools.extend([
             (
                 ENVIRONMENT_LIST_TOOL_NAME,
-                "List the live universe environments allowed by this session. Use this before activation when you do not know the environment id. Registered environments carry a group, the name of the pool they registered under; filter by it to pick from one pool.",
-                list_schema(),
+                "List the environments attached to this session with their status, this session's access on each, and which one is active.",
+                empty_schema(),
             ),
             (
                 ENVIRONMENT_ACTIVATE_TOOL_NAME,
-                "Select one allowed, ready universe environment as this session's active environment. Environment-dependent tools must be called in a later turn.",
+                "Select one attached environment as this session's active environment. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
                 required_environment_id_schema(),
             ),
             (
@@ -100,18 +89,6 @@ fn function_definition(
         description,
         schema,
     ))
-}
-
-fn list_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "cursor": { "type": ["string", "null"] },
-            "limit": { "type": ["integer", "null"], "minimum": 1, "maximum": MAX_ENVIRONMENT_LIST_LIMIT },
-            "group": { "type": ["string", "null"], "minLength": 1, "description": "Only environments in this group (registered pool name)." }
-        },
-        "additionalProperties": false
-    })
 }
 
 fn optional_environment_id_schema() -> Value {

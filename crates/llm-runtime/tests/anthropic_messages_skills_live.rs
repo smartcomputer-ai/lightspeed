@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use engine::{
     BlobRef, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
     CoreAgentCommand, CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus,
-    SessionConfig, SessionId, WorkspaceLink, WorkspaceLinkAccess, WorkspaceLinkTarget,
+    SessionConfig, SessionId, WorkspaceAccess, WorkspaceAttachment, WorkspaceAttachmentTarget,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::anthropic::messages::{Client, Config};
@@ -27,8 +27,8 @@ use tools::{
 };
 use vfs::{
     CompareAndSetVfsWorkspaceHead, CreateInlineSnapshotRequest, CreateVfsWorkspaceRecord,
-    InlineFile, ResolvedWorkspaceLink, ResolvedWorkspaceLinkTarget, VfsCatalogError, VfsPath,
-    VfsWorkspaceId, VfsWorkspaceRecord, VfsWorkspaceStore, create_inline_snapshot,
+    InlineFile, ResolvedWorkspaceAttachment, ResolvedWorkspaceAttachmentTarget, VfsCatalogError,
+    VfsPath, VfsWorkspaceId, VfsWorkspaceRecord, VfsWorkspaceStore, create_inline_snapshot,
 };
 
 mod support;
@@ -245,23 +245,23 @@ async fn anthropic_messages_live_selects_and_reads_the_matching_skill() {
     )
     .await
     .expect("create skill snapshot");
-    let workspace_links = vec![WorkspaceLink {
+    let workspace_attachments = vec![WorkspaceAttachment {
         path: "/skills/system".to_owned(),
-        target: WorkspaceLinkTarget::Snapshot {
+        target: WorkspaceAttachmentTarget::Snapshot {
             snapshot_ref: snapshot.snapshot_ref.to_string(),
         },
-        access: WorkspaceLinkAccess::ReadOnly,
+        access: WorkspaceAccess::Read,
     }];
 
     let linked_fs = LinkedVfsFileSystem::new(
         blobs.clone(),
         vfs.clone(),
-        vec![ResolvedWorkspaceLink {
+        vec![ResolvedWorkspaceAttachment {
             path: VfsPath::parse("/skills/system").unwrap(),
-            target: ResolvedWorkspaceLinkTarget::AvailableSnapshot {
+            target: ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
                 snapshot_ref: snapshot.snapshot_ref,
             },
-            access: WorkspaceLinkAccess::ReadOnly,
+            access: WorkspaceAccess::Read,
         }],
     )
     .expect("linked fs");
@@ -294,7 +294,7 @@ async fn anthropic_messages_live_selects_and_reads_the_matching_skill() {
             session_id: session_id.clone(),
             observed_at_ms: 10,
             command: CoreAgentCommand::OpenSession {
-                config: session_config(model, workspace_links),
+                config: session_config(model, workspace_attachments),
             },
             max_steps: None,
         })
@@ -393,7 +393,10 @@ async fn anthropic_messages_live_selects_and_reads_the_matching_skill() {
     );
 }
 
-fn session_config(model: ModelSelection, workspace_links: Vec<WorkspaceLink>) -> SessionConfig {
+fn session_config(
+    model: ModelSelection,
+    workspace_attachments: Vec<WorkspaceAttachment>,
+) -> SessionConfig {
     SessionConfig {
         model,
         generation: engine::GenerationConfig {
@@ -409,14 +412,13 @@ fn session_config(model: ModelSelection, workspace_links: Vec<WorkspaceLink>) ->
             vfs: Some(engine::VfsFeature {
                 skills: Some(engine::VfsSkillsConfig {
                     roots: Some(
-                        workspace_links
+                        workspace_attachments
                             .iter()
                             .map(|link| link.path.clone())
                             .collect(),
                     ),
                 }),
-                workspace_links,
-                tools: Some(engine::VfsToolSurface::ReadOnly),
+                workspaces: workspace_attachments,
                 ..engine::VfsFeature::default()
             }),
             ..engine::FeaturesConfig::default()
