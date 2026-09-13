@@ -503,7 +503,7 @@ function SessionProfileSection({
               models={options.models}
               profiles={options.profiles}
               environments={options.environments}
-              discoverMcpTools={options.discoverMcpTools}
+              mcpToolDiscovery={options.mcpToolDiscovery}
               featureDisableReasons={resourceFeatureDisableReasons(merged)}
               environmentSetup={defaultEnvironment?.environmentId ? (
                 <BotEnvironmentCard slug={slug} universeId={universeId} environmentId={defaultEnvironment.environmentId} manage={manage} />

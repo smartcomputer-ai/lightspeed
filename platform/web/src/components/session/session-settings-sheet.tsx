@@ -330,7 +330,7 @@ function LiveSessionSetup({
               models={options.models}
               profiles={options.profiles}
               environments={options.environments}
-              discoverMcpTools={options.discoverMcpTools}
+              mcpToolDiscovery={options.mcpToolDiscovery}
               featureDisableReasons={resourceFeatureDisableReasons({
                 config: configDraft,
               })}

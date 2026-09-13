@@ -1,7 +1,7 @@
+import { mcpDiscoveryFailureAction } from "@/lib/mcp/tool-discovery";
 import { describe, expect, it } from "vitest";
 import {
   isValidMcpUrl,
-  mcpDiscoveryFailureAction,
   mcpAuthPolicyInput,
   mcpAuthKind,
   mcpGrantCompatible,

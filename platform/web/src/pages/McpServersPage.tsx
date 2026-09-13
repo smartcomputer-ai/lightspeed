@@ -1,3 +1,5 @@
+import { McpToolPicker } from "@/components/mcp/tool-picker";
+import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { slugify } from "@lightspeed/platform-shared";
@@ -10,7 +12,6 @@ import {
   Pencil,
   Plus,
   RotateCcw,
-  Search,
   Trash2,
 } from "lucide-react";
 import {
@@ -20,7 +21,6 @@ import {
   type McpOAuthFlowStart,
   type McpServer,
   type McpServerAuthDiscovery,
-  type McpToolDiscovery,
 } from "@/api";
 import {
   AlertDialog,
@@ -390,13 +390,8 @@ function ServerDialog({
   const [approval, setApproval] = useState<string>(
     server?.approval ?? "never",
   );
-  const [allToolsAllowed, setAllToolsAllowed] = useState(server?.allowedTools == null);
-  const [allowedTools, setAllowedTools] = useState<string[]>(server?.allowedTools ?? []);
-  const [toolSearch, setToolSearch] = useState("");
-  const [toolDiscoveryObservation, setToolDiscoveryObservation] = useState<{
-    connectionKey: string;
-    result: McpToolDiscovery;
-  } | null>(null);
+  const [allowedTools, setAllowedTools] = useState<string[] | undefined>(server?.allowedTools ?? undefined);
+  const toolDiscoverySource = useMcpToolDiscoverySource(universeId);
   const [description, setDescription] = useState(server?.description ?? "");
   const [authPolicy, setAuthPolicy] = useState<string>(server?.authPolicy.type ?? "none");
   const [authTouched, setAuthTouched] = useState(Boolean(server));
@@ -434,6 +429,7 @@ function ServerDialog({
     authPolicy !== server.authPolicy.type ||
     credentialGrantId !== (server.credential?.grantId ?? "") ||
     status !== server.status ||
+    allowPrivateNetwork !== server.allowPrivateNetwork ||
     (isOAuthPolicy(authPolicy) && (
       oauthResource.trim() !== oauthPolicyString(server.authPolicy, "resource") ||
       JSON.stringify(currentOAuthScopes) !== JSON.stringify(oauthPolicyScopes(server.authPolicy)) ||
@@ -441,26 +437,8 @@ function ServerDialog({
       oauthAuthorizationServer.trim() !== oauthPolicyString(server.authPolicy, "authorizationServer")
     ))
   ));
-  const toolConnectionKey = `${server?.serverId ?? "new"}:${server?.revision ?? 0}`;
-  const toolConnectionKeyRef = useRef(toolConnectionKey);
-  toolConnectionKeyRef.current = toolConnectionKey;
-  const toolDiscovery = !connectionSettingsDirty &&
-    toolDiscoveryObservation?.connectionKey === toolConnectionKey
-    ? toolDiscoveryObservation.result
-    : null;
-  const parsedTools = [...new Set(allowedTools.map((tool) => tool.trim()).filter(Boolean))]
+  const parsedTools = [...new Set((allowedTools ?? []).map((tool) => tool.trim()).filter(Boolean))]
     .sort((left, right) => left.localeCompare(right));
-  const advertisedTools = toolDiscovery?.status === "success"
-    ? toolDiscovery.tools.slice().sort((left, right) => left.name.localeCompare(right.name))
-    : [];
-  const normalizedToolSearch = toolSearch.trim().toLocaleLowerCase();
-  const visibleTools = advertisedTools.filter((tool) =>
-    !normalizedToolSearch || `${tool.name} ${tool.title ?? ""} ${tool.description ?? ""}`
-      .toLocaleLowerCase()
-      .includes(normalizedToolSearch),
-  );
-  const advertisedNames = new Set(advertisedTools.map((tool) => tool.name));
-  const unavailableSelectedTools = parsedTools.filter((name) => !advertisedNames.has(name));
 
   const probe = useMutation({
     mutationFn: (url: string) => api<McpServerAuthDiscovery>(
@@ -481,29 +459,6 @@ function ServerDialog({
       setLastProbedUrl(url);
     },
   });
-
-  const discoverTools = useMutation({
-    mutationFn: (_connectionKey: string) => api<McpToolDiscovery>(
-      "POST",
-      `/api/v1/universes/${universeId}/mcp-servers/${server!.serverId}/tools/discover`,
-    ),
-    onSuccess: (result, connectionKey) => {
-      if (connectionKey === toolConnectionKeyRef.current) {
-        setToolDiscoveryObservation({ connectionKey, result });
-      }
-    },
-    onError: (_error, connectionKey) => {
-      if (connectionKey === toolConnectionKeyRef.current) {
-        setToolDiscoveryObservation(null);
-      }
-    },
-  });
-
-  const toggleAllowedTool = (name: string, checked: boolean) => {
-    setAllowedTools((current) => checked
-      ? [...new Set([...current, name])]
-      : current.filter((tool) => tool !== name));
-  };
 
   const discoverAuth = async () => {
     const url = serverUrl.trim();
@@ -566,7 +521,7 @@ function ServerDialog({
           status: nextStatus,
           displayName: displayName.trim() || null,
           description: description.trim() || null,
-          allowedTools: allToolsAllowed ? null : parsedTools,
+          allowedTools: allowedTools === undefined ? null : parsedTools,
           deferLoading: server.deferLoading ?? null,
           allowPrivateNetwork,
         },
@@ -610,8 +565,8 @@ function ServerDialog({
       setError(credentialError);
       return;
     }
-    if (editing && !allToolsAllowed && parsedTools.length === 0) {
-      setError("Select at least one tool, or allow every advertised tool.");
+    if (editing && allowedTools !== undefined && parsedTools.length === 0) {
+      setError("Select at least one tool, or choose all advertised tools.");
       return;
     }
     save.mutate();
@@ -793,130 +748,23 @@ function ServerDialog({
               )}
 
               {editing ? (
-                <Field>
-                  <div className="flex items-end justify-between gap-3">
-                    <div>
-                      <FieldLabel>Available tools</FieldLabel>
-                      <FieldDescription>
-                        Read live with the connected account's permissions and never cached.
-                        Server-provided descriptions and safety annotations are untrusted hints.
-                      </FieldDescription>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={discoverTools.isPending || connectionSettingsDirty}
-                      onClick={() => discoverTools.mutate(toolConnectionKey)}
-                    >
-                      <RotateCcw className={discoverTools.isPending ? "animate-spin" : ""} />
-                      {toolDiscovery ? "Refresh" : "Load tools"}
-                    </Button>
-                  </div>
-                <Select
-                  value={allToolsAllowed ? "all" : "selected"}
-                  onValueChange={(value) => setAllToolsAllowed(value === "all")}
-                >
-                  <SelectTrigger className="w-full" aria-label="Allowed tools">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Allow every advertised tool</SelectItem>
-                    <SelectItem value="selected">Allow only selected tools</SelectItem>
-                  </SelectContent>
-                </Select>
-                {connectionSettingsDirty && (
-                  <FieldDescription>
-                    Save connection or credential changes before loading its tools.
-                  </FieldDescription>
-                )}
-                {discoverTools.error && (
-                  <p className="text-sm text-destructive">{discoverTools.error.message}</p>
-                )}
-                {toolDiscovery?.status === "failure" && (
-                  <div className="grid gap-1">
-                    <p className="text-sm text-destructive">{toolDiscovery.message}</p>
-                    <FieldDescription>
-                      {mcpDiscoveryFailureAction(toolDiscovery.code)}
-                      {toolDiscovery.requiredScopes?.length
-                        ? ` Required scopes: ${toolDiscovery.requiredScopes.join(", ")}.`
-                        : ""}
-                    </FieldDescription>
-                  </div>
-                )}
-                {!allToolsAllowed && toolDiscovery?.status !== "success" && parsedTools.length > 0 && (
-                  <div className="rounded-md border p-3">
-                    <p className="mb-2 text-xs font-medium text-muted-foreground">Authored selection</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {parsedTools.map((name) => (
-                        <Badge key={name} variant="outline" className="font-mono">{name}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {toolDiscovery?.status === "success" && (
-                  <div className="grid gap-2">
-                    <div className="relative">
-                      <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        value={toolSearch}
-                        onChange={(event) => setToolSearch(event.target.value)}
-                        placeholder={`Search ${advertisedTools.length} tool${advertisedTools.length === 1 ? "" : "s"}`}
-                        aria-label="Search MCP tools"
-                        className="pl-8"
-                      />
-                    </div>
-                    <div className="max-h-64 overflow-y-auto rounded-md border">
-                      {visibleTools.length === 0 ? (
-                        <p className="p-3 text-sm text-muted-foreground">
-                          {advertisedTools.length === 0
-                            ? "No tools advertised. Check this account's access, requested scopes, and workspace or admin policy, then refresh or reconnect this server."
-                            : "No tools match your search."}
-                        </p>
-                      ) : visibleTools.map((tool) => (
-                        <Label
-                          key={tool.name}
-                          className="flex items-start gap-3 border-b p-3 font-normal last:border-b-0"
-                        >
-                          {!allToolsAllowed && (
-                            <Checkbox
-                              className="mt-0.5"
-                              checked={allowedTools.includes(tool.name)}
-                              onCheckedChange={(checked) => toggleAllowedTool(tool.name, checked === true)}
-                            />
-                          )}
-                          <span className="min-w-0 flex-1">
-                            <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
-                              {tool.title ?? tool.name}
-                              {tool.annotations?.readOnlyHint === true && <Badge variant="outline">read only</Badge>}
-                              {tool.annotations?.readOnlyHint === false && <Badge variant="outline">may write</Badge>}
-                              {tool.annotations?.destructiveHint === true && <Badge variant="outline">destructive</Badge>}
-                              {tool.annotations?.idempotentHint === true && <Badge variant="outline">idempotent</Badge>}
-                              {tool.annotations?.openWorldHint === true && <Badge variant="outline">external access</Badge>}
-                            </span>
-                            <span className="block font-mono text-xs text-muted-foreground">{tool.name}</span>
-                            {tool.description && (
-                              <span className="mt-1 block text-xs text-muted-foreground">{tool.description}</span>
-                            )}
-                          </span>
-                        </Label>
-                      ))}
-                    </div>
-                    {!allToolsAllowed && unavailableSelectedTools.length > 0 && (
-                      <FieldDescription>
-                        Still selected but not currently advertised: {unavailableSelectedTools.join(", ")}.
-                        They are preserved until you deselect them.
-                      </FieldDescription>
-                    )}
-                  </div>
-                )}
-                </Field>
+                <McpToolPicker
+                  scope="server"
+                  serverId={server.serverId}
+                  revision={server.revision}
+                  source={toolDiscoverySource}
+                  value={allowedTools}
+                  onChange={setAllowedTools}
+                  discoveryDisabledReason={connectionSettingsDirty
+                    ? "Save connection or credential changes before loading its tools."
+                    : undefined}
+                />
               ) : (
                 <div className="grid gap-1 rounded-md border bg-muted/15 p-3">
                   <p className="text-sm font-medium">Tool selection after connection</p>
                   <p className="text-xs text-muted-foreground">
                     This server will initially allow every advertised tool. After adding it and completing any
-                    authentication, edit the server to load its live inventory and restrict access.
+                    authentication, edit the server and select its allowed tools to restrict access.
                   </p>
                 </div>
               )}
@@ -1483,35 +1331,6 @@ export function mcpServerStatusForCredential(
   return status;
 }
 
-export function mcpDiscoveryFailureAction(
-  code: Extract<McpToolDiscovery, { status: "failure" }>["code"],
-): string {
-  switch (code) {
-    case "credentialAbsent":
-      return "Connect a credential to this server, then try again.";
-    case "grantNeedsReauth":
-    case "unauthorized":
-      return "Reconnect this server to refresh its access.";
-    case "grantAudienceMismatch":
-      return "Use a credential issued for this exact server address.";
-    case "forbidden":
-      return "Check the account's scopes and workspace or administrator policy.";
-    case "additionalConsentRequired":
-      return "Reconnect this server and explicitly approve the additional scopes.";
-    case "remoteRateLimited":
-      return "Wait briefly before refreshing again.";
-    case "unreachable":
-      return "Check the server address, network reachability, and TLS setup.";
-    case "unsupportedProtocol":
-    case "invalidResponse":
-      return "Check that this address is a current Streamable HTTP MCP endpoint.";
-    case "paginationLimit":
-    case "responseTooLarge":
-      return "The server's inventory exceeded safe discovery limits; narrow or fix the server response.";
-    case "remoteFailure":
-      return "Check the server or provider status, then retry.";
-  }
-}
 
 function authGrantLabel(grant: AuthGrantOption): string {
   const name = grant.displayName || grant.subjectHint || grant.grantId;

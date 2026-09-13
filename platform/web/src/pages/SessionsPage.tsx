@@ -1224,7 +1224,7 @@ function InlineSetupEditor({
           models={options.models}
           profiles={options.profiles}
           environments={options.environments}
-          discoverMcpTools={options.discoverMcpTools}
+          mcpToolDiscovery={options.mcpToolDiscovery}
           featureDisableReasons={resourceFeatureDisableReasons(value)}
           metadataSetup={(
             <MetadataMapEditor

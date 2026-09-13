@@ -307,6 +307,15 @@ Never re-propose without new evidence:
   default promotes the next row, or the previous row when removing the last.
   New VFS rows attach workspaces without a target-type picker;
   snapshots supplied through JSON or the API remain supported.
+- [x] Shared MCP picker: server allowances and session subsets use the same
+  searchable inventory with visible descriptions, annotations, and structured
+  discovery errors. Discovery observations are temporary and scoped to the
+  universe, server, and revision; unsaved connection changes prevent loading.
+  The server editor always shows tool selection; profile and session configs
+  use an inline Customize toggle with the current selection beside it.
+  Selection drafts survive mode switches, unavailable selections stay removable,
+  and discovery never rewrites explicit tool names. Attachment remove controls
+  sit at the top of each MCP, workspace, and environment row.
 - [x] Web consumers: profile and bot forms use config attachments; session
   activation and creation overrides offer only attached environments. MCP
   forms and gateway mappings use the renamed record fields. Demo profiles

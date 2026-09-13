@@ -43,7 +43,8 @@ import { Switch } from "@/components/ui/switch";
 import { supportsOpenAiProcessingTier } from "@/lib/sessions/run-options";
 import { cn } from "@/lib/utils";
 import { selectableEnvironments } from "@/lib/sessions/resource-features";
-import { McpToolSubsetField } from "./mcp-tool-subset-field";
+import { McpToolPicker } from "@/components/mcp/tool-picker";
+import type { McpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 
 export type SessionConfig = Record<string, unknown>;
 type FeatureName = "vfs" | "web" | "subagents" | "timers" | "environments" | "mcp";
@@ -53,6 +54,7 @@ export type McpServerOption = {
   displayName?: string | null;
   status?: "active" | "needsAuthConfig" | "unverified" | "disabled";
   allowedTools?: string[] | null;
+  revision?: number;
 };
 
 export type WorkspaceOption = {
@@ -85,8 +87,6 @@ export type EnvironmentOption = {
   status?: string;
 };
 
-export type DiscoverMcpTools = (serverId: string) => Promise<string[]>;
-
 type Props = {
   value?: unknown;
   onChange: (config: SessionConfig | undefined) => void;
@@ -98,7 +98,7 @@ type Props = {
   profiles?: ProfileOption[];
   environments?: EnvironmentOption[];
   allowInherit?: boolean;
-  discoverMcpTools?: DiscoverMcpTools;
+  mcpToolDiscovery?: McpToolDiscoverySource;
   featureDisableReasons?: Partial<Record<FeatureName, string>>;
   environmentSetup?: ReactNode;
   metadataSetup?: ReactNode;
@@ -523,7 +523,7 @@ export function SessionConfigEditor({
   profiles = [],
   environments = [],
   allowInherit = false,
-  discoverMcpTools,
+  mcpToolDiscovery,
   featureDisableReasons = {},
   environmentSetup,
   metadataSetup,
@@ -633,7 +633,7 @@ export function SessionConfigEditor({
                   />
                 )}
                 {name === "subagents" && <SubagentFields feature={record(features.subagents)} profiles={profiles} patch={(fn) => patchFeature("subagents", fn)} />}
-                {name === "mcp" && <McpFields feature={record(features.mcp)} servers={mcpServers} discoverTools={discoverMcpTools} patch={(fn) => patchFeature("mcp", fn)} />}
+                {name === "mcp" && <McpFields feature={record(features.mcp)} servers={mcpServers} discoverySource={mcpToolDiscovery} patch={(fn) => patchFeature("mcp", fn)} />}
               </FeaturePanel>
             ))}
           {(metadataSetup || retentionSetup) && (
@@ -1407,7 +1407,7 @@ function VfsFields({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="self-end text-destructive"
+                className="self-start text-destructive"
                 aria-label="Remove workspace attachment"
                 onClick={() => updateLinks(links.filter((_, linkIndex) => linkIndex !== index))}
               >
@@ -1920,7 +1920,7 @@ function EnvironmentFields({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="self-end text-destructive"
+                className="self-start text-destructive"
                 aria-label="Remove environment attachment"
                 onClick={() =>
                   patch((next) => {
@@ -1988,12 +1988,12 @@ function EnvironmentFields({
 function McpFields({
   feature,
   servers,
-  discoverTools,
+  discoverySource,
   patch,
 }: {
   feature: RecordValue;
   servers: McpServerOption[];
-  discoverTools?: DiscoverMcpTools;
+  discoverySource?: McpToolDiscoverySource;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
   const links = Array.isArray(feature.servers) ? feature.servers.map(record) : [];
@@ -2068,14 +2068,25 @@ function McpFields({
                 />
               )}
             </Field>
-            <McpToolSubsetField serverId={string(link.serverId)} allowedTools={options.get(string(link.serverId))?.allowedTools}
-              value={Array.isArray(link.tools) ? stringList(link.tools) : undefined} discoverTools={discoverTools}
-              onChange={(tools) => updateLink(index, (next) => { if (tools === undefined) delete next.tools; else next.tools = tools; })} />
+            <div className="mt-3">
+              <McpToolPicker
+                scope="session"
+                serverId={string(link.serverId)}
+                revision={options.get(string(link.serverId))?.revision}
+                allowedTools={options.get(string(link.serverId))?.allowedTools}
+                source={discoverySource}
+                value={Array.isArray(link.tools) ? stringList(link.tools) : undefined}
+                onChange={(tools) => updateLink(index, (next) => {
+                  if (tools === undefined) delete next.tools;
+                  else next.tools = tools;
+                })}
+              />
+            </div>
           </div>
           <Button
             variant="ghost"
             size="icon-sm"
-            className="self-end text-destructive"
+            className="self-start text-destructive"
             aria-label="Remove MCP server"
             onClick={() => updateLinks(links.filter((_, linkIndex) => linkIndex !== index))}
           >

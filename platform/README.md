@@ -40,8 +40,9 @@ Demo tool fixtures record these identities explicitly as well.
 Session and profile editors configure workspace and environment attachments
 with access per resource. Environment rows also carry a default selection and
 working directory; saved profiles can inherit a parent environment for
-sub-agents. MCP rows can select a nonempty subset of the server's allowed
-tools from discovery. Session activation controls offer attached environments
+sub-agents. MCP server allowances and session subsets share a searchable
+tool picker with live descriptions and connection errors. Session subsets
+can only narrow the server's allowance. Session activation controls offer attached environments
 and remain separate from profile defaults.
 
 Context views and run outputs share a content descriptor. Assistant messages,

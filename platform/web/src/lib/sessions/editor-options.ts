@@ -1,9 +1,8 @@
-import { useCallback } from "react";
+import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
   type Environment,
-  type McpToolDiscovery,
   type ModelListResponse,
   type ProfileSummary,
 } from "@/api";
@@ -40,11 +39,7 @@ export function useSessionConfigEditorOptions(universeId: string, enabled = true
     queryFn: () => api<Environment[]>("GET", `/api/v1/universes/${universeId}/environments`),
     enabled,
   });
-  const discoverMcpTools = useCallback(async (serverId: string) => {
-    const result = await api<McpToolDiscovery>("POST", `/api/v1/universes/${universeId}/mcp-servers/${encodeURIComponent(serverId)}/tools/discover`);
-    if (result.status === "failure") throw new Error(result.message);
-    return result.tools.map((tool) => tool.name);
-  }, [universeId]);
+  const mcpToolDiscovery = useMcpToolDiscoverySource(universeId);
   return {
     mcpServers: servers.data,
     workspaces: workspaces.data,
@@ -52,6 +47,6 @@ export function useSessionConfigEditorOptions(universeId: string, enabled = true
     models: models.data?.models,
     profiles: profiles.data,
     environments: environments.data,
-    discoverMcpTools,
+    mcpToolDiscovery,
   };
 }

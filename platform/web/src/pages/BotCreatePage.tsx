@@ -675,7 +675,7 @@ function Wizard({
                       models={options.models}
                       profiles={options.profiles}
                       environments={options.environments}
-                      discoverMcpTools={options.discoverMcpTools}
+                      mcpToolDiscovery={options.mcpToolDiscovery}
                       metadataSetup={<MetadataMapEditor value={metadata} onChange={setMetadata} />}
                       metadataDescription="Defaults copied to every session this bot creates. Metadata helps with filtering and does not affect runtime behavior."
                       retentionSetup={

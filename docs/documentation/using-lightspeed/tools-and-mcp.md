@@ -88,10 +88,12 @@ connection; it does not grant the server to a profile yet.
 ## Select tools and grant the server
 
 A newly registered server initially allows all of its advertised tools.
-Before adding it to a session, edit the server, choose **Load tools**, then
-**Allow only selected tools**. Select the operations needed for the job and
-choose **Save**. If you changed the URL or credential first, save those
-connection changes before loading tools.
+To restrict that connection for every profile and session, edit the server
+and choose **Selected tools**. Tool selection is always visible here, with
+the live inventory loaded when the editor opens. Search by name or
+description, select the allowed operations, and choose **Save**. If you changed
+the URL, credential, or network access first, save those connection changes
+before loading tools.
 
 For an issue-tracker integration, an initial review profile might need issue
 search and issue read operations. Add a write operation when the task also
@@ -103,9 +105,21 @@ and safety annotations as claims from that server. The allowlist and approval
 policy are the controls you configure in Lightspeed.
 
 Now open the profile, enable **MCP Servers**, choose **Add server**, and select
-the registered **Server**. Save and start a session from that profile. Ask it
-to perform a small read-only lookup against a known object, then inspect the
-arguments and returned result in the transcript.
+the registered **Server**. Its tools default to **All server-allowed tools**.
+To narrow them for this profile, choose **Customize tools**, then **Selected
+tools**. The same picker shows only tools within the server's allowance, plus
+any saved selections that are no longer allowed so you can remove them.
+
+The all-tools mode includes future tools within the server's allowance;
+**Selected tools** keeps the explicit names you chose, even if you selected
+every currently available tool. Switching modes preserves your selection draft
+while the editor is open. Refreshing discovers live metadata without changing
+your selections. Missing tools remain visible and removable, and an empty
+selection must be filled or switched back to all tools before saving.
+
+Save and start a session from that profile. Ask it to perform a small read-only
+lookup against a known object, then inspect the arguments and returned result
+in the transcript.
 
 The profile references the server ID and may narrow the server's allowlist
 further for that session. In JSON, `features.mcp.servers` is a list such as
