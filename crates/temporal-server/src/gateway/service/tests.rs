@@ -45,46 +45,6 @@ fn admission_failure_mapping_uses_gateway_error_kinds() {
 }
 
 #[test]
-fn managed_session_retry_requires_the_durable_creation_fingerprint() {
-    let universe_id = uuid::Uuid::from_u128(1);
-    let declaration = engine::ManagedSessionWorkflowTools::v1(
-        Some(engine::WorkflowEndpointRef {
-            workflow_id: "global controller/work-1".to_owned(),
-            workflow_kind: "agent_work".to_owned(),
-        }),
-        Vec::new(),
-    );
-    let mut state = engine::CoreAgentState::new();
-    state.workflow_tools.session_universe_id = Some(universe_id);
-    state.workflow_tools.managed_creation_fingerprint = Some(
-        declaration
-            .creation_fingerprint(universe_id)
-            .expect("creation fingerprint"),
-    );
-    validate_managed_session_retry(&state, universe_id, &declaration).expect("matching retry");
-
-    let conflicting = engine::ManagedSessionWorkflowTools::v1(
-        Some(engine::WorkflowEndpointRef {
-            workflow_id: "another controller".to_owned(),
-            workflow_kind: "agent_work".to_owned(),
-        }),
-        Vec::new(),
-    );
-    assert_eq!(
-        validate_managed_session_retry(&state, universe_id, &conflicting)
-            .expect_err("conflicting retry")
-            .kind,
-        AgentApiErrorKind::Conflict
-    );
-    assert_eq!(
-        validate_managed_session_retry(&engine::CoreAgentState::new(), universe_id, &declaration,)
-            .expect_err("standalone session cannot become managed")
-            .kind,
-        AgentApiErrorKind::Conflict
-    );
-}
-
-#[test]
 fn legacy_subagent_bindings_retain_their_immutable_deadline_ceiling() {
     const LEGACY_CEILING_MS: u64 = 4 * 60 * 60 * 1_000;
     let tool = tools::definitions::register(

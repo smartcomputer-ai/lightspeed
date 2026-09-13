@@ -118,32 +118,6 @@ impl GatewayAgentApi {
             .map_err(map_blob_store_error)
     }
 
-    pub(super) async fn wait_for_open_session(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<SessionView, AgentApiError> {
-        let started = Instant::now();
-        loop {
-            if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(format!(
-                    "timed out waiting for agent session to open: {session_id}"
-                )));
-            }
-            if let Some(status) = self.query_status_optional(session_id).await? {
-                if let Some(error) = status.setup_error {
-                    return Err(error);
-                }
-                if let Some(error) = status.last_error {
-                    return Err(AgentApiError::internal(error));
-                }
-                if status.ready {
-                    return self.project_session_by_id(session_id).await;
-                }
-            }
-            tokio::time::sleep(self.poll_interval).await;
-        }
-    }
-
     /// Waits for exact context entries to commit; any per-entry admission
     /// failure is escalated to a call-level typed error. Built on the same
     /// wait loop as `session/context/append`.
@@ -767,77 +741,5 @@ mod tests {
             )
             .is_none()
         );
-    }
-}
-
-impl GatewayAgentApi {
-    pub(super) async fn retry_session_setup(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<(), AgentApiError> {
-        self.workflow_handle(session_id)
-            .signal(
-                AgentSessionWorkflow::retry_setup,
-                (),
-                WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(map_workflow_interaction_error)
-    }
-
-    pub(super) async fn prepare_session_operation(
-        &self,
-        session_id: &SessionId,
-        operation: temporal_workflow::SessionOperation,
-    ) -> Result<api::ProfileApplySummary, AgentApiError> {
-        let request = temporal_workflow::SessionOperationRequest {
-            operation_id: format!("prepare_{}", uuid::Uuid::new_v4().simple()),
-            submitted_at_ms: u64::try_from(now_ms()?)
-                .map_err(|error| AgentApiError::internal(error.to_string()))?,
-            operation,
-        };
-        let receipt = request
-            .receipt()
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.refresh_input_blob_grace(&request).await?;
-        self.workflow_handle(session_id)
-            .signal(
-                AgentSessionWorkflow::prepare_session,
-                request.clone(),
-                WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(map_workflow_interaction_error)?;
-        let started = Instant::now();
-        loop {
-            if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(format!(
-                    "timed out waiting for session preparation: {}",
-                    request.operation_id
-                )));
-            }
-            let outcome = self
-                .workflow_handle(session_id)
-                .query(
-                    AgentSessionWorkflow::operation_outcome,
-                    receipt.clone(),
-                    WorkflowQueryOptions::default(),
-                )
-                .await
-                .map_err(map_workflow_query_error)?
-                .outcome?;
-            if let Some(outcome) = outcome {
-                return outcome.result;
-            }
-            if let Some(status) = self.query_status_optional(session_id).await? {
-                if let Some(error) = status.setup_error {
-                    return Err(error);
-                }
-                if let Some(error) = status.last_error {
-                    return Err(AgentApiError::internal(error));
-                }
-            }
-            tokio::time::sleep(self.poll_interval).await;
-        }
     }
 }

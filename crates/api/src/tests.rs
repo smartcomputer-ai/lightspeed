@@ -4,6 +4,15 @@ use serde_json::{Value, json};
 use super::*;
 
 #[test]
+fn mcp_feature_preserves_an_empty_server_list() {
+    for value in [json!({}), json!({ "servers": [] })] {
+        let feature: McpFeature = serde_json::from_value(value).expect("empty MCP feature");
+        assert!(feature.servers.is_empty());
+        assert_eq!(serde_json::to_value(feature).unwrap()["servers"], json!([]));
+    }
+}
+
+#[test]
 fn session_retention_put_requires_an_explicit_nullable_policy() {
     assert!(
         serde_json::from_value::<SessionRetentionPutParams>(json!({

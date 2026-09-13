@@ -538,15 +538,7 @@ pub fn admit_command(
                     format!("approval {} is already terminal", command.approval_id),
                 );
             }
-            let Some(active) = state.runs.active.as_ref() else {
-                return reject(
-                    CommandRejectionKind::MissingActiveRun,
-                    "approval decision requires an active run",
-                );
-            };
-            if active.run_id != command.run_id
-                || !matches!(active.status, RunStatus::Active | RunStatus::Parked)
-            {
+            if !matches!(active_run.status, RunStatus::Active | RunStatus::Parked) {
                 return reject(
                     CommandRejectionKind::ActiveWork,
                     "approval decision does not target the accepting active run",
@@ -686,23 +678,12 @@ pub fn admit_command(
             // A dead receiver must never leave an unresolvable pending
             // promise: fail every still-pending keyed completion promise of
             // this invocation in the same append.
-            if let Some(promises) = &invocation.completion_promises {
-                for promise_id in promises.values() {
-                    let Some(promise) = state.promises.promises.get(promise_id) else {
-                        continue;
-                    };
-                    if promise.status.is_terminal() {
-                        continue;
-                    }
-                    proposals.push(CoreAgentEventProposal::new(
-                        CoreAgentJoins::default(),
-                        CoreAgentEvent::Promise(PromiseEvent::Failed {
-                            promise_id: promise_id.clone(),
-                            error_ref: Some(error_ref.clone()),
-                        }),
-                    ));
-                }
-            }
+            fail_pending_completion_promises(
+                state,
+                invocation.completion_promises.as_ref(),
+                &error_ref,
+                &mut proposals,
+            );
             Ok(proposals)
         }
         CoreAgentCommand::FailWorkflowToolStart {
@@ -737,23 +718,12 @@ pub fn admit_command(
             )];
             // An unstartable execution must never leave an unresolvable
             // pending promise.
-            if let Some(promises) = &invocation.completion_promises {
-                for promise_id in promises.values() {
-                    let Some(promise) = state.promises.promises.get(promise_id) else {
-                        continue;
-                    };
-                    if promise.status.is_terminal() {
-                        continue;
-                    }
-                    proposals.push(CoreAgentEventProposal::new(
-                        CoreAgentJoins::default(),
-                        CoreAgentEvent::Promise(PromiseEvent::Failed {
-                            promise_id: promise_id.clone(),
-                            error_ref: Some(error_ref.clone()),
-                        }),
-                    ));
-                }
-            }
+            fail_pending_completion_promises(
+                state,
+                invocation.completion_promises.as_ref(),
+                &error_ref,
+                &mut proposals,
+            );
             Ok(proposals)
         }
         CoreAgentCommand::ForceCancelRun { run_id } => {
@@ -856,6 +826,31 @@ pub fn admit_command(
                 CoreAgentJoins::default(),
                 CoreAgentEvent::Environment(crate::EnvironmentEvent::ActiveEnvironmentCleared),
             )])
+        }
+    }
+}
+
+fn fail_pending_completion_promises(
+    state: &CoreAgentState,
+    completion_promises: Option<&std::collections::BTreeMap<String, crate::PromiseId>>,
+    error_ref: &crate::BlobRef,
+    proposals: &mut Vec<CoreAgentEventProposal>,
+) {
+    if let Some(promises) = completion_promises {
+        for promise_id in promises.values() {
+            let Some(promise) = state.promises.promises.get(promise_id) else {
+                continue;
+            };
+            if promise.status.is_terminal() {
+                continue;
+            }
+            proposals.push(CoreAgentEventProposal::new(
+                CoreAgentJoins::default(),
+                CoreAgentEvent::Promise(PromiseEvent::Failed {
+                    promise_id: promise_id.clone(),
+                    error_ref: Some(error_ref.clone()),
+                }),
+            ));
         }
     }
 }
@@ -966,4 +961,74 @@ fn unknown_reference_rejection_from_domain(error: DomainError) -> CommandError {
         CommandRejectionKind::UnknownReference,
         error.to_string(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        BlobRef, Promise, PromiseId, PromiseOwnership, PromiseScope, PromiseSource, PromiseStatus,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn completion_failure_preserves_key_order_and_skips_missing_or_terminal_promises() {
+        let mut state = CoreAgentState::new();
+        for (number, status) in [
+            (1, PromiseStatus::Pending),
+            (2, PromiseStatus::Resolved),
+            (3, PromiseStatus::Failed),
+            (4, PromiseStatus::Cancelled),
+            (5, PromiseStatus::Pending),
+        ] {
+            let promise_id = PromiseId::from_number(number);
+            state.promises.promises.insert(
+                promise_id.clone(),
+                Promise {
+                    promise_id,
+                    source: PromiseSource::Workflow {
+                        producer_workflow_id: "producer".into(),
+                        producer_workflow_kind: "test".into(),
+                        invocation_id: "invocation".into(),
+                        completion_key: format!("key-{number}"),
+                    },
+                    scope: PromiseScope::Session,
+                    ownership: PromiseOwnership::Runtime,
+                    status,
+                    payload_ref: None,
+                    error_ref: None,
+                    deadline_ms: None,
+                },
+            );
+        }
+        // Completion-key order deliberately differs from promise-ID order.
+        let completions = BTreeMap::from([
+            ("a".into(), PromiseId::from_number(5)),
+            ("b".into(), PromiseId::from_number(2)),
+            ("c".into(), PromiseId::from_number(3)),
+            ("d".into(), PromiseId::from_number(4)),
+            ("e".into(), PromiseId::from_number(6)),
+            ("f".into(), PromiseId::from_number(1)),
+        ]);
+        let error_ref = BlobRef::from_bytes(b"workflow failed");
+        let mut proposals = Vec::new();
+        fail_pending_completion_promises(&state, None, &error_ref, &mut proposals);
+        assert!(proposals.is_empty());
+        fail_pending_completion_promises(&state, Some(&completions), &error_ref, &mut proposals);
+        let failed: Vec<_> = proposals
+            .iter()
+            .map(|proposal| {
+                let CoreAgentEvent::Promise(PromiseEvent::Failed {
+                    promise_id,
+                    error_ref: actual_error,
+                }) = &proposal.event
+                else {
+                    panic!("expected promise failure");
+                };
+                assert_eq!(actual_error.as_ref(), Some(&error_ref));
+                promise_id.number()
+            })
+            .collect();
+        assert_eq!(failed, [5, 1]);
+    }
 }

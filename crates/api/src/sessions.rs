@@ -665,13 +665,13 @@ pub struct EnvironmentSkillsConfig {
 }
 
 /// Grants remote MCP tools by declaring linked servers from the universe MCP
-/// catalog; must link at least one server, with unique server ids.
+/// catalog. Server ids must be unique; an empty list grants no MCP tools.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpFeature {
     #[serde(default = "default_feature_version")]
     pub version: u32,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub servers: Vec<McpServerLink>,
 }
 

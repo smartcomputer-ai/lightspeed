@@ -545,9 +545,8 @@ pub struct EnvironmentSkillsConfig {
 pub struct McpFeature {
     #[serde(default = "default_feature_version")]
     pub version: u32,
-    /// Must be non-empty with unique server ids; omit the feature instead of
-    /// linking zero servers.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Attached servers have unique ids. An empty list grants no MCP tools.
+    #[serde(default)]
     pub servers: Vec<McpServerLink>,
 }
 
@@ -1004,11 +1003,6 @@ fn validate_web_feature(web: &WebFeature, api_kind: &ProviderApiKind) -> Result<
 }
 
 fn validate_mcp_feature(mcp: &McpFeature) -> Result<(), DomainError> {
-    if mcp.servers.is_empty() {
-        return Err(DomainError::InvariantViolation(
-            "mcp feature links zero servers; omit the feature instead".to_owned(),
-        ));
-    }
     let mut seen = std::collections::BTreeSet::new();
     for link in &mcp.servers {
         if link.server_id.trim().is_empty() {
@@ -1583,13 +1577,10 @@ mod tests {
     }
 
     #[test]
-    fn mcp_feature_requires_unique_nonempty_servers() {
+    fn mcp_feature_requires_unique_nonempty_server_ids() {
         let mut config = config(ProviderApiKind::OpenAiResponses, None);
         config.features.mcp = Some(McpFeature::default());
-        let error = config
-            .validate()
-            .expect_err("zero linked servers must fail");
-        assert!(matches!(error, DomainError::InvariantViolation(_)));
+        config.validate().expect("an empty attachment list is valid");
 
         let link = McpServerLink {
             server_id: "linear".to_owned(),
@@ -1604,6 +1595,13 @@ mod tests {
             .validate()
             .expect_err("duplicate server links must fail");
         assert!(matches!(error, DomainError::InvariantViolation(_)));
+
+        let mut blank = config.clone();
+        blank.features.mcp.as_mut().unwrap().servers.push(McpServerLink {
+            server_id: " ".to_owned(),
+            tools: None,
+        });
+        assert!(matches!(blank.validate(), Err(DomainError::InvariantViolation(_))));
 
         for tools in [vec![], vec![""], vec!["search", "search"]] {
             let mut narrowed = config.clone();
@@ -1630,6 +1628,36 @@ mod tests {
         narrowed
             .validate()
             .expect("a non-empty unique subset is valid");
+    }
+
+    #[test]
+    fn mcp_empty_attachments_survive_lifecycle_replay() {
+        use crate::core::components::lifecycle::{Event, apply_event};
+
+        let mut empty = config(ProviderApiKind::OpenAiResponses, None);
+        empty.features.mcp = Some(McpFeature::default());
+        let mut attached = empty.clone();
+        attached.features.mcp.as_mut().unwrap().servers.push(McpServerLink {
+            server_id: "catalog".to_owned(),
+            tools: None,
+        });
+        let events = [
+            Event::Opened { config: empty.clone() },
+            Event::ConfigChanged { config: attached, revision: 1 },
+            Event::ConfigChanged { config: empty.clone(), revision: 2 },
+        ];
+        let mut original = CoreAgentState::new();
+        let mut replayed = CoreAgentState::new();
+        for event in events {
+            apply_event(&mut original, &event).expect("apply lifecycle event");
+            let bytes = serde_json::to_vec(&event).expect("encode event");
+            let decoded: Event = serde_json::from_slice(&bytes).expect("decode event");
+            apply_event(&mut replayed, &decoded).expect("replay lifecycle event");
+        }
+        assert_eq!(original, replayed);
+        assert_eq!(replayed.lifecycle.config, Some(empty.clone()));
+        assert_eq!(replayed.lifecycle.config_revision, 2);
+        assert_eq!(serde_json::to_value(empty).unwrap()["features"]["mcp"]["servers"], serde_json::json!([]));
     }
 
     #[test]

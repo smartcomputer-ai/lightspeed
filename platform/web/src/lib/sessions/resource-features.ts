@@ -1,6 +1,6 @@
 import type { EnvironmentAttachment } from "@lightspeed-ai/agent-client";
 
-export type ResourceFeature = "vfs" | "environments";
+export type ResourceFeature = "vfs" | "environments" | "mcp";
 
 export function environmentAttachments(config: unknown): EnvironmentAttachment[] {
   const value = record(record(record(config).features).environments).environments;
@@ -22,9 +22,13 @@ export function attachedEnvironments<T extends { environmentId: string }>(config
 export function resourceFeatureDisableReasons(setup: unknown): Partial<Record<ResourceFeature, string>> {
   const features = record(record(record(setup).config).features);
   const result: Partial<Record<ResourceFeature, string>> = {};
-  for (const [name, field] of [["vfs", "workspaces"], ["environments", "environments"]] as const) {
+  for (const [name, field, label] of [
+    ["vfs", "workspaces", "workspace"],
+    ["environments", "environments", "environment"],
+    ["mcp", "servers", "server"],
+  ] as const) {
     const attachments = record(features[name])[field];
-    if (Array.isArray(attachments) && attachments.length) result[name] = `Remove the ${name === "vfs" ? "workspace" : "environment"} attachments before disabling this feature.`;
+    if (Array.isArray(attachments) && attachments.length) result[name] = `Remove the ${label} attachments before disabling this feature.`;
   }
   return result;
 }

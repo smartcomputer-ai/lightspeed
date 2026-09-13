@@ -97,3 +97,29 @@ Validation on 2026-09-13:
   the same five pre-existing diagnostics recorded above.
 - Formatting checks for changed Rust files and `git diff --check` passed.
   No live or credentialed suites ran.
+
+## Targeted command-admission cleanup
+
+Completed 2026-09-13:
+
+- Reuse the already-validated active run in approval decisions, removing an
+  unreachable missing-run branch and a redundant run-ID comparison. Preserve
+  the remaining validation order and keep the exhaustive command match.
+- Share pending completion-promise failure proposals between workflow-tool
+  delivery and start failures. Preserve completion-key order, missing/terminal
+  promise handling, and each command's leading event and retry checks.
+- Add a regression for mixed pending, missing, and terminal promises with
+  completion-key order different from promise-ID order.
+- `cargo test -p engine --features contract`: 226 tests passed, including
+  existing replay and workflow-tool failure/idempotency coverage.
+- `cargo clippy -p engine --all-targets --features contract --no-deps -- -D warnings`
+  passed, as did changed-file formatting and `git diff --check`.
+
+## Gateway session lifecycle cleanup
+
+The [gateway lifecycle record](gateway-session-lifecycle.md) describes the
+completed extraction, removal of discarded full-view projection and repeated
+state loads, shared retry completion, retained declaration admission, and shared
+workspace validation. Seven new offline tests exercise recovery and readiness;
+the complete server library suite passed with 344 tests and one existing
+ignored test. Live suites were not run.

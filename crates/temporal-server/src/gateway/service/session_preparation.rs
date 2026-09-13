@@ -314,6 +314,31 @@ impl SessionPreparationService {
 }
 
 impl SessionPreparationService {
+    pub(crate) async fn validate_workspace_attachment_targets(
+        &self,
+        features: &engine::FeaturesConfig,
+    ) -> Result<(), AgentApiError> {
+        let Some(vfs) = features.vfs.as_ref() else {
+            return Ok(());
+        };
+        if vfs.workspaces.is_empty() {
+            return Ok(());
+        }
+        let blobs: Arc<dyn BlobStore> = self.store.clone();
+        let workspace_store: Arc<dyn VfsWorkspaceStore> = self.store.clone();
+        let resolved = vfs::resolve_workspace_attachments(blobs, workspace_store, &vfs.workspaces)
+            .await
+            .map_err(map_vfs_catalog_error)?;
+        if let Some(link) = resolved.iter().find(|link| !link.is_available()) {
+            return Err(AgentApiError::invalid_request(format!(
+                "workspace attachment target at {} is unavailable: {}",
+                link.path,
+                link.unavailable_reason().unwrap_or("unknown reason")
+            )));
+        }
+        Ok(())
+    }
+
     pub(crate) async fn validate_configuration(
         &self,
         config: &SessionConfig,
@@ -321,22 +346,8 @@ impl SessionPreparationService {
         config
             .validate()
             .map_err(|e| AgentApiError::invalid_request(e.to_string()))?;
-        if let Some(vfs) = &config.features.vfs {
-            let links = vfs::resolve_workspace_attachments(
-                self.store.clone(),
-                self.store.clone(),
-                &vfs.workspaces,
-            )
-            .await
-            .map_err(map_vfs_catalog_error)?;
-            if let Some(link) = links.iter().find(|link| !link.is_available()) {
-                return Err(AgentApiError::invalid_request(format!(
-                    "workspace attachment target at {} is unavailable: {}",
-                    link.path,
-                    link.unavailable_reason().unwrap_or("unknown reason")
-                )));
-            }
-        }
+        self.validate_workspace_attachment_targets(&config.features)
+            .await?;
         if let Some(subagents) = &config.features.subagents {
             for agent in &subagents.agents {
                 let id = api::ProfileId::try_new(agent.profile_id.clone())
@@ -423,5 +434,14 @@ impl SessionPreparationService {
             instructions,
             environment_id,
         })
+    }
+}
+
+impl GatewayAgentApi {
+    pub(super) fn preparation_service(&self) -> SessionPreparationService {
+        SessionPreparationService {
+            store: self.store.clone(),
+            task_queue: self.task_queue.clone(),
+        }
     }
 }

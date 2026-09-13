@@ -538,14 +538,6 @@ mod tests {
 }
 
 impl GatewayAgentApi {
-    pub(super) fn preparation_service(
-        &self,
-    ) -> super::session_preparation::SessionPreparationService {
-        super::session_preparation::SessionPreparationService {
-            store: self.store.clone(),
-            task_queue: self.task_queue.clone(),
-        }
-    }
     pub(super) async fn desired_mcp_tools(
         &self,
         features: &engine::FeaturesConfig,

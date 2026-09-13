@@ -42,7 +42,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { supportsOpenAiProcessingTier } from "@/lib/sessions/run-options";
 import { cn } from "@/lib/utils";
-import { selectableEnvironments } from "@/lib/sessions/resource-features";
+import { resourceFeatureDisableReasons, selectableEnvironments } from "@/lib/sessions/resource-features";
 import { McpToolPicker } from "@/components/mcp/tool-picker";
 import type { McpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 
@@ -358,9 +358,6 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
               return { serverId, ...(Array.isArray(server.tools) ? { tools: stringList(server.tools) } : {}) };
             })
         : [];
-      // Keep an incomplete row while it is being edited. Validation prevents
-      // saving it, and a completed row is normalized to the thin document.
-      if (!servers.length) servers.push({ serverId: "" });
       next.servers = servers;
     }
 
@@ -553,7 +550,7 @@ export function SessionConfigEditor({
         if (name === "vfs") nextFeatures.vfs = { workspaces: [], prompts: {}, skills: {} };
         else if (name === "web") nextFeatures.web = { search: {}, fetch: {} };
         else if (name === "mcp") {
-          nextFeatures.mcp = { servers: [{ serverId: firstUsableMcpServerId(mcpServers) }] };
+          nextFeatures.mcp = { servers: [] };
         }
         else nextFeatures[name] = {};
       } else {
@@ -601,7 +598,7 @@ export function SessionConfigEditor({
                 value={config}
                 environments={environments}
                 allowInherit={allowInherit}
-                disableReason={featureDisableReasons.environments}
+                disableReason={disableReasons.environments}
                 onChange={onChange}
               >
                 {environmentSetup}
@@ -612,7 +609,7 @@ export function SessionConfigEditor({
                 name={name}
                 enabled={name in features}
                 feature={record(features[name])}
-                disableReason={featureDisableReasons[name]}
+                disableReason={disableReasons[name]}
                 expandable={name !== "timers"}
                 onEnabledChange={(enabled) => setFeature(name, enabled)}
               >
@@ -2034,6 +2031,7 @@ function McpFields({
           Add server
         </Button>
       </div>
+      {!links.length && <p className="text-xs text-muted-foreground">No server attachments.</p>}
       {links.map((link, index) => (
         <div
           key={index}

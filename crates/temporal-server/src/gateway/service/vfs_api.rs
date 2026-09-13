@@ -5,25 +5,9 @@ impl GatewayAgentApi {
         &self,
         features: &engine::FeaturesConfig,
     ) -> Result<(), AgentApiError> {
-        let Some(vfs) = features.vfs.as_ref() else {
-            return Ok(());
-        };
-        if vfs.workspaces.is_empty() {
-            return Ok(());
-        }
-        let blobs: Arc<dyn BlobStore> = self.store.clone();
-        let workspace_store: Arc<dyn VfsWorkspaceStore> = self.store.clone();
-        let resolved = vfs::resolve_workspace_attachments(blobs, workspace_store, &vfs.workspaces)
+        self.preparation_service()
+            .validate_workspace_attachment_targets(features)
             .await
-            .map_err(map_vfs_catalog_error)?;
-        if let Some(link) = resolved.iter().find(|link| !link.is_available()) {
-            return Err(AgentApiError::invalid_request(format!(
-                "workspace attachment target at {} is unavailable: {}",
-                link.path,
-                link.unavailable_reason().unwrap_or("unknown reason")
-            )));
-        }
-        Ok(())
     }
 
     pub(super) async fn create_vfs_workspace_record(
