@@ -8,6 +8,7 @@ pub(crate) mod mcp;
 mod reaper;
 mod secrets;
 mod session_tools;
+mod universes;
 
 use temporalio_client::Client;
 use temporalio_common::{telemetry::TelemetryOptions, worker::WorkerTaskTypes};

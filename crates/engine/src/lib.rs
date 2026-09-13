@@ -13,6 +13,7 @@ pub mod emission;
 pub mod media;
 pub mod session;
 pub mod storage;
+mod string_id;
 
 pub use blob::*;
 pub use core::*;

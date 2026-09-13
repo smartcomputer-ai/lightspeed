@@ -964,10 +964,6 @@ fn visible_mcp_result(
     fallback: &serde_json::Value,
     assets: &[NativeMcpAsset],
 ) -> (String, Vec<NativeMcpMedia>) {
-    use engine::media::{
-        MediaRejection, admit_tool_media, tool_media_line, tool_media_omitted_line,
-    };
-
     let mut lines = Vec::new();
     let mut media = Vec::new();
     let mut next_asset = 0usize;
@@ -1003,49 +999,14 @@ fn visible_mcp_result(
                     continue;
                 };
                 let index = next_index(if label == "image" { "image" } else { "audio" });
-                let admission = if label == "audio" {
-                    Err(MediaRejection::UnsupportedMediaType {
-                        media_type: asset
-                            .media_type
-                            .clone()
-                            .unwrap_or_else(|| "audio".to_owned()),
-                    })
-                } else {
-                    admit_tool_media(asset.media_type.as_deref(), asset.bytes.len() as u64)
-                };
-                let admission = admission.and_then(|kind| {
-                    if media.len() >= engine::media::MAX_TOOL_MEDIA_ITEMS {
-                        Err(MediaRejection::TooMany {
-                            limit: engine::media::MAX_TOOL_MEDIA_ITEMS,
-                        })
-                    } else {
-                        Ok(kind)
-                    }
-                });
-                match admission {
-                    Ok(kind) => {
-                        let media_type = engine::media::normalized_media_type(
-                            asset.media_type.as_deref().unwrap_or_default(),
-                        );
-                        lines.push(tool_media_line(
-                            kind,
-                            index,
-                            &asset.blob_ref,
-                            &media_type,
-                            None,
-                            asset.bytes.len() as u64,
-                        ));
-                        media.push(NativeMcpMedia {
-                            asset_index,
-                            kind,
-                            media_type,
-                            name: None,
-                        });
-                    }
-                    Err(rejection) => {
-                        lines.push(tool_media_omitted_line(label, index, &rejection));
-                    }
-                }
+                lines.push(render_mcp_asset(
+                    asset,
+                    asset_index,
+                    label,
+                    index,
+                    None,
+                    &mut media,
+                ));
             }
             Some("resource") => {
                 let Some(resource) = block.get("resource") else {
@@ -1071,41 +1032,14 @@ fn visible_mcp_result(
                 };
                 let name = uri.map(resource_name);
                 let index = next_index("document");
-                let admission =
-                    admit_tool_media(asset.media_type.as_deref(), asset.bytes.len() as u64)
-                        .and_then(|kind| {
-                            if media.len() >= engine::media::MAX_TOOL_MEDIA_ITEMS {
-                                Err(MediaRejection::TooMany {
-                                    limit: engine::media::MAX_TOOL_MEDIA_ITEMS,
-                                })
-                            } else {
-                                Ok(kind)
-                            }
-                        });
-                match admission {
-                    Ok(kind) => {
-                        let media_type = engine::media::normalized_media_type(
-                            asset.media_type.as_deref().unwrap_or_default(),
-                        );
-                        lines.push(tool_media_line(
-                            kind,
-                            index,
-                            &asset.blob_ref,
-                            &media_type,
-                            name.as_deref(),
-                            asset.bytes.len() as u64,
-                        ));
-                        media.push(NativeMcpMedia {
-                            asset_index,
-                            kind,
-                            media_type,
-                            name,
-                        });
-                    }
-                    Err(rejection) => {
-                        lines.push(tool_media_omitted_line("document", index, &rejection));
-                    }
-                }
+                lines.push(render_mcp_asset(
+                    asset,
+                    asset_index,
+                    "document",
+                    index,
+                    name,
+                    &mut media,
+                ));
             }
             Some("resource_link") => {
                 let uri = block
@@ -1129,6 +1063,63 @@ fn visible_mcp_result(
         lines.join("\n")
     };
     (visible, media)
+}
+
+/// Admit and render one binary block against the shared result-wide media cap.
+fn render_mcp_asset(
+    asset: &NativeMcpAsset,
+    asset_index: usize,
+    label: &str,
+    index: usize,
+    name: Option<String>,
+    media: &mut Vec<NativeMcpMedia>,
+) -> String {
+    use engine::media::{
+        MediaRejection, admit_tool_media, tool_media_line, tool_media_omitted_line,
+    };
+
+    let admission = if label == "audio" {
+        Err(MediaRejection::UnsupportedMediaType {
+            media_type: asset
+                .media_type
+                .clone()
+                .unwrap_or_else(|| "audio".to_owned()),
+        })
+    } else {
+        admit_tool_media(asset.media_type.as_deref(), asset.bytes.len() as u64)
+    };
+    let admission = admission.and_then(|kind| {
+        if media.len() >= engine::media::MAX_TOOL_MEDIA_ITEMS {
+            Err(MediaRejection::TooMany {
+                limit: engine::media::MAX_TOOL_MEDIA_ITEMS,
+            })
+        } else {
+            Ok(kind)
+        }
+    });
+    match admission {
+        Ok(kind) => {
+            let media_type = engine::media::normalized_media_type(
+                asset.media_type.as_deref().unwrap_or_default(),
+            );
+            let line = tool_media_line(
+                kind,
+                index,
+                &asset.blob_ref,
+                &media_type,
+                name.as_deref(),
+                asset.bytes.len() as u64,
+            );
+            media.push(NativeMcpMedia {
+                asset_index,
+                kind,
+                media_type,
+                name,
+            });
+            line
+        }
+        Err(rejection) => tool_media_omitted_line(label, index, &rejection),
+    }
 }
 
 /// The last path segment of a resource URI, used as a document name.
@@ -1632,6 +1623,90 @@ mod tests {
             "[image 11 omitted: at most 8 media items per result]"
         );
         assert_eq!(lines.len(), 12);
+    }
+
+    #[test]
+    fn mixed_media_shares_the_cap_and_preserves_asset_indices_and_rejection_precedence() {
+        let mut content = vec![
+            serde_json::json!({"type": "image", "mimeType": "image/svg+xml", "data": b64(b"svg")}),
+            // Audio blocks remain unsupported even if they claim an image MIME.
+            serde_json::json!({"type": "audio", "mimeType": "image/png", "data": b64(b"audio")}),
+        ];
+        let mut expected_media = Vec::new();
+        for index in 0..engine::media::MAX_TOOL_MEDIA_ITEMS {
+            let (kind, media_type, name) = if index % 2 == 0 {
+                content.push(serde_json::json!({
+                    "type": "image", "mimeType": "Image/PNG; charset=binary", "data": b64(b"png")
+                }));
+                (engine::media::MediaKind::Image, "image/png", None)
+            } else {
+                let name = format!("report-{index}.pdf");
+                content.push(serde_json::json!({"type": "resource", "resource": {
+                    "uri": format!("docs://reports/{name}"),
+                    "mimeType": "Application/PDF", "blob": b64(b"pdf")
+                }}));
+                (
+                    engine::media::MediaKind::Document,
+                    "application/pdf",
+                    Some(name),
+                )
+            };
+            expected_media.push(NativeMcpMedia {
+                asset_index: index + 2,
+                kind,
+                media_type: media_type.to_owned(),
+                name,
+            });
+        }
+        content.extend([
+            serde_json::json!({"type": "text", "text": "between blocks"}),
+            serde_json::json!({"type": "image", "mimeType": "image/png", "data": b64(b"excess")}),
+            serde_json::json!({"type": "resource", "resource": {
+                "uri": "docs://excess.pdf", "mimeType": "application/pdf", "blob": b64(b"excess")
+            }}),
+            serde_json::json!({"type": "resource", "resource": {
+                "mimeType": "image/svg+xml", "blob": b64(b"svg")
+            }}),
+        ]);
+        let (visible, media, assets) = native_result(serde_json::Value::Array(content));
+        assert_eq!(media, expected_media);
+        assert_eq!(assets.len(), engine::media::MAX_TOOL_MEDIA_ITEMS + 5);
+        let lines: Vec<_> = visible.lines().collect();
+        assert_eq!(
+            lines[0],
+            "[image 1 omitted: image/svg+xml is not supported]"
+        );
+        assert_eq!(lines[1], "[audio 1 omitted: image/png is not supported]");
+        for (index, item) in media.iter().enumerate() {
+            let position = if index % 2 == 0 {
+                index / 2 + 2
+            } else {
+                index / 2 + 1
+            };
+            let label = if index % 2 == 0 { "image" } else { "document" };
+            let handle = engine::media::media_handle(&assets[item.asset_index].blob_ref);
+            let name = item
+                .name
+                .as_ref()
+                .map(|name| format!(" · {name}"))
+                .unwrap_or_default();
+            assert_eq!(
+                lines[index + 2],
+                format!(
+                    "[{label} {position} · {handle} · {}{name} · 3 B]",
+                    item.media_type
+                )
+            );
+        }
+        assert_eq!(
+            &lines[engine::media::MAX_TOOL_MEDIA_ITEMS + 2..],
+            &[
+                "between blocks",
+                "[image 6 omitted: at most 8 media items per result]",
+                "[document 5 omitted: at most 8 media items per result]",
+                "[document 6 omitted: image/svg+xml is not supported]",
+            ]
+        );
     }
 
     #[test]

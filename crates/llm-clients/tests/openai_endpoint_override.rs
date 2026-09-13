@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use llm_clients::openai::{completions, responses};
+use llm_clients::openai::{audio, completions, responses};
 use llm_clients::{EndpointOverride, RequestAuth};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
@@ -52,6 +52,102 @@ async fn one_request_server(
         stream.write_all(response.as_bytes()).await.expect("write");
     });
     (format!("http://{address}/v1"), receiver, task)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn default_openai_headers_preserve_each_clients_path_and_content_type() {
+    for (kind, body, path, content_type) in [
+        (
+            "audio",
+            r#"{"text":"ok"}"#,
+            "/v1/audio/transcriptions",
+            "multipart/form-data; boundary=",
+        ),
+        (
+            "completions",
+            r#"{"id":"chatcmpl_test","object":"chat.completion","created":1,"model":"test","choices":[]}"#,
+            "/v1/chat/completions",
+            "application/json",
+        ),
+        (
+            "responses",
+            r#"{"id":"resp_test","object":"response","status":"completed","output":[]}"#,
+            "/v1/responses",
+            "application/json",
+        ),
+    ] {
+        let (base_url, request, server) = one_request_server(body).await;
+        match kind {
+            "audio" => {
+                let mut config = audio::Config::new("test-key");
+                config.base_url = base_url;
+                config.organization = Some("org-test".into());
+                config.project = Some("project-test".into());
+                audio::Client::new(config)
+                    .expect("client")
+                    .create_transcription(audio::CreateTranscriptionRequest::new(
+                        audio::AudioFile {
+                            filename: "test.wav".into(),
+                            mime: "audio/wav".into(),
+                            bytes: b"RIFF".to_vec(),
+                        },
+                    ))
+                    .await
+                    .expect("transcription");
+            }
+            "completions" => {
+                let mut config = completions::Config::new("test-key");
+                config.base_url = base_url;
+                config.organization = Some("org-test".into());
+                config.project = Some("project-test".into());
+                completions::Client::new(config)
+                    .expect("client")
+                    .create(completions::CreateCompletionRequest::user_text(
+                        "test", "hello",
+                    ))
+                    .await
+                    .expect("completion");
+            }
+            "responses" => {
+                let mut config = responses::Config::new("test-key");
+                config.base_url = base_url;
+                config.organization = Some("org-test".into());
+                config.project = Some("project-test".into());
+                responses::Client::new(config)
+                    .expect("client")
+                    .create(responses::CreateResponseRequest::text("test", "hello"))
+                    .await
+                    .expect("response");
+            }
+            _ => unreachable!(),
+        }
+        let request = request
+            .await
+            .expect("captured request")
+            .to_ascii_lowercase();
+        let headers = request.split_once("\r\n\r\n").expect("headers").0;
+        assert!(
+            headers.starts_with(&format!("post {path} http/1.1")),
+            "{kind}"
+        );
+        for header in [
+            "authorization: bearer test-key",
+            "openai-organization: org-test",
+            "openai-project: project-test",
+        ] {
+            assert!(
+                headers.lines().any(|line| line == header),
+                "{kind}: {header}"
+            );
+        }
+        assert!(
+            headers
+                .lines()
+                .any(|line| line.starts_with(&format!("content-type: {content_type}"))),
+            "{kind}"
+        );
+        server.await.expect("server");
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]

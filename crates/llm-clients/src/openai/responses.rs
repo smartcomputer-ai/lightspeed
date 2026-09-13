@@ -13,7 +13,7 @@ use crate::transport::{
 use crate::{SseEvent, SseParser};
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use reqwest::{Method, Url};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -80,15 +80,12 @@ impl Config {
     }
 
     fn with_env_overrides(mut self) -> Self {
-        if let Ok(base_url) = std::env::var("OPENAI_BASE_URL") {
-            self.base_url = base_url;
-        }
-        if let Ok(organization) = std::env::var("OPENAI_ORG_ID") {
-            self.organization = Some(organization);
-        }
-        if let Ok(project) = std::env::var("OPENAI_PROJECT_ID") {
-            self.project = Some(project);
-        }
+        super::config::apply_env_overrides(
+            &mut self.base_url,
+            &mut self.organization,
+            &mut self.project,
+            |name| std::env::var(name).ok(),
+        );
         self
     }
 }
@@ -117,24 +114,11 @@ impl Client {
             .as_deref()
             .map(bearer_auth_value)
             .transpose()?;
-        let mut headers = HeaderMap::new();
+        let mut headers = super::config::default_headers(
+            config.organization.as_deref(),
+            config.project.as_deref(),
+        )?;
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        if let Some(organization) = &config.organization {
-            headers.insert(
-                "OpenAI-Organization",
-                HeaderValue::from_str(organization).map_err(|err| {
-                    ConfigurationError::new(format!("invalid OpenAI organization header: {err}"))
-                })?,
-            );
-        }
-        if let Some(project) = &config.project {
-            headers.insert(
-                "OpenAI-Project",
-                HeaderValue::from_str(project).map_err(|err| {
-                    ConfigurationError::new(format!("invalid OpenAI project header: {err}"))
-                })?,
-            );
-        }
 
         Ok(Self {
             http: HttpClient::with_headers(config.http, headers)?,

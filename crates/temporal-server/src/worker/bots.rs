@@ -5,73 +5,28 @@
 
 use std::sync::Arc;
 
+use super::universes::WorkerUniverses;
+
 use temporal_workflow::bots::*;
-use temporalio_common::error::ApplicationFailure;
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
-use crate::{
-    gateway::GatewayAgentApi,
-    universe::{UniverseError, UniverseRuntime},
-};
-
-enum BotWorkerUniverses {
-    /// One pre-built service for one universe (tests).
-    Fixed {
-        universe_id: uuid::Uuid,
-        api: Arc<GatewayAgentApi>,
-    },
-    /// Lazy per-universe resolution over the deployment runtime.
-    Runtime(Arc<UniverseRuntime>),
-}
+use crate::{gateway::GatewayAgentApi, universe::UniverseRuntime};
 
 pub struct BotWorkerActivities {
-    universes: BotWorkerUniverses,
+    universes: WorkerUniverses,
 }
 
 impl BotWorkerActivities {
     pub fn for_universe(universe_id: uuid::Uuid, api: Arc<GatewayAgentApi>) -> Self {
         Self {
-            universes: BotWorkerUniverses::Fixed { universe_id, api },
+            universes: WorkerUniverses::Fixed { universe_id, api },
         }
     }
 
     pub fn with_runtime(runtime: Arc<UniverseRuntime>) -> Self {
         Self {
-            universes: BotWorkerUniverses::Runtime(runtime),
-        }
-    }
-
-    async fn api_for(
-        &self,
-        universe_id: uuid::Uuid,
-    ) -> Result<Arc<GatewayAgentApi>, ActivityError> {
-        match &self.universes {
-            BotWorkerUniverses::Fixed {
-                universe_id: served,
-                api,
-            } => {
-                if *served != universe_id {
-                    return Err(ActivityError::application(
-                        ApplicationFailure::non_retryable(anyhow::anyhow!(
-                            "worker serves universe {served} but activity requested {universe_id}"
-                        )),
-                    ));
-                }
-                Ok(api.clone())
-            }
-            BotWorkerUniverses::Runtime(runtime) => runtime
-                .state_for(universe_id, false)
-                .await
-                .map(|state| state.api.clone())
-                .map_err(|error| match error {
-                    UniverseError::Unknown { .. } => ActivityError::application(
-                        ApplicationFailure::non_retryable(anyhow::anyhow!("{error}")),
-                    ),
-                    UniverseError::Runtime(_) => ActivityError::application(
-                        ApplicationFailure::new(anyhow::anyhow!("{error}")),
-                    ),
-                }),
+            universes: WorkerUniverses::Runtime(runtime),
         }
     }
 }
@@ -84,7 +39,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotEnsureSessionRequest,
     ) -> Result<BotEnsureSessionResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::sessions::ensure_session(&api, request).await
     }
 
@@ -94,7 +49,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotRenameSessionRequest,
     ) -> Result<(), ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::sessions::rename_session(&api, request).await
     }
 
@@ -104,7 +59,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotSessionRequest,
     ) -> Result<BotSessionStatus, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::sessions::read_session_status(&api, request).await
     }
 
@@ -114,7 +69,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotReadRunUsageRequest,
     ) -> Result<BotReadRunUsageResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::sessions::read_run_usage(&api, request).await
     }
 
@@ -124,7 +79,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotStartRunRequest,
     ) -> Result<BotStartRunResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::sessions::start_run(&api, request).await
     }
 
@@ -134,7 +89,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotSteerRunRequest,
     ) -> Result<BotSteerRunResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::sessions::steer_run(&api, request).await
     }
 
@@ -144,7 +99,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotAppendContextRequest,
     ) -> Result<(), ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::sessions::append_context(&api, request).await
     }
 
@@ -154,7 +109,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotCloseSessionRequest,
     ) -> Result<BotCloseSessionResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::sessions::close_session(&api, request).await
     }
 
@@ -164,7 +119,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotCountDescendantsRequest,
     ) -> Result<BotCountDescendantsResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::sessions::count_descendants(&api, request).await
     }
 
@@ -174,7 +129,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotReadToolInvocationsRequest,
     ) -> Result<BotReadToolInvocationsResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::sessions::read_tool_invocations(&api, request).await
     }
 
@@ -184,7 +139,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotReadJsonBlobRequest,
     ) -> Result<serde_json::Value, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::sessions::read_json_blob(&api, request).await
     }
 
@@ -194,7 +149,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotExecuteToolRequest,
     ) -> Result<BotExecuteToolResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::tools::execute_tool(&api, request).await
     }
 
@@ -204,7 +159,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotRecordOutcomesRequest,
     ) -> Result<BotRecordOutcomesResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::receipts::record_outcomes(&api, request).await
     }
 
@@ -214,7 +169,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotRecordClosedRequest,
     ) -> Result<BotRecordClosedResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::receipts::record_closed(&api, request).await
     }
 
@@ -224,7 +179,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotSendDeliveryReceiptsRequest,
     ) -> Result<BotReceiptsSent, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::receipts::send_delivery_receipts(&api, request).await
     }
 
@@ -234,7 +189,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotSendBotReceiptsRequest,
     ) -> Result<BotReceiptsSent, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::receipts::send_bot_receipts(&api, request).await
     }
 
@@ -244,7 +199,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotPublishDirectoryRequest,
     ) -> Result<BotPublishDirectoryResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::receipts::publish_directory(&api, request).await
     }
 
@@ -254,7 +209,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotTriggerFireRequest,
     ) -> Result<BotScheduleFireResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::fires::admit_schedule_event(&api, request).await
     }
 
@@ -264,7 +219,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotTriggerFireRequest,
     ) -> Result<BotPollFireResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::bots::fires::poll_trigger(&api, request).await
     }
 }

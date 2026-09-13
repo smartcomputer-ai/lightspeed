@@ -1,89 +1,10 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use crate::string_id::string_id;
+use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::str::FromStr;
 
 pub use crate::session::{
     CorrelationId, EventSeq, SessionId, StringIdError, validate_general_string_id,
 };
-
-macro_rules! string_id {
-    ($name:ident, $validator:ident) => {
-        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        #[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
-        pub struct $name(String);
-
-        impl $name {
-            pub fn new(value: impl Into<String>) -> Self {
-                let value = value.into();
-                Self::try_new(value)
-                    .unwrap_or_else(|error| panic!("invalid {}: {error}", stringify!($name)))
-            }
-
-            pub fn try_new(value: impl Into<String>) -> Result<Self, StringIdError> {
-                let value = value.into();
-                $validator(stringify!($name), &value)?;
-                Ok(Self(value))
-            }
-
-            pub fn parse(value: impl Into<String>) -> Result<Self, StringIdError> {
-                Self::try_new(value)
-            }
-
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
-        }
-
-        impl TryFrom<String> for $name {
-            type Error = StringIdError;
-
-            fn try_from(value: String) -> Result<Self, Self::Error> {
-                Self::try_new(value)
-            }
-        }
-
-        impl TryFrom<&str> for $name {
-            type Error = StringIdError;
-
-            fn try_from(value: &str) -> Result<Self, Self::Error> {
-                Self::try_new(value)
-            }
-        }
-
-        impl FromStr for $name {
-            type Err = StringIdError;
-
-            fn from_str(value: &str) -> Result<Self, Self::Err> {
-                Self::try_new(value)
-            }
-        }
-
-        impl Serialize for $name {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: Serializer,
-            {
-                serializer.serialize_str(&self.0)
-            }
-        }
-
-        impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                let value = String::deserialize(deserializer)?;
-                Self::try_new(value).map_err(de::Error::custom)
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-    };
-}
 
 const TOOL_NAME_MAX_LEN: usize = 64;
 

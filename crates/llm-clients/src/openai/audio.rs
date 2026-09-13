@@ -8,7 +8,7 @@ use crate::error::{
 };
 use crate::transport::http::{join_url, normalize_base_url};
 use crate::transport::{ApiResponse, HeaderSnapshot, HttpClient, HttpClientConfig};
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, HeaderValue};
 use reqwest::{Method, StatusCode, Url};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -71,15 +71,12 @@ impl Config {
     }
 
     fn with_env_overrides(mut self) -> Self {
-        if let Ok(base_url) = std::env::var("OPENAI_BASE_URL") {
-            self.base_url = base_url;
-        }
-        if let Ok(organization) = std::env::var("OPENAI_ORG_ID") {
-            self.organization = Some(organization);
-        }
-        if let Ok(project) = std::env::var("OPENAI_PROJECT_ID") {
-            self.project = Some(project);
-        }
+        super::config::apply_env_overrides(
+            &mut self.base_url,
+            &mut self.organization,
+            &mut self.project,
+            |name| std::env::var(name).ok(),
+        );
         self
     }
 }
@@ -100,23 +97,10 @@ impl Client {
             .as_deref()
             .map(bearer_auth_value)
             .transpose()?;
-        let mut headers = HeaderMap::new();
-        if let Some(organization) = &config.organization {
-            headers.insert(
-                "OpenAI-Organization",
-                HeaderValue::from_str(organization).map_err(|err| {
-                    ConfigurationError::new(format!("invalid OpenAI organization header: {err}"))
-                })?,
-            );
-        }
-        if let Some(project) = &config.project {
-            headers.insert(
-                "OpenAI-Project",
-                HeaderValue::from_str(project).map_err(|err| {
-                    ConfigurationError::new(format!("invalid OpenAI project header: {err}"))
-                })?,
-            );
-        }
+        let headers = super::config::default_headers(
+            config.organization.as_deref(),
+            config.project.as_deref(),
+        )?;
 
         Ok(Self {
             http: HttpClient::with_headers(config.http, headers)?,

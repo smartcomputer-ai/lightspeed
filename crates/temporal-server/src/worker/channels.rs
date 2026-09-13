@@ -3,71 +3,28 @@
 
 use std::sync::Arc;
 
+use super::universes::WorkerUniverses;
+
 use temporal_workflow::channels::*;
-use temporalio_common::error::ApplicationFailure;
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
-use crate::{
-    gateway::GatewayAgentApi,
-    universe::{UniverseError, UniverseRuntime},
-};
-
-enum ChannelWorkerUniverses {
-    Fixed {
-        universe_id: uuid::Uuid,
-        api: Arc<GatewayAgentApi>,
-    },
-    Runtime(Arc<UniverseRuntime>),
-}
+use crate::{gateway::GatewayAgentApi, universe::UniverseRuntime};
 
 pub struct ChannelWorkerActivities {
-    universes: ChannelWorkerUniverses,
+    universes: WorkerUniverses,
 }
 
 impl ChannelWorkerActivities {
     pub fn for_universe(universe_id: uuid::Uuid, api: Arc<GatewayAgentApi>) -> Self {
         Self {
-            universes: ChannelWorkerUniverses::Fixed { universe_id, api },
+            universes: WorkerUniverses::Fixed { universe_id, api },
         }
     }
 
     pub fn with_runtime(runtime: Arc<UniverseRuntime>) -> Self {
         Self {
-            universes: ChannelWorkerUniverses::Runtime(runtime),
-        }
-    }
-
-    async fn api_for(
-        &self,
-        universe_id: uuid::Uuid,
-    ) -> Result<Arc<GatewayAgentApi>, ActivityError> {
-        match &self.universes {
-            ChannelWorkerUniverses::Fixed {
-                universe_id: served,
-                api,
-            } => {
-                if *served != universe_id {
-                    return Err(ActivityError::application(
-                        ApplicationFailure::non_retryable(anyhow::anyhow!(
-                            "worker serves universe {served} but activity requested {universe_id}"
-                        )),
-                    ));
-                }
-                Ok(api.clone())
-            }
-            ChannelWorkerUniverses::Runtime(runtime) => runtime
-                .state_for(universe_id, false)
-                .await
-                .map(|state| state.api.clone())
-                .map_err(|error| match error {
-                    UniverseError::Unknown { .. } => ActivityError::application(
-                        ApplicationFailure::non_retryable(anyhow::anyhow!("{error}")),
-                    ),
-                    UniverseError::Runtime(_) => ActivityError::application(
-                        ApplicationFailure::new(anyhow::anyhow!("{error}")),
-                    ),
-                }),
+            universes: WorkerUniverses::Runtime(runtime),
         }
     }
 }
@@ -80,7 +37,7 @@ impl ChannelWorkerActivities {
         _ctx: ActivityContext,
         request: ChatToolDeclarationsRequest,
     ) -> Result<ChatToolDeclarationsResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::chat_tool_declarations(&api, request).await
     }
 
@@ -90,7 +47,7 @@ impl ChannelWorkerActivities {
         _ctx: ActivityContext,
         request: ChatReadJsonBlobRequest,
     ) -> Result<serde_json::Value, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::read_json_blob(&api, request).await
     }
 
@@ -100,7 +57,7 @@ impl ChannelWorkerActivities {
         _ctx: ActivityContext,
         request: ChatPutJsonBlobRequest,
     ) -> Result<ChatPutJsonBlobResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::put_json_blob(&api, request).await
     }
 
@@ -110,7 +67,7 @@ impl ChannelWorkerActivities {
         _ctx: ActivityContext,
         request: ChatReconcileDeliveryRequest,
     ) -> Result<ChatReconcileDeliveryResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::reconcile_delivery(&api, request).await
     }
 
@@ -120,7 +77,7 @@ impl ChannelWorkerActivities {
         _ctx: ActivityContext,
         request: ChatEmitEventRequest,
     ) -> Result<ChatEmitEventResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::emit_chat_event(&api, request).await
     }
 
@@ -130,7 +87,7 @@ impl ChannelWorkerActivities {
         _ctx: ActivityContext,
         request: ChatStoreSentRequest,
     ) -> Result<ChatStoreSentResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::store_chat_sent(&api, request).await
     }
 
@@ -140,7 +97,7 @@ impl ChannelWorkerActivities {
         _ctx: ActivityContext,
         request: ChatResolveHandleRequest,
     ) -> Result<ChatResolveHandleResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::resolve_chat_handle(&api, request).await
     }
 
@@ -150,7 +107,7 @@ impl ChannelWorkerActivities {
         _ctx: ActivityContext,
         request: ChatAssertTriggerActiveRequest,
     ) -> Result<ChatTriggerActiveResult, ActivityError> {
-        let api = self.api_for(request.universe_id).await?;
+        let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::assert_trigger_active(&api, request).await
     }
 }

@@ -1430,6 +1430,59 @@ fn unsupported_environment_data_transport(transport: impl std::fmt::Display) -> 
     ))
 }
 
+#[derive(Clone, Copy)]
+enum BatchCallRoute {
+    Workflow,
+    Concurrency,
+    EnvironmentControl,
+    EnvironmentJobRead,
+    Inline,
+}
+
+impl BatchCallRoute {
+    fn requires_runtime(self) -> bool {
+        matches!(self, Self::EnvironmentJobRead | Self::Inline)
+    }
+}
+
+struct BatchCall<'a> {
+    call: &'a engine::ToolInvocationRequest,
+    route: BatchCallRoute,
+    denial: Option<String>,
+    needs_vfs: bool,
+    needs_environment: bool,
+}
+
+impl<'a> BatchCall<'a> {
+    fn new(request: &ToolInvocationBatchRequest, call: &'a engine::ToolInvocationRequest) -> Self {
+        let id = call.tool_id.as_ref();
+        let requirements = id.map(BuiltinToolRequirements::for_id).unwrap_or_default();
+        let is_job_read = id.is_some_and(|id| id.as_str() == "env.job_read");
+        let route = if call.workflow_tool.is_some() {
+            BatchCallRoute::Workflow
+        } else if id.is_some_and(is_concurrency_tool) {
+            BatchCallRoute::Concurrency
+        } else if id.is_some_and(is_environment_control_tool) {
+            BatchCallRoute::EnvironmentControl
+        } else if is_job_read {
+            BatchCallRoute::EnvironmentJobRead
+        } else {
+            BatchCallRoute::Inline
+        };
+        Self {
+            call,
+            route,
+            denial: environment_tool_denial(
+                request.environment_policy.as_ref(),
+                request.active_environment_id.as_ref(),
+                call,
+            ),
+            needs_vfs: requirements.vfs,
+            needs_environment: requirements.active_environment || is_job_read,
+        }
+    }
+}
+
 #[async_trait]
 impl CoreAgentTools for SessionTools {
     async fn invoke_batch(
@@ -1489,91 +1542,23 @@ impl CoreAgentTools for SessionTools {
         if has_await_call {
             return self.invoke_mixed_await_batch(request).await;
         }
-        let has_generic_runtime_call = request.calls.iter().any(|call| {
-            !call.tool_id.as_ref().is_some_and(is_concurrency_tool)
-                && !call
-                    .tool_id
-                    .as_ref()
-                    .is_some_and(is_environment_control_tool)
-                && call.workflow_tool.is_none()
-        });
+        let calls: Vec<_> = request
+            .calls
+            .iter()
+            .map(|call| BatchCall::new(&request, call))
+            .collect();
+        let has_generic_runtime_call = calls.iter().any(|call| call.route.requires_runtime());
+        // Preserve the fast path: workflow/concurrency/control-only batches do
+        // not resolve generic domains, even if a supplied call has a builtin ID.
+        let has_vfs_call = has_generic_runtime_call
+            && calls
+                .iter()
+                .any(|call| call.denial.is_none() && call.needs_vfs);
+        let has_environment_call = has_generic_runtime_call
+            && calls
+                .iter()
+                .any(|call| call.denial.is_none() && call.needs_environment);
         let mut successful_workflow_siblings = BTreeMap::new();
-        if !has_generic_runtime_call {
-            // Workflow-tool/concurrency-only batches skip generic VFS/runtime
-            // setup entirely.
-            let mut results = Vec::with_capacity(request.calls.len());
-            for call in &request.calls {
-                if let Some(message) = environment_tool_denial(
-                    request.environment_policy.as_ref(),
-                    request.active_environment_id.as_ref(),
-                    call,
-                ) {
-                    results.push(
-                        failed_result(self.blobs.as_ref(), call.call_id.clone(), message).await?,
-                    );
-                } else if call.workflow_tool.is_some() {
-                    results.push(
-                        self.invoke_supplied_workflow_tool_call(
-                            &request,
-                            call,
-                            &mut successful_workflow_siblings,
-                            &promise_ids,
-                        )
-                        .await?,
-                    );
-                } else if call
-                    .tool_id
-                    .as_ref()
-                    .is_some_and(is_environment_control_tool)
-                {
-                    results.push(self.invoke_environment_control_call(&request, call).await?);
-                } else {
-                    results.push(
-                        self.invoke_concurrency_call(&request, call, &promise_ids)
-                            .await?,
-                    );
-                }
-            }
-            return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
-                run_id: request.run_id,
-                turn_id: request.turn_id,
-                batch_id: request.batch_id,
-                results,
-            }));
-        }
-
-        let has_vfs_call = request.calls.iter().any(|call| {
-            if environment_tool_denial(
-                request.environment_policy.as_ref(),
-                request.active_environment_id.as_ref(),
-                call,
-            )
-            .is_some()
-            {
-                return false;
-            }
-            call.tool_id
-                .as_ref()
-                .is_some_and(|id| BuiltinToolRequirements::for_id(id).vfs)
-        });
-        let has_environment_call = request.calls.iter().any(|call| {
-            if environment_tool_denial(
-                request.environment_policy.as_ref(),
-                request.active_environment_id.as_ref(),
-                call,
-            )
-            .is_some()
-            {
-                return false;
-            }
-            call.tool_id
-                .as_ref()
-                .is_some_and(|id| BuiltinToolRequirements::for_id(id).active_environment)
-                || call
-                    .tool_id
-                    .as_ref()
-                    .is_some_and(|id| id.as_str() == "env.job_read")
-        });
         let links = if has_vfs_call {
             vfs::resolve_workspace_attachments(
                 self.blobs.clone(),
@@ -1591,76 +1576,69 @@ impl CoreAgentTools for SessionTools {
             SessionEnvironmentManager::new(self.blobs.clone())
         };
         let outcome = async {
-            let runtime = self
-                .runtime_for_domains(
-                    links,
-                    &environments,
-                    request.active_environment_id.as_ref(),
-                    request.vfs_working_directory.as_deref(),
+            let runtime = if has_generic_runtime_call {
+                Some(
+                    self.runtime_for_domains(
+                        links,
+                        &environments,
+                        request.active_environment_id.as_ref(),
+                        request.vfs_working_directory.as_deref(),
+                    )
+                    .await?,
                 )
-                .await?;
+            } else {
+                None
+            };
 
-            let mut results = Vec::with_capacity(request.calls.len());
-            for call in &request.calls {
-                if let Some(message) = environment_tool_denial(
-                    request.environment_policy.as_ref(),
-                    request.active_environment_id.as_ref(),
-                    call,
-                ) {
-                    results.push(
-                        failed_result(self.blobs.as_ref(), call.call_id.clone(), message).await?,
-                    );
-                } else if call.workflow_tool.is_some() {
-                    results.push(
-                        self.invoke_supplied_workflow_tool_call(
-                            &request,
-                            call,
-                            &mut successful_workflow_siblings,
-                            &promise_ids,
-                        )
-                        .await?,
-                    );
-                } else if call.tool_id.as_ref().is_some_and(is_concurrency_tool) {
-                    results.push(
-                        self.invoke_concurrency_call(&request, call, &promise_ids)
-                            .await?,
-                    );
-                } else if call
-                    .tool_id
-                    .as_ref()
-                    .is_some_and(is_environment_control_tool)
+            let mut results = Vec::with_capacity(calls.len());
+            for planned in calls {
+                let call = planned.call;
+                let result = if let Some(message) = planned.denial {
+                    failed_result(self.blobs.as_ref(), call.call_id.clone(), message).await?
+                } else if planned.route.requires_runtime()
+                    && planned.needs_environment
+                    && let Some(blocker) = environments.active_blocker()
                 {
-                    results.push(self.invoke_environment_control_call(&request, call).await?);
-                } else if let Some(blocker) = environments.active_blocker().filter(|_| {
-                    call.tool_id
-                        .as_ref()
-                        .is_some_and(|id| id.as_str() == "env.job_read")
-                        || call.tool_id.as_ref().is_some_and(|id| {
-                            BuiltinToolRequirements::for_id(id).active_environment
-                        })
-                }) {
                     // Batch-unit execution has no workflow-level readiness wait;
                     // report the blocker as an ordinary failed call.
-                    results.push(
-                        failed_result(
-                            self.blobs.as_ref(),
-                            call.call_id.clone(),
-                            active_environment_blocker_message(blocker),
-                        )
-                        .await?,
-                    );
-                } else if call
-                    .tool_id
-                    .as_ref()
-                    .is_some_and(|id| id.as_str() == "env.job_read")
-                {
-                    results.push(
-                        self.invoke_environment_job_call(&request, call, &environments)
-                            .await?,
-                    );
+                    failed_result(
+                        self.blobs.as_ref(),
+                        call.call_id.clone(),
+                        active_environment_blocker_message(blocker),
+                    )
+                    .await?
                 } else {
-                    results.push(runtime.invoke_call(call).await?);
-                }
+                    match planned.route {
+                        BatchCallRoute::Workflow => {
+                            self.invoke_supplied_workflow_tool_call(
+                                &request,
+                                call,
+                                &mut successful_workflow_siblings,
+                                &promise_ids,
+                            )
+                            .await?
+                        }
+                        BatchCallRoute::Concurrency => {
+                            self.invoke_concurrency_call(&request, call, &promise_ids)
+                                .await?
+                        }
+                        BatchCallRoute::EnvironmentControl => {
+                            self.invoke_environment_control_call(&request, call).await?
+                        }
+                        BatchCallRoute::EnvironmentJobRead => {
+                            self.invoke_environment_job_call(&request, call, &environments)
+                                .await?
+                        }
+                        BatchCallRoute::Inline => {
+                            runtime
+                                .as_ref()
+                                .expect("inline calls require runtime setup")
+                                .invoke_call(call)
+                                .await?
+                        }
+                    }
+                };
+                results.push(result);
             }
             Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
                 run_id: request.run_id,
@@ -2539,6 +2517,138 @@ mod tests {
             .await
             .expect("append opening events");
         (session_id, binding)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn special_dispatch_preserves_order_and_accounting_with_or_without_inline_calls() {
+        for with_inline in [false, true] {
+            let (blobs, tools, _, workspace_attachments) = session_tools_with_readme_link().await;
+            let sessions = InMemorySessionStore::new();
+            let (session_id, binding) = workflow_tool_session(blobs.as_ref(), &sessions).await;
+            let registry = Arc::new(InMemoryEnvironmentRegistryStore::new());
+            let tools = tools.with_environment_resolver(
+                crate::environments::resolver::EnvironmentResolver::new(registry.clone(), registry),
+            );
+            let sleep_args = blobs.put_bytes(br#"{"ms":50}"#.to_vec()).await.unwrap();
+            let workflow_args = blobs
+                .put_bytes(br#"{"status":"complete"}"#.to_vec())
+                .await
+                .unwrap();
+            let list_args = blobs.put_bytes(b"{}".to_vec()).await.unwrap();
+            let read_args = blobs
+                .put_bytes(br#"{"path":"README.md"}"#.to_vec())
+                .await
+                .unwrap();
+            let call = |name: &str, id: &str, arguments_ref: BlobRef| {
+                let mut call = per_call_request(name, b"{}", &[]).call;
+                call.call_id = ToolCallId::new(id);
+                call.arguments_ref = arguments_ref;
+                call
+            };
+            let mut workflow = call("work_report", "workflow", workflow_args);
+            workflow.builtin = None;
+            workflow.workflow_tool = Some(engine::WorkflowToolCallRuntime::v1(
+                binding,
+                engine::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN - 1,
+            ));
+            let mut bad_route = workflow.clone();
+            bad_route.call_id = ToolCallId::new("bad-route");
+            // Supplied workflow routing wins over a builtin-looking ID. The
+            // mismatch must fail validation without demanding VFS setup on
+            // the special-only path, and must not consume the sibling cap.
+            bad_route.tool_id = Some(test_tool_id("vfs_read_file"));
+            let mut over_cap = workflow.clone();
+            over_cap.call_id = ToolCallId::new("over-cap");
+            let mut calls = vec![
+                call(
+                    ::tools::concurrency::SLEEP_TOOL_NAME,
+                    "sleep-a",
+                    sleep_args.clone(),
+                ),
+                bad_route,
+                workflow,
+                call(ENVIRONMENT_LIST_TOOL_NAME, "list", list_args),
+                call(::tools::concurrency::SLEEP_TOOL_NAME, "sleep-b", sleep_args),
+                over_cap,
+            ];
+            if with_inline {
+                calls.push(call("vfs_read_file", "read", read_args));
+            }
+            let expected_ids: Vec<_> = calls.iter().map(|call| call.call_id.clone()).collect();
+            let results = tools
+                .invoke_batch(ToolInvocationBatchRequest {
+                    session_id,
+                    run_id: RunId::new(9),
+                    turn_id: TurnId::new(1),
+                    batch_id: ToolBatchId::new(1),
+                    promise_id_base: 5,
+                    // A special-only batch must not inspect this nonexistent cwd.
+                    vfs_working_directory: Some(
+                        if with_inline {
+                            "/workspace"
+                        } else {
+                            "/missing"
+                        }
+                        .into(),
+                    ),
+                    workspace_attachments,
+                    active_environment_id: None,
+                    environment_policy: Some(test_environment_policy(&[])),
+                    subagents_policy: None,
+                    calls,
+                })
+                .await
+                .expect("dispatch")
+                .completed_result()
+                .expect("completed")
+                .results;
+            assert_eq!(
+                results
+                    .iter()
+                    .map(|result| result.call_id.clone())
+                    .collect::<Vec<_>>(),
+                expected_ids
+            );
+            for (index, result) in results.iter().enumerate() {
+                let expected = if matches!(index, 1 | 5) {
+                    ToolCallStatus::Failed
+                } else {
+                    ToolCallStatus::Succeeded
+                };
+                assert_eq!(
+                    result.status, expected,
+                    "inline={with_inline}, call={}",
+                    result.call_id
+                );
+            }
+            assert_eq!(
+                results[0].effects[0]
+                    .data
+                    .get("promise_id")
+                    .map(String::as_str),
+                Some("promise_5")
+            );
+            assert_eq!(
+                results[4].effects[0]
+                    .data
+                    .get("promise_id")
+                    .map(String::as_str),
+                Some("promise_6")
+            );
+            assert_eq!(
+                results[2].effects[0].kind,
+                engine::WORKFLOW_TOOL_EMIT_EFFECT_KIND
+            );
+            assert!(results[1].effects.is_empty());
+            assert!(results[5].effects.is_empty());
+            if with_inline {
+                let output = blobs
+                    .read_text(results[6].output_ref.as_ref().unwrap())
+                    .await
+                    .unwrap();
+                assert!(output.contains("hello"));
+            }
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
