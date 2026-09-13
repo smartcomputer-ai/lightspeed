@@ -8,7 +8,7 @@
 
 <p align="center"><strong>Run thousands of agents. Efficient, durable, auditable.</strong></p>
 
-Lightspeed is open-source infrastructure for running managed agent fleets as durable workflows. 
+Lightspeed is open-source infrastructure for running managed agent fleets as durable workflows.
 
 "Managed agents" is an emerging pattern that separates the core agent loops from the VM or sandbox they use. Agents survive restarts, can run for months, and stay cheap when idle. When they
 need an operating system, they borrow a real machine for as long as the task

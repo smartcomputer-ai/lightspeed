@@ -35,10 +35,10 @@ use crate::worker::{
 
 mod common;
 mod compaction;
+mod context_refresh;
 mod environment_jobs;
 mod llm;
 mod preprocess;
-mod context_refresh;
 pub use context_refresh::subagent_catalog_snapshot;
 mod state;
 mod storage;
@@ -610,10 +610,10 @@ impl WorkerActivities {
     > {
         let state = self.state_for(&ctx).await?;
         let service = preparation_service(&state, &ctx)?;
-        if request.validate_configuration {
-            if let Err(error) = service.validate_configuration(&request.source.config).await {
-                return preparation_activity_result(Err(error));
-            }
+        if request.validate_configuration
+            && let Err(error) = service.validate_configuration(&request.source.config).await
+        {
+            return preparation_activity_result(Err(error));
         }
         preparation_activity_result(service.prepare_toolset(request.source).await)
     }

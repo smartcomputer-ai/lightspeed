@@ -13,7 +13,7 @@
       "tool_choice": "auto",
       "tools": [
         {
-          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "name": "vfs_apply_patch",
           "parameters": {
             "additionalProperties": false,
@@ -32,7 +32,7 @@
           "type": "function"
         },
         {
-          "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "name": "vfs_edit_file",
           "parameters": {
             "additionalProperties": false,
@@ -65,7 +65,7 @@
           "type": "function"
         },
         {
-          "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "name": "vfs_glob",
           "parameters": {
             "additionalProperties": false,
@@ -115,7 +115,7 @@
           "type": "function"
         },
         {
-          "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "name": "vfs_grep",
           "parameters": {
             "additionalProperties": false,
@@ -176,7 +176,7 @@
           "type": "function"
         },
         {
-          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "name": "vfs_list_dir",
           "parameters": {
             "additionalProperties": false,
@@ -193,7 +193,7 @@
           "type": "function"
         },
         {
-          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "name": "vfs_read_file",
           "parameters": {
             "additionalProperties": false,
@@ -236,7 +236,7 @@
           "type": "function"
         },
         {
-          "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "name": "vfs_write_file",
           "parameters": {
             "additionalProperties": false,
@@ -276,7 +276,7 @@
       "tool_choice": "auto",
       "tools": [
         {
-          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "apply_patch",
           "parameters": {
             "additionalProperties": false,
@@ -295,7 +295,7 @@
           "type": "function"
         },
         {
-          "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "edit_file",
           "parameters": {
             "additionalProperties": false,
@@ -328,7 +328,7 @@
           "type": "function"
         },
         {
-          "description": "Select one allowed, ready universe environment as this session's active environment. Environment-dependent tools must be called in a later turn.",
+          "description": "Select one attached environment as this session's active environment. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
           "name": "environment_activate",
           "parameters": {
             "additionalProperties": false,
@@ -358,41 +358,18 @@
           "type": "function"
         },
         {
-          "description": "List the live universe environments allowed by this session. Use this before activation when you do not know the environment id. Registered environments carry a group, the name of the pool they registered under; filter by it to pick from one pool.",
+          "description": "List the environments attached to this session with their status, this session's access on each, and which one is active.",
           "name": "environment_list",
           "parameters": {
             "additionalProperties": false,
-            "properties": {
-              "cursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "group": {
-                "description": "Only environments in this group (registered pool name).",
-                "minLength": 1,
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "limit": {
-                "maximum": 100,
-                "minimum": 1,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
+            "properties": {},
             "type": "object"
           },
           "strict": false,
           "type": "function"
         },
         {
-          "description": "Read live details for an environment. Omit environment_id to inspect this session's active environment; provide a known id to inspect another environment allowed by the session.",
+          "description": "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide the id of another environment attached to this session to inspect it.",
           "name": "environment_read",
           "parameters": {
             "additionalProperties": false,
@@ -411,7 +388,7 @@
           "type": "function"
         },
         {
-          "description": "Runs a command in a shell (a PTY when `tty` is true), returning output or a session ID for ongoing interaction. A command may leave services running for later calls; they keep running until stopped or the environment closes. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Runs a command in a shell (a PTY when `tty` is true), returning output or a session ID for ongoing interaction. A command may leave services running for later calls; they keep running until stopped or the environment closes. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "exec_command",
           "parameters": {
             "additionalProperties": false,
@@ -475,7 +452,7 @@
           "type": "function"
         },
         {
-          "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "glob",
           "parameters": {
             "additionalProperties": false,
@@ -525,7 +502,7 @@
           "type": "function"
         },
         {
-          "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "grep",
           "parameters": {
             "additionalProperties": false,
@@ -586,7 +563,7 @@
           "type": "function"
         },
         {
-          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "list_dir",
           "parameters": {
             "additionalProperties": false,
@@ -603,7 +580,7 @@
           "type": "function"
         },
         {
-          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "read_file",
           "parameters": {
             "additionalProperties": false,
@@ -646,7 +623,7 @@
           "type": "function"
         },
         {
-          "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "write_file",
           "parameters": {
             "additionalProperties": false,
@@ -670,7 +647,7 @@
           "type": "function"
         },
         {
-          "description": "Writes characters to an existing unified exec session and returns recent output. Empty `chars` polls without writing; Ctrl-C (\\u0003) interrupts the session. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Writes characters to an existing unified exec session and returns recent output. Empty `chars` polls without writing; Ctrl-C (\\u0003) interrupts the session. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "write_stdin",
           "parameters": {
             "additionalProperties": false,
@@ -736,7 +713,7 @@
       "tool_choice": "auto",
       "tools": [
         {
-          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "apply_patch",
           "parameters": {
             "additionalProperties": false,
@@ -755,7 +732,7 @@
           "type": "function"
         },
         {
-          "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "edit_file",
           "parameters": {
             "additionalProperties": false,
@@ -788,7 +765,7 @@
           "type": "function"
         },
         {
-          "description": "Select one allowed, ready universe environment as this session's active environment. Environment-dependent tools must be called in a later turn.",
+          "description": "Select one attached environment as this session's active environment. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
           "name": "environment_activate",
           "parameters": {
             "additionalProperties": false,
@@ -818,41 +795,18 @@
           "type": "function"
         },
         {
-          "description": "List the live universe environments allowed by this session. Use this before activation when you do not know the environment id. Registered environments carry a group, the name of the pool they registered under; filter by it to pick from one pool.",
+          "description": "List the environments attached to this session with their status, this session's access on each, and which one is active.",
           "name": "environment_list",
           "parameters": {
             "additionalProperties": false,
-            "properties": {
-              "cursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "group": {
-                "description": "Only environments in this group (registered pool name).",
-                "minLength": 1,
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "limit": {
-                "maximum": 100,
-                "minimum": 1,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
+            "properties": {},
             "type": "object"
           },
           "strict": false,
           "type": "function"
         },
         {
-          "description": "Read live details for an environment. Omit environment_id to inspect this session's active environment; provide a known id to inspect another environment allowed by the session.",
+          "description": "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide the id of another environment attached to this session to inspect it.",
           "name": "environment_read",
           "parameters": {
             "additionalProperties": false,
@@ -871,7 +825,7 @@
           "type": "function"
         },
         {
-          "description": "Runs a command to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Runs a command to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "exec_command",
           "parameters": {
             "additionalProperties": false,
@@ -928,7 +882,7 @@
           "type": "function"
         },
         {
-          "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "glob",
           "parameters": {
             "additionalProperties": false,
@@ -978,7 +932,7 @@
           "type": "function"
         },
         {
-          "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "grep",
           "parameters": {
             "additionalProperties": false,
@@ -1039,7 +993,7 @@
           "type": "function"
         },
         {
-          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "list_dir",
           "parameters": {
             "additionalProperties": false,
@@ -1056,7 +1010,7 @@
           "type": "function"
         },
         {
-          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "read_file",
           "parameters": {
             "additionalProperties": false,
@@ -1099,7 +1053,7 @@
           "type": "function"
         },
         {
-          "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "write_file",
           "parameters": {
             "additionalProperties": false,
@@ -1139,7 +1093,7 @@
       "tool_choice": "auto",
       "tools": [
         {
-          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "apply_patch",
           "parameters": {
             "additionalProperties": false,
@@ -1158,7 +1112,7 @@
           "type": "function"
         },
         {
-          "description": "Continue with a running handle: optionally send input or a signal, then wait up to `wait_ms` and return the output produced since the last call. With nothing but the handle it only waits. Once the process has exited it returns the remaining output and the exit code. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Continue with a running handle: optionally send input or a signal, then wait up to `wait_ms` and return the output produced since the last call. With nothing but the handle it only waits. Once the process has exited it returns the remaining output and the exit code. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "continue_process",
           "parameters": {
             "additionalProperties": false,
@@ -1227,7 +1181,7 @@
           "type": "function"
         },
         {
-          "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "edit_file",
           "parameters": {
             "additionalProperties": false,
@@ -1260,7 +1214,7 @@
           "type": "function"
         },
         {
-          "description": "Select one allowed, ready universe environment as this session's active environment. Environment-dependent tools must be called in a later turn.",
+          "description": "Select one attached environment as this session's active environment. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
           "name": "environment_activate",
           "parameters": {
             "additionalProperties": false,
@@ -1290,41 +1244,18 @@
           "type": "function"
         },
         {
-          "description": "List the live universe environments allowed by this session. Use this before activation when you do not know the environment id. Registered environments carry a group, the name of the pool they registered under; filter by it to pick from one pool.",
+          "description": "List the environments attached to this session with their status, this session's access on each, and which one is active.",
           "name": "environment_list",
           "parameters": {
             "additionalProperties": false,
-            "properties": {
-              "cursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "group": {
-                "description": "Only environments in this group (registered pool name).",
-                "minLength": 1,
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "limit": {
-                "maximum": 100,
-                "minimum": 1,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
+            "properties": {},
             "type": "object"
           },
           "strict": false,
           "type": "function"
         },
         {
-          "description": "Read live details for an environment. Omit environment_id to inspect this session's active environment; provide a known id to inspect another environment allowed by the session.",
+          "description": "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide the id of another environment attached to this session to inspect it.",
           "name": "environment_read",
           "parameters": {
             "additionalProperties": false,
@@ -1343,7 +1274,7 @@
           "type": "function"
         },
         {
-          "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "glob",
           "parameters": {
             "additionalProperties": false,
@@ -1393,7 +1324,7 @@
           "type": "function"
         },
         {
-          "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "grep",
           "parameters": {
             "additionalProperties": false,
@@ -1454,7 +1385,7 @@
           "type": "function"
         },
         {
-          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "list_dir",
           "parameters": {
             "additionalProperties": false,
@@ -1471,7 +1402,7 @@
           "type": "function"
         },
         {
-          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "read_file",
           "parameters": {
             "additionalProperties": false,
@@ -1514,7 +1445,7 @@
           "type": "function"
         },
         {
-          "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "run_process",
           "parameters": {
             "additionalProperties": false,
@@ -1597,7 +1528,7 @@
           "type": "function"
         },
         {
-          "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "write_file",
           "parameters": {
             "additionalProperties": false,
@@ -1838,7 +1769,7 @@
           "type": "function"
         },
         {
-          "description": "Run one durable environment job and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Run one durable environment job and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "job_run",
           "parameters": {
             "additionalProperties": false,
@@ -1901,7 +1832,7 @@
           "type": "function"
         },
         {
-          "description": "Start one or more durable environment jobs asynchronously. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Start one or more durable environment jobs asynchronously. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "job_submit",
           "parameters": {
             "additionalProperties": false,
@@ -2041,7 +1972,7 @@
       },
       "tools": [
         {
-          "description": "Performs exact string replacements in a file. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Performs exact string replacements in a file. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2075,7 +2006,7 @@
           "name": "VfsEdit"
         },
         {
-          "description": "Finds files by glob pattern. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Finds files by glob pattern. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2099,7 +2030,7 @@
           "name": "VfsGlob"
         },
         {
-          "description": "Searches file contents with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Searches file contents with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2246,7 +2177,7 @@
           "name": "VfsGrep"
         },
         {
-          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2261,7 +2192,7 @@
           "name": "VfsListDir"
         },
         {
-          "description": "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2312,7 +2243,7 @@
           "cache_control": {
             "type": "ephemeral"
           },
-          "description": "Writes a file to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Writes a file to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2349,7 +2280,7 @@
       },
       "tools": [
         {
-          "description": "Executes a shell command. Waits for it to finish, killing it at `timeout`, unless `run_in_background` is true, in which case it returns at once with an ID for BashOutput and KillShell. A command may leave services running; they keep running until stopped or the environment is closed. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Executes a shell command. Waits for it to finish, killing it at `timeout`, unless `run_in_background` is true, in which case it returns at once with an ID for BashOutput and KillShell. A command may leave services running; they keep running until stopped or the environment is closed. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2399,7 +2330,7 @@
           "name": "Bash"
         },
         {
-          "description": "Wait up to `timeout` for a background command to finish and return the output produced since the last call. Returns at once if it has already exited, with its exit code. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Wait up to `timeout` for a background command to finish and return the output produced since the last call. Returns at once if it has already exited, with its exit code. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2435,7 +2366,7 @@
           "name": "BashOutput"
         },
         {
-          "description": "Performs exact string replacements in a file. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Performs exact string replacements in a file. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2469,7 +2400,7 @@
           "name": "Edit"
         },
         {
-          "description": "Finds files by glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Finds files by glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2493,7 +2424,7 @@
           "name": "Glob"
         },
         {
-          "description": "Searches file contents with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Searches file contents with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2640,7 +2571,7 @@
           "name": "Grep"
         },
         {
-          "description": "Kills a running background command by its ID and returns the output it produced since the last call. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Kills a running background command by its ID and returns the output it produced since the last call. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2657,7 +2588,7 @@
           "name": "KillShell"
         },
         {
-          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2672,7 +2603,7 @@
           "name": "ListDir"
         },
         {
-          "description": "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2720,7 +2651,7 @@
           "name": "Read"
         },
         {
-          "description": "Writes a file to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Writes a file to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2742,7 +2673,7 @@
           "name": "Write"
         },
         {
-          "description": "Select one allowed, ready universe environment as this session's active environment. Environment-dependent tools must be called in a later turn.",
+          "description": "Select one attached environment as this session's active environment. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2768,33 +2699,10 @@
           "name": "environment_deactivate"
         },
         {
-          "description": "List the live universe environments allowed by this session. Use this before activation when you do not know the environment id. Registered environments carry a group, the name of the pool they registered under; filter by it to pick from one pool.",
+          "description": "List the environments attached to this session with their status, this session's access on each, and which one is active.",
           "input_schema": {
             "additionalProperties": false,
-            "properties": {
-              "cursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "group": {
-                "description": "Only environments in this group (registered pool name).",
-                "minLength": 1,
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "limit": {
-                "maximum": 100,
-                "minimum": 1,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
+            "properties": {},
             "type": "object"
           },
           "name": "environment_list"
@@ -2803,7 +2711,7 @@
           "cache_control": {
             "type": "ephemeral"
           },
-          "description": "Read live details for an environment. Omit environment_id to inspect this session's active environment; provide a known id to inspect another environment allowed by the session.",
+          "description": "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide the id of another environment attached to this session to inspect it.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2835,7 +2743,7 @@
       },
       "tools": [
         {
-          "description": "Executes a shell command and waits for it to finish, killing it at `timeout`. A command may leave services running; they keep running until stopped or the environment is closed. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Executes a shell command and waits for it to finish, killing it at `timeout`. A command may leave services running; they keep running until stopped or the environment is closed. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2878,7 +2786,7 @@
           "name": "Bash"
         },
         {
-          "description": "Performs exact string replacements in a file. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Performs exact string replacements in a file. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2912,7 +2820,7 @@
           "name": "Edit"
         },
         {
-          "description": "Finds files by glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Finds files by glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2936,7 +2844,7 @@
           "name": "Glob"
         },
         {
-          "description": "Searches file contents with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Searches file contents with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3083,7 +2991,7 @@
           "name": "Grep"
         },
         {
-          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3098,7 +3006,7 @@
           "name": "ListDir"
         },
         {
-          "description": "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3146,7 +3054,7 @@
           "name": "Read"
         },
         {
-          "description": "Writes a file to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Writes a file to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3168,7 +3076,7 @@
           "name": "Write"
         },
         {
-          "description": "Select one allowed, ready universe environment as this session's active environment. Environment-dependent tools must be called in a later turn.",
+          "description": "Select one attached environment as this session's active environment. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3194,33 +3102,10 @@
           "name": "environment_deactivate"
         },
         {
-          "description": "List the live universe environments allowed by this session. Use this before activation when you do not know the environment id. Registered environments carry a group, the name of the pool they registered under; filter by it to pick from one pool.",
+          "description": "List the environments attached to this session with their status, this session's access on each, and which one is active.",
           "input_schema": {
             "additionalProperties": false,
-            "properties": {
-              "cursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "group": {
-                "description": "Only environments in this group (registered pool name).",
-                "minLength": 1,
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "limit": {
-                "maximum": 100,
-                "minimum": 1,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
+            "properties": {},
             "type": "object"
           },
           "name": "environment_list"
@@ -3229,7 +3114,7 @@
           "cache_control": {
             "type": "ephemeral"
           },
-          "description": "Read live details for an environment. Omit environment_id to inspect this session's active environment; provide a known id to inspect another environment allowed by the session.",
+          "description": "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide the id of another environment attached to this session to inspect it.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3261,7 +3146,7 @@
       },
       "tools": [
         {
-          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3278,7 +3163,7 @@
           "name": "apply_patch"
         },
         {
-          "description": "Continue with a running handle: optionally send input or a signal, then wait up to `wait_ms` and return the output produced since the last call. With nothing but the handle it only waits. Once the process has exited it returns the remaining output and the exit code. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Continue with a running handle: optionally send input or a signal, then wait up to `wait_ms` and return the output produced since the last call. With nothing but the handle it only waits. Once the process has exited it returns the remaining output and the exit code. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3345,7 +3230,7 @@
           "name": "continue_process"
         },
         {
-          "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3376,7 +3261,7 @@
           "name": "edit_file"
         },
         {
-          "description": "Select one allowed, ready universe environment as this session's active environment. Environment-dependent tools must be called in a later turn.",
+          "description": "Select one attached environment as this session's active environment. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3402,39 +3287,16 @@
           "name": "environment_deactivate"
         },
         {
-          "description": "List the live universe environments allowed by this session. Use this before activation when you do not know the environment id. Registered environments carry a group, the name of the pool they registered under; filter by it to pick from one pool.",
+          "description": "List the environments attached to this session with their status, this session's access on each, and which one is active.",
           "input_schema": {
             "additionalProperties": false,
-            "properties": {
-              "cursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "group": {
-                "description": "Only environments in this group (registered pool name).",
-                "minLength": 1,
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "limit": {
-                "maximum": 100,
-                "minimum": 1,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
+            "properties": {},
             "type": "object"
           },
           "name": "environment_list"
         },
         {
-          "description": "Read live details for an environment. Omit environment_id to inspect this session's active environment; provide a known id to inspect another environment allowed by the session.",
+          "description": "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide the id of another environment attached to this session to inspect it.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3451,7 +3313,7 @@
           "name": "environment_read"
         },
         {
-          "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3499,7 +3361,7 @@
           "name": "glob"
         },
         {
-          "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3558,7 +3420,7 @@
           "name": "grep"
         },
         {
-          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3573,7 +3435,7 @@
           "name": "list_dir"
         },
         {
-          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3614,7 +3476,7 @@
           "name": "read_file"
         },
         {
-          "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3698,7 +3560,7 @@
           "cache_control": {
             "type": "ephemeral"
           },
-          "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+          "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3907,7 +3769,7 @@
           "name": "detach"
         },
         {
-          "description": "Run one durable environment job and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Run one durable environment job and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "description": "job_run",
@@ -3968,7 +3830,7 @@
           "name": "job_run"
         },
         {
-          "description": "Start one or more durable environment jobs asynchronously. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; linked VFS files are not implicitly available.",
+          "description": "Start one or more durable environment jobs asynchronously. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "description": "job_submit",
@@ -4107,7 +3969,7 @@
       "tools": [
         {
           "function": {
-            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
             "name": "vfs_apply_patch",
             "parameters": {
               "additionalProperties": false,
@@ -4128,7 +3990,7 @@
         },
         {
           "function": {
-            "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+            "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
             "name": "vfs_edit_file",
             "parameters": {
               "additionalProperties": false,
@@ -4163,7 +4025,7 @@
         },
         {
           "function": {
-            "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+            "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
             "name": "vfs_glob",
             "parameters": {
               "additionalProperties": false,
@@ -4215,7 +4077,7 @@
         },
         {
           "function": {
-            "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+            "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
             "name": "vfs_grep",
             "parameters": {
               "additionalProperties": false,
@@ -4278,7 +4140,7 @@
         },
         {
           "function": {
-            "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+            "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
             "name": "vfs_list_dir",
             "parameters": {
               "additionalProperties": false,
@@ -4297,7 +4159,7 @@
         },
         {
           "function": {
-            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
             "name": "vfs_read_file",
             "parameters": {
               "additionalProperties": false,
@@ -4342,7 +4204,7 @@
         },
         {
           "function": {
-            "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands.",
+            "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
             "name": "vfs_write_file",
             "parameters": {
               "additionalProperties": false,
@@ -4382,7 +4244,7 @@
       "tools": [
         {
           "function": {
-            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "apply_patch",
             "parameters": {
               "additionalProperties": false,
@@ -4403,7 +4265,7 @@
         },
         {
           "function": {
-            "description": "Continue with a running handle: optionally send input or a signal, then wait up to `wait_ms` and return the output produced since the last call. With nothing but the handle it only waits. Once the process has exited it returns the remaining output and the exit code. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+            "description": "Continue with a running handle: optionally send input or a signal, then wait up to `wait_ms` and return the output produced since the last call. With nothing but the handle it only waits. Once the process has exited it returns the remaining output and the exit code. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "continue_process",
             "parameters": {
               "additionalProperties": false,
@@ -4474,7 +4336,7 @@
         },
         {
           "function": {
-            "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "edit_file",
             "parameters": {
               "additionalProperties": false,
@@ -4509,7 +4371,7 @@
         },
         {
           "function": {
-            "description": "Select one allowed, ready universe environment as this session's active environment. Environment-dependent tools must be called in a later turn.",
+            "description": "Select one attached environment as this session's active environment. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
             "name": "environment_activate",
             "parameters": {
               "additionalProperties": false,
@@ -4543,34 +4405,11 @@
         },
         {
           "function": {
-            "description": "List the live universe environments allowed by this session. Use this before activation when you do not know the environment id. Registered environments carry a group, the name of the pool they registered under; filter by it to pick from one pool.",
+            "description": "List the environments attached to this session with their status, this session's access on each, and which one is active.",
             "name": "environment_list",
             "parameters": {
               "additionalProperties": false,
-              "properties": {
-                "cursor": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "group": {
-                  "description": "Only environments in this group (registered pool name).",
-                  "minLength": 1,
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "limit": {
-                  "maximum": 100,
-                  "minimum": 1,
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                }
-              },
+              "properties": {},
               "type": "object"
             },
             "strict": false
@@ -4579,7 +4418,7 @@
         },
         {
           "function": {
-            "description": "Read live details for an environment. Omit environment_id to inspect this session's active environment; provide a known id to inspect another environment allowed by the session.",
+            "description": "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide the id of another environment attached to this session to inspect it.",
             "name": "environment_read",
             "parameters": {
               "additionalProperties": false,
@@ -4600,7 +4439,7 @@
         },
         {
           "function": {
-            "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "glob",
             "parameters": {
               "additionalProperties": false,
@@ -4652,7 +4491,7 @@
         },
         {
           "function": {
-            "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "grep",
             "parameters": {
               "additionalProperties": false,
@@ -4715,7 +4554,7 @@
         },
         {
           "function": {
-            "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "list_dir",
             "parameters": {
               "additionalProperties": false,
@@ -4734,7 +4573,7 @@
         },
         {
           "function": {
-            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "read_file",
             "parameters": {
               "additionalProperties": false,
@@ -4779,7 +4618,7 @@
         },
         {
           "function": {
-            "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+            "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "run_process",
             "parameters": {
               "additionalProperties": false,
@@ -4864,7 +4703,7 @@
         },
         {
           "function": {
-            "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "write_file",
             "parameters": {
               "additionalProperties": false,
@@ -4904,7 +4743,7 @@
       "tools": [
         {
           "function": {
-            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "apply_patch",
             "parameters": {
               "additionalProperties": false,
@@ -4925,7 +4764,7 @@
         },
         {
           "function": {
-            "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "edit_file",
             "parameters": {
               "additionalProperties": false,
@@ -4960,7 +4799,7 @@
         },
         {
           "function": {
-            "description": "Select one allowed, ready universe environment as this session's active environment. Environment-dependent tools must be called in a later turn.",
+            "description": "Select one attached environment as this session's active environment. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
             "name": "environment_activate",
             "parameters": {
               "additionalProperties": false,
@@ -4994,34 +4833,11 @@
         },
         {
           "function": {
-            "description": "List the live universe environments allowed by this session. Use this before activation when you do not know the environment id. Registered environments carry a group, the name of the pool they registered under; filter by it to pick from one pool.",
+            "description": "List the environments attached to this session with their status, this session's access on each, and which one is active.",
             "name": "environment_list",
             "parameters": {
               "additionalProperties": false,
-              "properties": {
-                "cursor": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "group": {
-                  "description": "Only environments in this group (registered pool name).",
-                  "minLength": 1,
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "limit": {
-                  "maximum": 100,
-                  "minimum": 1,
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                }
-              },
+              "properties": {},
               "type": "object"
             },
             "strict": false
@@ -5030,7 +4846,7 @@
         },
         {
           "function": {
-            "description": "Read live details for an environment. Omit environment_id to inspect this session's active environment; provide a known id to inspect another environment allowed by the session.",
+            "description": "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide the id of another environment attached to this session to inspect it.",
             "name": "environment_read",
             "parameters": {
               "additionalProperties": false,
@@ -5051,7 +4867,7 @@
         },
         {
           "function": {
-            "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "glob",
             "parameters": {
               "additionalProperties": false,
@@ -5103,7 +4919,7 @@
         },
         {
           "function": {
-            "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "grep",
             "parameters": {
               "additionalProperties": false,
@@ -5166,7 +4982,7 @@
         },
         {
           "function": {
-            "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "list_dir",
             "parameters": {
               "additionalProperties": false,
@@ -5185,7 +5001,7 @@
         },
         {
           "function": {
-            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "read_file",
             "parameters": {
               "additionalProperties": false,
@@ -5230,7 +5046,7 @@
         },
         {
           "function": {
-            "description": "Run a command and wait until it exits, returning its output. With `timeout_ms` the command is killed at that deadline. A command may leave services running; they keep running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+            "description": "Run a command and wait until it exits, returning its output. With `timeout_ms` the command is killed at that deadline. A command may leave services running; they keep running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "run_process",
             "parameters": {
               "additionalProperties": false,
@@ -5303,7 +5119,7 @@
         },
         {
           "function": {
-            "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "write_file",
             "parameters": {
               "additionalProperties": false,
@@ -5343,7 +5159,7 @@
       "tools": [
         {
           "function": {
-            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "apply_patch",
             "parameters": {
               "additionalProperties": false,
@@ -5364,7 +5180,7 @@
         },
         {
           "function": {
-            "description": "Continue with a running handle: optionally send input or a signal, then wait up to `wait_ms` and return the output produced since the last call. With nothing but the handle it only waits. Once the process has exited it returns the remaining output and the exit code. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+            "description": "Continue with a running handle: optionally send input or a signal, then wait up to `wait_ms` and return the output produced since the last call. With nothing but the handle it only waits. Once the process has exited it returns the remaining output and the exit code. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "continue_process",
             "parameters": {
               "additionalProperties": false,
@@ -5435,7 +5251,7 @@
         },
         {
           "function": {
-            "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "edit_file",
             "parameters": {
               "additionalProperties": false,
@@ -5470,7 +5286,7 @@
         },
         {
           "function": {
-            "description": "Select one allowed, ready universe environment as this session's active environment. Environment-dependent tools must be called in a later turn.",
+            "description": "Select one attached environment as this session's active environment. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
             "name": "environment_activate",
             "parameters": {
               "additionalProperties": false,
@@ -5504,34 +5320,11 @@
         },
         {
           "function": {
-            "description": "List the live universe environments allowed by this session. Use this before activation when you do not know the environment id. Registered environments carry a group, the name of the pool they registered under; filter by it to pick from one pool.",
+            "description": "List the environments attached to this session with their status, this session's access on each, and which one is active.",
             "name": "environment_list",
             "parameters": {
               "additionalProperties": false,
-              "properties": {
-                "cursor": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "group": {
-                  "description": "Only environments in this group (registered pool name).",
-                  "minLength": 1,
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "limit": {
-                  "maximum": 100,
-                  "minimum": 1,
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                }
-              },
+              "properties": {},
               "type": "object"
             },
             "strict": false
@@ -5540,7 +5333,7 @@
         },
         {
           "function": {
-            "description": "Read live details for an environment. Omit environment_id to inspect this session's active environment; provide a known id to inspect another environment allowed by the session.",
+            "description": "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide the id of another environment attached to this session to inspect it.",
             "name": "environment_read",
             "parameters": {
               "additionalProperties": false,
@@ -5561,7 +5354,7 @@
         },
         {
           "function": {
-            "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Find files recursively with a glob pattern. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "glob",
             "parameters": {
               "additionalProperties": false,
@@ -5613,7 +5406,7 @@
         },
         {
           "function": {
-            "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Search UTF-8 files recursively with a regular expression. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "grep",
             "parameters": {
               "additionalProperties": false,
@@ -5676,7 +5469,7 @@
         },
         {
           "function": {
-            "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "List one directory. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "list_dir",
             "parameters": {
               "additionalProperties": false,
@@ -5695,7 +5488,7 @@
         },
         {
           "function": {
-            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "read_file",
             "parameters": {
               "additionalProperties": false,
@@ -5740,7 +5533,7 @@
         },
         {
           "function": {
-            "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; linked VFS files are not implicitly available.",
+            "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "run_process",
             "parameters": {
               "additionalProperties": false,
@@ -5825,7 +5618,7 @@
         },
         {
           "function": {
-            "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify linked VFS files.",
+            "description": "Write full UTF-8 file content, creating parent directories when needed. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "write_file",
             "parameters": {
               "additionalProperties": false,
@@ -6067,7 +5860,7 @@
         },
         {
           "function": {
-            "description": "Run one durable environment job and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; linked VFS files are not implicitly available.",
+            "description": "Run one durable environment job and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "job_run",
             "parameters": {
               "additionalProperties": false,
@@ -6132,7 +5925,7 @@
         },
         {
           "function": {
-            "description": "Start one or more durable environment jobs asynchronously. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; linked VFS files are not implicitly available.",
+            "description": "Start one or more durable environment jobs asynchronously. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "job_submit",
             "parameters": {
               "additionalProperties": false,

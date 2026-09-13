@@ -14,7 +14,7 @@ pub(super) enum SessionAdmission {
     Core(AgentAdmission),
     Operation(SessionOperationRequest),
     PreparedRun {
-        admission: AgentAdmission,
+        admission: Box<AgentAdmission>,
         result: Result<SessionToolsetPreparation, AgentApiError>,
     },
 }
@@ -22,7 +22,8 @@ pub(super) enum SessionAdmission {
 impl SessionAdmission {
     pub(super) fn core(&self) -> Option<&AgentAdmission> {
         match self {
-            Self::Core(admission) | Self::PreparedRun { admission, .. } => Some(admission),
+            Self::Core(admission) => Some(admission),
+            Self::PreparedRun { admission, .. } => Some(admission),
             Self::Operation(_) => None,
         }
     }
@@ -658,7 +659,7 @@ pub(super) async fn run_preparation_loop(ctx: WorkflowContext<AgentSessionWorkfl
                 state.pending_admissions.insert(
                     0,
                     SessionAdmission::PreparedRun {
-                        admission: pending.admission,
+                        admission: Box::new(pending.admission),
                         result,
                     },
                 );

@@ -132,7 +132,7 @@ async fn fixture(api: ProviderApiKind, case: &str) -> Value {
     .expect("request json")
 }
 
-/// Captured from the pre-refactor executable builders (commit 5707d076).
+/// Captured provider contracts track intentional changes to the builtin surface.
 /// Compare complete requests: descriptions, schemas, strictness, order, helper
 /// placement, and cache breakpoints. The resolver runs with an empty blob store.
 #[tokio::test(flavor = "current_thread")]

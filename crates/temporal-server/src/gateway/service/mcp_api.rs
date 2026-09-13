@@ -498,6 +498,15 @@ fn api_status(value: mcp::McpServerStatus) -> api::McpServerStatus {
     }
 }
 
+impl GatewayAgentApi {
+    pub(super) async fn desired_mcp_tools(
+        &self,
+        features: &engine::FeaturesConfig,
+    ) -> Result<BTreeMap<ToolName, engine::ToolSpec>, AgentApiError> {
+        self.preparation_service().desired_mcp_tools(features).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,14 +543,5 @@ mod tests {
         };
         assert_eq!(tools[0].title.as_deref(), Some(retained.as_str()));
         assert_eq!(tools[0].description.as_deref(), Some(retained.as_str()));
-    }
-}
-
-impl GatewayAgentApi {
-    pub(super) async fn desired_mcp_tools(
-        &self,
-        features: &engine::FeaturesConfig,
-    ) -> Result<BTreeMap<ToolName, engine::ToolSpec>, AgentApiError> {
-        self.preparation_service().desired_mcp_tools(features).await
     }
 }

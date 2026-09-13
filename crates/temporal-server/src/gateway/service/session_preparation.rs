@@ -241,16 +241,15 @@ impl SessionPreparationService {
         }
         for declaration in &declarations {
             let id = &declaration.definition.tool_id;
-            if let Some(existing) = source.bindings.get(id) {
-                if !source.system_binding_ids.contains(id)
+            if let Some(existing) = source.bindings.get(id)
+                && (!source.system_binding_ids.contains(id)
                     || existing.session_universe_id != self.store.config().universe_id
                     || existing.definition.semantic_type != declaration.definition.semantic_type
-                    || existing.definition.tool.name != declaration.definition.tool.name
-                {
-                    return Err(AgentApiError::invalid_request(format!(
-                        "system workflow tool {id} conflicts with an existing immutable binding"
-                    )));
-                }
+                    || existing.definition.tool.name != declaration.definition.tool.name)
+            {
+                return Err(AgentApiError::invalid_request(format!(
+                    "system workflow tool {id} conflicts with an existing immutable binding"
+                )));
             }
         }
         let mut validation_state = engine::CoreAgentState::new();

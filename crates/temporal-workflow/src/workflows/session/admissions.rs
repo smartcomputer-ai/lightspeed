@@ -19,6 +19,7 @@ pub(super) async fn admit_admissions(
             }
             SessionAdmission::Core(admission) => admission,
             SessionAdmission::PreparedRun { admission, result } => {
+                let admission = *admission;
                 match result {
                     Ok(prepared) => observed_tools = Some(prepared),
                     Err(error) => {
