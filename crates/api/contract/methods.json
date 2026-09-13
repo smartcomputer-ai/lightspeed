@@ -19,7 +19,7 @@
       "summary": "Inspect the Lightspeed protocol"
     },
     {
-      "description": "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. An existing-or-none environment override can replace the profile intent. Retrying an existing session id returns that session.",
+      "description": "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.",
       "method": "session/start",
       "params": {
         "schema": {
@@ -37,7 +37,7 @@
       "summary": "Create or reopen a session"
     },
     {
-      "description": "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and environment overrides follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.",
+      "description": "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.",
       "method": "session/managed/start",
       "params": {
         "schema": {

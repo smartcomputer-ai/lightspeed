@@ -9,7 +9,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_session_start",
     "method": "session/start",
     "summary": "Create or reopen a session",
-    "description": "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. An existing-or-none environment override can replace the profile intent. Retrying an existing session id returns that session.",
+    "description": "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.",
     "paramsType": "SessionStartParams",
     "resultType": "AgentApiOutcome<SessionStartResponse>",
     "inputSchema": {
@@ -43,17 +43,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "string",
             "null"
           ]
-        },
-        "environment": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/SessionEnvironmentOverride"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Optional creation-time override for the selected profile's environment\nintent. Omit to use the profile's intent unchanged."
         },
         "metadata": {
           "additionalProperties": {
@@ -502,11 +491,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants remote MCP tools by declaring linked servers from the universe MCP\ncatalog; must link at least one server, with unique server ids.",
+          "description": "Grants remote MCP tools by declaring attached servers from the universe MCP\ncatalog. Server ids must be unique; an empty list grants no MCP tools.",
           "properties": {
             "servers": {
+              "default": [],
               "items": {
-                "$ref": "#/definitions/McpServerLink"
+                "$ref": "#/definitions/McpServerAttachment"
               },
               "type": "array"
             },
@@ -519,11 +509,11 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "McpServerLink": {
+        "McpServerAttachment": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the link may only narrow the\nrecord's tool allowlist for this session.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
           "properties": {
             "serverId": {
               "type": "string"
@@ -726,45 +716,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           },
           "type": "object"
-        },
-        "SessionEnvironmentOverride": {
-          "description": "Creation-time override for the environment intent carried by a profile.\nAbsence uses the profile unchanged; `none` suppresses its environment\nintent, while `existing` activates the specified universe environment.",
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "type": {
-                  "const": "none",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "environmentId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "existing",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "environmentId"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "SubagentAgentRef": {
           "additionalProperties": {
@@ -1581,11 +1532,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants remote MCP tools by declaring linked servers from the universe MCP\ncatalog; must link at least one server, with unique server ids.",
+          "description": "Grants remote MCP tools by declaring attached servers from the universe MCP\ncatalog. Server ids must be unique; an empty list grants no MCP tools.",
           "properties": {
             "servers": {
+              "default": [],
               "items": {
-                "$ref": "#/definitions/McpServerLink"
+                "$ref": "#/definitions/McpServerAttachment"
               },
               "type": "array"
             },
@@ -1598,11 +1550,11 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "McpServerLink": {
+        "McpServerAttachment": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the link may only narrow the\nrecord's tool allowlist for this session.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
           "properties": {
             "serverId": {
               "type": "string"
@@ -3661,11 +3613,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants remote MCP tools by declaring linked servers from the universe MCP\ncatalog; must link at least one server, with unique server ids.",
+          "description": "Grants remote MCP tools by declaring attached servers from the universe MCP\ncatalog. Server ids must be unique; an empty list grants no MCP tools.",
           "properties": {
             "servers": {
+              "default": [],
               "items": {
-                "$ref": "#/definitions/McpServerLink"
+                "$ref": "#/definitions/McpServerAttachment"
               },
               "type": "array"
             },
@@ -3678,11 +3631,11 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "McpServerLink": {
+        "McpServerAttachment": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the link may only narrow the\nrecord's tool allowlist for this session.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
           "properties": {
             "serverId": {
               "type": "string"
@@ -5391,11 +5344,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants remote MCP tools by declaring linked servers from the universe MCP\ncatalog; must link at least one server, with unique server ids.",
+          "description": "Grants remote MCP tools by declaring attached servers from the universe MCP\ncatalog. Server ids must be unique; an empty list grants no MCP tools.",
           "properties": {
             "servers": {
+              "default": [],
               "items": {
-                "$ref": "#/definitions/McpServerLink"
+                "$ref": "#/definitions/McpServerAttachment"
               },
               "type": "array"
             },
@@ -5408,11 +5362,11 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "McpServerLink": {
+        "McpServerAttachment": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the link may only narrow the\nrecord's tool allowlist for this session.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
           "properties": {
             "serverId": {
               "type": "string"
@@ -6405,11 +6359,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Grants remote MCP tools by declaring linked servers from the universe MCP\ncatalog; must link at least one server, with unique server ids.",
+          "description": "Grants remote MCP tools by declaring attached servers from the universe MCP\ncatalog. Server ids must be unique; an empty list grants no MCP tools.",
           "properties": {
             "servers": {
+              "default": [],
               "items": {
-                "$ref": "#/definitions/McpServerLink"
+                "$ref": "#/definitions/McpServerAttachment"
               },
               "type": "array"
             },
@@ -6422,11 +6377,11 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
-        "McpServerLink": {
+        "McpServerAttachment": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the link may only narrow the\nrecord's tool allowlist for this session.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
           "properties": {
             "serverId": {
               "type": "string"

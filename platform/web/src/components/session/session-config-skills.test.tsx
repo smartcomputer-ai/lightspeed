@@ -2,7 +2,7 @@
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it } from "vitest";
-import { SessionConfigEditor, type EnvironmentOption, type SessionConfig, type WorkspaceOption } from "./session-config-editor";
+import { SessionConfigEditor, type EnvironmentOption, type McpServerOption, type SessionConfig, type WorkspaceOption } from "./session-config-editor";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 Object.assign(window, { PointerEvent: MouseEvent });
@@ -14,7 +14,7 @@ afterEach(async () => {
   await act(async () => root?.unmount());
   container?.remove();
 });
-async function setup(value: SessionConfig, options: { environments?: EnvironmentOption[]; workspaces?: WorkspaceOption[] } = {}) {
+async function setup(value: SessionConfig, options: { environments?: EnvironmentOption[]; workspaces?: WorkspaceOption[]; mcpServers?: McpServerOption[] } = {}) {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -51,6 +51,32 @@ async function input(label: string, value: string) {
     field.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+it("requires explicit MCP attachments and removal before disabling the feature", async () => {
+  await setup({}, { mcpServers: [{ serverId: "catalog", status: "active" }] });
+  await toggle("Enable MCP Servers");
+  expect(current).toHaveProperty("features.mcp.servers", []);
+  expect(container.textContent).toContain("No server attachments.");
+  expect(error).toBeNull();
+  const featureSwitch = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Enable MCP Servers"]')!;
+  expect(featureSwitch.getAttribute("aria-disabled")).not.toBe("true");
+  const add = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+    .find((button) => button.textContent?.trim() === "Add server")!;
+  await act(async () => add.click());
+  expect(current).toHaveProperty("features.mcp.servers", [{ serverId: "catalog" }]);
+  expect(featureSwitch.getAttribute("aria-disabled")).toBe("true");
+  expect(container.textContent).toContain("Remove the server attachments before disabling this feature.");
+  await toggle("Enable MCP Servers");
+  expect(current).toHaveProperty("features.mcp.servers", [{ serverId: "catalog" }]);
+  const remove = container.querySelector<HTMLButtonElement>('[aria-label="Remove MCP server"]')!;
+  await act(async () => remove.click());
+  expect(current).toHaveProperty("features.mcp.servers", []);
+  expect(error).toBeNull();
+  expect(featureSwitch.getAttribute("aria-disabled")).not.toBe("true");
+  await toggle("Enable MCP Servers");
+  expect(current ?? {}).not.toHaveProperty("features.mcp");
+  expect(error).toBeNull();
+});
+
 it("shares the environment working directory while source overrides remain independent", async () => {
   await setup({ features: { environments: { environments: [{ environmentId: "runner", access: "jobs" }] }, vfs: { workspaces: [] } } });
   await expand("Environment working directory");
@@ -166,7 +192,7 @@ it.each([
   expect(current).not.toHaveProperty(`features.vfs.${key}`);
   expect(current).toHaveProperty("features.environments.skills", {});
 });
-it("allows both VFS sources to be enabled without links", async () => {
+it("allows both VFS sources to be enabled without attachments", async () => {
   await setup({ features: { vfs: {} } });
   await toggle("VFS skill discovery");
   await toggle("VFS prompt loading");

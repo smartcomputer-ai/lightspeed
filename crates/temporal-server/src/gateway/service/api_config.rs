@@ -228,9 +228,9 @@ fn features_from_api(
             servers: mcp
                 .servers
                 .into_iter()
-                .map(|link| engine::McpServerLink {
-                    server_id: link.server_id,
-                    tools: link.tools,
+                .map(|attachment| engine::McpServerAttachment {
+                    server_id: attachment.server_id,
+                    tools: attachment.tools,
                 })
                 .collect(),
         }),
@@ -238,22 +238,22 @@ fn features_from_api(
 }
 
 fn workspace_attachment_from_api(
-    link: api::WorkspaceAttachment,
+    attachment: api::WorkspaceAttachment,
 ) -> Result<engine::WorkspaceAttachment, AgentApiError> {
-    let target = match (link.workspace_id, link.snapshot_ref) {
+    let target = match (attachment.workspace_id, attachment.snapshot_ref) {
         (Some(workspace_id), None) => engine::WorkspaceAttachmentTarget::Workspace { workspace_id },
         (None, Some(snapshot_ref)) => engine::WorkspaceAttachmentTarget::Snapshot { snapshot_ref },
         _ => {
             return Err(AgentApiError::invalid_request(format!(
                 "workspace attachment at {} must set exactly one of workspaceId and snapshotRef",
-                link.path
+                attachment.path
             )));
         }
     };
     Ok(engine::WorkspaceAttachment {
-        path: link.path,
+        path: attachment.path,
         target,
-        access: match link.access {
+        access: match attachment.access {
             api::WorkspaceAccess::Read => engine::WorkspaceAccess::Read,
             api::WorkspaceAccess::Edit => engine::WorkspaceAccess::Edit,
         },

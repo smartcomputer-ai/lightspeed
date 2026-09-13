@@ -12,8 +12,12 @@ describe("environment attachment options", () => {
     expect(isEnvironmentAttached(config, "unlisted")).toBe(false);
     expect(defaultEnvironmentAttachment({})).toBeUndefined();
   });
-  it("requires removing attachments before disabling their feature", () => {
-    expect(resourceFeatureDisableReasons({ config })).toHaveProperty("environments");
-    expect(resourceFeatureDisableReasons({ config: { features: { environments: { environments: [] } } } })).toEqual({});
+  it.each([
+    ["environments", "environments", { environmentId: "primary" }],
+    ["vfs", "workspaces", { workspaceId: "files" }],
+    ["mcp", "servers", { serverId: "catalog" }],
+  ])("requires removing %s attachments before disabling the feature", (feature, field, attachment) => {
+    expect(resourceFeatureDisableReasons({ config: { features: { [feature]: { [field]: [attachment] } } } })).toHaveProperty(feature);
+    expect(resourceFeatureDisableReasons({ config: { features: { [feature]: { [field]: [] } } } })).toEqual({});
   });
 });

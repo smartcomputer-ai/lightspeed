@@ -160,7 +160,7 @@ describe("OpenAI processing tier config", () => {
   });
 });
 
-describe("workspace link config", () => {
+describe("workspace attachment config", () => {
   it("round-trips links inside the VFS feature", () => {
     const config = normalizeSessionConfig({
       features: {
@@ -332,6 +332,12 @@ describe("sub-agent feature config", () => {
 });
 
 describe("MCP feature config", () => {
+  it.each([{}, { servers: [] }])("preserves an enabled MCP feature without attachments: %j", (mcp) => {
+    const config = normalizeSessionConfig({ features: { mcp } });
+    expect(config).toEqual({ features: { mcp: { servers: [] } } });
+    expect(configError(config!)).toBeNull();
+  });
+
   it("keeps only server selection", () => {
     expect(normalizeSessionConfig({
       features: {

@@ -9,7 +9,7 @@ use std::{collections::BTreeSet, path::PathBuf, process::Stdio, sync::Arc, time:
 
 use api::{
     AgentApiService, ApprovalDecisionInput, ApprovalDecisionKind, ApprovalDecisionStatus,
-    FeaturesConfig, InputItem, McpServerDeleteParams, McpServerInput, McpServerLink,
+    FeaturesConfig, InputItem, McpServerAttachment, McpServerDeleteParams, McpServerInput,
     McpServerListParams, McpServerPutParams, McpServerReadParams, McpServerStatus,
     McpServerToolsDiscoverParams, McpServerToolsDiscoverResponse, RemoteMcpApprovalPolicy,
     RemoteMcpExecution, RemoteMcpExposure, RunApprovalsDecideParams, RunLimitsConfig,
@@ -490,15 +490,15 @@ async fn run_matrix_client(
                 mcp: Some(api::McpFeature {
                     version: api::CURRENT_FEATURE_VERSION,
                     servers: vec![
-                        McpServerLink {
+                        McpServerAttachment {
                             server_id: ids.small.clone(),
                             tools: None,
                         },
-                        McpServerLink {
+                        McpServerAttachment {
                             server_id: ids.large.clone(),
                             tools: None,
                         },
-                        McpServerLink {
+                        McpServerAttachment {
                             server_id: ids.selected.clone(),
                             tools: None,
                         },
@@ -509,7 +509,6 @@ async fn run_matrix_client(
             ..SessionConfig::default()
         }),
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -1393,7 +1392,6 @@ async fn run_approval_live_client(
             ..SessionConfig::default()
         }),
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -1560,7 +1558,7 @@ async fn run_native_mcp_live_client(
             features: Some(FeaturesConfig {
                 mcp: Some(api::McpFeature {
                     version: api::CURRENT_FEATURE_VERSION,
-                    servers: vec![api::McpServerLink {
+                    servers: vec![api::McpServerAttachment {
                         server_id: server_id.clone(),
                         tools: None,
                     }],
@@ -1570,7 +1568,6 @@ async fn run_native_mcp_live_client(
             ..SessionConfig::default()
         }),
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -1716,7 +1713,6 @@ async fn run_mcp_live_client(
             ..SessionConfig::default()
         }),
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -1735,7 +1731,7 @@ async fn run_mcp_live_client(
     let mut features = linked_config.features.clone().unwrap_or_default();
     features.mcp = Some(api::McpFeature {
         version: api::CURRENT_FEATURE_VERSION,
-        servers: vec![api::McpServerLink {
+        servers: vec![api::McpServerAttachment {
             server_id: server_id.clone(),
             tools: None,
         }],
@@ -2229,7 +2225,7 @@ async fn run_mixed_batch_live_client(
                 }),
                 mcp: Some(api::McpFeature {
                     version: api::CURRENT_FEATURE_VERSION,
-                    servers: vec![api::McpServerLink {
+                    servers: vec![api::McpServerAttachment {
                         server_id: server_id.clone(),
                         tools: None,
                     }],
@@ -2239,7 +2235,6 @@ async fn run_mixed_batch_live_client(
             ..SessionConfig::default()
         }),
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;

@@ -123,7 +123,7 @@ const featureInfo: Record<
 > = {
   vfs: {
     title: "Virtual File System: Files, Instructions, Skills",
-    description: "Grant access to workspace-linked files and source instructions or skills from them.",
+    description: "Grant access to workspace-attached files and source instructions or skills from them.",
     icon: FolderOpen,
   },
   web: {
@@ -408,8 +408,8 @@ export function configError(config: SessionConfig | undefined, pinnedApiKind?: s
   if ("subagents" in record(config.features) && !subagentProfileIds(subagents.agents).length) {
     return "Sub-agents require at least one agent profile.";
   }
-  const linkError = workspaceAttachmentsError(workspaceAttachmentsFromConfig(config));
-  if (linkError) return linkError;
+  const attachmentError = workspaceAttachmentsError(workspaceAttachmentsFromConfig(config));
+  if (attachmentError) return attachmentError;
   const features = record(config.features);
   const vfs = record(features.vfs);
   for (const key of ["skills", "prompts"] as const) {
@@ -418,14 +418,14 @@ export function configError(config: SessionConfig | undefined, pinnedApiKind?: s
     const label = key === "skills" ? "VFS skill" : "VFS prompt";
     const roots = stringList(source.roots);
     if (!roots.length) return `${label} root overrides must not be empty; clear the override to use defaults.`;
-    const links = workspaceAttachmentsFromConfig(config);
+    const attachments = workspaceAttachmentsFromConfig(config);
     if (roots.some((root) => !isCanonicalAbsolutePath(root)
-      || !links.some((link) => link.path === "/" || root === link.path || root.startsWith(`${link.path}/`)))) {
+      || !attachments.some((attachment) => attachment.path === "/" || root === attachment.path || root.startsWith(`${attachment.path}/`)))) {
       return `${label} roots must be absolute paths inside workspace attachments.`;
     }
   }
   const vfsCwd = string(vfs.workingDirectory);
-  if (vfsCwd && (!isCanonicalAbsolutePath(vfsCwd) || (vfsCwd !== "/" && !workspaceAttachmentsFromConfig(config).some((link) => link.path === "/" || vfsCwd === link.path || vfsCwd.startsWith(`${link.path}/`))))) {
+  if (vfsCwd && (!isCanonicalAbsolutePath(vfsCwd) || (vfsCwd !== "/" && !workspaceAttachmentsFromConfig(config).some((attachment) => attachment.path === "/" || vfsCwd === attachment.path || vfsCwd.startsWith(`${attachment.path}/`))))) {
     return "VFS working directory must be / or an absolute path inside a workspace attachment.";
   }
   const environment = record(features.environments);
@@ -455,16 +455,16 @@ export function configError(config: SessionConfig | undefined, pinnedApiKind?: s
 }
 
 export function workspaceAttachmentsFromConfig(config: unknown): WorkspaceAttachmentDraft[] {
-  const links = record(record(record(config).features).vfs).workspaces;
-  return Array.isArray(links)
-    ? structuredClone(links.filter((link) => link && typeof link === "object")) as WorkspaceAttachmentDraft[]
+  const attachments = record(record(record(config).features).vfs).workspaces;
+  return Array.isArray(attachments)
+    ? structuredClone(attachments.filter((attachment) => attachment && typeof attachment === "object")) as WorkspaceAttachmentDraft[]
     : [];
 }
 
-export function workspaceAttachmentsError(links: WorkspaceAttachmentDraft[]): string | null {
+export function workspaceAttachmentsError(attachments: WorkspaceAttachmentDraft[]): string | null {
   const paths: string[] = [];
-  for (const link of links) {
-    const path = link.path?.trim() ?? "";
+  for (const attachment of attachments) {
+    const path = attachment.path?.trim() ?? "";
     if (!path) return "Each workspace attachment needs a session path.";
     if (!isCanonicalAbsolutePath(path)) {
       return `Workspace attachment path must be canonical and absolute: ${path}`;
@@ -473,24 +473,24 @@ export function workspaceAttachmentsError(links: WorkspaceAttachmentDraft[]): st
       return `Workspace attachment paths cannot overlap: ${path}`;
     }
     paths.push(path);
-    if (("workspaceId" in link) === ("snapshotRef" in link)) return `Workspace attachment ${path} needs exactly one workspace or snapshot.`;
-    if ("workspaceId" in link && !link.workspaceId?.trim()) return `Workspace attachment ${path} needs a workspace.`;
-    if ("snapshotRef" in link) {
-      if (!/^sha256:[a-f0-9]{64}$/.test(link.snapshotRef ?? "")) return `Workspace attachment ${path} needs a valid snapshot ref.`;
-      if (link.access !== "read") return `Snapshot attachment ${path} must be read only.`;
+    if (("workspaceId" in attachment) === ("snapshotRef" in attachment)) return `Workspace attachment ${path} needs exactly one workspace or snapshot.`;
+    if ("workspaceId" in attachment && !attachment.workspaceId?.trim()) return `Workspace attachment ${path} needs a workspace.`;
+    if ("snapshotRef" in attachment) {
+      if (!/^sha256:[a-f0-9]{64}$/.test(attachment.snapshotRef ?? "")) return `Workspace attachment ${path} needs a valid snapshot ref.`;
+      if (attachment.access !== "read") return `Snapshot attachment ${path} must be read only.`;
     }
-    if (link.access !== "read" && link.access !== "edit") return `Workspace attachment ${path} needs read or edit access.`;
+    if (attachment.access !== "read" && attachment.access !== "edit") return `Workspace attachment ${path} needs read or edit access.`;
   }
   return null;
 }
 
 export function mcpAttachmentError(config: unknown, servers: McpServerOption[]): string | null {
-  const links = record(record(record(config).features).mcp).servers;
-  for (const item of Array.isArray(links) ? links : []) {
-    const link = record(item);
-    const server = servers.find((server) => server.serverId === link.serverId);
-    if (server?.allowedTools != null && Array.isArray(link.tools)) {
-      const denied = link.tools.find((name) => !server.allowedTools!.includes(String(name)));
+  const attachments = record(record(record(config).features).mcp).servers;
+  for (const item of Array.isArray(attachments) ? attachments : []) {
+    const attachment = record(item);
+    const server = servers.find((server) => server.serverId === attachment.serverId);
+    if (server?.allowedTools != null && Array.isArray(attachment.tools)) {
+      const denied = attachment.tools.find((name) => !server.allowedTools!.includes(String(name)));
       if (denied !== undefined)
         return `Tool ${String(denied)} is not allowed by server ${server.serverId}.`;
     }
@@ -543,6 +543,7 @@ export function SessionConfigEditor({
   };
 
   const features = record(config.features);
+  const disableReasons = { ...featureDisableReasons, ...resourceFeatureDisableReasons({ config }) };
   const setFeature = (name: FeatureName, enabled: boolean) =>
     change((next) => {
       const nextFeatures = record(next.features);
@@ -1260,33 +1261,33 @@ function VfsFields({
   workspacesLoading: boolean;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
-  const links = Array.isArray(feature.workspaces)
+  const attachments = Array.isArray(feature.workspaces)
     ? feature.workspaces.map(record)
     : [];
   const workspaceOptions = new Map<string, WorkspaceOption>();
   for (const workspace of workspaces) workspaceOptions.set(workspace.workspaceId, workspace);
-  for (const link of links) {
-    const workspaceId = string(link.workspaceId);
-    if ("workspaceId" in link && workspaceId && !workspaceOptions.has(workspaceId)) {
+  for (const attachment of attachments) {
+    const workspaceId = string(attachment.workspaceId);
+    if ("workspaceId" in attachment && workspaceId && !workspaceOptions.has(workspaceId)) {
       workspaceOptions.set(workspaceId, { workspaceId });
     }
   }
   const options = [...workspaceOptions.values()];
-  const updateLinks = (nextLinks: RecordValue[]) =>
+  const updateAttachments = (nextAttachments: RecordValue[]) =>
     patch((next) => {
-      if (nextLinks.length) next.workspaces = nextLinks;
+      if (nextAttachments.length) next.workspaces = nextAttachments;
       else delete next.workspaces;
     });
-  const updateLink = (index: number, mutate: (link: RecordValue) => void) =>
-    updateLinks(
-      links.map((link, linkIndex) => {
-        if (linkIndex !== index) return link;
-        const next = { ...link };
+  const updateAttachment = (index: number, mutate: (attachment: RecordValue) => void) =>
+    updateAttachments(
+      attachments.map((attachment, attachmentIndex) => {
+        if (attachmentIndex !== index) return attachment;
+        const next = { ...attachment };
         mutate(next);
         return next;
       }),
     );
-  const nextPath = nextWorkspaceAttachmentPath(links);
+  const nextPath = nextWorkspaceAttachmentPath(attachments);
 
   return (
     <div className="grid gap-5">
@@ -1301,8 +1302,8 @@ function VfsFields({
           <Button
             variant="outline"
             size="xs"
-            onClick={() => updateLinks([
-              ...links,
+            onClick={() => updateAttachments([
+              ...attachments,
               {
                 path: nextPath,
                 access: "edit",
@@ -1314,11 +1315,11 @@ function VfsFields({
             Add workspace
           </Button>
         </div>
-        {links.length === 0 && (
+        {attachments.length === 0 && (
           <p className="text-xs text-muted-foreground">No workspace attachments.</p>
         )}
-        {links.map((link, index) => {
-          const snapshot = "snapshotRef" in link;
+        {attachments.map((attachment, index) => {
+          const snapshot = "snapshotRef" in attachment;
           return (
             <div
               key={index}
@@ -1330,8 +1331,8 @@ function VfsFields({
                     <FieldLabel>Snapshot ref</FieldLabel>
                     <Input
                       className="font-mono"
-                      value={string(link.snapshotRef)}
-                      onChange={(event) => updateLink(index, (next) => {
+                      value={string(attachment.snapshotRef)}
+                      onChange={(event) => updateAttachment(index, (next) => {
                         next.snapshotRef = event.target.value;
                       })}
                     />
@@ -1341,9 +1342,9 @@ function VfsFields({
                     <FieldLabel>Workspace</FieldLabel>
                     {options.length || workspacesLoading ? (
                       <Select
-                        value={string(link.workspaceId)}
+                        value={string(attachment.workspaceId)}
                         disabled={workspacesLoading}
-                        onValueChange={(workspaceId) => updateLink(index, (next) => {
+                        onValueChange={(workspaceId) => updateAttachment(index, (next) => {
                           next.workspaceId = workspaceId;
                         })}
                       >
@@ -1365,8 +1366,8 @@ function VfsFields({
                     ) : (
                       <Input
                         className="font-mono"
-                        value={string(link.workspaceId)}
-                        onChange={(event) => updateLink(index, (next) => {
+                        value={string(attachment.workspaceId)}
+                        onChange={(event) => updateAttachment(index, (next) => {
                           next.workspaceId = event.target.value;
                         })}
                         placeholder="workspace id"
@@ -1378,8 +1379,8 @@ function VfsFields({
                   <FieldLabel>Session path</FieldLabel>
                   <Input
                     className="font-mono"
-                    value={string(link.path)}
-                    onChange={(event) => updateLink(index, (next) => {
+                    value={string(attachment.path)}
+                    onChange={(event) => updateAttachment(index, (next) => {
                       next.path = event.target.value;
                     })}
                   />
@@ -1387,9 +1388,9 @@ function VfsFields({
                 <Field>
                   <FieldLabel>Access</FieldLabel>
                   <Select
-                    value={string(link.access) || "edit"}
+                    value={string(attachment.access) || "edit"}
                     disabled={snapshot}
-                    onValueChange={(access) => updateLink(index, (next) => {
+                    onValueChange={(access) => updateAttachment(index, (next) => {
                       next.access = access;
                     })}
                   >
@@ -1406,7 +1407,7 @@ function VfsFields({
                 size="icon-sm"
                 className="self-start text-destructive"
                 aria-label="Remove workspace attachment"
-                onClick={() => updateLinks(links.filter((_, linkIndex) => linkIndex !== index))}
+                onClick={() => updateAttachments(attachments.filter((_, attachmentIndex) => attachmentIndex !== index))}
               >
                 <Trash2 />
               </Button>
@@ -1426,8 +1427,8 @@ function VfsFields({
   );
 }
 
-function nextWorkspaceAttachmentPath(links: RecordValue[]): string {
-  const paths = new Set(links.map((link) => string(link.path)));
+function nextWorkspaceAttachmentPath(attachments: RecordValue[]): string {
+  const paths = new Set(attachments.map((attachment) => string(attachment.path)));
   if (!paths.has("/workspace")) return "/workspace";
   let suffix = 2;
   while (paths.has(`/workspace-${suffix}`)) suffix += 1;
@@ -1688,7 +1689,7 @@ function WorkingDirectoryField({ environment, feature, patch }: {
             })} />
           <FieldDescription className="text-xs">{environment
             ? "Absolute machine directory for file tools, commands, jobs, and discovery. Empty uses the environment default."
-            : "Absolute linked VFS directory for relative file paths. Empty uses /. Source discovery still searches every workspace attachment."}</FieldDescription>
+            : "Absolute attached VFS directory for relative file paths. Empty uses /. Source discovery still searches every workspace attachment."}</FieldDescription>
         </Field>
       )}
     </div>
@@ -1993,24 +1994,24 @@ function McpFields({
   discoverySource?: McpToolDiscoverySource;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
-  const links = Array.isArray(feature.servers) ? feature.servers.map(record) : [];
+  const attachments = Array.isArray(feature.servers) ? feature.servers.map(record) : [];
   const options = new Map<string, McpServerOption>();
   for (const server of servers) options.set(server.serverId, server);
-  for (const link of links) {
-    const serverId = string(link.serverId);
+  for (const attachment of attachments) {
+    const serverId = string(attachment.serverId);
     if (serverId && !options.has(serverId)) options.set(serverId, { serverId });
   }
   const serverOptions = [...options.values()];
   const firstServerId = firstUsableMcpServerId(serverOptions);
-  const updateLinks = (nextLinks: RecordValue[]) =>
+  const updateAttachments = (nextAttachments: RecordValue[]) =>
     patch((next) => {
-      next.servers = nextLinks;
+      next.servers = nextAttachments;
     });
-  const updateLink = (index: number, mutate: (link: RecordValue) => void) =>
-    updateLinks(
-      links.map((link, linkIndex) => {
-        if (linkIndex !== index) return link;
-        const next = { ...link };
+  const updateAttachment = (index: number, mutate: (attachment: RecordValue) => void) =>
+    updateAttachments(
+      attachments.map((attachment, attachmentIndex) => {
+        if (attachmentIndex !== index) return attachment;
+        const next = { ...attachment };
         mutate(next);
         return next;
       }),
@@ -2025,14 +2026,14 @@ function McpFields({
         <Button
           variant="outline"
           size="xs"
-          onClick={() => updateLinks([...links, { serverId: firstServerId }])}
+          onClick={() => updateAttachments([...attachments, { serverId: firstServerId }])}
         >
           <Plus data-icon="inline-start" />
           Add server
         </Button>
       </div>
-      {!links.length && <p className="text-xs text-muted-foreground">No server attachments.</p>}
-      {links.map((link, index) => (
+      {!attachments.length && <p className="text-xs text-muted-foreground">No server attachments.</p>}
+      {attachments.map((attachment, index) => (
         <div
           key={index}
           className="grid gap-3 border-t pt-3 sm:grid-cols-[minmax(0,1fr)_auto]"
@@ -2042,8 +2043,8 @@ function McpFields({
               <FieldLabel>Server</FieldLabel>
               {serverOptions.length ? (
                 <Select
-                  value={string(link.serverId)}
-                  onValueChange={(value) => updateLink(index, (next) => { next.serverId = value as string; delete next.tools; })}
+                  value={string(attachment.serverId)}
+                  onValueChange={(value) => updateAttachment(index, (next) => { next.serverId = value as string; delete next.tools; })}
                 >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -2061,20 +2062,20 @@ function McpFields({
               ) : (
                 <Input
                   className="font-mono"
-                  value={string(link.serverId)}
-                  onChange={(e) => updateLink(index, (next) => { next.serverId = e.target.value; delete next.tools; })}
+                  value={string(attachment.serverId)}
+                  onChange={(e) => updateAttachment(index, (next) => { next.serverId = e.target.value; delete next.tools; })}
                 />
               )}
             </Field>
             <div className="mt-3">
               <McpToolPicker
                 scope="session"
-                serverId={string(link.serverId)}
-                revision={options.get(string(link.serverId))?.revision}
-                allowedTools={options.get(string(link.serverId))?.allowedTools}
+                serverId={string(attachment.serverId)}
+                revision={options.get(string(attachment.serverId))?.revision}
+                allowedTools={options.get(string(attachment.serverId))?.allowedTools}
                 source={discoverySource}
-                value={Array.isArray(link.tools) ? stringList(link.tools) : undefined}
-                onChange={(tools) => updateLink(index, (next) => {
+                value={Array.isArray(attachment.tools) ? stringList(attachment.tools) : undefined}
+                onChange={(tools) => updateAttachment(index, (next) => {
                   if (tools === undefined) delete next.tools;
                   else next.tools = tools;
                 })}
@@ -2086,7 +2087,7 @@ function McpFields({
             size="icon-sm"
             className="self-start text-destructive"
             aria-label="Remove MCP server"
-            onClick={() => updateLinks(links.filter((_, linkIndex) => linkIndex !== index))}
+            onClick={() => updateAttachments(attachments.filter((_, attachmentIndex) => attachmentIndex !== index))}
           >
             <Trash2 />
           </Button>

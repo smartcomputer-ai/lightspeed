@@ -85,9 +85,8 @@ export function sessionRoutes(store: DemoStore): Hono {
     });
   });
 
-  /// The environment intent is resolved before the session exists so a
-  /// refused profile leaves nothing behind; the id is minted early because
-  /// a provisioned environment is keyed by it.
+  /// Resolve the default attachment before creating the session so a refused
+  /// profile leaves no session behind.
   app.post("/:id/sessions", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
@@ -96,14 +95,14 @@ export function sessionRoutes(store: DemoStore): Hono {
       metadata?: Record<string, string>;
       deleteAfterCloseMs?: number | null;
       profile?: ProfileSource;
-      environment?: { type: "none" } | { type: "existing"; environmentId: string };
     }>(c);
+    if (Object.hasOwn(body, "environment")) return badRequest(c, "environment is not a session creation field; configure environment attachments instead");
     if (!body.profile) return badRequest(c, "profile is required");
     const profile = resolveProfile(universe, body.profile);
     if (!profile) return notFound(c, "not found in engine");
     const config = sessionConfig(profile.config);
     const sessionId = store.nextId("session");
-    const resolved = resolveEnvironment(universe, profile, body.environment);
+    const resolved = resolveEnvironment(universe, profile);
     if ("error" in resolved) return conflict(c, `engine conflict: ${resolved.error}`);
     const session = newSession(store, universe, {
       id: sessionId,
@@ -477,10 +476,9 @@ function instructionText(store: DemoStore, instructions: ProfileInstructions | n
 function resolveEnvironment(
   universe: UniverseState,
   profile: ResolvedProfile,
-  override?: { type: "none" } | { type: "existing"; environmentId: string },
 ): { environmentId: string | null } | { error: string } {
   if (environmentAttachments(profile.config).some((attachment) => attachment.inherit)) return { error: "inherited environments require a parent session" };
-  const environmentId = override?.type === "none" ? null : override?.environmentId ?? defaultEnvironmentAttachment(profile.config)?.environmentId;
+  const environmentId = defaultEnvironmentAttachment(profile.config)?.environmentId;
   if (!environmentId) return { environmentId: null };
   if (!isEnvironmentAttached(profile.config, environmentId)) return { error: `environment is not attached: ${environmentId}` };
   const environment = universe.environments.get(environmentId);

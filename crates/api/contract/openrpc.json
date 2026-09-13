@@ -9836,17 +9836,6 @@
               "null"
             ]
           },
-          "environment": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SessionEnvironmentOverride"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Optional creation-time override for the selected profile's environment\nintent. Omit to use the profile's intent unchanged."
-          },
           "metadata": {
             "additionalProperties": {
               "type": "string"
@@ -9950,11 +9939,12 @@
       },
       "McpFeature": {
         "additionalProperties": false,
-        "description": "Grants remote MCP tools by declaring linked servers from the universe MCP\ncatalog; must link at least one server, with unique server ids.",
+        "description": "Grants remote MCP tools by declaring attached servers from the universe MCP\ncatalog. Server ids must be unique; an empty list grants no MCP tools.",
         "properties": {
           "servers": {
+            "default": [],
             "items": {
-              "$ref": "#/components/schemas/McpServerLink"
+              "$ref": "#/components/schemas/McpServerAttachment"
             },
             "type": "array"
           },
@@ -9990,6 +9980,29 @@
         },
         "required": [
           "resource"
+        ],
+        "type": "object"
+      },
+      "McpServerAttachment": {
+        "additionalProperties": false,
+        "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "tools": {
+            "description": "Non-empty subset of the record's allowed tools exposed to this\nsession, under both injection and search; absent exposes the record's\nfull allowlist.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "serverId"
         ],
         "type": "object"
       },
@@ -10276,29 +10289,6 @@
           "serverId",
           "serverUrl",
           "defaultServerLabel"
-        ],
-        "type": "object"
-      },
-      "McpServerLink": {
-        "additionalProperties": false,
-        "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the link may only narrow the\nrecord's tool allowlist for this session.",
-        "properties": {
-          "serverId": {
-            "type": "string"
-          },
-          "tools": {
-            "description": "Non-empty subset of the record's allowed tools exposed to this\nsession, under both injection and search; absent exposes the record's\nfull allowlist.",
-            "items": {
-              "type": "string"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "serverId"
         ],
         "type": "object"
       },
@@ -13115,41 +13105,6 @@
         ],
         "type": "object"
       },
-      "SessionEnvironmentOverride": {
-        "description": "Creation-time override for the environment intent carried by a profile.\nAbsence uses the profile unchanged; `none` suppresses its environment\nintent, while `existing` activates the specified universe environment.",
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "type": {
-                "const": "none",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "environmentId": {
-                "type": "string"
-              },
-              "type": {
-                "const": "existing",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "environmentId"
-            ],
-            "type": "object"
-          }
-        ]
-      },
       "SessionEventDirection": {
         "enum": [
           "forward",
@@ -15333,17 +15288,6 @@
               "null"
             ]
           },
-          "environment": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SessionEnvironmentOverride"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Optional creation-time override for the selected profile's environment\nintent. Omit to use the profile's intent unchanged."
-          },
           "metadata": {
             "additionalProperties": {
               "type": "string"
@@ -17317,7 +17261,7 @@
       "summary": "Inspect the Lightspeed protocol"
     },
     {
-      "description": "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. An existing-or-none environment override can replace the profile intent. Retrying an existing session id returns that session.",
+      "description": "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.",
       "name": "session/start",
       "paramStructure": "by-name",
       "params": [
@@ -17338,7 +17282,7 @@
       "summary": "Create or reopen a session"
     },
     {
-      "description": "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and environment overrides follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.",
+      "description": "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.",
       "name": "session/managed/start",
       "paramStructure": "by-name",
       "params": [

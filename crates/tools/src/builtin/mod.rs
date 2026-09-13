@@ -705,17 +705,17 @@ impl BuiltinTool {
             BuiltinToolSurface::ClaudeCodeLike => claude::description(self, scoped_paths),
         }?;
         let boundary = if self.is_transfer() {
-            " Explicitly transfers between session-linked VFS paths and the selected environment. Both domains' access rules apply."
+            " Explicitly transfers between session-attached VFS paths and the selected environment. Both domains' access rules apply."
         } else {
             match self.domain {
                 BuiltinToolDomain::Vfs => {
-                    " Accesses only session-linked VFS workspaces and snapshots; these files are not visible to environment commands."
+                    " Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands."
                 }
                 BuiltinToolDomain::Environment if self.is_filesystem_operation() => {
-                    " Accesses only the active environment filesystem; it does not read or modify linked VFS files."
+                    " Accesses only the active environment filesystem; it does not read or modify attached VFS files."
                 }
                 BuiltinToolDomain::Environment => {
-                    " Operates only in the active environment; linked VFS files are not implicitly available."
+                    " Operates only in the active environment; attached VFS files are not implicitly available."
                 }
             }
         };
@@ -812,7 +812,7 @@ mod tests {
                     );
                     let description = tool.description(true).unwrap();
                     assert!(description.contains("Both domains' access rules apply"));
-                    assert!(!description.contains("Accesses only session-linked"));
+                    assert!(!description.contains("Accesses only session-attached"));
                 }
             }
         }

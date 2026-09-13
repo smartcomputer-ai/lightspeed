@@ -1,4 +1,3 @@
-import { attachedEnvironments } from "@/lib/sessions/resource-features";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   type InfiniteData,
@@ -13,13 +12,11 @@ import {
   api,
   botLabel,
   type BotListResponse,
-  type Environment,
   type InlineProfile,
   type ProfileDocument,
   type ProfileSource,
   type ProfileSummary,
   type SessionListPage,
-  type SessionEnvironmentOverride,
   type SessionOrigin,
   type SessionRunAccepted,
   type SessionRunApprovalsDecided,
@@ -115,8 +112,6 @@ import {
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
 import { managedSessionBotId, managedSessionOwnerLabel } from "@/lib/sessions/management";
 import {
-  hasSessionFeature,
-  selectableEnvironments,
   resourceFeatureDisableReasons,
   setupResourceFeatureError,
 } from "@/lib/sessions/resource-features";
@@ -912,7 +907,6 @@ function NewSessionDialog({
   const [profileId, setProfileId] = useState("");
   const [step, setStep] = useState<"basics" | "setup">("basics");
   const [inlineProfile, setInlineProfile] = useState<InlineProfile | null>(null);
-  const [environmentOverride, setEnvironmentOverride] = useState<SessionEnvironmentOverride>();
   const [configError, setConfigError] = useState<string | null>(null);
   const [retentionError, setRetentionError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -931,17 +925,11 @@ function NewSessionDialog({
     enabled: open && Boolean(profileId),
   });
   const editorOptions = useSessionConfigEditorOptions(universeId, open && step === "setup");
-  const environments = useQuery({
-    queryKey: ["environments", universeId],
-    queryFn: () => api<Environment[]>("GET", `/api/v1/universes/${universeId}/environments`),
-    enabled: open,
-  });
   const create = useMutation({
     mutationFn: () =>
       api<SessionView>("POST", `/api/v1/universes/${universeId}/sessions`, {
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
         profile: profileForCreate(profileId, inlineProfile, selectedProfile.data),
-        ...(environmentOverride ? { environment: environmentOverride } : {}),
       }),
     onSuccess: async (session) => {
       await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
@@ -951,7 +939,6 @@ function NewSessionDialog({
       setProfileId("");
       setStep("basics");
       setInlineProfile(null);
-      setEnvironmentOverride(undefined);
       setConfigError(null);
       setRetentionError(null);
       setError(null);
@@ -979,7 +966,6 @@ function NewSessionDialog({
       setProfileId("");
       setStep("basics");
       setInlineProfile(null);
-      setEnvironmentOverride(undefined);
       setConfigError(null);
       setRetentionError(null);
       setError(null);
@@ -997,7 +983,6 @@ function NewSessionDialog({
         ? inlineProfileFromDocument(selectedProfile.data)
         : {},
     );
-    setEnvironmentOverride(undefined);
     setStep("setup");
   };
   const resourceFeatureError = inlineProfile
@@ -1037,7 +1022,6 @@ function NewSessionDialog({
                   onValueChange={(value) => {
                     setProfileId(value as string);
                     setInlineProfile(null);
-                    setEnvironmentOverride(undefined);
                     setConfigError(null);
                     setRetentionError(null);
                     setError(null);
@@ -1065,40 +1049,6 @@ function NewSessionDialog({
                   The profile is resolved at creation; later profile edits do not change this session.
                 </FieldDescription>
               </Field>
-              {profileId
-                && selectedProfile.data
-                && hasSessionFeature(selectedProfile.data.config, "environments")
-                && !inlineProfile ? (
-                <Field>
-                  <FieldLabel>Environment</FieldLabel>
-                  <Select
-                    value={environmentOverrideValue(environmentOverride)}
-                    onValueChange={(value) => {
-                      setEnvironmentOverride(environmentOverrideFromValue(value as string));
-                      setError(null);
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="profile">Use profile default</SelectItem>
-                      <SelectItem value="none">No active environment</SelectItem>
-                      {selectableEnvironments(attachedEnvironments(selectedProfile.data?.config, environments.data ?? [])).map((environment) => (
-                        <SelectItem
-                          key={environment.environmentId}
-                          value={`existing:${environment.environmentId}`}
-                        >
-                          {environment.displayName ?? environment.environmentId}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FieldDescription>
-                    Override this session’s environment without converting the profile to an inline setup.
-                  </FieldDescription>
-                </Field>
-              ) : null}
               <Button
                 type="button"
                 variant="outline"
@@ -1265,17 +1215,6 @@ function inlineProfileFromDocument(document: ProfileDocument): InlineProfile {
   if (isRecord(document.config)) profile.config = structuredClone(document.config);
   if (isRecord(document.instructions)) profile.instructions = structuredClone(document.instructions) as InlineProfile["instructions"];
   return profile;
-}
-
-function environmentOverrideValue(environment: SessionEnvironmentOverride | undefined): string {
-  if (!environment) return "profile";
-  return environment.type === "none" ? "none" : `existing:${environment.environmentId}`;
-}
-
-function environmentOverrideFromValue(value: string): SessionEnvironmentOverride | undefined {
-  if (value === "profile") return undefined;
-  if (value === "none") return { type: "none" };
-  return { type: "existing", environmentId: value.slice("existing:".length) };
 }
 
 function profileForCreate(

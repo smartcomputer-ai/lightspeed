@@ -1641,22 +1641,6 @@ export type SessionJobCancelScopeView = "job" | "dependents";
  */
 export type SessionJobDependencyPolicyView = "allSucceeded" | "allTerminal";
 /**
- * Creation-time override for the environment intent carried by a profile.
- * Absence uses the profile unchanged; `none` suppresses its environment
- * intent, while `existing` activates the specified universe environment.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionEnvironmentOverride".
- */
-export type SessionEnvironmentOverride =
-  | {
-      type: "none";
-    }
-  | {
-      environmentId: string;
-      type: "existing";
-    };
-/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProfileSource".
  */
@@ -2102,25 +2086,25 @@ export interface EnvironmentSkillsConfig {
   roots?: [string, ...string[]] | null;
 }
 /**
- * Grants remote MCP tools by declaring linked servers from the universe MCP
- * catalog; must link at least one server, with unique server ids.
+ * Grants remote MCP tools by declaring attached servers from the universe MCP
+ * catalog. Server ids must be unique; an empty list grants no MCP tools.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpFeature".
  */
 export interface McpFeature {
-  servers?: McpServerLink[];
+  servers?: McpServerAttachment[];
   version?: number;
 }
 /**
  * A selected universe MCP server. Its catalog record owns connection,
- * execution, exposure, approval, and auth; the link may only narrow the
+ * execution, exposure, approval, and auth; the attachment may only narrow the
  * record's tool allowlist for this session.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerLink".
+ * via the `definition` "McpServerAttachment".
  */
-export interface McpServerLink {
+export interface McpServerAttachment {
   serverId: string;
   /**
    * Non-empty subset of the record's allowed tools exposed to this
@@ -7026,11 +7010,6 @@ export interface ManagedSessionStartParams {
   deleteAfterCloseMs?: number | null;
   displayName?: string | null;
   /**
-   * Optional creation-time override for the selected profile's environment
-   * intent. Omit to use the profile's intent unchanged.
-   */
-  environment?: SessionEnvironmentOverride | null;
-  /**
    * Descriptive key/value metadata with the same bounds as
    * `session/start`; applied only when the session is first created.
    */
@@ -7622,11 +7601,6 @@ export interface SessionStartParams {
    */
   deleteAfterCloseMs?: number | null;
   displayName?: string | null;
-  /**
-   * Optional creation-time override for the selected profile's environment
-   * intent. Omit to use the profile's intent unchanged.
-   */
-  environment?: SessionEnvironmentOverride | null;
   /**
    * Descriptive key/value metadata, applied only when the session is
    * first created: at most 32 entries, keys 1..=64 bytes, values 1..=256

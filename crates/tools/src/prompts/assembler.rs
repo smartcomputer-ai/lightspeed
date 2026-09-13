@@ -130,13 +130,13 @@ pub fn prompt_report_blob_refs(report: &PromptInstructionsReport) -> BTreeSet<Bl
     for source in &report.sources {
         refs.insert(source.content_ref.clone());
         match &source.source {
-            PromptSourceLocation::LinkedSnapshot {
+            PromptSourceLocation::AttachedSnapshot {
                 source_snapshot_ref,
                 ..
             } => {
                 refs.insert(source_snapshot_ref.clone());
             }
-            PromptSourceLocation::LinkedWorkspace {
+            PromptSourceLocation::AttachedWorkspace {
                 workspace_head_ref, ..
             } => {
                 refs.insert(workspace_head_ref.clone());
@@ -518,24 +518,24 @@ fn source_location(
 ) -> Result<PromptSourceLocation, PromptInstructionsError> {
     let prompt_file_path = vfs_path(path)?;
     match &root.source {
-        PromptRootSource::LinkedSnapshot {
+        PromptRootSource::AttachedSnapshot {
             snapshot_ref,
-            link_path,
-        } => Ok(PromptSourceLocation::LinkedSnapshot {
+            attachment_path,
+        } => Ok(PromptSourceLocation::AttachedSnapshot {
             source_snapshot_ref: snapshot_ref.clone(),
-            source_link_path: link_path.clone(),
+            source_attachment_path: attachment_path.clone(),
             prompt_file_path,
         }),
-        PromptRootSource::LinkedWorkspace {
+        PromptRootSource::AttachedWorkspace {
             workspace_id,
             workspace_head_ref,
             workspace_revision,
-            link_path,
-        } => Ok(PromptSourceLocation::LinkedWorkspace {
+            attachment_path,
+        } => Ok(PromptSourceLocation::AttachedWorkspace {
             workspace_id: workspace_id.clone(),
             workspace_revision: *workspace_revision,
             workspace_head_ref: workspace_head_ref.clone(),
-            source_link_path: link_path.clone(),
+            source_attachment_path: attachment_path.clone(),
             prompt_file_path,
         }),
     }
@@ -546,14 +546,14 @@ fn source_input_for_root(
 ) -> Result<PromptSourceFingerprintInput, PromptInstructionsError> {
     let root_path = vfs_path(&root.root_path)?;
     match &root.source {
-        PromptRootSource::LinkedSnapshot { snapshot_ref, .. } => {
+        PromptRootSource::AttachedSnapshot { snapshot_ref, .. } => {
             Ok(PromptSourceFingerprintInput::SnapshotRoot {
                 root_id: root.root_id.clone(),
                 snapshot_ref: snapshot_ref.clone(),
                 root_path,
             })
         }
-        PromptRootSource::LinkedWorkspace {
+        PromptRootSource::AttachedWorkspace {
             workspace_id,
             workspace_head_ref,
             workspace_revision,
@@ -1111,9 +1111,9 @@ mod tests {
             root: PromptRoot {
                 root_id: root_id.to_owned(),
                 root_path: FsPath::new(root_path).unwrap(),
-                source: PromptRootSource::LinkedSnapshot {
+                source: PromptRootSource::AttachedSnapshot {
                     snapshot_ref: BlobRef::from_bytes(b"snapshot-1"),
-                    link_path: VfsPath::parse("/workspace").unwrap(),
+                    attachment_path: VfsPath::parse("/workspace").unwrap(),
                 },
                 access: WorkspaceAccess::Read,
             },

@@ -31,14 +31,14 @@ automatic sync.
 The session needs both a workspace attachment and an environment attachment.
 Materialize requires read access to its VFS source and an environment
 attachment with `edit` or higher; capture requires an `edit` workspace attachment
-and any environment attachment. Snapshot links are read-only. A selected VFS path must belong to one linked
+and any environment attachment. Snapshot attachments are read-only. A selected VFS path must belong to one attached
 workspace or snapshot, rather than a synthetic directory spanning several
-links. Ordinary VFS operations do not require a selected environment.
+attachments. Ordinary VFS operations do not require a selected environment.
 
 Profiles and session settings use the same grants, and the transfer tools
 follow the union of attachment access in both domains: any workspace attachment
 plus an environment attached with `edit` or higher installs materialize; an
-`edit` link plus any environment attachment installs capture. A VFS or
+`edit` attachment plus any environment attachment installs capture. A VFS or
 environment feature with no attachments installs neither. A call runs against
 the active environment and is refused when that machine's own access does
 not cover it. Read-level VFS access allows materialization to write the

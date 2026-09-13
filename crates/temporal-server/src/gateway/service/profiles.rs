@@ -232,6 +232,9 @@ mod tests {
             default_environment_id(&features).unwrap(),
             Some(engine::EnvironmentId::new("env_ok"))
         );
+        features.environments.as_mut().unwrap().environments[0].default = false;
+        assert_eq!(default_environment_id(&features).unwrap(), None);
+        features.environments.as_mut().unwrap().environments[0].default = true;
         for invalid in ["".to_owned(), "env/bad".into(), "a".repeat(129)] {
             features.environments.as_mut().unwrap().environments[0].environment_id = invalid;
             let error = default_environment_id(&features).unwrap_err();

@@ -104,9 +104,9 @@ async fn openai_completions_runtime_live_skill_catalog_exposes_relevant_skill_pa
             trust: SkillTrustLevel::Project,
             interface: None,
             dependencies: SkillDependencies::default(),
-            location: SkillLocation::LinkedWorkspace {
+            location: SkillLocation::AttachedWorkspace {
                 workspace_id,
-                source_link_path: VfsPath::parse("/skills").expect("link path"),
+                source_attachment_path: VfsPath::parse("/skills").expect("attachment path"),
                 skill_dir_path: VfsPath::parse("/skills/release-audit").expect("skill path"),
                 skill_doc_path: VfsPath::parse("/skills/release-audit/SKILL.md")
                     .expect("skill doc path"),

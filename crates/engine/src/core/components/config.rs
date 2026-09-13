@@ -192,7 +192,10 @@ impl VfsFeature {
     /// The widest access any workspace attachment grants; `None` without
     /// attachments, which installs no filesystem tools.
     pub fn tool_access(&self) -> Option<WorkspaceAccess> {
-        self.workspaces.iter().map(|link| link.access).max()
+        self.workspaces
+            .iter()
+            .map(|attachment| attachment.access)
+            .max()
     }
 }
 
@@ -538,7 +541,7 @@ pub struct EnvironmentSkillsConfig {
     pub roots: Option<Vec<String>>,
 }
 
-/// Grants remote MCP tools by declaring linked servers from the universe MCP
+/// Grants remote MCP tools by declaring attached servers from the universe MCP
 /// catalog. Reconciliation into tool specs happens in the runtime
 /// materialization layer, not in the engine.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -547,7 +550,7 @@ pub struct McpFeature {
     pub version: u32,
     /// Attached servers have unique ids. An empty list grants no MCP tools.
     #[serde(default)]
-    pub servers: Vec<McpServerLink>,
+    pub servers: Vec<McpServerAttachment>,
 }
 
 impl Default for McpFeature {
@@ -560,10 +563,10 @@ impl Default for McpFeature {
 }
 
 /// A selected universe MCP server. Its catalog record owns connection,
-/// execution, exposure, approval, and auth; the link may only narrow the
+/// execution, exposure, approval, and auth; the attachment may only narrow the
 /// record's tool allowlist for this session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpServerLink {
+pub struct McpServerAttachment {
     pub server_id: String,
     /// Subset of the record's allowed tools exposed to this session; absent
     /// exposes the record's full allowlist.
@@ -709,21 +712,21 @@ fn validate_features(
 ) -> Result<(), DomainError> {
     if let Some(vfs) = &features.vfs {
         validate_feature_version("vfs", vfs.version)?;
-        let link_paths = validate_workspace_attachments(&vfs.workspaces)?;
+        let attachment_paths = validate_workspace_attachments(&vfs.workspaces)?;
         if let Some(cwd) = &vfs.working_directory
             && cwd != "/"
         {
             validate_source_roots(
                 "vfs working directory",
                 Some(std::slice::from_ref(cwd)),
-                &link_paths,
+                &attachment_paths,
             )?;
         }
         if let Some(prompts) = &vfs.prompts {
-            validate_source_roots("vfs prompts", prompts.roots.as_deref(), &link_paths)?;
+            validate_source_roots("vfs prompts", prompts.roots.as_deref(), &attachment_paths)?;
         }
         if let Some(skills) = &vfs.skills {
-            validate_source_roots("vfs skills", skills.roots.as_deref(), &link_paths)?;
+            validate_source_roots("vfs skills", skills.roots.as_deref(), &attachment_paths)?;
         }
     }
     if let Some(web) = &features.web {
@@ -842,11 +845,11 @@ fn validate_environment_attachments(
 }
 
 fn validate_workspace_attachments(
-    links: &[WorkspaceAttachment],
+    attachments: &[WorkspaceAttachment],
 ) -> Result<Vec<String>, DomainError> {
-    let mut paths = Vec::with_capacity(links.len());
-    for link in links {
-        let path = canonical_workspace_attachment_path(&link.path)?;
+    let mut paths = Vec::with_capacity(attachments.len());
+    for attachment in attachments {
+        let path = canonical_workspace_attachment_path(&attachment.path)?;
         if paths.iter().any(|existing: &String| {
             existing == &path
                 || existing == "/"
@@ -858,7 +861,7 @@ fn validate_workspace_attachments(
                 "workspace attachment path {path:?} overlaps another workspace attachment"
             )));
         }
-        match &link.target {
+        match &attachment.target {
             WorkspaceAttachmentTarget::Workspace { workspace_id } => {
                 if workspace_id.trim().is_empty() {
                     return Err(DomainError::InvariantViolation(
@@ -872,7 +875,7 @@ fn validate_workspace_attachments(
                         "workspace attachment snapshot_ref must not be empty".to_owned(),
                     ));
                 }
-                if link.access != WorkspaceAccess::Read {
+                if attachment.access != WorkspaceAccess::Read {
                     return Err(DomainError::InvariantViolation(format!(
                         "snapshot workspace attachment at {path:?} must be read"
                     )));
@@ -921,7 +924,7 @@ fn validate_feature_version(feature: &str, version: u32) -> Result<(), DomainErr
 fn validate_source_roots(
     feature: &str,
     roots: Option<&[String]>,
-    link_paths: &[String],
+    attachment_paths: &[String],
 ) -> Result<(), DomainError> {
     let Some(roots) = roots else {
         return Ok(());
@@ -940,8 +943,10 @@ fn validate_source_roots(
                 "{feature} root {root:?} is declared more than once"
             )));
         }
-        if !link_paths.iter().any(|link_path| {
-            root == *link_path || link_path == "/" || root.starts_with(&format!("{link_path}/"))
+        if !attachment_paths.iter().any(|attachment_path| {
+            root == *attachment_path
+                || attachment_path == "/"
+                || root.starts_with(&format!("{attachment_path}/"))
         }) {
             return Err(DomainError::InvariantViolation(format!(
                 "{feature} root {root:?} is not under a workspace attachment"
@@ -1004,23 +1009,23 @@ fn validate_web_feature(web: &WebFeature, api_kind: &ProviderApiKind) -> Result<
 
 fn validate_mcp_feature(mcp: &McpFeature) -> Result<(), DomainError> {
     let mut seen = std::collections::BTreeSet::new();
-    for link in &mcp.servers {
-        if link.server_id.trim().is_empty() {
+    for attachment in &mcp.servers {
+        if attachment.server_id.trim().is_empty() {
             return Err(DomainError::InvariantViolation(
-                "mcp server link requires a non-empty server_id".to_owned(),
+                "mcp server attachment requires a non-empty server_id".to_owned(),
             ));
         }
-        if !seen.insert(link.server_id.as_str()) {
+        if !seen.insert(attachment.server_id.as_str()) {
             return Err(DomainError::InvariantViolation(format!(
-                "mcp server {} is linked more than once",
-                link.server_id
+                "mcp server {} is attached more than once",
+                attachment.server_id
             )));
         }
-        if let Some(tools) = &link.tools {
+        if let Some(tools) = &attachment.tools {
             if tools.is_empty() {
                 return Err(DomainError::InvariantViolation(format!(
                     "mcp server {} tools subset must be non-empty; omit it to expose the record's allowlist",
-                    link.server_id
+                    attachment.server_id
                 )));
             }
             let mut names = std::collections::BTreeSet::new();
@@ -1028,13 +1033,13 @@ fn validate_mcp_feature(mcp: &McpFeature) -> Result<(), DomainError> {
                 if tool.trim().is_empty() {
                     return Err(DomainError::InvariantViolation(format!(
                         "mcp server {} tools subset contains an empty tool name",
-                        link.server_id
+                        attachment.server_id
                     )));
                 }
                 if !names.insert(tool.as_str()) {
                     return Err(DomainError::InvariantViolation(format!(
                         "mcp server {} tools subset lists {tool} twice",
-                        link.server_id
+                        attachment.server_id
                     )));
                 }
             }
@@ -1421,12 +1426,12 @@ mod tests {
         });
         assert!(config.validate().is_err());
         config.features.environments.as_mut().unwrap().prompts = None;
-        config.features.vfs.as_mut().unwrap().working_directory = Some("/unlinked".into());
+        config.features.vfs.as_mut().unwrap().working_directory = Some("/unattached".into());
         assert!(config.validate().is_err());
     }
 
     #[test]
-    fn empty_vfs_source_blocks_enable_defaults_without_links() {
+    fn empty_vfs_source_blocks_enable_defaults_without_attachments() {
         let mut config = config(ProviderApiKind::OpenAiResponses, None);
         config.features.vfs = Some(VfsFeature {
             skills: Some(VfsSkillsConfig::default()),
@@ -1461,7 +1466,7 @@ mod tests {
     }
 
     #[test]
-    fn vfs_skills_require_linked_roots_and_are_independent_of_environment_skills() {
+    fn vfs_skills_require_attached_roots_and_are_independent_of_environment_skills() {
         let mut config = config(ProviderApiKind::OpenAiResponses, None);
         config.features.environments = Some(EnvironmentsFeature {
             skills: Some(EnvironmentSkillsConfig::default()),
@@ -1580,35 +1585,46 @@ mod tests {
     fn mcp_feature_requires_unique_nonempty_server_ids() {
         let mut config = config(ProviderApiKind::OpenAiResponses, None);
         config.features.mcp = Some(McpFeature::default());
-        config.validate().expect("an empty attachment list is valid");
+        config
+            .validate()
+            .expect("an empty attachment list is valid");
 
-        let link = McpServerLink {
+        let attachment = McpServerAttachment {
             server_id: "linear".to_owned(),
             tools: None,
         };
         let mut duplicated = config.clone();
         duplicated.features.mcp = Some(McpFeature {
-            servers: vec![link.clone(), link.clone()],
+            servers: vec![attachment.clone(), attachment.clone()],
             ..McpFeature::default()
         });
         let error = duplicated
             .validate()
-            .expect_err("duplicate server links must fail");
+            .expect_err("duplicate server attachments must fail");
         assert!(matches!(error, DomainError::InvariantViolation(_)));
 
         let mut blank = config.clone();
-        blank.features.mcp.as_mut().unwrap().servers.push(McpServerLink {
-            server_id: " ".to_owned(),
-            tools: None,
-        });
-        assert!(matches!(blank.validate(), Err(DomainError::InvariantViolation(_))));
+        blank
+            .features
+            .mcp
+            .as_mut()
+            .unwrap()
+            .servers
+            .push(McpServerAttachment {
+                server_id: " ".to_owned(),
+                tools: None,
+            });
+        assert!(matches!(
+            blank.validate(),
+            Err(DomainError::InvariantViolation(_))
+        ));
 
         for tools in [vec![], vec![""], vec!["search", "search"]] {
             let mut narrowed = config.clone();
             narrowed.features.mcp = Some(McpFeature {
-                servers: vec![McpServerLink {
+                servers: vec![McpServerAttachment {
                     tools: Some(tools.into_iter().map(String::from).collect()),
-                    ..link.clone()
+                    ..attachment.clone()
                 }],
                 ..McpFeature::default()
             });
@@ -1619,9 +1635,9 @@ mod tests {
         }
         let mut narrowed = config;
         narrowed.features.mcp = Some(McpFeature {
-            servers: vec![McpServerLink {
+            servers: vec![McpServerAttachment {
                 tools: Some(vec!["search".to_owned()]),
-                ..link
+                ..attachment
             }],
             ..McpFeature::default()
         });
@@ -1637,14 +1653,28 @@ mod tests {
         let mut empty = config(ProviderApiKind::OpenAiResponses, None);
         empty.features.mcp = Some(McpFeature::default());
         let mut attached = empty.clone();
-        attached.features.mcp.as_mut().unwrap().servers.push(McpServerLink {
-            server_id: "catalog".to_owned(),
-            tools: None,
-        });
+        attached
+            .features
+            .mcp
+            .as_mut()
+            .unwrap()
+            .servers
+            .push(McpServerAttachment {
+                server_id: "catalog".to_owned(),
+                tools: None,
+            });
         let events = [
-            Event::Opened { config: empty.clone() },
-            Event::ConfigChanged { config: attached, revision: 1 },
-            Event::ConfigChanged { config: empty.clone(), revision: 2 },
+            Event::Opened {
+                config: empty.clone(),
+            },
+            Event::ConfigChanged {
+                config: attached,
+                revision: 1,
+            },
+            Event::ConfigChanged {
+                config: empty.clone(),
+                revision: 2,
+            },
         ];
         let mut original = CoreAgentState::new();
         let mut replayed = CoreAgentState::new();
@@ -1657,7 +1687,10 @@ mod tests {
         assert_eq!(original, replayed);
         assert_eq!(replayed.lifecycle.config, Some(empty.clone()));
         assert_eq!(replayed.lifecycle.config_revision, 2);
-        assert_eq!(serde_json::to_value(empty).unwrap()["features"]["mcp"]["servers"], serde_json::json!([]));
+        assert_eq!(
+            serde_json::to_value(empty).unwrap()["features"]["mcp"]["servers"],
+            serde_json::json!([])
+        );
     }
 
     #[test]

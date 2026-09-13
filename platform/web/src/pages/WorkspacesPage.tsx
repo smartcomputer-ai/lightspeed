@@ -193,10 +193,10 @@ function WorkspacePane({
         )}
         {tree.data && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {/* The id is what profile workspace links reference — keep it in sight. */}
+            {/* The id is what profile workspace attachments reference — keep it in sight. */}
             <code
               className="cursor-pointer rounded bg-muted px-1.5 py-0.5 font-mono hover:bg-accent"
-              title="Workspace id (used by profile workspace links) — click to copy"
+              title="Workspace id (used by profile workspace attachments) — click to copy"
               onClick={() =>
                 void navigator.clipboard.writeText(tree.data.workspace.workspaceId)
               }
@@ -660,7 +660,7 @@ function NewWorkspaceDialog({
               className="font-mono"
             />
             <FieldDescription>
-              What profile workspace links reference — cannot be changed later.
+              What profile workspace attachments reference — cannot be changed later.
             </FieldDescription>
           </Field>
           {error && <p className="text-sm text-destructive">{error}</p>}

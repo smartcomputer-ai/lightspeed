@@ -10,7 +10,7 @@ use vfs::{
 };
 
 use crate::{
-    fs::{FileSystem, FsError, FsPath, LinkedVfsFileSystem},
+    fs::{AttachedVfsFileSystem, FileSystem, FsError, FsPath},
     prompts::{PromptRoot, PromptRootInput, PromptRootSource, PromptWarning, PromptWarningKind},
 };
 
@@ -29,14 +29,14 @@ impl VfsPromptRootSpec {
     }
 }
 
-pub struct LinkedVfsPromptRoots {
-    fs: LinkedVfsFileSystem,
+pub struct AttachedVfsPromptRoots {
+    fs: AttachedVfsFileSystem,
     roots: Vec<PromptRoot>,
     warnings: Vec<PromptWarning>,
 }
 
-impl LinkedVfsPromptRoots {
-    pub fn fs(&self) -> &LinkedVfsFileSystem {
+impl AttachedVfsPromptRoots {
+    pub fn fs(&self) -> &AttachedVfsFileSystem {
         &self.fs
     }
 
@@ -48,7 +48,7 @@ impl LinkedVfsPromptRoots {
         &self.warnings
     }
 
-    pub fn into_parts(self) -> (LinkedVfsFileSystem, Vec<PromptRoot>, Vec<PromptWarning>) {
+    pub fn into_parts(self) -> (AttachedVfsFileSystem, Vec<PromptRoot>, Vec<PromptWarning>) {
         (self.fs, self.roots, self.warnings)
     }
 
@@ -94,7 +94,7 @@ pub enum PromptVfsRootError {
     InvalidConfiguredRoot { root: String, message: String },
 
     #[error("VFS prompt root {root_id} at {root_path} is not under a workspace attachment")]
-    UnlinkedRoot { root_id: String, root_path: VfsPath },
+    UnattachedRoot { root_id: String, root_path: VfsPath },
 
     #[error("invalid VFS prompt root {root_id} at {root_path}: {message}")]
     InvalidRootPath {
@@ -103,7 +103,7 @@ pub enum PromptVfsRootError {
         message: String,
     },
 
-    #[error("failed to build linked VFS filesystem: {message}")]
+    #[error("failed to build attached VFS filesystem: {message}")]
     Filesystem { message: String },
 
     #[error("failed to read VFS workspace {workspace_id}: {message}")]
@@ -113,14 +113,14 @@ pub enum PromptVfsRootError {
     },
 }
 
-pub async fn resolve_linked_vfs_prompt_roots(
+pub async fn resolve_attached_vfs_prompt_roots(
     blobs: Arc<dyn BlobStore>,
     workspace_store: Arc<dyn VfsWorkspaceStore>,
-    links: Vec<ResolvedWorkspaceAttachment>,
+    attachments: Vec<ResolvedWorkspaceAttachment>,
     specs: Vec<VfsPromptRootSpec>,
-) -> Result<LinkedVfsPromptRoots, PromptVfsRootError> {
+) -> Result<AttachedVfsPromptRoots, PromptVfsRootError> {
     validate_specs(&specs)?;
-    let fs = LinkedVfsFileSystem::new(blobs, workspace_store, links).map_err(|error| {
+    let fs = AttachedVfsFileSystem::new(blobs, workspace_store, attachments).map_err(|error| {
         PromptVfsRootError::Filesystem {
             message: error.to_string(),
         }
@@ -129,8 +129,9 @@ pub async fn resolve_linked_vfs_prompt_roots(
     let mut roots = Vec::with_capacity(specs.len());
     let mut warnings = Vec::new();
     for spec in specs {
-        if let Some(link) = link_for_root(fs.links(), &spec.root_path)
-            && let ResolvedWorkspaceAttachmentTarget::Unavailable { reason, .. } = &link.target
+        if let Some(attachment) = attachment_for_root(fs.attachments(), &spec.root_path)
+            && let ResolvedWorkspaceAttachmentTarget::Unavailable { reason, .. } =
+                &attachment.target
         {
             warnings.push(PromptWarning::new(
                 spec.root_id.clone(),
@@ -140,12 +141,12 @@ pub async fn resolve_linked_vfs_prompt_roots(
                 },
             ));
         }
-        if let Some(root) = resolve_root(fs.links(), spec).await? {
+        if let Some(root) = resolve_root(fs.attachments(), spec).await? {
             roots.push(root);
         }
     }
 
-    Ok(LinkedVfsPromptRoots {
+    Ok(AttachedVfsPromptRoots {
         fs,
         roots,
         warnings,
@@ -153,31 +154,31 @@ pub async fn resolve_linked_vfs_prompt_roots(
 }
 
 pub fn conventional_vfs_prompt_root_specs(
-    links: &[ResolvedWorkspaceAttachment],
+    attachments: &[ResolvedWorkspaceAttachment],
 ) -> Vec<VfsPromptRootSpec> {
     let mut specs = Vec::new();
     let mut seen = BTreeSet::new();
-    for link in links {
+    for attachment in attachments {
         push_spec(
             &mut specs,
             &mut seen,
-            workspace_prompt_root(&link.path, ".lightspeed/prompts"),
+            workspace_prompt_root(&attachment.path, ".lightspeed/prompts"),
         );
         push_spec(
             &mut specs,
             &mut seen,
-            workspace_prompt_root(&link.path, ".agents/prompts"),
+            workspace_prompt_root(&attachment.path, ".agents/prompts"),
         );
     }
     specs
 }
 
 pub fn configured_vfs_prompt_root_specs(
-    links: &[ResolvedWorkspaceAttachment],
+    attachments: &[ResolvedWorkspaceAttachment],
     roots: Option<&[String]>,
 ) -> Result<Vec<VfsPromptRootSpec>, PromptVfsRootError> {
     let Some(roots) = roots else {
-        return Ok(conventional_vfs_prompt_root_specs(links));
+        return Ok(conventional_vfs_prompt_root_specs(attachments));
     };
     roots
         .iter()
@@ -206,8 +207,8 @@ fn push_spec(
     }
 }
 
-fn workspace_prompt_root(link_path: &VfsPath, suffix: &str) -> VfsPromptRootSpec {
-    let path = append_vfs_path(link_path, suffix);
+fn workspace_prompt_root(attachment_path: &VfsPath, suffix: &str) -> VfsPromptRootSpec {
+    let path = append_vfs_path(attachment_path, suffix);
     VfsPromptRootSpec::new(root_id_for_vfs_path("workspace", &path), path)
 }
 
@@ -242,14 +243,15 @@ fn validate_specs(specs: &[VfsPromptRootSpec]) -> Result<(), PromptVfsRootError>
 }
 
 async fn resolve_root(
-    links: &[ResolvedWorkspaceAttachment],
+    attachments: &[ResolvedWorkspaceAttachment],
     spec: VfsPromptRootSpec,
 ) -> Result<Option<PromptRoot>, PromptVfsRootError> {
-    let link =
-        link_for_root(links, &spec.root_path).ok_or_else(|| PromptVfsRootError::UnlinkedRoot {
+    let attachment = attachment_for_root(attachments, &spec.root_path).ok_or_else(|| {
+        PromptVfsRootError::UnattachedRoot {
             root_id: spec.root_id.clone(),
             root_path: spec.root_path.clone(),
-        })?;
+        }
+    })?;
     let root_path = FsPath::new(spec.root_path.as_str()).map_err(|error| {
         PromptVfsRootError::InvalidRootPath {
             root_id: spec.root_id.clone(),
@@ -257,19 +259,19 @@ async fn resolve_root(
             message: error.to_string(),
         }
     })?;
-    let source = match &link.target {
+    let source = match &attachment.target {
         ResolvedWorkspaceAttachmentTarget::AvailableSnapshot { snapshot_ref } => {
-            PromptRootSource::LinkedSnapshot {
+            PromptRootSource::AttachedSnapshot {
                 snapshot_ref: snapshot_ref.clone(),
-                link_path: link.path.clone(),
+                attachment_path: attachment.path.clone(),
             }
         }
         ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace } => {
-            PromptRootSource::LinkedWorkspace {
+            PromptRootSource::AttachedWorkspace {
                 workspace_id: workspace.workspace_id.clone(),
                 workspace_head_ref: workspace.head_snapshot_ref.clone(),
                 workspace_revision: workspace.revision,
-                link_path: link.path.clone(),
+                attachment_path: attachment.path.clone(),
             }
         }
         ResolvedWorkspaceAttachmentTarget::Unavailable { .. } => return Ok(None),
@@ -279,17 +281,17 @@ async fn resolve_root(
         root_id: spec.root_id,
         root_path,
         source,
-        access: link.access,
+        access: attachment.access,
     }))
 }
 
-fn link_for_root<'a>(
-    links: &'a [ResolvedWorkspaceAttachment],
+fn attachment_for_root<'a>(
+    attachments: &'a [ResolvedWorkspaceAttachment],
     root_path: &VfsPath,
 ) -> Option<&'a ResolvedWorkspaceAttachment> {
-    links
+    attachments
         .iter()
-        .find(|link| vfs_path_starts_with(root_path, &link.path))
+        .find(|attachment| vfs_path_starts_with(root_path, &attachment.path))
 }
 
 fn vfs_path_starts_with(path: &VfsPath, base: &VfsPath) -> bool {
@@ -346,15 +348,15 @@ mod tests {
             })
             .await
             .expect("workspace");
-        let links = vec![resolved_link(
+        let attachments = vec![resolved_attachment(
             "/workspace",
             ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace },
             WorkspaceAccess::Edit,
         )];
-        let specs = conventional_vfs_prompt_root_specs(&links);
+        let specs = conventional_vfs_prompt_root_specs(&attachments);
 
         let resolved =
-            resolve_linked_vfs_prompt_roots(blobs.clone(), workspace_store, links, specs)
+            resolve_attached_vfs_prompt_roots(blobs.clone(), workspace_store, attachments, specs)
                 .await
                 .expect("resolve roots");
         let inputs = resolved
@@ -379,31 +381,31 @@ mod tests {
         );
         assert!(matches!(
             &build.report.sources[0].source,
-            crate::prompts::PromptSourceLocation::LinkedWorkspace {
+            crate::prompts::PromptSourceLocation::AttachedWorkspace {
                 workspace_id: source_workspace_id,
                 workspace_revision,
-                source_link_path,
+                source_attachment_path,
                 prompt_file_path,
                 ..
             } if source_workspace_id == &workspace_id
                 && *workspace_revision == 0
-                && source_link_path.as_str() == "/workspace"
+                && source_attachment_path.as_str() == "/workspace"
                 && prompt_file_path.as_str() == "/workspace/.lightspeed/prompts/instructions.md"
         ));
         assert!(build.report.sources[0].writable);
     }
 
     #[test]
-    fn conventional_prompt_roots_cover_workspace_and_snapshot_links() {
+    fn conventional_prompt_roots_cover_workspace_and_snapshot_attachments() {
         let roots = conventional_vfs_prompt_root_specs(&[
-            resolved_link(
+            resolved_attachment(
                 "/workspace",
                 ResolvedWorkspaceAttachmentTarget::AvailableWorkspace {
                     workspace: workspace_record("workspace_1", BlobRef::from_bytes(b"head")),
                 },
                 WorkspaceAccess::Edit,
             ),
-            resolved_link(
+            resolved_attachment(
                 "/skills/system",
                 ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
                     snapshot_ref: engine::BlobRef::from_bytes(b"snapshot"),
@@ -443,7 +445,7 @@ mod tests {
         );
     }
 
-    fn resolved_link(
+    fn resolved_attachment(
         path: &str,
         target: ResolvedWorkspaceAttachmentTarget,
         access: WorkspaceAccess,

@@ -41,7 +41,7 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
       },
       "version": 0,
     },
-    // Grants remote MCP tools by declaring linked servers from the universe MCP catalog; must link at least one server, with unique server ids.
+    // Grants remote MCP tools by declaring attached servers from the universe MCP catalog. Server ids must be unique; an empty list grants no MCP tools.
     "mcp": {
       "servers": [{
         // (required when this object is present)

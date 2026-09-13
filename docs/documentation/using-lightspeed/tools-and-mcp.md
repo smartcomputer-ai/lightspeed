@@ -28,7 +28,7 @@ The model-configuration editor groups capabilities by what the agent can do:
 | **Environments** | Working with execution environments and their processes. See [Environments](../environments/overview.md). |
 | **MCP Servers** | Calling tools supplied by registered external MCP servers. |
 
-Each feature has its own settings. VFS tools come from linked workspaces,
+Each feature has its own settings. VFS tools come from attached workspaces,
 and process access needs an environment attached with `exec` access. After
 changing the profile,
 create a new session or [apply the setup](profiles-and-instructions.md#apply-changes-deliberately)
@@ -104,8 +104,10 @@ Loading tools discovers their metadata without invoking them. Read descriptions
 and safety annotations as claims from that server. The allowlist and approval
 policy are the controls you configure in Lightspeed.
 
-Now open the profile, enable **MCP Servers**, choose **Add server**, and select
-the registered **Server**. Its tools default to **All server-allowed tools**.
+Now open the profile and enable **MCP Servers**. It starts with no server
+attachments and grants no MCP tools until you choose **Add server** and select
+the registered **Server**. Remove all server attachments before disabling the
+feature. Each attachment defaults to **All server-allowed tools**.
 To narrow them for this profile, choose **Customize tools**, then **Selected
 tools**. The same picker shows only tools within the server's allowance, plus
 any saved selections that are no longer allowed so you can remove them.

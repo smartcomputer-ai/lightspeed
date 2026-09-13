@@ -193,7 +193,6 @@ async fn run_checkpoint_and_bounded_reads_live_client(
             ..SessionConfig::default()
         }),
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -392,7 +391,6 @@ async fn run_fake_live_client(
                 ..SessionConfig::default()
             }),
             profile: None,
-            environment: None,
             delete_after_close_ms: None,
         })
         .await?;
@@ -600,7 +598,6 @@ async fn run_fake_live_client(
             display_name: None,
             config: None,
             profile: None,
-            environment: None,
             delete_after_close_ms: None,
         })
         .await?;
@@ -673,7 +670,6 @@ async fn run_lifecycle_delete_live_client(
         display_name: Some("Lifecycle delete live test".to_owned()),
         config: None,
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -766,7 +762,6 @@ async fn run_continue_as_new_live_client(
             ..SessionConfig::default()
         }),
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -896,7 +891,6 @@ async fn run_context_append_live_client(
             ..SessionConfig::default()
         }),
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -1108,7 +1102,6 @@ async fn run_admission_failure_live_client(
             ..SessionConfig::default()
         }),
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -1233,7 +1226,6 @@ async fn run_openai_live_client(
                 },
             }),
         }),
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -1313,7 +1305,6 @@ async fn run_builtin_tool_live_client(
                 },
             }),
         }),
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -1449,7 +1440,6 @@ async fn run_session_metadata_live_client(
             metadata: job.clone(),
             config: None,
             profile: None,
-            environment: None,
             delete_after_close_ms: None,
         })
         .await?;
@@ -1518,7 +1508,6 @@ async fn run_session_metadata_live_client(
             metadata: BTreeMap::from([pair("lightspeed.owner", "x")]),
             config: None,
             profile: None,
-            environment: None,
             delete_after_close_ms: None,
         })
         .await

@@ -19,7 +19,7 @@ use llm_runtime::{AnthropicMessagesLlmAdapter, LlmAdapterRegistry, LlmRuntime};
 use test_support::{DriveCommand, RunnerQuiescence, RunnerStores, SessionRunner};
 use tools::{
     fs::tools::ReadFileResult,
-    fs::{FsPath, FsToolContext, LinkedVfsFileSystem},
+    fs::{AttachedVfsFileSystem, FsPath, FsToolContext},
     runtime::InlineToolRuntime,
     toolset::{ToolsetConfig, register_toolset},
 };
@@ -191,7 +191,7 @@ async fn anthropic_messages_live_selects_and_reads_the_matching_skill() {
         access: WorkspaceAccess::Read,
     }];
 
-    let linked_fs = LinkedVfsFileSystem::new(
+    let attached_fs = AttachedVfsFileSystem::new(
         blobs.clone(),
         vfs.clone(),
         vec![ResolvedWorkspaceAttachment {
@@ -202,8 +202,8 @@ async fn anthropic_messages_live_selects_and_reads_the_matching_skill() {
             access: WorkspaceAccess::Read,
         }],
     )
-    .expect("linked fs");
-    let fs_ctx = FsToolContext::new(Arc::new(linked_fs), blobs.clone()).with_cwd(FsPath::root());
+    .expect("attached fs");
+    let fs_ctx = FsToolContext::new(Arc::new(attached_fs), blobs.clone()).with_cwd(FsPath::root());
     let model = ModelSelection {
         api_kind: ProviderApiKind::AnthropicMessages,
         provider_id: "anthropic".to_string(),
@@ -352,7 +352,7 @@ fn session_config(
                     roots: Some(
                         workspace_attachments
                             .iter()
-                            .map(|link| link.path.clone())
+                            .map(|attachment| attachment.path.clone())
                             .collect(),
                     ),
                 }),

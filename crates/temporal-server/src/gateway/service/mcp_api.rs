@@ -134,11 +134,11 @@ pub(super) fn validate_mcp_server_credential(
     }
 }
 
-/// Resolve one declared config link against its catalog record and grant
+/// Resolve one declared config attachment against its catalog record and grant
 /// into the remote MCP tool spec. Shared by put-time validation and toolset
-/// reconciliation, so a config put fails fast when a link cannot resolve.
-pub(super) fn mcp_tool_from_config_link(
-    link: &engine::McpServerLink,
+/// reconciliation, so a config put fails fast when an attachment cannot resolve.
+pub(super) fn mcp_tool_from_config_attachment(
+    attachment: &engine::McpServerAttachment,
     record: &mcp::McpServerRecord,
     grant: Option<&auth::AuthGrantRecord>,
 ) -> Result<engine::ToolSpec, AgentApiError> {
@@ -151,14 +151,14 @@ pub(super) fn mcp_tool_from_config_link(
         }
         mcp::McpServerStatus::NeedsAuthConfig => {
             return Err(AgentApiError::rejected(format!(
-                "MCP server needs auth configuration before linking: {}",
+                "MCP server needs auth configuration before attaching: {}",
                 record.server_id
             )));
         }
         mcp::McpServerStatus::Active | mcp::McpServerStatus::Unverified => {}
     }
 
-    let allowed_tools = match &link.tools {
+    let allowed_tools = match &attachment.tools {
         Some(tools) => {
             if let Some(allowed) = &record.allowed_tools
                 && let Some(tool) = tools.iter().find(|tool| !allowed.contains(tool))
@@ -201,7 +201,7 @@ pub(super) fn mcp_tool_from_config_link(
 }
 
 impl super::session_preparation::SessionPreparationService {
-    /// Resolve the config's declared MCP links into the desired remote tool
+    /// Resolve the config's declared MCP attachments into the desired remote tool
     /// specs, loading catalog records and auth grants. Used both to validate
     /// a config document at admission and to reconcile the session toolset.
     pub(crate) async fn desired_mcp_tools(
@@ -213,8 +213,8 @@ impl super::session_preparation::SessionPreparationService {
         };
         let mut tools = BTreeMap::new();
         let mut search_descriptions = Vec::new();
-        for link in &mcp.servers {
-            let server_id = parse_mcp_server_id(link.server_id.clone())?;
+        for attachment in &mcp.servers {
+            let server_id = parse_mcp_server_id(attachment.server_id.clone())?;
             let record = self
                 .store
                 .read_server(&server_id)
@@ -229,7 +229,7 @@ impl super::session_preparation::SessionPreparationService {
                 ),
                 None => None,
             };
-            let tool = mcp_tool_from_config_link(link, &record, grant.as_ref())?;
+            let tool = mcp_tool_from_config_attachment(attachment, &record, grant.as_ref())?;
             if record.execution == mcp::McpExecution::Native
                 && record.exposure == mcp::McpExposure::Search
             {

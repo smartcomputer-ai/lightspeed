@@ -102,7 +102,7 @@ pub fn skill_catalog_blob_refs(catalog: &SkillCatalogSnapshot) -> BTreeSet<BlobR
         if let SkillSource::Snapshot { snapshot_ref, .. } = &skill.source {
             refs.insert(snapshot_ref.clone());
         }
-        if let SkillLocation::LinkedSnapshot {
+        if let SkillLocation::AttachedSnapshot {
             source_snapshot_ref,
             ..
         } = &skill.location
@@ -320,11 +320,11 @@ fn metadata_for_skill(
 
 fn source_for_root(root: &SkillCatalogRoot) -> SkillSource {
     match &root.source {
-        SkillCatalogRootSource::LinkedSnapshot { snapshot_ref, .. } => SkillSource::Snapshot {
+        SkillCatalogRootSource::AttachedSnapshot { snapshot_ref, .. } => SkillSource::Snapshot {
             root_id: root.root_id.clone(),
             snapshot_ref: snapshot_ref.clone(),
         },
-        SkillCatalogRootSource::LinkedWorkspace { workspace_id, .. } => SkillSource::Workspace {
+        SkillCatalogRootSource::AttachedWorkspace { workspace_id, .. } => SkillSource::Workspace {
             root_id: root.root_id.clone(),
             workspace_id: workspace_id.clone(),
         },
@@ -337,22 +337,22 @@ fn location_for_skill(
     skill_doc_path: &FsPath,
 ) -> Result<SkillLocation, SkillCatalogError> {
     match &root.source {
-        SkillCatalogRootSource::LinkedSnapshot {
+        SkillCatalogRootSource::AttachedSnapshot {
             snapshot_ref,
-            link_path,
-        } => Ok(SkillLocation::LinkedSnapshot {
+            attachment_path,
+        } => Ok(SkillLocation::AttachedSnapshot {
             source_snapshot_ref: snapshot_ref.clone(),
-            source_link_path: link_path.clone(),
+            source_attachment_path: attachment_path.clone(),
             skill_dir_path: vfs_path(skill_dir_path)?,
             skill_doc_path: vfs_path(skill_doc_path)?,
         }),
-        SkillCatalogRootSource::LinkedWorkspace {
+        SkillCatalogRootSource::AttachedWorkspace {
             workspace_id,
             workspace_head_ref: _,
-            link_path,
-        } => Ok(SkillLocation::LinkedWorkspace {
+            attachment_path,
+        } => Ok(SkillLocation::AttachedWorkspace {
             workspace_id: workspace_id.clone(),
-            source_link_path: link_path.clone(),
+            source_attachment_path: attachment_path.clone(),
             skill_dir_path: vfs_path(skill_dir_path)?,
             skill_doc_path: vfs_path(skill_doc_path)?,
         }),
@@ -374,13 +374,13 @@ fn skill_id_for_path(root: &SkillCatalogRoot, skill_doc_path: &FsPath) -> SkillI
 
 fn source_key(source: &SkillCatalogRootSource) -> String {
     match source {
-        SkillCatalogRootSource::LinkedSnapshot { snapshot_ref, .. } => {
+        SkillCatalogRootSource::AttachedSnapshot { snapshot_ref, .. } => {
             format!("snapshot:{snapshot_ref}")
         }
-        SkillCatalogRootSource::LinkedWorkspace {
+        SkillCatalogRootSource::AttachedWorkspace {
             workspace_id,
             workspace_head_ref: _,
-            link_path: _,
+            attachment_path: _,
         } => format!("workspace:{workspace_id}"),
     }
 }
@@ -429,17 +429,17 @@ struct RootScanResult {
 
 fn source_input_for_root(input: &SkillCatalogRootInput<'_>) -> SkillCatalogSourceInput {
     match &input.root.source {
-        SkillCatalogRootSource::LinkedSnapshot { snapshot_ref, .. } => {
+        SkillCatalogRootSource::AttachedSnapshot { snapshot_ref, .. } => {
             SkillCatalogSourceInput::SnapshotRoot {
                 root_id: input.root.root_id.clone(),
                 snapshot_ref: snapshot_ref.clone(),
                 root_path: vfs_path(&input.root.root_path).unwrap_or_else(|_| VfsPath::root()),
             }
         }
-        SkillCatalogRootSource::LinkedWorkspace {
+        SkillCatalogRootSource::AttachedWorkspace {
             workspace_id,
             workspace_head_ref,
-            link_path: _,
+            attachment_path: _,
         } => SkillCatalogSourceInput::WorkspaceRoot {
             root_id: input.root.root_id.clone(),
             workspace_id: workspace_id.clone(),
@@ -568,9 +568,9 @@ mod tests {
                 SkillCatalogRoot {
                     root_id: "system".to_owned(),
                     root_path: FsPath::new("/skills").unwrap(),
-                    source: SkillCatalogRootSource::LinkedSnapshot {
+                    source: SkillCatalogRootSource::AttachedSnapshot {
                         snapshot_ref: BlobRef::from_bytes(b"snapshot-1"),
-                        link_path: VfsPath::parse("/skills").unwrap(),
+                        attachment_path: VfsPath::parse("/skills").unwrap(),
                     },
                     trust: SkillTrustLevel::System,
                     scope: SkillScope::Global,
@@ -594,7 +594,7 @@ mod tests {
         );
         assert!(matches!(
             build.catalog.skills[0].location,
-            SkillLocation::LinkedSnapshot { .. }
+            SkillLocation::AttachedSnapshot { .. }
         ));
     }
 
@@ -627,9 +627,9 @@ mod tests {
                 SkillCatalogRoot {
                     root_id: "system".to_owned(),
                     root_path: FsPath::new("/skills").unwrap(),
-                    source: SkillCatalogRootSource::LinkedSnapshot {
+                    source: SkillCatalogRootSource::AttachedSnapshot {
                         snapshot_ref: snapshot_ref.clone(),
-                        link_path: VfsPath::parse("/skills").unwrap(),
+                        attachment_path: VfsPath::parse("/skills").unwrap(),
                     },
                     trust: SkillTrustLevel::System,
                     scope: SkillScope::Global,
@@ -684,9 +684,9 @@ mod tests {
                     SkillCatalogRoot {
                         root_id: "one".to_owned(),
                         root_path: FsPath::new("/skills-one").unwrap(),
-                        source: SkillCatalogRootSource::LinkedSnapshot {
+                        source: SkillCatalogRootSource::AttachedSnapshot {
                             snapshot_ref: BlobRef::from_bytes(b"snapshot-1"),
-                            link_path: VfsPath::parse("/skills-one").unwrap(),
+                            attachment_path: VfsPath::parse("/skills-one").unwrap(),
                         },
                         trust: SkillTrustLevel::System,
                         scope: SkillScope::Global,
@@ -697,9 +697,9 @@ mod tests {
                     SkillCatalogRoot {
                         root_id: "two".to_owned(),
                         root_path: FsPath::new("/skills-two").unwrap(),
-                        source: SkillCatalogRootSource::LinkedSnapshot {
+                        source: SkillCatalogRootSource::AttachedSnapshot {
                             snapshot_ref: BlobRef::from_bytes(b"snapshot-2"),
-                            link_path: VfsPath::parse("/skills-two").unwrap(),
+                            attachment_path: VfsPath::parse("/skills-two").unwrap(),
                         },
                         trust: SkillTrustLevel::User,
                         scope: SkillScope::Global,
@@ -738,9 +738,9 @@ mod tests {
                 SkillCatalogRoot {
                     root_id: "system".to_owned(),
                     root_path: FsPath::new("/skills").unwrap(),
-                    source: SkillCatalogRootSource::LinkedSnapshot {
+                    source: SkillCatalogRootSource::AttachedSnapshot {
                         snapshot_ref: BlobRef::from_bytes(b"snapshot-1"),
-                        link_path: VfsPath::parse("/skills").unwrap(),
+                        attachment_path: VfsPath::parse("/skills").unwrap(),
                     },
                     trust: SkillTrustLevel::System,
                     scope: SkillScope::Global,
@@ -774,10 +774,10 @@ mod tests {
         let mut root = SkillCatalogRoot {
             root_id: "vfs".to_owned(),
             root_path: FsPath::new("/skills").unwrap(),
-            source: SkillCatalogRootSource::LinkedWorkspace {
+            source: SkillCatalogRootSource::AttachedWorkspace {
                 workspace_id: VfsWorkspaceId::new("workspace-skills"),
                 workspace_head_ref: BlobRef::from_bytes(b"head-1"),
-                link_path: VfsPath::parse("/skills").unwrap(),
+                attachment_path: VfsPath::parse("/skills").unwrap(),
             },
             trust: SkillTrustLevel::User,
             scope: SkillScope::Global,
@@ -800,7 +800,7 @@ mod tests {
         .await
         .expect("edit body");
 
-        if let SkillCatalogRootSource::LinkedWorkspace {
+        if let SkillCatalogRootSource::AttachedWorkspace {
             workspace_head_ref, ..
         } = &mut root.source
         {
@@ -835,10 +835,10 @@ mod tests {
         let root = |head: &[u8]| SkillCatalogRoot {
             root_id: "workspace".to_owned(),
             root_path: FsPath::new("/workspace/.lightspeed/skills").unwrap(),
-            source: SkillCatalogRootSource::LinkedWorkspace {
+            source: SkillCatalogRootSource::AttachedWorkspace {
                 workspace_id: VfsWorkspaceId::new("workspace-1"),
                 workspace_head_ref: BlobRef::from_bytes(head),
-                link_path: VfsPath::parse("/workspace").unwrap(),
+                attachment_path: VfsPath::parse("/workspace").unwrap(),
             },
             trust: SkillTrustLevel::Project,
             scope: SkillScope::Global,
@@ -942,9 +942,9 @@ mod tests {
         SkillCatalogRoot {
             root_id: root_id.to_owned(),
             root_path: FsPath::new(root_path).unwrap(),
-            source: SkillCatalogRootSource::LinkedSnapshot {
+            source: SkillCatalogRootSource::AttachedSnapshot {
                 snapshot_ref: BlobRef::from_bytes(format!("{root_id}:{root_path}").as_bytes()),
-                link_path: VfsPath::parse(root_path).unwrap(),
+                attachment_path: VfsPath::parse(root_path).unwrap(),
             },
             trust: SkillTrustLevel::System,
             scope: SkillScope::Global,

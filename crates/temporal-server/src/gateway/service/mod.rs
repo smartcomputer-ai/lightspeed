@@ -1841,7 +1841,7 @@ impl AgentApiService for GatewayAgentApi {
 
     /// Idempotent on a client-supplied session id: when the session already
     /// exists, the existing session view is returned (creation fields such as
-    /// config, metadata, profile, and environment override are ignored).
+    /// config, metadata, profile, and retention are ignored).
     /// This keeps a retried `session/start` + `session/runs/start` pair safe
     /// end to end.
     async fn start_session(
@@ -1862,7 +1862,6 @@ impl AgentApiService for GatewayAgentApi {
             metadata,
             config,
             profile,
-            environment,
             delete_after_close_ms,
             workflow_tools,
         } = params;
@@ -1874,7 +1873,6 @@ impl AgentApiService for GatewayAgentApi {
                 metadata,
                 config,
                 profile,
-                environment,
                 delete_after_close_ms,
             },
             false,

@@ -287,7 +287,7 @@ fn environment_attachments_carry_access_default_and_inherit() {
 }
 
 #[test]
-fn mcp_links_may_narrow_tools_and_profiles_carry_no_environment_intent() {
+fn mcp_attachments_may_narrow_tools_and_profiles_carry_no_environment_intent() {
     let bundle = api::export_schemas().schema_bundle;
     let value = json!({
         "version": api::CURRENT_FEATURE_VERSION,

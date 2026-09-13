@@ -713,7 +713,7 @@ async fn link(args: McpLinkArgs) -> Result<()> {
         servers: Vec::new(),
     });
     mcp.servers.retain(|link| link.server_id != args.server_id);
-    mcp.servers.push(api::McpServerLink {
+    mcp.servers.push(api::McpServerAttachment {
         server_id: args.server_id.clone(),
         tools: (!args.tools.is_empty()).then_some(args.tools.clone()),
     });

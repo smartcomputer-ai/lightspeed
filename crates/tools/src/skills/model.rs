@@ -149,18 +149,23 @@ pub struct SkillDependencies {
     pub tools: Vec<String>,
 }
 
+// Preserve the serialized names used by stored source reports.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SkillLocation {
-    LinkedSnapshot {
+    #[serde(rename = "linked_snapshot")]
+    AttachedSnapshot {
         source_snapshot_ref: BlobRef,
-        source_link_path: VfsPath,
+        #[serde(rename = "source_link_path")]
+        source_attachment_path: VfsPath,
         skill_dir_path: VfsPath,
         skill_doc_path: VfsPath,
     },
-    LinkedWorkspace {
+    #[serde(rename = "linked_workspace")]
+    AttachedWorkspace {
         workspace_id: VfsWorkspaceId,
-        source_link_path: VfsPath,
+        #[serde(rename = "source_link_path")]
+        source_attachment_path: VfsPath,
         skill_dir_path: VfsPath,
         skill_doc_path: VfsPath,
     },
@@ -207,13 +212,43 @@ pub struct SkillCatalogRoot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SkillCatalogRootSource {
-    LinkedSnapshot {
+    AttachedSnapshot {
         snapshot_ref: BlobRef,
-        link_path: VfsPath,
+        attachment_path: VfsPath,
     },
-    LinkedWorkspace {
+    AttachedWorkspace {
         workspace_id: VfsWorkspaceId,
         workspace_head_ref: BlobRef,
-        link_path: VfsPath,
+        attachment_path: VfsPath,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn stored_attachment_sources_keep_their_serialized_format() {
+        let snapshot_ref = format!("sha256:{}", "a".repeat(64));
+        let sources = [
+            json!({
+                "type": "linked_snapshot",
+                "source_snapshot_ref": snapshot_ref,
+                "source_link_path": "/workspace",
+                "skill_dir_path": "/workspace/skills/check", "skill_doc_path": "/workspace/skills/check/SKILL.md"
+            }),
+            json!({
+                "type": "linked_workspace",
+                "workspace_id": "workspace_1",
+                "source_link_path": "/workspace",
+                "skill_dir_path": "/workspace/skills/check", "skill_doc_path": "/workspace/skills/check/SKILL.md"
+            }),
+        ];
+        for source in sources {
+            let decoded: SkillLocation =
+                serde_json::from_value(source.clone()).expect("read stored source");
+            assert_eq!(serde_json::to_value(decoded).expect("write source"), source);
+        }
+    }
 }

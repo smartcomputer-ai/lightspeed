@@ -17,8 +17,8 @@ pub use id::SkillId;
 pub use model::*;
 pub use parser::{SkillFrontmatter, SkillParseError, parse_skill_frontmatter};
 pub use vfs::{
-    LinkedVfsSkillCatalogRoots, SkillVfsRootError, VfsSkillRootSpec,
-    configured_vfs_skill_root_specs, resolve_linked_vfs_skill_roots,
+    AttachedVfsSkillCatalogRoots, SkillVfsRootError, VfsSkillRootSpec,
+    configured_vfs_skill_root_specs, resolve_attached_vfs_skill_roots,
 };
 
 pub mod environment;

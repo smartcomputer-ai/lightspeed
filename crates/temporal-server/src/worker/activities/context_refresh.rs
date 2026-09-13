@@ -16,11 +16,11 @@ use tools::{
     },
     prompts::{
         PromptAssemblyLimits, configured_vfs_prompt_root_specs,
-        prepare_prompt_instructions_publication_with_warnings, resolve_linked_vfs_prompt_roots,
+        prepare_prompt_instructions_publication_with_warnings, resolve_attached_vfs_prompt_roots,
     },
     skills::{
         configured_vfs_skill_root_specs, prepare_skill_catalog_publication_with_warnings,
-        resolve_linked_vfs_skill_roots,
+        resolve_attached_vfs_skill_roots,
     },
 };
 
@@ -36,7 +36,7 @@ pub(super) async fn refresh_context(
         });
     };
 
-    let links = vfs::resolve_workspace_attachments(
+    let attachments = vfs::resolve_workspace_attachments(
         deps.blobs.clone(),
         deps.workspace_store.clone(),
         &request.workspace_attachments,
@@ -74,7 +74,8 @@ pub(super) async fn refresh_context(
     }
 
     if request.vfs_catalog_enabled {
-        let catalog = vfs_catalog_from_workspace_attachments(&links).map_err(activity_error)?;
+        let catalog =
+            vfs_catalog_from_workspace_attachments(&attachments).map_err(activity_error)?;
         if let Some(command) = prepare_vfs_catalog_publication(
             deps.blobs.as_ref(),
             deps.blob_graph.as_deref(),
@@ -153,12 +154,13 @@ pub(super) async fn refresh_context(
     }
 
     let prompt_entries = if request.vfs_prompts_enabled {
-        let specs = configured_vfs_prompt_root_specs(&links, request.vfs_prompt_roots.as_deref())
-            .map_err(activity_error)?;
-        let resolved = resolve_linked_vfs_prompt_roots(
+        let specs =
+            configured_vfs_prompt_root_specs(&attachments, request.vfs_prompt_roots.as_deref())
+                .map_err(activity_error)?;
+        let resolved = resolve_attached_vfs_prompt_roots(
             deps.blobs.clone(),
             deps.workspace_store.clone(),
-            links.clone(),
+            attachments.clone(),
             specs,
         )
         .await
@@ -208,7 +210,7 @@ pub(super) async fn refresh_context(
             ),
         });
     };
-    let specs = configured_vfs_skill_root_specs(&links, skills_config.roots.as_deref())
+    let specs = configured_vfs_skill_root_specs(&attachments, skills_config.roots.as_deref())
         .map_err(activity_error)?;
     if specs.is_empty() {
         return Ok(RuntimeProjectionRefreshActivityResult {
@@ -219,10 +221,10 @@ pub(super) async fn refresh_context(
         });
     }
 
-    let resolved = resolve_linked_vfs_skill_roots(
+    let resolved = resolve_attached_vfs_skill_roots(
         deps.blobs.clone(),
         deps.workspace_store.clone(),
-        links,
+        attachments,
         specs,
     )
     .await

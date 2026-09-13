@@ -2143,8 +2143,8 @@ fn vfs_feature_to_api(vfs: &engine::VfsFeature) -> api::VfsFeature {
         workspaces: vfs
             .workspaces
             .iter()
-            .map(|link| {
-                let (workspace_id, snapshot_ref) = match &link.target {
+            .map(|attachment| {
+                let (workspace_id, snapshot_ref) = match &attachment.target {
                     engine::WorkspaceAttachmentTarget::Workspace { workspace_id } => {
                         (Some(workspace_id.clone()), None)
                     }
@@ -2153,10 +2153,10 @@ fn vfs_feature_to_api(vfs: &engine::VfsFeature) -> api::VfsFeature {
                     }
                 };
                 api::WorkspaceAttachment {
-                    path: link.path.clone(),
+                    path: attachment.path.clone(),
                     workspace_id,
                     snapshot_ref,
-                    access: match link.access {
+                    access: match attachment.access {
                         engine::WorkspaceAccess::Read => api::WorkspaceAccess::Read,
                         engine::WorkspaceAccess::Edit => api::WorkspaceAccess::Edit,
                     },
@@ -2252,9 +2252,9 @@ fn mcp_feature_to_api(mcp: &engine::McpFeature) -> api::McpFeature {
         servers: mcp
             .servers
             .iter()
-            .map(|link| api::McpServerLink {
-                server_id: link.server_id.clone(),
-                tools: link.tools.clone(),
+            .map(|attachment| api::McpServerAttachment {
+                server_id: attachment.server_id.clone(),
+                tools: attachment.tools.clone(),
             })
             .collect(),
     }
@@ -4389,7 +4389,7 @@ mod tests {
                 }),
                 mcp: Some(engine::McpFeature {
                     version: engine::CURRENT_FEATURE_VERSION,
-                    servers: vec![engine::McpServerLink {
+                    servers: vec![engine::McpServerAttachment {
                         server_id: "linear".to_owned(),
                         tools: Some(vec!["search".to_owned()]),
                     }],
@@ -4480,7 +4480,7 @@ mod tests {
                     }),
                     mcp: Some(api::McpFeature {
                         version: api::CURRENT_FEATURE_VERSION,
-                        servers: vec![api::McpServerLink {
+                        servers: vec![api::McpServerAttachment {
                             server_id: "linear".to_owned(),
                             tools: Some(vec!["search".to_owned()]),
                         }],

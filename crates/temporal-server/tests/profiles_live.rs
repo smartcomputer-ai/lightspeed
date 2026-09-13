@@ -147,7 +147,6 @@ async fn run_profile_environment_selection_live_client(
             display_name: None,
             metadata: Default::default(),
             config: None,
-            environment: None,
             delete_after_close_ms: None,
             profile: Some(ProfileSource::Named {
                 profile_id: profile_id.clone(),
@@ -283,7 +282,7 @@ async fn run_profiles_live_client(
                         features: Some(api::FeaturesConfig {
                             mcp: Some(api::McpFeature {
                                 version: api::CURRENT_FEATURE_VERSION,
-                                servers: vec![api::McpServerLink {
+                                servers: vec![api::McpServerAttachment {
                                     server_id: server_id.clone(),
                                     tools: None,
                                 }],
@@ -349,7 +348,6 @@ async fn run_profiles_live_client(
             model: Some(model_to_api(&model)),
             ..SessionConfig::default()
         }),
-        environment: None,
         delete_after_close_ms: None,
         profile: Some(ProfileSource::Named {
             profile_id: profile_id.clone(),

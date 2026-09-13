@@ -203,7 +203,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn deleting_a_linked_workspace_preserves_the_declaration_as_unavailable() {
+    async fn deleting_an_attached_workspace_preserves_the_declaration_as_unavailable() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let store = Arc::new(TestWorkspaceStore::default());
         let snapshot = create_inline_snapshot(
@@ -215,7 +215,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let workspace_id = VfsWorkspaceId::new("workspace-linked");
+        let workspace_id = VfsWorkspaceId::new("workspace-attached");
         store
             .create_workspace(CreateVfsWorkspaceRecord {
                 workspace_id: workspace_id.clone(),

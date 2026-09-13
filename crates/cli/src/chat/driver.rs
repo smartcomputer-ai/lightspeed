@@ -242,7 +242,6 @@ impl ChatSessionDriver {
                 display_name: None,
                 config: Some(session_start_config(&options.draft_settings)),
                 profile: options.profile.clone(),
-                environment: None,
                 delete_after_close_ms: None,
             })
             .await
@@ -1051,7 +1050,6 @@ impl ChatSessionDriver {
                 display_name: None,
                 config: Some(session_start_config(&self.settings)),
                 profile: None,
-                environment: None,
                 delete_after_close_ms: None,
             })
             .await

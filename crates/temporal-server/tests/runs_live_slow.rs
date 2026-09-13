@@ -73,7 +73,6 @@ async fn run_llm_timeout_live_client(
         display_name: None,
         config: None,
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;

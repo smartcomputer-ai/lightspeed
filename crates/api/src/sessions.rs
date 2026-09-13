@@ -23,21 +23,6 @@ fn optional_nullable_delete_after_close_ms_schema(
     })
 }
 
-/// Creation-time override for the environment intent carried by a profile.
-/// Absence uses the profile unchanged; `none` suppresses its environment
-/// intent, while `existing` activates the specified universe environment.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
-pub enum SessionEnvironmentOverride {
-    None {},
-    Existing { environment_id: EnvironmentId },
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionStartParams {
@@ -55,10 +40,6 @@ pub struct SessionStartParams {
     pub config: Option<SessionConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<ProfileSource>,
-    /// Optional creation-time override for the selected profile's environment
-    /// intent. Omit to use the profile's intent unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment: Option<SessionEnvironmentOverride>,
     /// Root-owned automatic deletion measured from close. Absent inherits a
     /// profile default, explicit null keeps the tree, and a duration overrides
     /// the profile.
@@ -87,10 +68,6 @@ pub struct ManagedSessionStartParams {
     pub config: Option<SessionConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<ProfileSource>,
-    /// Optional creation-time override for the selected profile's environment
-    /// intent. Omit to use the profile's intent unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment: Option<SessionEnvironmentOverride>,
     /// Root-owned automatic deletion measured from close. Absent inherits a
     /// profile default, explicit null keeps the tree, and a duration overrides
     /// the profile.
@@ -664,7 +641,7 @@ pub struct EnvironmentSkillsConfig {
     pub roots: Option<Vec<String>>,
 }
 
-/// Grants remote MCP tools by declaring linked servers from the universe MCP
+/// Grants remote MCP tools by declaring attached servers from the universe MCP
 /// catalog. Server ids must be unique; an empty list grants no MCP tools.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -672,15 +649,15 @@ pub struct McpFeature {
     #[serde(default = "default_feature_version")]
     pub version: u32,
     #[serde(default)]
-    pub servers: Vec<McpServerLink>,
+    pub servers: Vec<McpServerAttachment>,
 }
 
 /// A selected universe MCP server. Its catalog record owns connection,
-/// execution, exposure, approval, and auth; the link may only narrow the
+/// execution, exposure, approval, and auth; the attachment may only narrow the
 /// record's tool allowlist for this session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct McpServerLink {
+pub struct McpServerAttachment {
     pub server_id: String,
     /// Non-empty subset of the record's allowed tools exposed to this
     /// session, under both injection and search; absent exposes the record's

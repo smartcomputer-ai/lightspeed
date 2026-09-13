@@ -102,19 +102,24 @@ pub struct PromptSourceReport {
     pub writable: bool,
 }
 
+// Preserve the serialized names used by stored source reports.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PromptSourceLocation {
-    LinkedSnapshot {
+    #[serde(rename = "linked_snapshot")]
+    AttachedSnapshot {
         source_snapshot_ref: BlobRef,
-        source_link_path: VfsPath,
+        #[serde(rename = "source_link_path")]
+        source_attachment_path: VfsPath,
         prompt_file_path: VfsPath,
     },
-    LinkedWorkspace {
+    #[serde(rename = "linked_workspace")]
+    AttachedWorkspace {
         workspace_id: VfsWorkspaceId,
         workspace_revision: u64,
         workspace_head_ref: BlobRef,
-        source_link_path: VfsPath,
+        #[serde(rename = "source_link_path")]
+        source_attachment_path: VfsPath,
         prompt_file_path: VfsPath,
     },
 }
@@ -172,14 +177,44 @@ pub struct PromptRoot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PromptRootSource {
-    LinkedSnapshot {
+    AttachedSnapshot {
         snapshot_ref: BlobRef,
-        link_path: VfsPath,
+        attachment_path: VfsPath,
     },
-    LinkedWorkspace {
+    AttachedWorkspace {
         workspace_id: VfsWorkspaceId,
         workspace_head_ref: BlobRef,
         workspace_revision: u64,
-        link_path: VfsPath,
+        attachment_path: VfsPath,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn stored_attachment_sources_keep_their_serialized_format() {
+        let snapshot_ref = format!("sha256:{}", "a".repeat(64));
+        let sources = [
+            json!({
+                "type": "linked_snapshot",
+                "source_snapshot_ref": snapshot_ref,
+                "source_link_path": "/workspace",
+                "prompt_file_path": "/workspace/AGENTS.md"
+            }),
+            json!({
+                "type": "linked_workspace",
+                "workspace_id": "workspace_1", "workspace_revision": 1, "workspace_head_ref": snapshot_ref,
+                "source_link_path": "/workspace",
+                "prompt_file_path": "/workspace/AGENTS.md"
+            }),
+        ];
+        for source in sources {
+            let decoded: PromptSourceLocation =
+                serde_json::from_value(source.clone()).expect("read stored source");
+            assert_eq!(serde_json::to_value(decoded).expect("write source"), source);
+        }
+    }
 }

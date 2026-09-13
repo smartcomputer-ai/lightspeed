@@ -89,12 +89,12 @@ pub(super) fn skill_list_response(
                     short_description: skill.short_description.clone(),
                     enabled: skill.enabled,
                     location: match &skill.location {
-                        SkillLocation::LinkedSnapshot {
+                        SkillLocation::AttachedSnapshot {
                             skill_dir_path,
                             skill_doc_path,
                             ..
                         }
-                        | SkillLocation::LinkedWorkspace {
+                        | SkillLocation::AttachedWorkspace {
                             skill_dir_path,
                             skill_doc_path,
                             ..

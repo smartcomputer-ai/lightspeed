@@ -36,7 +36,7 @@ use tools::{
         NormalizeJobResultInput, normalize_job_result,
     },
     environment_protocol::RemoteEnvironmentConnection,
-    fs::{FsPath, FsToolContext, LinkedVfsFileSystem},
+    fs::{AttachedVfsFileSystem, FsPath, FsToolContext},
     limits::ToolLimits,
     runtime::InlineToolRuntime,
     runtime::ToolCatalog,
@@ -1213,18 +1213,18 @@ impl SessionTools {
 
     async fn runtime_for_domains(
         &self,
-        links: Vec<ResolvedWorkspaceAttachment>,
+        attachments: Vec<ResolvedWorkspaceAttachment>,
         environments: &SessionEnvironmentManager,
         active_environment_id: Option<&EnvironmentId>,
         vfs_working_directory: Option<&str>,
     ) -> Result<InlineToolRuntime, CoreAgentIoError> {
-        let vfs = if links.is_empty() {
+        let vfs = if attachments.is_empty() {
             None
         } else {
-            let fs = LinkedVfsFileSystem::new(
+            let fs = AttachedVfsFileSystem::new(
                 self.blobs.clone(),
                 self.workspace_store.clone(),
-                links.clone(),
+                attachments.clone(),
             )
             .map_err(io_error)?
             .with_blob_graph(self.blob_graph.clone());
@@ -1559,7 +1559,7 @@ impl CoreAgentTools for SessionTools {
                 .iter()
                 .any(|call| call.denial.is_none() && call.needs_environment);
         let mut successful_workflow_siblings = BTreeMap::new();
-        let links = if has_vfs_call {
+        let attachments = if has_vfs_call {
             vfs::resolve_workspace_attachments(
                 self.blobs.clone(),
                 self.workspace_store.clone(),
@@ -1579,7 +1579,7 @@ impl CoreAgentTools for SessionTools {
             let runtime = if has_generic_runtime_call {
                 Some(
                     self.runtime_for_domains(
-                        links,
+                        attachments,
                         &environments,
                         request.active_environment_id.as_ref(),
                         request.vfs_working_directory.as_deref(),
@@ -1797,7 +1797,7 @@ impl SessionTools {
             environments.close().await;
             return outcome;
         }
-        let links = if is_vfs_call {
+        let attachments = if is_vfs_call {
             vfs::resolve_workspace_attachments(
                 self.blobs.clone(),
                 self.workspace_store.clone(),
@@ -1811,7 +1811,7 @@ impl SessionTools {
         let outcome = async {
             let runtime = self
                 .runtime_for_domains(
-                    links,
+                    attachments,
                     &environments,
                     batch_request.active_environment_id.as_ref(),
                     batch_request.vfs_working_directory.as_deref(),
@@ -2230,11 +2230,11 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn denied_environment_call_does_not_block_an_independent_vfs_read() {
-        let (blobs, tools, session_id, links) = session_tools_with_readme_link().await;
+        let (blobs, tools, session_id, attachments) = session_tools_with_readme_attachment().await;
         let mut request =
             per_call_request("vfs_read_file", br#"{"path":"/workspace/README.md"}"#, &[]);
         request.session_id = session_id;
-        request.workspace_attachments = links;
+        request.workspace_attachments = attachments;
         request.call.arguments_ref = blobs
             .put_bytes(br#"{"path":"/workspace/README.md"}"#.to_vec())
             .await
@@ -2522,7 +2522,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn special_dispatch_preserves_order_and_accounting_with_or_without_inline_calls() {
         for with_inline in [false, true] {
-            let (blobs, tools, _, workspace_attachments) = session_tools_with_readme_link().await;
+            let (blobs, tools, _, workspace_attachments) =
+                session_tools_with_readme_attachment().await;
             let sessions = InMemorySessionStore::new();
             let (session_id, binding) = workflow_tool_session(blobs.as_ref(), &sessions).await;
             let registry = Arc::new(InMemoryEnvironmentRegistryStore::new());
@@ -3376,7 +3377,7 @@ mod tests {
         }
     }
 
-    async fn session_tools_with_readme_link() -> (
+    async fn session_tools_with_readme_attachment() -> (
         Arc<InMemoryBlobStore>,
         SessionTools,
         SessionId,
@@ -3532,7 +3533,7 @@ mod tests {
                     ProviderApiKind::OpenAiCompletions,
                 ] {
                     let (blobs, tools, session_id, workspace_attachments) =
-                        session_tools_with_readme_link().await;
+                        session_tools_with_readme_attachment().await;
                     let root = tempfile::tempdir().unwrap();
                     let fs = environment_daemon::filesystem::LocalFileSystem::new(
                         root.path().into(),
@@ -3644,7 +3645,7 @@ mod tests {
                         "workspace effects must be drained from the VFS context"
                     );
 
-                    // Link permissions are enforced even if a call has an admitted
+                    // Attachment permissions are enforced even if a call has an admitted
                     // editing-tool identity.
                     capture.call.call_id = ToolCallId::new("capture-readonly");
                     capture.workspace_attachments[0].access = WorkspaceAccess::Read;
@@ -4198,10 +4199,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn vfs_relative_paths_use_only_the_configured_directory() {
         for (cwd, succeeds) in [(None, false), (Some("/workspace"), true)] {
-            let (blobs, tools, session_id, links) = session_tools_with_readme_link().await;
+            let (blobs, tools, session_id, attachments) =
+                session_tools_with_readme_attachment().await;
             let mut request = per_call_request("vfs_read_file", br#"{"path":"README.md"}"#, &[]);
             request.session_id = session_id;
-            request.workspace_attachments = links;
+            request.workspace_attachments = attachments;
             request.vfs_working_directory = cwd.map(String::from);
             request.call.arguments_ref = blobs
                 .put_bytes(br#"{"path":"README.md"}"#.to_vec())
@@ -4224,7 +4226,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn session_tools_read_vfs_workspace_attachment() {
         let (blobs, tools, session_id, workspace_attachments) =
-            session_tools_with_readme_link().await;
+            session_tools_with_readme_attachment().await;
         let arguments_ref = blobs
             .put_bytes(br#"{"path":"README.md","offset":1,"limit":10}"#.to_vec())
             .await
@@ -4269,7 +4271,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn session_tools_accept_claude_style_vfs_read_tool() {
         let (blobs, tools, session_id, workspace_attachments) =
-            session_tools_with_readme_link().await;
+            session_tools_with_readme_attachment().await;
         let arguments_ref = blobs
             .put_bytes(br#"{"file_path":"README.md","offset":1,"limit":10}"#.to_vec())
             .await
@@ -4321,7 +4323,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn session_tools_route_vfs_file_tools_and_environment_process_tools_separately() {
         let (blobs, tools, session_id, workspace_attachments) =
-            session_tools_with_readme_link().await;
+            session_tools_with_readme_attachment().await;
         let process = Arc::new(RecordingProcessExecutor::default());
         let tools = tools.with_environment(test_environment(blobs.clone(), process.clone()));
         let read_args = blobs

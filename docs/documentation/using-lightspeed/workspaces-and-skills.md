@@ -1,8 +1,8 @@
 # Workspaces and skills
 
 A VFS workspace holds persistent files that agents and people can read and
-edit. A session links the workspace at an absolute path, such as `/workspace`.
-The link makes those files visible to the agent without attaching an operating
+edit. A session attaches the workspace at an absolute path, such as `/workspace`.
+The attachment makes those files visible to the agent without attaching an operating
 system or starting a machine.
 
 The same files can also supply instructions and reusable skills. Prompt files
@@ -14,7 +14,7 @@ This guide extends the `release-notes` workspace from
 [Build your first agent](../getting-started/first-agent.md). Use a universe
 owner/admin or platform administrator account to manage workspaces and profiles.
 
-## Link files into a session
+## Attach files to a session
 
 Create or select a workspace under **Workspaces**. **New file** accepts a path
 relative to that workspace, and creates directories in the path as needed.
@@ -23,24 +23,24 @@ Open a file, edit its contents, and choose **Save**.
 In a profile's **Virtual File System: Files, Instructions, Skills** section,
 enabling VFS turns on **Prompt loading** and **Skill discovery** and lets you
 add a **Workspace attachment**. Adjust these independently. Existing configurations
-keep their saved settings.
+keep their saved settings. New rows attach workspaces. JSON and API configurations
+can also attach immutable snapshots, which always use **Read** access.
 
 | Setting | Meaning |
 | --- | --- |
-| **Target type → Workspace** | Reads the live workspace as it changes. |
-| **Target type → Snapshot** | Reads an immutable snapshot. Snapshot links are always **Read**. |
-| **Session path** | The absolute path where this agent sees the linked files. |
-| **Access → Read** | Lets the agent inspect the linked files. |
+| **Workspace** | Selects the live workspace to attach. |
+| **Session path** | The absolute path where this agent sees the attached files. |
+| **Access → Read** | Lets the agent inspect the attached files. |
 | **Access → Edit** | Also lets the agent write, edit, and patch files under this path. |
 
-There is no separate file-tool switch. Linking any workspace installs the VFS
-read tools, and an **Edit** link adds the write tools; the toolset follows the
-union of the links' access, and a write under a **Read** link is refused. To
-edit `release-notes`, link the live workspace at `/workspace` with **Edit**
-access. A reviewer links it with **Read**. Link paths cannot overlap, and
-prompt or skill roots must fall inside a configured link.
+There is no separate file-tool switch. Attaching any workspace installs the VFS
+read tools, and an **Edit** attachment adds the write tools; the toolset follows the
+union of the attachments' access, and a write under a **Read** attachment is refused. To
+edit `release-notes`, attach the live workspace at `/workspace` with **Edit**
+access. A reviewer attaches it with **Read**. Attachment paths cannot overlap, and
+prompt or skill roots must fall inside a configured attachment.
 
-A profile linking the same workspace into several sessions shares its live
+A profile attaching the same workspace into several sessions shares its live
 files. A change made by one session becomes visible to another on a subsequent
 file operation. A snapshot gives a reader a fixed version instead. For tasks
 that must produce independent artifacts, create separate workspaces or use
@@ -188,7 +188,7 @@ belongs in the existing instruction mechanism.
 VFS skill discovery is independently opt-in through the session or profile's
 `features.vfs.skills` block. An empty block enables `.agents/skills` and
 `.lightspeed/skills` beneath each workspace attachment, including snapshot attachments.
-No links means nothing to discover. For example:
+No attachments means nothing to discover. For example:
 
 ```json
 {
@@ -207,7 +207,7 @@ Omitting `features.vfs.skills` disables discovery and removes its runtime
 catalog. To replace the conventional roots, supply a nonempty `roots` list of
 absolute paths inside workspace attachments, such as
 `"skills": { "roots": ["/workspace/team-skills"] }`. An explicit empty list
-and paths outside links are invalid. Each entry of `workspaces` names a
+and paths outside attachments are invalid. Each entry of `workspaces` names a
 `workspaceId` or an immutable `snapshotRef` at an absolute `path` with `read`
 or `edit` access; snapshots must be `read`. Workspace attachments, prompt sourcing,
 and CLI chat defaults do not enable skill discovery.
@@ -336,17 +336,17 @@ Transfer files explicitly when a process needs them; see
 
 | Symptom | What to check |
 | --- | --- |
-| A file exists in the browser but the agent cannot find it | Combine its workspace-relative path with the link's session path, and check the current session setup. |
-| A write fails despite edit tools | Check link access and whether the target is a snapshot. Read-only links remain read-only. |
-| Prompt files have no effect | Enable Prompt loading, check the default or overridden roots inside links, use direct .md or .txt files, and start the next run after the update. |
+| A file exists in the browser but the agent cannot find it | Combine its workspace-relative path with the attachment's session path, and check the current session setup. |
+| A write fails despite edit tools | Check attachment access and whether the target is a snapshot. Read-only attachments remain read-only. |
+| Prompt files have no effect | Enable Prompt loading, check the default or overridden roots inside attachments, use direct .md or .txt files, and start the next run after the update. |
 | A skill is absent from the catalog | Enable Skill discovery and check the default or overridden root, direct child directory, exact `SKILL.md` name, and required frontmatter. |
 | A discovered skill has not affected the answer | Inspect whether the agent read it, or select it with `/skill` or `skills use`. Discovery alone loads only its catalog entry. |
 | Saving reports a revision conflict | Reload and reconcile with the intervening edit; do not assume the save was merged. |
 
 ## Copy files to or from a machine
 
-Linking a VFS workspace does not put it on an execution environment. With a
-workspace linked and an environment attached with `edit` or higher access, use
+Attaching a VFS workspace does not put it on an execution environment. With a
+workspace attached and an environment attached with `edit` or higher access, use
 `vfs_materialize` for a file, subtree or whole workspace; with an `edit`
 workspace attachment and any environment attachment, use `vfs_capture` to save
 machine outputs into that editable workspace. These tools handle binary files and executable scripts

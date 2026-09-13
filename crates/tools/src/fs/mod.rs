@@ -25,7 +25,7 @@ pub use scoped::ScopedFileSystem;
 pub use scoped_local::ScopedLocalFileSystem;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-pub use vfs::{LinkedVfsFileSystem, VfsSnapshotFileSystem, VfsWorkspaceFileSystem};
+pub use vfs::{AttachedVfsFileSystem, VfsSnapshotFileSystem, VfsWorkspaceFileSystem};
 
 use crate::limits::ToolLimits;
 

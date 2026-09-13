@@ -17,7 +17,7 @@ Returns protocol version, server identity, and supported capabilities without ch
 
 **Create or reopen a session**
 
-Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. An existing-or-none environment override can replace the profile intent. Retrying an existing session id returns that session.
+Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.
 
 - Params: `SessionStartParams`
 - Result: `AgentApiOutcome<SessionStartResponse>`
@@ -26,7 +26,7 @@ Creates a session with optional config/profile setup. Profile metadata and reten
 
 **Create or reopen a managed session**
 
-Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and environment overrides follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.
+Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.
 
 - Params: `ManagedSessionStartParams`
 - Result: `AgentApiOutcome<SessionStartResponse>`

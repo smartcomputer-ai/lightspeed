@@ -176,7 +176,7 @@ explicit attachment wins. An `inherit` attachment in a standalone session or
 a plain session configuration is rejected.
 
 The child can also attach a different existing machine. Create any new machine
-through the environment API first. Its VFS links remain independent of these choices. See
+through the environment API first. Its VFS attachments remain independent of these choices. See
 [Sub-agents and federation](../using-lightspeed/subagents-and-federation.md)
 for the rest of the child-profile boundary.
 

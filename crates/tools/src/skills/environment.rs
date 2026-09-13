@@ -228,9 +228,9 @@ mod tests {
                 root: SkillCatalogRoot {
                     root_id: "workspace".into(),
                     root_path: FsPath::new("/skills").unwrap(),
-                    source: SkillCatalogRootSource::LinkedSnapshot {
+                    source: SkillCatalogRootSource::AttachedSnapshot {
                         snapshot_ref: BlobRef::from_bytes(b"snapshot"),
-                        link_path: ::vfs::VfsPath::parse("/skills").unwrap(),
+                        attachment_path: ::vfs::VfsPath::parse("/skills").unwrap(),
                     },
                     trust: SkillTrustLevel::User,
                     scope: SkillScope::Global,

@@ -36,14 +36,14 @@ fn skill_catalog_entry(skill: &SkillMetadata) -> String {
 
 fn skill_doc_path(location: &SkillLocation) -> &str {
     match location {
-        SkillLocation::LinkedSnapshot { skill_doc_path, .. }
-        | SkillLocation::LinkedWorkspace { skill_doc_path, .. } => skill_doc_path.as_str(),
+        SkillLocation::AttachedSnapshot { skill_doc_path, .. }
+        | SkillLocation::AttachedWorkspace { skill_doc_path, .. } => skill_doc_path.as_str(),
     }
 }
 
 fn skill_dir_path(location: &SkillLocation) -> &str {
     match location {
-        SkillLocation::LinkedSnapshot { skill_dir_path, .. }
-        | SkillLocation::LinkedWorkspace { skill_dir_path, .. } => skill_dir_path.as_str(),
+        SkillLocation::AttachedSnapshot { skill_dir_path, .. }
+        | SkillLocation::AttachedWorkspace { skill_dir_path, .. } => skill_dir_path.as_str(),
     }
 }

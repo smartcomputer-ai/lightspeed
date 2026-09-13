@@ -188,7 +188,7 @@ export function writeFile(path: string, content: string, detail: string): DemoTo
   );
 }
 
-/// `vfs_write_file` into a writable workspace link.
+/// `vfs_write_file` into a writable workspace attachment.
 export function vfsWriteFile(path: string, content: string, detail: string): DemoToolCall {
   return tool(
     "vfs.write_file",

@@ -10,7 +10,6 @@ import type {
   EnvironmentTemplateView,
   EnvironmentView,
   ProfileSessionRetention as ProfileSessionRetentionView,
-  SessionEnvironmentOverride as SessionEnvironmentOverrideView,
   SessionEventView,
   SessionEventsReadResponse,
   ToolCallDisplayView,
@@ -154,7 +153,6 @@ export interface ProfileSummary {
 }
 
 export type ProfileSessionRetention = ProfileSessionRetentionView;
-export type SessionEnvironmentOverride = SessionEnvironmentOverrideView;
 
 export type ProfileDocument = {
   profileId: string;

@@ -14,7 +14,7 @@ use llm_runtime::{LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter};
 use test_support::{DriveCommand, RunnerQuiescence, RunnerStores, SessionRunner};
 use tools::{
     fs::tools::ReadFileResult,
-    fs::{FsPath, FsToolContext, LinkedVfsFileSystem},
+    fs::{AttachedVfsFileSystem, FsPath, FsToolContext},
     runtime::InlineToolRuntime,
     toolset::{ToolsetConfig, register_toolset},
 };
@@ -186,7 +186,7 @@ async fn openai_responses_live_selects_and_reads_the_matching_skill() {
         access: WorkspaceAccess::Read,
     }];
 
-    let linked_fs = LinkedVfsFileSystem::new(
+    let attached_fs = AttachedVfsFileSystem::new(
         blobs.clone(),
         vfs.clone(),
         vec![ResolvedWorkspaceAttachment {
@@ -197,8 +197,8 @@ async fn openai_responses_live_selects_and_reads_the_matching_skill() {
             access: WorkspaceAccess::Read,
         }],
     )
-    .expect("linked fs");
-    let fs_ctx = FsToolContext::new(Arc::new(linked_fs), blobs.clone()).with_cwd(FsPath::root());
+    .expect("attached fs");
+    let fs_ctx = FsToolContext::new(Arc::new(attached_fs), blobs.clone()).with_cwd(FsPath::root());
     let model = ModelSelection {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_string(),
@@ -347,7 +347,7 @@ fn session_config(
                     roots: Some(
                         workspace_attachments
                             .iter()
-                            .map(|link| link.path.clone())
+                            .map(|attachment| attachment.path.clone())
                             .collect(),
                     ),
                 }),

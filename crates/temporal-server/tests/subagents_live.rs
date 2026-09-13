@@ -649,7 +649,6 @@ async fn start_subagent_parent_with_features(
             ..SessionConfig::default()
         }),
         profile: None,
-        environment: None,
         delete_after_close_ms: None,
     })
     .await?;
@@ -1230,7 +1229,6 @@ async fn run_agent_run_inherit_environment_live_client(
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
         config: None,
-        environment: None,
         delete_after_close_ms: None,
         profile: Some(ProfileSource::Inline {
             profile: Box::new(api::InlineAgentProfile {

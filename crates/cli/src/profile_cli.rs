@@ -115,7 +115,8 @@ impl ProvisionValidate {
 #[serde(rename_all = "camelCase")]
 struct ProvisionVfs {
     path: PathBuf,
-    link_path: String,
+    #[serde(rename = "linkPath")]
+    attachment_path: String,
     #[serde(default)]
     mode: ProvisionVfsMode,
     #[serde(default)]
@@ -270,12 +271,12 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
 
 async fn provision_vfs(api: &HttpAgentApi, document: &mut ProfileImportDocument) -> Result<()> {
     validate_local_vfs(&document.provision, &document.base_dir).ensure_success()?;
-    let mut link_paths = BTreeSet::new();
+    let mut attachment_paths = BTreeSet::new();
     for entry in document.provision.vfs.clone() {
-        if !link_paths.insert(entry.link_path.clone()) {
+        if !attachment_paths.insert(entry.attachment_path.clone()) {
             bail!(
                 "duplicate provision.vfs linkPath {}; each workspace attachment can be provisioned once",
-                entry.link_path
+                entry.attachment_path
             );
         }
         let source_path = resolve_local_path(&document.base_dir, &entry.path);
@@ -289,7 +290,7 @@ async fn provision_vfs(api: &HttpAgentApi, document: &mut ProfileImportDocument)
                 upsert_profile_attachment(
                     &mut document.profile,
                     WorkspaceAttachment {
-                        path: entry.link_path.clone(),
+                        path: entry.attachment_path.clone(),
                         workspace_id: Some(workspace_id),
                         snapshot_ref: None,
                         access: WorkspaceAccess::Edit,
@@ -300,7 +301,7 @@ async fn provision_vfs(api: &HttpAgentApi, document: &mut ProfileImportDocument)
                 upsert_profile_attachment(
                     &mut document.profile,
                     WorkspaceAttachment {
-                        path: entry.link_path.clone(),
+                        path: entry.attachment_path.clone(),
                         workspace_id: None,
                         snapshot_ref: Some(summary.snapshot_ref),
                         access: WorkspaceAccess::Read,
@@ -445,12 +446,12 @@ fn prefix_validation_report(profile_id: &str, mut report: ValidationReport) -> V
 
 fn validate_local_vfs(provision: &ProvisionConfig, base_dir: &Path) -> ValidationReport {
     let mut report = ValidationReport::default();
-    let mut link_paths = BTreeSet::new();
+    let mut attachment_paths = BTreeSet::new();
     for entry in &provision.vfs {
-        if !link_paths.insert(entry.link_path.clone()) {
+        if !attachment_paths.insert(entry.attachment_path.clone()) {
             report.error(format!(
                 "duplicate provision.vfs linkPath {}; each workspace attachment can be provisioned once",
-                entry.link_path
+                entry.attachment_path
             ));
         }
         let path = resolve_local_path(base_dir, &entry.path);
@@ -496,7 +497,7 @@ async fn validate_workspace_attachments(
         .provision
         .vfs
         .iter()
-        .map(|entry| entry.link_path.as_str())
+        .map(|entry| entry.attachment_path.as_str())
         .collect::<BTreeSet<_>>();
     let Some(attachments) = profile_workspace_attachments(&document.profile) else {
         return;
@@ -732,12 +733,12 @@ fn provision_workspace_id(profile: &AgentProfileInput, entry: &ProvisionVfs) -> 
             profile_workspace_attachments(profile)
                 .unwrap_or_default()
                 .iter()
-                .find(|attachment| attachment.path == entry.link_path)
+                .find(|attachment| attachment.path == entry.attachment_path)
                 .and_then(|attachment| attachment.workspace_id.clone())
         })
         .unwrap_or_else(|| {
-            let link = sanitize_id_component(&entry.link_path);
-            format!("profile_{}_{}", profile.profile_id.as_str(), link)
+            let attachment = sanitize_id_component(&entry.attachment_path);
+            format!("profile_{}_{}", profile.profile_id.as_str(), attachment)
         })
 }
 
@@ -1001,7 +1002,10 @@ mod tests {
         assert_eq!(batch.documents[0].profile.profile_id.as_str(), "support");
         assert_eq!(batch.documents[1].profile.profile_id.as_str(), "review");
         assert_eq!(batch.documents[1].provision.vfs.len(), 1);
-        assert_eq!(batch.documents[1].provision.vfs[0].link_path, "/workspace");
+        assert_eq!(
+            batch.documents[1].provision.vfs[0].attachment_path,
+            "/workspace"
+        );
     }
 
     #[test]

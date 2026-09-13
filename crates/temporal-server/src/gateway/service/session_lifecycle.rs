@@ -205,7 +205,6 @@ impl GatewayAgentApi {
                 display_name: None,
                 config: None,
                 profile: Some(profile),
-                environment: None,
                 // Delegated children inherit their retention root and never
                 // apply a profile's root-session default.
                 delete_after_close_ms: Some(None),
@@ -234,7 +233,6 @@ impl GatewayAgentApi {
                 display_name: None,
                 config: None,
                 profile,
-                environment: None,
                 delete_after_close_ms: None,
             },
             close_on_terminal,
@@ -258,7 +256,6 @@ impl GatewayAgentApi {
             metadata,
             config,
             profile,
-            environment,
             delete_after_close_ms,
         } = params;
         validate_caller_metadata(&metadata)?;
@@ -329,28 +326,7 @@ impl GatewayAgentApi {
             config,
         );
         let session_config = self.session_config_for_start(start_config).await?;
-        // The creation-time environment: an explicit override must be an
-        // attachment of the effective configuration; otherwise the default
-        // attachment, if any, is activated at setup.
-        let setup_environment = match environment {
-            Some(SessionEnvironmentOverride::None {}) => None,
-            Some(SessionEnvironmentOverride::Existing { environment_id }) => {
-                let environment_id = engine::EnvironmentId::try_new(environment_id)
-                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
-                let attached = session_config
-                    .features
-                    .environments
-                    .as_ref()
-                    .is_some_and(|environments| environments.is_attached(environment_id.as_str()));
-                if !attached {
-                    return Err(AgentApiError::invalid_request(format!(
-                        "environment {environment_id} is not attached in the session configuration"
-                    )));
-                }
-                Some(environment_id)
-            }
-            None => profiles::default_environment_id(&session_config.features)?,
-        };
+        let setup_environment = profiles::default_environment_id(&session_config.features)?;
 
         if let Some(admitted) = admitted.as_ref() {
             self.validate_managed_session_materialization(&session_config, admitted)

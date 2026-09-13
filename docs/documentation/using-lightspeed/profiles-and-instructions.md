@@ -79,7 +79,7 @@ environment's own access does not cover is refused when it executes.
 Workspace attachments and environment attachments together also grant
 [VFS transfer tools](../environments/vfs-transfer.md). Any workspace attachment plus
 an environment attached with `edit` or higher enables materialize into the
-active environment; an `edit` link plus any environment attachment enables
+active environment; an `edit` attachment plus any environment attachment enables
 capture into that workspace. A VFS or environment feature with no attachments
 enables neither. These rules also apply in session settings.
 
@@ -184,6 +184,10 @@ different scopes.
 A profile activates a machine through its environment attachments. Mark one
 attachment `"default": true` and it is activated at session creation and
 whenever the profile is applied to a session that has no active environment.
+Session creation uses that default attachment and has no separate environment
+override in the UI or the ordinary and managed session APIs. To start with a
+different selection, customize the attachments and their default. With no
+default attachment, a new session has no active environment.
 A sub-agent profile can instead attach `"inherit": true`, which resolves to
 the delegating parent's active environment when the child is spawned. A plain
 session configuration replacement never activates a default. Environments

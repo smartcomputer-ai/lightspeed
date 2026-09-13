@@ -43,7 +43,8 @@ working directory; saved profiles can inherit a parent environment for
 sub-agents. MCP server allowances and session subsets share a searchable
 tool picker with live descriptions and connection errors. Session subsets
 can only narrow the server's allowance. Session activation controls offer attached environments
-and remain separate from profile defaults.
+and remain separate from profile defaults. Session creation uses the default
+environment attachment in the effective config, without a separate override.
 
 Context views and run outputs share a content descriptor. Assistant messages,
 reasoning, and audio transcripts can reference JSON; API views include their

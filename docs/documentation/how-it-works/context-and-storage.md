@@ -83,7 +83,7 @@ for the resolution rules.
 ## Assemble a turn from recorded inputs
 
 Before an idle session admits new run work, the session workflow refreshes
-material derived from its linked workspaces and selected environment. That
+material derived from its attached workspaces and selected environment. That
 includes enabled prompt sources, skill catalogs, the environment catalog, and
 the sub-agent menu. The
 gateway submits the run without first repeating this discovery. Session setup,

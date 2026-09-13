@@ -127,8 +127,10 @@ implies `exec`. Lists are always arrays on the wire; the editor hides that.
   switching.
 - `selection: true` (renamed from `selectionTools`) exposes list, activate,
   and deactivate tools over the list. Harmless with one item.
-- `session/start.environment` stays as a creation-time override but must name
-  a listed environment; `none` suppresses the default.
+- Session creation has no separate environment override, in the web,
+  `session/start`, or `session/start-managed`. The effective configuration
+  supplies its default attachment; without one, no environment is activated.
+  Customizing creation means changing the attachment list or its default.
 - A config put that removes the active environment clears the pointer in the
   same deterministic command. Put already requires an idle session.
 - Runtime policy becomes a lookup: the batch carries the active id, and the
@@ -166,6 +168,10 @@ implies `exec`. Lists are always arrays on the wire; the editor hides that.
 
 ### MCP
 
+- Server items are named `McpServerAttachment` in Rust and generated consumers.
+  An empty `servers` list is valid and grants no MCP tools. Enabling the feature
+  in the editor starts empty; servers must be added explicitly, and all server
+  attachments must be removed before disabling the feature.
 - Items become `{ serverId, tools? }`. `tools` must be a nonempty subset of the
   record's allowlist and narrows both injection and search. Execution,
   exposure, deferral, approval, and auth remain on the record.
@@ -316,8 +322,16 @@ Never re-propose without new evidence:
   Selection drafts survive mode switches, unavailable selections stay removable,
   and discovery never rewrites explicit tool names. Attachment remove controls
   sit at the top of each MCP, workspace, and environment row.
+- [x] MCP attachment lifecycle: enabling starts with an empty list, adding a
+  server is explicit, and disabling requires removing every attachment. Rust
+  validation and lifecycle replay accept the empty list; API contracts preserve
+  it and use `McpServerAttachment` consistently with other attachment types.
+- [x] Attachment terminology: workspace and environment DTOs, VFS adapters,
+  prompt and skill source types, config helpers, and editor copy use attachment
+  names. Stored source reports retain their existing JSON names.
 - [x] Web consumers: profile and bot forms use config attachments; session
-  activation and creation overrides offer only attached environments. MCP
+  activation offers only attached environments. Session creation uses the
+  configured default without a separate override in the web or APIs. MCP
   forms and gateway mappings use the renamed record fields. Demo profiles
   use the new shapes, reject unlisted activation, and clear removed active
   selections without filling a default on config put.

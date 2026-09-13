@@ -7,6 +7,7 @@ import {
   mcpServerInputWithOAuthGrant,
   modelProviderCredentialId,
   modelProviderCredentialView,
+  sessionCreateSchema,
 } from "./gateway.js";
 
 describe("model provider credential ids", () => {
@@ -148,4 +149,19 @@ describe("external environment request ids", () => {
       externalEnvironmentRequestId("ws://127.0.0.1:19091/"),
     );
   });
+});
+
+describe("session creation setup", () => {
+  it("accepts profile-based creation without an environment override", () => {
+    const request = { profile: { kind: "named", profileId: "developer" } };
+    expect(sessionCreateSchema.parse(request)).toEqual(request);
+  });
+
+  it.each([{ type: "none" }, { type: "existing", environmentId: "runner" }, null])(
+    "rejects the removed environment override: %j", (environment) => {
+      expect(sessionCreateSchema.safeParse({
+        profile: { kind: "named", profileId: "developer" }, environment,
+      }).success).toBe(false);
+    },
+  );
 });
