@@ -2,7 +2,6 @@
 //! the session id as `prompt_cache_key`, the second request reports most of
 //! the previous prompt as cached, and a superseded catalog keeps the hit.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,10 +11,13 @@ use engine::{
     LlmGenerationStatus, LlmRequest, LlmUsage, ModelSelection, ProviderApiKind, RunId, SessionId,
     TurnId, storage::InMemoryBlobStore,
 };
-use llm_clients::openai::responses::{Client, Config};
 use llm_runtime::{LlmGenerationAdapter, OpenAiResponsesLlmAdapter, OpenAiResponsesParams};
 
 mod support;
+
+use support::{
+    openai_responses_live_client as live_client, openai_responses_live_model as live_model,
+};
 
 use support::{
     caching::{MIN_CACHED_SHARE, assert_cached_share, long_instructions},
@@ -25,66 +27,6 @@ use support::{
 /// OpenAI's cache is eventually consistent across its fleet; a read that
 /// misses right after the write is retried a few times before failing.
 const CACHE_READ_ATTEMPTS: usize = 3;
-
-fn live_model() -> String {
-    env_or_dotenv_var("OPENAI_RESPONSES_MODEL")
-        .or_else(|_| env_or_dotenv_var("OPENAI_LIVE_MODEL"))
-        .unwrap_or_else(|_| "gpt-5.5".to_string())
-}
-
-fn live_client() -> Client {
-    let api_key = env_or_dotenv_var("OPENAI_API_KEY").expect(
-        "OPENAI_API_KEY must be set in env or root .env to run openai:responses caching live tests",
-    );
-    assert!(
-        !api_key.trim().is_empty(),
-        "OPENAI_API_KEY is set but empty"
-    );
-    let mut config = Config::new(api_key);
-    if let Ok(base_url) = env_or_dotenv_var("OPENAI_BASE_URL") {
-        config.base_url = base_url;
-    }
-    if let Ok(org_id) = env_or_dotenv_var("OPENAI_ORG_ID") {
-        config.organization = Some(org_id);
-    }
-    if let Ok(project) = env_or_dotenv_var("OPENAI_PROJECT_ID") {
-        config.project = Some(project);
-    }
-    Client::new(config).expect("OpenAI Responses client")
-}
-
-fn env_or_dotenv_var(name: &str) -> Result<String, std::env::VarError> {
-    match std::env::var(name) {
-        Ok(value) => Ok(value),
-        Err(env_error) => dotenv_var(name).ok_or(env_error),
-    }
-}
-
-fn dotenv_var(name: &str) -> Option<String> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("repo root")
-        .join(".env");
-    let contents = std::fs::read_to_string(path).ok()?;
-    for line in contents.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let (key, value) = line.split_once('=')?;
-        if key.trim() == name {
-            return Some(
-                value
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .to_string(),
-            );
-        }
-    }
-    None
-}
 
 async fn text_blob(blobs: &InMemoryBlobStore, text: &str) -> BlobRef {
     blobs.insert_text(text).await

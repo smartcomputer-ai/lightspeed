@@ -3,7 +3,6 @@
 //! cache, and the ordinary things that happen to a session — a tool round
 //! trip, a catalog update — keep the hit.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use engine::{
@@ -13,7 +12,6 @@ use engine::{
     ToolChoice, ToolName, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
 };
-use llm_clients::anthropic::messages::{Client, Config};
 use llm_runtime::{
     AnthropicMessagesLlmAdapter, LlmGenerationAdapter, params::AnthropicMessagesParams,
 };
@@ -22,64 +20,14 @@ use serde_json::json;
 mod support;
 
 use support::{
+    anthropic_messages_live_client as live_client, anthropic_messages_live_model as live_model,
+};
+
+use support::{
     anthropic_params,
     caching::{assert_cached_share, long_instructions},
     retrying_anthropic_messages_client,
 };
-
-fn live_model() -> String {
-    env_or_dotenv_var("ANTHROPIC_MESSAGES_MODEL")
-        .or_else(|_| env_or_dotenv_var("ANTHROPIC_LIVE_MODEL"))
-        .unwrap_or_else(|_| "claude-opus-5".to_string())
-}
-
-fn live_client() -> Client {
-    let api_key = env_or_dotenv_var("ANTHROPIC_API_KEY").expect(
-        "ANTHROPIC_API_KEY must be set in env or root .env to run anthropic:messages caching live tests",
-    );
-    assert!(
-        !api_key.trim().is_empty(),
-        "ANTHROPIC_API_KEY is set but empty"
-    );
-    let mut config = Config::new(api_key);
-    if let Ok(base_url) = env_or_dotenv_var("ANTHROPIC_BASE_URL") {
-        config.base_url = base_url;
-    }
-    Client::new(config).expect("Anthropic Messages client")
-}
-
-fn env_or_dotenv_var(name: &str) -> Result<String, std::env::VarError> {
-    match std::env::var(name) {
-        Ok(value) => Ok(value),
-        Err(env_error) => dotenv_var(name).ok_or(env_error),
-    }
-}
-
-fn dotenv_var(name: &str) -> Option<String> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("repo root")
-        .join(".env");
-    let contents = std::fs::read_to_string(path).ok()?;
-    for line in contents.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let (key, value) = line.split_once('=')?;
-        if key.trim() == name {
-            return Some(
-                value
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .to_string(),
-            );
-        }
-    }
-    None
-}
 
 async fn text_blob(blobs: &InMemoryBlobStore, text: &str) -> BlobRef {
     blobs.insert_text(text).await

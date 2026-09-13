@@ -4,6 +4,7 @@ pub mod identity;
 pub mod jobs;
 pub mod process;
 mod process_group;
+mod redaction;
 pub mod registration;
 pub mod rpc;
 pub mod server;

@@ -5,7 +5,7 @@
 //! compaction task, the adapter runs a summarization request, and the engine
 //! prunes the compacted history in favor of the summary entry.
 
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use engine::{
     ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, BlobRef, CompactionPolicy,
@@ -15,7 +15,6 @@ use engine::{
     SessionId, TokenEstimate, TokenEstimateQuality,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
-use llm_clients::anthropic::messages::{Client, Config};
 use llm_runtime::{
     ANTHROPIC_MESSAGES_INPUT_MESSAGE_PROVIDER_KIND, AnthropicMessagesLlmAdapter,
     LlmAdapterRegistry, LlmRuntime,
@@ -24,73 +23,13 @@ use test_support::{DriveCommand, RunnerQuiescence, RunnerStores, SessionRunner};
 
 mod support;
 
+use support::{
+    anthropic_messages_live_client as live_client, anthropic_messages_live_model as live_model,
+};
+
 use support::retrying_anthropic_messages_client;
 
 const LIVE_MARKER: &str = "LIGHTSPEED-ANTHROPIC-COMPACTION-LIVE-4217";
-
-fn live_model() -> String {
-    env_or_dotenv_var("ANTHROPIC_MESSAGES_MODEL")
-        .or_else(|_| env_or_dotenv_var("ANTHROPIC_LIVE_MODEL"))
-        .unwrap_or_else(|_| "claude-opus-5".to_string())
-}
-
-fn live_client() -> Client {
-    let api_key = env_or_dotenv_var("ANTHROPIC_API_KEY").expect(
-        "ANTHROPIC_API_KEY must be set in env or root .env to run Anthropic compaction live tests",
-    );
-    assert!(
-        !api_key.trim().is_empty(),
-        "ANTHROPIC_API_KEY is set but empty"
-    );
-
-    let mut config = Config::new(api_key);
-    if let Ok(base_url) = env_or_dotenv_var("ANTHROPIC_BASE_URL") {
-        config.base_url = base_url;
-    }
-    Client::new(config).expect("Anthropic Messages client")
-}
-
-fn env_or_dotenv_var(name: &str) -> Result<String, std::env::VarError> {
-    match std::env::var(name) {
-        Ok(value) => Ok(value),
-        Err(env_error) => dotenv_var(name).ok_or(env_error),
-    }
-}
-
-fn dotenv_var(name: &str) -> Option<String> {
-    let contents = std::fs::read_to_string(root_dotenv_path()).ok()?;
-    for line in contents.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let (key, value) = line.split_once('=')?;
-        if key.trim() == name {
-            return Some(unquote_dotenv_value(value.trim()));
-        }
-    }
-    None
-}
-
-fn root_dotenv_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("repo root")
-        .join(".env")
-}
-
-fn unquote_dotenv_value(value: &str) -> String {
-    if value.len() >= 2 {
-        let bytes = value.as_bytes();
-        if (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'')
-        {
-            return value[1..value.len() - 1].to_string();
-        }
-    }
-    value.to_string()
-}
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]

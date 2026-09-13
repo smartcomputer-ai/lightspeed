@@ -21,9 +21,7 @@ use crate::{
     blob_io::{put_json, put_text, read_json, read_text},
     error::{LlmAdapterError, LlmAdapterResult},
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
-    mcp::{
-        MAX_NATIVE_MCP_TOOLS_PER_REQUEST, McpInventoryResolver, UnconfiguredMcpInventoryResolver,
-    },
+    mcp::{McpInventoryResolver, UnconfiguredMcpInventoryResolver, injected_native_tools},
     params::{openai_reasoning_from_effort, openai_responses_params},
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
@@ -586,37 +584,10 @@ async fn materialize_tools(
             }
             (RemoteMcpExecution::Native, RemoteMcpExposure::Search) => {}
             (RemoteMcpExecution::Native, RemoteMcpExposure::Inject) => {
-                let mut native = inventory.list_tools(spec).await.map_err(|error| {
-                    LlmAdapterError::McpInventory {
-                        server: spec.server_id.clone(),
-                        message: error.to_string(),
-                    }
-                })?;
-                native.sort_by(|left, right| left.remote_name.cmp(&right.remote_name));
-                let advertised_count = native.len();
-                native.retain(|native_tool| {
-                    let name = format!("{}__{}", tool.name, native_tool.remote_name);
-                    crate::tool_catalog::valid_exposed_name(&name)
-                });
-                let omitted_count = advertised_count - native.len();
-                if omitted_count != 0 {
-                    tracing::warn!(
-                        server_id = %spec.server_id,
-                        omitted_tool_count = omitted_count,
-                        "omitted native MCP tools with provider-incompatible names"
-                    );
-                }
-                if native_mcp_tool_count.saturating_add(native.len())
-                    > MAX_NATIVE_MCP_TOOLS_PER_REQUEST
-                {
-                    return Err(LlmAdapterError::McpInventory {
-                        server: spec.server_id.clone(),
-                        message: "native MCP inventory exceeds the per-request tool cap; author a Selected allowlist or switch the record to search exposure".to_owned(),
-                    });
-                }
-                native_mcp_tool_count += native.len();
-                for native_tool in native {
-                    let name = format!("{}__{}", tool.name, native_tool.remote_name);
+                let native =
+                    injected_native_tools(inventory, spec, &tool.name, &mut native_mcp_tool_count)
+                        .await?;
+                for (name, native_tool) in native {
                     catalog
                         .names
                         .insert(ToolName::new(name.clone()), Some(tool.id.clone()))?;

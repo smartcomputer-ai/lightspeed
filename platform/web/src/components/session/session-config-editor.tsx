@@ -155,9 +155,9 @@ const featureInfo: Record<
 
 const featureDisplayOrder: FeatureName[] = [
   "environments",
+  "vfs",
   "mcp",
   "subagents",
-  "vfs",
   "web",
   "timers",
 ];
@@ -1286,21 +1286,12 @@ function VfsFields({
 
   return (
     <div className="grid gap-5">
-      <p className="text-xs text-muted-foreground">File tools follow each workspace’s access. {environmentsGranted
-        ? "Materialize requires environment edit access. Capture requires workspace edit access and environment read access."
-        : "Enable Environments to also transfer files between attached workspaces and an active environment."}</p>
-
-      <SourceDiscoveryFields source="vfs-prompts" feature={feature} patch={patch} />
-      <SourceDiscoveryFields source="vfs" feature={feature} patch={patch} />
-
-      <WorkingDirectoryField feature={feature} patch={patch} />
-
-      <div className="grid gap-3 border-t pt-4">
-        <div className="flex min-w-0 items-center justify-between gap-3">
+      <div className="grid gap-3">
+        <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-sm font-medium">Workspace attachments</p>
             <p className="text-xs text-muted-foreground">
-              Expose catalog workspaces or pinned snapshots at session paths.
+              Attach workspaces at session paths with their own access grants.
             </p>
           </div>
           <Button
@@ -1323,37 +1314,14 @@ function VfsFields({
           <p className="text-xs text-muted-foreground">No workspace attachments.</p>
         )}
         {links.map((link, index) => {
-          const targetType = "snapshotRef" in link ? "snapshot" : "workspace";
+          const snapshot = "snapshotRef" in link;
           return (
             <div
               key={index}
               className="grid gap-3 border-t pt-3 sm:grid-cols-[minmax(0,1fr)_auto]"
             >
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <Field>
-                  <FieldLabel>Target type</FieldLabel>
-                  <Select
-                    value={targetType}
-                    onValueChange={(value) => updateLink(index, (next) => {
-                      if (value === "snapshot") {
-                        delete next.workspaceId;
-                        next.snapshotRef = "";
-                        next.access = "read";
-                      } else {
-                        delete next.snapshotRef;
-                        next.workspaceId = workspaces[0]?.workspaceId ?? "";
-                        next.access = "edit";
-                      }
-                    })}
-                  >
-                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="workspace">Workspace</SelectItem>
-                      <SelectItem value="snapshot">Snapshot</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                {targetType === "snapshot" ? (
+              <div className="grid gap-3 sm:grid-cols-3">
+                {snapshot ? (
                   <Field>
                     <FieldLabel>Snapshot ref</FieldLabel>
                     <Input
@@ -1416,7 +1384,7 @@ function VfsFields({
                   <FieldLabel>Access</FieldLabel>
                   <Select
                     value={string(link.access) || "edit"}
-                    disabled={targetType === "snapshot"}
+                    disabled={snapshot}
                     onValueChange={(access) => updateLink(index, (next) => {
                       next.access = access;
                     })}
@@ -1442,6 +1410,14 @@ function VfsFields({
           );
         })}
       </div>
+      <p className="text-xs text-muted-foreground">File tools follow each workspace’s access. {environmentsGranted
+        ? "Materialize requires environment edit access. Capture requires workspace edit access and environment read access."
+        : "Enable Environments to also transfer files between attached workspaces and an active environment."}</p>
+
+      <SourceDiscoveryFields source="vfs-prompts" feature={feature} patch={patch} />
+      <SourceDiscoveryFields source="vfs" feature={feature} patch={patch} />
+
+      <WorkingDirectoryField feature={feature} patch={patch} />
     </div>
   );
 }
@@ -1680,18 +1656,39 @@ function WorkingDirectoryField({ environment, feature, patch }: {
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
   const id = useId();
-  return <Field>
-    <FieldLabel htmlFor={id}>Working directory</FieldLabel>
-    <Input id={id} aria-label={`${environment ? "Environment" : "VFS"} working directory`}
-      className="font-mono" value={string(feature.workingDirectory)} placeholder={environment ? "Environment default" : "/"}
-      onChange={(event) => patch((next) => {
-        if (event.target.value) next.workingDirectory = event.target.value;
-        else delete next.workingDirectory;
-      })} />
-    <FieldDescription className="text-xs">{environment
-      ? "Absolute machine directory for file tools, commands, jobs, and discovery. Empty uses the environment default."
-      : "Absolute linked VFS directory for relative file paths. Empty uses /. Source discovery still searches every workspace attachment."}</FieldDescription>
-  </Field>;
+  const [open, setOpen] = useState(false);
+  const directory = string(feature.workingDirectory);
+  return (
+    <div className="grid min-w-0 gap-3">
+      {environment && (
+        <button
+          type="button"
+          aria-label="Configure Environment working directory"
+          aria-expanded={open}
+          aria-controls={`${id}-settings`}
+          onClick={() => setOpen((value) => !value)}
+          className="flex min-w-0 max-w-full w-fit items-center gap-1 cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {directory && <><span className="truncate font-mono">{directory}</span><span>·</span></>}
+          <span className="shrink-0">{open ? "Hide working directory" : directory ? "Edit working directory" : "Customize working directory"}</span>
+        </button>
+      )}
+      {(!environment || open) && (
+        <Field id={`${id}-settings`}>
+          <FieldLabel htmlFor={id}>Working directory</FieldLabel>
+          <Input id={id} aria-label={`${environment ? "Environment" : "VFS"} working directory`}
+            className="font-mono" value={directory} placeholder={environment ? "Environment default" : "/"}
+            onChange={(event) => patch((next) => {
+              if (event.target.value) next.workingDirectory = event.target.value;
+              else delete next.workingDirectory;
+            })} />
+          <FieldDescription className="text-xs">{environment
+            ? "Absolute machine directory for file tools, commands, jobs, and discovery. Empty uses the environment default."
+            : "Absolute linked VFS directory for relative file paths. Empty uses /. Source discovery still searches every workspace attachment."}</FieldDescription>
+        </Field>
+      )}
+    </div>
+  );
 }
 
 function SourceDiscoveryFields({ source, feature, patch }: {
@@ -1813,8 +1810,13 @@ function EnvironmentFields({
               );
               next.environments = [
                 ...attachments,
-                { environmentId: environment?.environmentId ?? "", access: "read" },
+                {
+                  environmentId: environment?.environmentId ?? "",
+                  access: "read",
+                  ...(attachments.length === 0 ? { default: true } : {}),
+                },
               ];
+              if (attachments.length + 1 > 2) next.selection = true;
             })
           }
         >
@@ -1899,11 +1901,14 @@ function EnvironmentFields({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="read">Read files</SelectItem>
-                    <SelectItem value="edit">Read and edit files</SelectItem>
-                    <SelectItem value="exec">Edit files and run commands</SelectItem>
-                    <SelectItem value="jobs">Commands and durable jobs</SelectItem>
+                    <SelectItem value="edit">Edit files</SelectItem>
+                    <SelectItem value="exec">Run commands</SelectItem>
+                    <SelectItem value="jobs">Run durable jobs</SelectItem>
                   </SelectContent>
                 </Select>
+                <FieldDescription className="text-xs">
+                  Each level includes all previous levels.
+                </FieldDescription>
               </Field>
               <Button
                 variant="ghost"

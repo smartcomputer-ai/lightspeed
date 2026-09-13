@@ -39,7 +39,10 @@ use tokio::{
     time::Instant,
 };
 
-use crate::process_group;
+use crate::{
+    process_group,
+    redaction::{redact_bytes, redactions_for_secret_env},
+};
 
 /// How long a finished process entry stays readable after the first read
 /// that observed its exit.
@@ -1117,39 +1120,6 @@ fn response_from_state(
         omitted_bytes,
         leftover_processes: state.leftover_processes.clone(),
     }
-}
-
-fn redactions_for_secret_env(
-    secret_env: &BTreeMap<String, environment_protocol::shared::SecretString>,
-) -> Vec<Vec<u8>> {
-    secret_env
-        .values()
-        .filter(|value| !value.is_empty())
-        .map(|value| value.expose().as_bytes().to_vec())
-        .collect()
-}
-
-fn redact_bytes(bytes: &[u8], redactions: &[Vec<u8>]) -> Vec<u8> {
-    let mut output = bytes.to_vec();
-    for secret in redactions {
-        if secret.is_empty() || secret.len() > output.len() {
-            continue;
-        }
-        let mut index = 0;
-        while let Some(offset) = find_subslice(&output[index..], secret) {
-            let start = index + offset;
-            let end = start + secret.len();
-            output.splice(start..end, b"<redacted>".iter().copied());
-            index = start + b"<redacted>".len();
-        }
-    }
-    output
-}
-
-fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
 }
 
 fn normalize_path(path: PathBuf) -> PathBuf {
