@@ -98,15 +98,22 @@ implies `exec`. Lists are always arrays on the wire; the editor hides that.
   deactivation is not undone by a config edit. This replaces
   `ProfileDocument.environment: existing`; bot exec polls without an explicit
   environment resolve the profile's default item instead of the profile
-  intent, and bot profile reapplication keeps the bot session and its polls
-  on the same machine.
+  intent. Polls and the bot session can therefore diverge: if A and B stay
+  listed and the default moves from A to B, the session keeps A while polls
+  run on B. That is the price of never overriding a live selection and is
+  documented rather than reconciled; a poll that must share the session's
+  machine names it with `environmentId`.
 - `inherit: true` is an item kind for sub-agent profiles: the parent's active
   environment at spawn, with the item's own grant. At most one per list.
-  The parent's spawn activity already resolves the profile into an inline
-  document and has the parent's active environment on its batch request, so
-  it resolves `inherit` there and hands the child a concrete profile. The
-  current checkpoint reread of the parent during child setup is deleted, and
-  a session config never contains `inherit`. If the resolved id already
+  Spawning has two stages: the batch executor admits the call and writes a
+  `SubagentExecutionContextV1`, and a later preparation activity reads that
+  context and resolves the profile. The executor has the parent's active
+  environment on its batch request; the context does not carry it today.
+  Add `parentActiveEnvironmentId` (nullable) to the context, captured at
+  admission, bump its version, and resolve `inherit` from that field in the
+  preparation activity. Retries reuse the captured value. The checkpoint
+  reread of the parent during child setup is deleted, and a session config
+  never contains `inherit`. If the resolved id already
   appears as an explicit item, the explicit item wins and the inherit item is
   dropped. If the parent has no active environment, the inherit item is
   dropped; if it carried `default`, nothing is activated.
@@ -125,8 +132,13 @@ implies `exec`. Lists are always arrays on the wire; the editor hides that.
   engine derives files, exec, jobs, and working directory from that item.
 - **Tool visibility is the union of all items' grants**, installed once.
   A call the active machine's grant does not cover is rejected at execution
-  by the existing denial path, with a message naming the active machine's
-  access. The toolset does not change on a switch: a session that moves
+  with a message naming the active machine's access. The existing denial
+  path covers file and process operations only; durable job submit and run
+  are workflow tools whose binding was previously installed only when `jobs`
+  was granted. With union visibility that binding exists whenever any item
+  grants `jobs`, so the batch executor must check the active item's grant
+  before building the job execution context and emitting the workflow
+  invocation. The toolset does not change on a switch: a session that moves
   between machines often must not invalidate the provider prompt cache each
   time, and switches happen inside a turn where a patch could not be
   published anyway.
@@ -264,12 +276,14 @@ Never re-propose without new evidence:
    Replay vectors for the new `ConfigChanged` payloads.
 2. Runtime policy: per-batch environment policy derived from the active item;
    tool reconciler derives VFS, environment, and transfer surfaces from grant
-   unions; denial messages name the active machine's access; explicit-id
-   tools check membership; MCP materialization applies the item subset;
+   unions; denial messages name the active machine's access; durable job
+   tools gate on the active item's `jobs` grant before invocation;
+   explicit-id tools check membership; MCP materialization applies the item subset;
    environment catalog projection.
 3. Setup and selection: membership-only `selectable`, fill-if-empty default
-   at creation and profile application, inherit resolution in the parent's
-   spawn activity (parent checkpoint reread deleted), bot fire path reads the
+   at creation and profile application, `parentActiveEnvironmentId` on the
+   sub-agent execution context with inherit resolved from it in preparation
+   (parent checkpoint reread deleted), bot fire path reads the
    default item, start override validates membership.
 4. API: DTO renames, MCP record field renames, contract export, TypeScript
    clients, Configurator reference data.
@@ -285,12 +299,17 @@ Never re-propose without new evidence:
   follows the active one, including working directory.
 - Config put removing the active environment clears it and does not fill
   the default; profile application fills an empty pointer with the default
-  and leaves a live listed selection alone, including bot reapplication
-  after the profile swaps its default machine; put with an unlisted
-  `default` or duplicate ids is rejected.
-- Sub-agent spawn resolves `inherit` in the parent's activity (explicit item
-  wins, absent parent environment drops the item) and stores a concrete
-  config; a parent switch after spawn does not change the child.
+  and leaves a live listed selection alone; after a bot profile swaps its
+  default from A to B with both listed, the session stays on A and polls run
+  on B; put with an unlisted `default` or duplicate ids is rejected.
+- Sub-agent spawn captures the parent's active environment (or its absence)
+  on the execution context at admission and resolves `inherit` from it
+  (explicit item wins, absent parent environment drops the item), storing a
+  concrete config; a parent switch after admission or an activity retry does
+  not change the child.
+- Durable job submit and run are rejected before any workflow invocation
+  while the active item grants only `read`, `edit`, or `exec`, and succeed
+  under `jobs`.
 - Derived tool surfaces match the grant union for every VFS and environment
   combination, including transfer tools; the toolset is unchanged across
   switches, and calls outside the active grant are denied with the access
