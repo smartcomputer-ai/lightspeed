@@ -162,6 +162,13 @@ const featureDisplayOrder: FeatureName[] = [
   "timers",
 ];
 
+const environmentAccessDescriptions: Record<string, string> = {
+  read: "Includes reading files.",
+  edit: "Includes reading and editing files.",
+  exec: "Includes reading and editing files, and running commands.",
+  jobs: "Includes reading and editing files, running commands, and running durable jobs.",
+};
+
 function record(value: unknown): RecordValue {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as RecordValue)
@@ -1812,11 +1819,11 @@ function EnvironmentFields({
                 ...attachments,
                 {
                   environmentId: environment?.environmentId ?? "",
-                  access: "read",
+                  access: "jobs",
                   ...(attachments.length === 0 ? { default: true } : {}),
                 },
               ];
-              if (attachments.length + 1 > 2) next.selection = true;
+              if (attachments.length + 1 >= 2) next.selection = true;
             })
           }
         >
@@ -1907,7 +1914,7 @@ function EnvironmentFields({
                   </SelectContent>
                 </Select>
                 <FieldDescription className="text-xs">
-                  Each level includes all previous levels.
+                  {environmentAccessDescriptions[string(attachment.access)]}
                 </FieldDescription>
               </Field>
               <Button
@@ -1917,7 +1924,12 @@ function EnvironmentFields({
                 aria-label="Remove environment attachment"
                 onClick={() =>
                   patch((next) => {
-                    next.environments = attachments.filter((_, position) => position !== index);
+                    const remaining = attachments.filter((_, position) => position !== index);
+                    if (attachment.default === true && remaining.length) {
+                      const defaultIndex = Math.min(index, remaining.length - 1);
+                      remaining[defaultIndex] = { ...remaining[defaultIndex], default: true };
+                    }
+                    next.environments = remaining;
                   })
                 }
               >

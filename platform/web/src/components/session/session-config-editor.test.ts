@@ -275,9 +275,9 @@ describe("environment feature config", () => {
     }));
     const labels = [
       "Environments",
+      "Virtual File System: Files, Instructions, Skills",
       "MCP Servers",
       "Sub-agents",
-      "Virtual File System: Files, Instructions, Skills",
       "Web",
       "Timers",
       "Session data",

@@ -299,6 +299,14 @@ Never re-propose without new evidence:
 - [x] Editor: attachment rows with an access picker per row; environment rows
   carry default and working directory; MCP rows carry an optional tool
   subset loaded from discovery.
+- [x] Editor refinements: environments precede VFS, with attachment controls
+  at the top of both sections. Environment working directory overrides are
+  collapsed, and the access note lists what the selected level includes. New
+  environments start with jobs access. Adding the first marks it as default;
+  adding a second or later environment enables selection tools. Removing the
+  default promotes the next row, or the previous row when removing the last.
+  New VFS rows attach workspaces without a target-type picker;
+  snapshots supplied through JSON or the API remain supported.
 - [x] Web consumers: profile and bot forms use config attachments; session
   activation and creation overrides offer only attached environments. MCP
   forms and gateway mappings use the renamed record fields. Demo profiles
