@@ -38,6 +38,16 @@ not add a deployment or change running services.
 
 ## Follow-up opportunities
 
+The first two tagged v0.3.0 builds failed before artifact staging: the inline
+transfer dispatch test exceeded its one-second deadline on the release runner.
+The test now uses the existing 30-second protocol ceiling, preserving its
+dispatch, byte round-trip, and read-only assertions. A separate deterministic
+test backdates an operation's start time and verifies that expiry rejects both
+progress and publication without replacing the destination. Production timeout
+limits and enforcement are unchanged.
+Validation: all 81 native macOS daemon library tests pass, including the dispatch
+and deterministic expiry tests; formatting and whitespace checks pass.
+
 Toolchain and Node pins still appear in multiple workflows and the build
 environment. Consolidate those separately from product versioning. If preview
 releases become necessary, add explicit npm dist-tag and GitHub prerelease

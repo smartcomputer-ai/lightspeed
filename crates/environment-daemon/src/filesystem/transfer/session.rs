@@ -1232,6 +1232,51 @@ mod tests {
     use environment_protocol::shared::EnvironmentPath;
 
     #[test]
+    fn expired_transfer_rejects_progress_and_publication() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::write(root.join("destination"), b"keep").unwrap();
+        let mut manager = TransferManager::default();
+        manager
+            .execute(
+                &root,
+                TransferRequest::Begin {
+                    operation_id: "expired".into(),
+                    selection: TransferSelection::Materialize {
+                        destination: EnvironmentPath::new(
+                            root.join("destination").to_str().unwrap(),
+                        )
+                        .unwrap(),
+                        on_existing: TransferOnExisting::Replace,
+                    },
+                    limits: InventoryLimits {
+                        max_duration_ms: 1000,
+                        ..Default::default()
+                    },
+                },
+            )
+            .unwrap();
+        // Exercise expiry without waiting for wall-clock time or depending on
+        // filesystem throughput and test-runner scheduling.
+        manager.operations.get_mut("expired").unwrap().started =
+            Instant::now() - Duration::from_secs(2);
+        for request in [
+            TransferRequest::Advance {
+                operation_id: "expired".into(),
+            },
+            TransferRequest::Commit {
+                operation_id: "expired".into(),
+            },
+        ] {
+            assert_eq!(
+                manager.execute(&root, request).unwrap_err().code,
+                Code::Timeout
+            );
+        }
+        assert_eq!(std::fs::read(root.join("destination")).unwrap(), b"keep");
+    }
+
+    #[test]
     fn scan_respects_remaining_budget_when_a_large_file_follows_a_small_file() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("source")).unwrap();

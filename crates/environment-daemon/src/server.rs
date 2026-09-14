@@ -379,7 +379,9 @@ mod transfer_tests {
                 max_depth: 0,
                 max_file_bytes: 2,
                 max_total_bytes: 2,
-                max_duration_ms: 1000,
+                // This checks dispatch and access, not storage latency. Allow
+                // shared-runner delays across the transfer's journal fsyncs.
+                max_duration_ms: MAX_TRANSFER_DURATION_MS,
             };
             let entries = vec![TransferEntry {
                 path: "".into(),
