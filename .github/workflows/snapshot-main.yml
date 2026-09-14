@@ -57,7 +57,16 @@ jobs:
           source release/metadata.env
           echo "sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
           echo "version=$LIGHTSPEED_PRODUCT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "rust_version=$LIGHTSPEED_RELEASE_RUST_VERSION" >> "$GITHUB_OUTPUT"
           echo "staging_tag=staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: ${{ steps.identity.outputs.rust_version }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.13.0
+      - name: Fetch locked dependencies for offline metadata verification
+        run: cargo fetch --locked
       - name: Verify release metadata
         run: scripts/release/verify-metadata.sh
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

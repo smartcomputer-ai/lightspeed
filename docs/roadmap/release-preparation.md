@@ -38,6 +38,17 @@ not add a deployment or change running services.
 
 ## Follow-up opportunities
 
+Snapshot metadata verification now explicitly installs the Rust toolchain named
+by release metadata and Node 24, then fetches locked Cargo dependencies before
+the offline check. The first snapshot after version preparation failed with
+`spawnSync cargo ENOENT`: the host preflight previously needed only Node and
+shell tools, while Rust builds happened inside Docker. PR/main CI already set
+up Cargo and therefore did not expose the missing snapshot prerequisites.
+The fetch also makes the check independent of a previous job's registry cache.
+Validation: `cargo fetch --locked` followed by metadata verification passes with
+an isolated, initially empty `CARGO_HOME`; workflow YAML/shell syntax and
+whitespace checks pass.
+
 The first two tagged v0.3.0 builds failed before artifact staging: the inline
 transfer dispatch test exceeded its one-second deadline on the release runner.
 The test now uses the existing 30-second protocol ceiling, preserving its
