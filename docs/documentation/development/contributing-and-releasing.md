@@ -93,6 +93,29 @@ revision, and Platform migration journal and supported baseline. These
 values have different meanings. A product version bump does not itself
 migrate a database or make an older daemon speak a new protocol.
 
+Prepare a stable release from freshly fetched `origin/main` on a dedicated
+branch:
+
+```bash
+git fetch origin main
+git switch -c release/0.3.0 origin/main
+npm run release:prepare -- 0.3.0
+scripts/release/verify-metadata.sh
+```
+
+The preparation command updates `workspace.package.version` in `Cargo.toml`,
+`LIGHTSPEED_PRODUCT_VERSION` in `release/metadata.env`, and the Cargo lockfile.
+The four executable packages and `release-info` inherit the workspace version;
+internal library versions remain independent. Cargo refreshes workspace package
+versions offline while preserving locked external dependencies. If preparation
+fails, the command restores the edited files. Run `npm ci` and `cargo fetch
+--locked` first if dependencies are not cached locally.
+
+Write `release/notes/v<version>.md`, including breaking changes and the supported
+upgrade procedure. Review the diff and merge the preparation branch through CI.
+The command does not commit, tag, publish, change compatibility revisions, or
+generate release notes automatically.
+
 Release staging sets the client and Configurator package versions and embeds
 the source commit in the client's `release.json`. Their package versions in
 the checkout are placeholders, so don't update every package version as a
@@ -191,6 +214,20 @@ The target can be an earlier commit on `main`; it need not be the current
 head. Annotation is checked, but cryptographic tag signatures are not
 validated by this workflow.
 
+After the preparation change has merged and CI passes, tag its exact merged
+commit with the reviewed notes. For example, in a clean checkout of that commit:
+
+```bash
+scripts/release/verify-metadata.sh
+git tag -a v0.3.0 -F release/notes/v0.3.0.md
+git push origin v0.3.0
+```
+
+Pushing the tag starts publication. The protected Linux amd64 `hz01` runner
+must be online, GHCR publishing must be enabled, and the `official-release`
+environment must contain `NPM_TOKEN`. The environment only pauses publication
+if approval rules have actually been configured in GitHub.
+
 The release workflow independently tests and builds the tagged source. It
 does not promote an already-built main snapshot. Final publication runs
 through the `official-release` environment, validates the staged bundle by
@@ -198,11 +235,11 @@ digest, and publishes exact-version OCI aliases, the npm package, and the
 GitHub Release with its assets. Existing aliases are checked against their
 expected digests so a retry cannot silently replace a different artifact.
 
-Versions reject `+build` metadata because they also become OCI tags.
-Prerelease suffixes are accepted, but the current workflow
-still publishes npm under `latest` and creates an ordinary GitHub Release.
-There is no isolated prerelease channel in this workflow today. Account for
-that behavior before choosing and pushing a release tag.
+Only stable `major.minor.patch` versions are accepted, without leading zeroes.
+Prereleases are rejected because publication assigns npm's `latest` tag and
+creates an ordinary GitHub Release. A future prerelease channel must choose a
+separate npm dist-tag and mark the GitHub Release as a prerelease. `+build`
+metadata is also rejected because versions become OCI tags.
 
 Official builds also publish image provenance and SBOM information and
 attest the release artifacts. A locally built archive has not passed through

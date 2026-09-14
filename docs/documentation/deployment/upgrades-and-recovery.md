@@ -34,6 +34,49 @@ upgrade path from every historical Platform schema. A database with a legacy
 migration history needs a validated release-specific migration before it can
 be treated as a current installation.
 
+## Upgrade from v0.2 to v0.3
+
+v0.3.0 changes session configuration, stored `ConfigChanged` events, and
+session workflow payloads without compatibility aliases. Use a coordinated
+maintenance window and fresh sessions and session workflow histories. Restarting
+workers does not convert old histories, and migration 10 does not rewrite
+stored configuration. The generic procedure below must include these additional
+steps:
+
+1. While the old release still runs, quiesce ingress and scheduled work, finish
+   or cancel active runs, and close sessions being retired. Retain the complete
+   recovery set, including the old release needed to access incompatible stored
+   sessions. Historical reads through the new runtime are not guaranteed.
+2. Convert saved profiles, bot configuration overrides, and external API
+   callers to the new generated configuration contract before resuming them.
+   Replace `vfs.workspaceLinks` with `vfs.workspaces` and `read`/`edit` access;
+   replace environment filters and session-wide tool settings with explicit
+   `environments.environments` attachments and per-machine access. Replace
+   profile-level environment provisioning/selection and session creation's
+   environment override with independently provisioned environments and
+   attachments, optionally marking one as the default. Update MCP and sub-agent
+   attachments as defined by the current contract. No automated conversion of
+   saved configuration is provided.
+3. Stop old application workers and writers. Apply runtime migration 10 with
+   the new `lightspeed-server migrate`. It removes environment session-origin
+   columns while preserving the environment resources; it does not migrate
+   session histories. Platform remains at schema revision 1. Reuse retained
+   workspaces and environments only through valid new attachments.
+4. Deploy the runtime and its consumers from one v0.3 release manifest. Create
+   fresh sessions, including replacements for bot sessions, and verify useful
+   work before reopening ingress. Do not resume old session continuations on
+   the new workers.
+5. Update environment daemons explicitly for the new transfer and filesystem
+   scan capabilities. The environment protocol remains 2, so automatic upgrade
+   on protocol mismatch will not detect the product-version change alone.
+
+The API protocol identifier remains `lightspeed.agent.api.v1`; its equality
+does not make v0.2 configuration shapes compatible with v0.3. Use the matching
+client and generated contracts. A database wipe is not required by schema
+migration 10, but preserving database rows alone does not make their old
+session payloads readable. Rehearse conversion and recovery against a copy
+before upgrading an installation with valuable state.
+
 ## Preserve a complete recovery set
 
 Lightspeed has no integrated backup/restore command. Use the backup procedures

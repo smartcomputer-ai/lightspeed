@@ -27,3 +27,6 @@ members = [
     "crates/cli",
 ]
 resolver = "2"
+
+[workspace.package]
+version = "0.3.0"

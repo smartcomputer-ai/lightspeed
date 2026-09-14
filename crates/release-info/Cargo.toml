@@ -1,5 +1,5 @@
 [package]
 name = "release-info"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 build = "build.rs"

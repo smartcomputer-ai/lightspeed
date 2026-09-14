@@ -14,6 +14,7 @@
     "platform/web"
   ],
   "scripts": {
+    "release:prepare": "node scripts/release/prepare-version.mjs",
     "dev:docs": "npm run dev --workspace @lightspeed/docs --",
     "build:docs": "npm run build --workspace @lightspeed/docs",
     "preview:docs": "npm run preview --workspace @lightspeed/docs --",

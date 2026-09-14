@@ -138,6 +138,14 @@ centralized in `release/metadata.env`; run
 toolchain, or build-image version. Every executable reports the product
 version, full source commit, target, and Rust version through `--version`.
 
+Use `npm run release:prepare -- <major.minor.patch>` to update the product
+version, shared Rust workspace version, and Cargo lockfile together. Released
+Rust packages inherit `workspace.package.version`; npm package versions are
+assigned during staging. The preparation command supports stable releases and
+does not publish. Add reviewed notes under `release/notes/`, merge through CI,
+and use those notes as the annotated tag message, as described in
+[Tagged releases](documentation/development/contributing-and-releasing.md#tagged-releases).
+
 ## Publication
 
 - Pull requests and pushes to `main` run path-classified checks on
@@ -190,8 +198,9 @@ version, full source commit, target, and Rust version through `--version`.
   `.github/workflows/release-tag.yml`. It independently tests and builds the
   exact tagged commit, applies SemVer aliases from the manifest's exact
   digests, publishes the stable TypeScript client, and creates the GitHub
-  Release. Release versions may use prerelease suffixes but not `+build`
-  metadata because the same version is also an OCI tag. The workflow never
+  Release. Release versions must be stable `major.minor.patch` values;
+  prereleases are rejected until an isolated publication channel exists, and
+  `+build` metadata is incompatible with OCI tags. The workflow never
   looks up or promotes a prior main snapshot.
 
 The `official-release` GitHub environment protects tagged-release credentials;

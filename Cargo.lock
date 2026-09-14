@@ -685,7 +685,7 @@ checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
 
 [[package]]
 name = "cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "api",
@@ -1238,7 +1238,7 @@ dependencies = [
 
 [[package]]
 name = "environment-daemon"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "api",
@@ -1289,7 +1289,7 @@ dependencies = [
 
 [[package]]
 name = "environment-provider-incus"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3724,7 +3724,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "release-info"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "reqwest"
@@ -4771,7 +4771,7 @@ dependencies = [
 
 [[package]]
 name = "temporal-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "api",

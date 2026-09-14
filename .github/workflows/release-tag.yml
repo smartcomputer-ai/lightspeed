@@ -48,9 +48,9 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
-          # OCI tags cannot contain SemVer build metadata's `+`, so release
-          # versions support ordinary SemVer and prereleases, but no `+build`.
-          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          # Publication assigns npm's latest tag; prereleases need a separate
+          # channel before they can be supported here.
+          [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           test "$(git cat-file -t "$tag")" = tag
           sha="$(git rev-parse HEAD^{commit})"
           test "$(git rev-list -n 1 "$tag")" = "$sha"

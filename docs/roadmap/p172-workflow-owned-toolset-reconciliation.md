@@ -238,8 +238,11 @@ workflow execution. Total: 105 passing live tests (68 runtime, 37 storage).
 This is a coordinated breaking deployment requiring fresh sessions and workflow
 histories. Close existing sessions with the old runtime, stop old workers, apply
 schema migration 10, and deploy matching runtime and clients before creating new
-sessions. Retain stored sessions for historical reads and retain environment
-resources; no database wipe is required. Restarting workers alone still replays
+sessions. Retain environment resources and a compatible recovery copy of stored
+sessions. The subsequent attachment configuration change also changes stored
+events, so historical reads through the new runtime are no longer guaranteed;
+see the [release upgrade procedure](../documentation/deployment/upgrades-and-recovery.md#upgrade-from-v02-to-v03).
+No database wipe is required by migration 10. Restarting workers alone still replays
 old histories and is not a migration strategy. Remove or convert saved profiles
 that still contain the removed `environment.type: provision` variant before
 reading/listing profiles with the new runtime; schema migration 10 removes the
