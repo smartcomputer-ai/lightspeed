@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { NavLink, useParams, useSearchParams } from "react-router-dom";
@@ -174,7 +175,7 @@ function BotsPane({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {bots.isLoading && <p className="p-4 text-sm text-muted-foreground">Loading…</p>}
-        {bots.error && <p className="p-4 text-sm text-destructive">{bots.error.message}</p>}
+        {bots.error && <ReadError error={bots.error} loading={!bots.data} className="p-4" />}
         {bots.data && roster.length === 0 && (
           <div className="grid gap-3 p-4 text-sm text-muted-foreground">
             <p>No bots yet.</p>

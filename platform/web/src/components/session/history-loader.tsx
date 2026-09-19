@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { SessionTail } from "@/lib/sessions/tail";
+import { ReadError } from "@/components/read-error";
 
 /** Lives outside MessageScrollerContent: a persistent first child inside that
  * element would hide prepends from the primitive's first-message detection.
@@ -39,9 +40,11 @@ export function SessionHistoryLoader({ tail }: { tail: SessionTail }) {
   return (
     <div ref={sentinel} className="relative h-px shrink-0" data-history-sentinel>
       {(loadingOlder || tail.historyError) && (
-        <span role="status" className="absolute inset-x-0 top-1 text-center text-xs text-muted-foreground">
-          {tail.historyError ? "Couldn’t load earlier history — retrying…" : "Loading earlier history…"}
-        </span>
+        <div className="absolute inset-x-0 top-1 text-center">
+          {tail.historyError
+            ? <ReadError error={tail.historyError} transient={tail.historyErrorIsTransient} retrying loading graceMs={10_000} prefix="Earlier history" className="text-xs" />
+            : <span role="status" className="text-xs text-muted-foreground">Loading earlier history…</span>}
+        </div>
       )}
     </div>
   );

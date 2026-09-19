@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
@@ -134,12 +135,10 @@ export function AdminEnvironmentProvidersPage() {
       />
       {providers.isLoading && <LoadingNote />}
       {providers.error && (
-        <p className="text-sm text-destructive">{providers.error.message}</p>
+        <ReadError error={providers.error} loading={!providers.data} />
       )}
       {bindings.error && (
-        <p className="mb-4 text-sm text-muted-foreground">
-          Binding inventory unavailable: {bindings.error.message}
-        </p>
+        <ReadError error={bindings.error} loading={!bindings.data} prefix="Binding inventory unavailable" className="mb-4 text-muted-foreground" />
       )}
       {removeProvider.error && (
         <p className="mb-4 text-sm text-destructive">{removeProvider.error.message}</p>

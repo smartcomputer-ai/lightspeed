@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, KeyRound, Plus, ShieldOff } from "lucide-react";
@@ -91,7 +92,7 @@ function ApiKeyList({ universeId }: { universeId: string }) {
         }
       />
       {keys.isLoading && <LoadingNote />}
-      {keys.error && <p className="text-sm text-destructive">{keys.error.message}</p>}
+      {keys.error && <ReadError error={keys.error} loading={!keys.data} />}
       {revoke.error && (
         <p className="mb-3 text-sm text-destructive">{revoke.error.message}</p>
       )}

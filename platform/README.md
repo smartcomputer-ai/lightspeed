@@ -137,11 +137,19 @@ History is reconstructed chronologically and deduplicated by event/entry ID;
 historical lifecycle transitions never overwrite live controls. History errors
 retry independently of live polling, and changing sessions aborts both paths.
 Live polling retries a transient connection failure immediately with `waitMs: 0`
-and at most one event from the unchanged cursor. Only a failed recovery probe shows a disconnect;
+and at most one event from the unchanged cursor. A failed recovery probe starts
+a ten-second presentation grace period before a muted disconnect notice;
 an empty successful probe clears it immediately and resumes normal long-polling.
 Authorization and event-integrity errors remain visible immediately. Live reads
 have a deadline ten seconds beyond their requested wait so stalled connections
 cannot stop updates indefinitely.
+Transcript and list read errors share this presentation rule: transient transport,
+timeout, rate-limit, and server errors stay quiet for ten seconds in transcripts
+and three seconds in lists, then show a
+muted connection notice. Initial reads show loading during that interval; cached
+content remains visible. Lists retain one retry for transient failures and expose
+actionable errors without a retry delay. Notices only say "retrying" where the
+transcript reader continues retrying; mutation error handling is unchanged.
 
 The authoritative configuration reference is
 [environment-variable reference](../docs/documentation/reference/environment-variables.md), with separate sections for the

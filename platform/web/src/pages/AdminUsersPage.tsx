@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus } from "lucide-react";
@@ -79,7 +80,7 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
         }}
       />
       {users.isLoading && <LoadingNote />}
-      {users.error && <p className="text-sm text-destructive">{users.error.message}</p>}
+      {users.error && <ReadError error={users.error} loading={!users.data} />}
       {users.data && (
         <TableCard className="mb-8">
           <Table>

@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
@@ -198,29 +199,19 @@ function ProviderList({ universeId }: { universeId: string }) {
       />
       {(bindings.isLoading || templates.isLoading || environments.isLoading || secrets.isLoading) && <LoadingNote />}
       {bindings.error && (
-        <p className="text-sm text-destructive">
-          Provider bindings unavailable: {bindings.error.message}
-        </p>
+        <ReadError error={bindings.error} loading={!bindings.data} prefix="Provider bindings unavailable" />
       )}
       {templates.error && (
-        <p className="text-sm text-destructive">
-          Environment templates unavailable: {templates.error.message}
-        </p>
+        <ReadError error={templates.error} loading={!templates.data} prefix="Environment templates unavailable" />
       )}
       {environments.error && (
-        <p className="text-sm text-destructive">
-          Environments unavailable: {environments.error.message}
-        </p>
+        <ReadError error={environments.error} loading={!environments.data} prefix="Environments unavailable" />
       )}
       {secrets.error && (
-        <p className="text-sm text-destructive">
-          Access credentials unavailable: {secrets.error.message}
-        </p>
+        <ReadError error={secrets.error} loading={!secrets.data} prefix="Access credentials unavailable" />
       )}
       {registrationKeys.error && (
-        <p className="text-sm text-destructive">
-          Registration keys unavailable: {registrationKeys.error.message}
-        </p>
+        <ReadError error={registrationKeys.error} loading={!registrationKeys.data} prefix="Registration keys unavailable" />
       )}
       {bindings.data && environments.data && environmentRows.length === 0 && (
         <div className="rounded-xl border border-dashed px-5 py-8 text-center">

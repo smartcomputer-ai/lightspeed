@@ -37,8 +37,12 @@ Status: implemented and verified.
 - Retry older-page failures without stopping live updates. Abort both directions
   and clear the projection on session changes.
 - Recover a transient live-read failure with an immediate non-waiting probe
-  from the same cursor. Show a disconnect if that probe also fails, pace further
-  retries, and clear it on any successful probe, including an empty response.
+  from the same cursor. If that probe also fails, wait ten seconds before
+  showing a muted disconnect notice, pace further retries, and clear the notice
+  on any successful probe, including an empty response. Initial and older-history
+  reads share the ten-second grace period; list-page reads use three seconds through a small shared
+  error component. Cached content remains visible; actionable query errors skip
+  the retry delay. Retry timing and transcript cursor recovery are unchanged.
   Authorization and event-integrity errors stay immediately visible. Bound live
   requests to their requested wait plus ten seconds of transport/projection time.
 - Keep the parent/sub-agent header mounted while run activity refreshes its

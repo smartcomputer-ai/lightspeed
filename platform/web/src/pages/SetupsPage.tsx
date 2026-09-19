@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, PackageOpen, RefreshCw, Sparkles } from "lucide-react";
 import { api, type UniverseSetup } from "@/api";
@@ -45,7 +46,7 @@ function SetupList({ universeId }: { universeId: string }) {
         description="Install ready-to-use profiles and resources maintained by Lightspeed."
       />
       {setups.isLoading && <LoadingNote />}
-      {setups.error && <p className="text-sm text-destructive">{setups.error.message}</p>}
+      {setups.error && <ReadError error={setups.error} loading={!setups.data} />}
       {install.error && <p className="mb-4 text-sm text-destructive">{install.error.message}</p>}
       <div className="grid gap-4 md:grid-cols-2">
         {(setups.data ?? []).map((setup) => (

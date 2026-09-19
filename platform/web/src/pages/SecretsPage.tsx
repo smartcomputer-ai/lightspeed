@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -138,7 +139,7 @@ function SecretsList({ universeId, slug }: { universeId: string; slug: string })
       />
       {inventory.isLoading && <LoadingNote />}
       {inventory.error && (
-        <p className="text-sm text-destructive">{inventory.error.message}</p>
+        <ReadError error={inventory.error} loading={!inventory.data} />
       )}
       {mutationError && (
         <p className="mb-4 text-sm text-destructive">{mutationError.message}</p>

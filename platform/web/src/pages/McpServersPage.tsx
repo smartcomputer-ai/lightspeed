@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { McpToolPicker } from "@/components/mcp/tool-picker";
 import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -144,12 +145,10 @@ function ServerList({ universeId }: { universeId: string }) {
       />
       {servers.isLoading && <LoadingNote />}
       {servers.error && (
-        <p className="text-sm text-destructive">{servers.error.message}</p>
+        <ReadError error={servers.error} loading={!servers.data} />
       )}
       {authGrants.error && (
-        <p className="text-sm text-destructive">
-          Access credentials unavailable: {authGrants.error.message}
-        </p>
+        <ReadError error={authGrants.error} loading={!authGrants.data} prefix="Access credentials unavailable" />
       )}
       {servers.data && rows.length === 0 && (
         <p className="mb-4 text-sm text-muted-foreground">

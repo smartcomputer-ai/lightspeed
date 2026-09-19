@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
@@ -221,7 +222,7 @@ function WorkspacePane({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {tree.error && (
-          <p className="p-2 text-sm text-destructive">{tree.error.message}</p>
+          <ReadError error={tree.error} loading={!tree.data} className="p-2" />
         )}
         {tree.data && Object.keys(tree.data.manifest.root.entries).length === 0 && (
           <p className="p-2 text-sm text-muted-foreground">

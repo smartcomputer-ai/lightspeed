@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
@@ -91,7 +92,7 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
         }
       />
       {members.isLoading && <LoadingNote />}
-      {members.error && <p className="text-sm text-destructive">{members.error.message}</p>}
+      {members.error && <ReadError error={members.error} loading={!members.data} />}
       {members.data && (
         <TableCard className="mb-6">
           <Table>

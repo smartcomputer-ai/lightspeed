@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -113,12 +114,10 @@ export function AdminUniversesPage() {
       <NewUniverseDialog open={createOpen} onOpenChange={setCreateOpen} />
       {universes.isLoading && <LoadingNote />}
       {universes.error && (
-        <p className="text-sm text-destructive">{universes.error.message}</p>
+        <ReadError error={universes.error} loading={!universes.data} />
       )}
       {reconcile.error && (
-        <p className="mb-4 text-sm text-muted-foreground">
-          Engine reconciliation unavailable: {reconcile.error.message}
-        </p>
+        <ReadError error={reconcile.error} loading={!reconcile.data} prefix="Engine reconciliation unavailable" className="mb-4 text-muted-foreground" />
       )}
       {universes.data && (
         <TableCard>

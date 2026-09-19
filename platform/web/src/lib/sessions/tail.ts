@@ -2,14 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionEventsPage, SessionRunView } from "@/api";
 import { emptyTranscript, type TranscriptState } from "./transcript";
 import { TranscriptWindow } from "./transcript-window";
+import { isTransientReadError } from "@/lib/read-errors";
 
 export interface SessionTail {
   transcript: TranscriptState;
   phase: "loading" | "live";
   error: string | null;
+  errorIsTransient: boolean;
   hasOlder: boolean;
   loadingOlder: boolean;
   historyError: string | null;
+  historyErrorIsTransient: boolean;
   historyRevision: number;
   loadOlder: () => void;
   reconcileRuns: (runs: SessionRunView[]) => void;
@@ -24,8 +27,8 @@ const RETRY_SLEEP_MS = 3_000;
 
 type TailState = Omit<SessionTail, "loadOlder" | "reconcileRuns"> & { scope?: string };
 const initialState = (): TailState => ({
-  transcript: emptyTranscript(), phase: "loading", error: null,
-  hasOlder: false, loadingOlder: false, historyError: null, historyRevision: 0,
+  transcript: emptyTranscript(), phase: "loading", error: null, errorIsTransient: false,
+  hasOlder: false, loadingOlder: false, historyError: null, historyErrorIsTransient: false, historyRevision: 0,
 });
 
 /** The first history page fences the live cursor. Older-page requests and
@@ -82,7 +85,7 @@ export function useSessionTail(universeId: string, sessionId: string): SessionTa
             return;
           } catch (error) {
             if (signal.aborted) return;
-            push({ historyError: errorText(error) });
+            push({ historyError: errorText(error), historyErrorIsTransient: isTransientReadError(error) });
             await sleep(retry, signal);
             retry = Math.min(retry * 2, 30_000);
           }
@@ -106,7 +109,7 @@ export function useSessionTail(universeId: string, sessionId: string): SessionTa
           push({ transcript: window.state, phase: "live", error: null, hasOlder: before !== null });
         } catch (error) {
           if (signal.aborted) return;
-          push({ error: errorText(error) });
+          push({ error: errorText(error), errorIsTransient: isTransientReadError(error) });
           await sleep(RETRY_SLEEP_MS, signal);
         }
       }
@@ -140,7 +143,7 @@ export function useSessionTail(universeId: string, sessionId: string): SessionTa
           // One dropped connection is recoverable without interrupting the
           // transcript. Failed probes still report an outage and are paced.
           if (!retryImmediately) {
-            push({ error: errorText(error) });
+            push({ error: errorText(error), errorIsTransient: isTransientReadError(error) });
             await sleep(RETRY_SLEEP_MS, signal);
           }
         }
@@ -215,13 +218,6 @@ class SessionReadHttpError extends Error {
   constructor(readonly status: number) {
     super(`Reading session history failed (${status})`);
   }
-}
-
-function isTransientReadError(error: unknown): boolean {
-  return error instanceof TypeError ||
-    (error instanceof DOMException && error.name === "TimeoutError") ||
-    (error instanceof SessionReadHttpError &&
-      (error.status >= 500 || error.status === 408 || error.status === 429));
 }
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }

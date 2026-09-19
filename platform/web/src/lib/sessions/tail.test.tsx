@@ -123,6 +123,7 @@ describe("recent transcript and live history", () => {
     await act(async () => requests[1]!.reject(new TypeError("Failed to fetch")));
     await act(async () => requests[2]!.reject(new TypeError("Failed to fetch")));
     expect(tail.error).toBe("Failed to fetch");
+    expect(tail.errorIsTransient).toBe(true);
     expect(requests).toHaveLength(3);
     await act(async () => vi.advanceTimersByTime(2999));
     expect(requests).toHaveLength(3);
@@ -160,6 +161,7 @@ describe("recent transcript and live history", () => {
     await reply(0, history([10], 10, 10));
     await reply(1, { error: "unauthorized" }, 401);
     expect(tail.error).toContain("401");
+    expect(tail.errorIsTransient).toBe(false);
     expect(requests).toHaveLength(2);
   });
 

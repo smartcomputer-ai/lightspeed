@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
@@ -133,7 +134,7 @@ function ProfilePane({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {profiles.isLoading && <p className="p-4 text-sm text-muted-foreground">Loading…</p>}
         {profiles.error && (
-          <p className="p-4 text-sm text-destructive">{profiles.error.message}</p>
+          <ReadError error={profiles.error} loading={!profiles.data} className="p-4" />
         )}
         {profiles.data && profiles.data.length === 0 && (
           <p className="p-4 text-sm text-muted-foreground">

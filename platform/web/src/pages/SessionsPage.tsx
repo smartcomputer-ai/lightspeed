@@ -103,6 +103,7 @@ import { TranscriptEntrance, TranscriptMotionProvider } from "@/components/sessi
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/tool-trace";
 import { sectionsByRun, withPendingRunInputs } from "@/lib/sessions/run-sections";
 import { CenteredNote, LoadingNote, UniverseNotFound } from "@/components/page";
+import { ReadError } from "@/components/read-error";
 import { useSessionTail } from "@/lib/sessions/tail";
 import {
   mediaByHandle,
@@ -596,7 +597,7 @@ function SessionList({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {pages.isLoading && <p className="p-4 text-sm text-muted-foreground">Loading…</p>}
         {pages.error && (
-          <p className="p-4 text-sm text-destructive">{pages.error.message}</p>
+          <ReadError error={pages.error} loading={!pages.data} className="p-4" />
         )}
         {pages.data && allSessions.length === 0 && (
           <p className="p-4 text-sm text-muted-foreground">
@@ -1999,7 +2000,7 @@ export function SessionDetail({
                 <LoadingNote />
               )}
               {tail.error && entries.length === 0 && (
-                <p className="text-sm text-destructive">{tail.error}</p>
+                <ReadError error={tail.error} transient={tail.errorIsTransient} retrying loading graceMs={10_000} />
               )}
               {tail.phase === "live" &&
                 entries.length === 0 &&
@@ -2047,9 +2048,7 @@ export function SessionDetail({
                 </MessageScrollerItem>
               )}
               {tail.error && entries.length > 0 && (
-                <p className="text-center text-xs text-destructive">
-                  Connection lost — retrying. ({tail.error})
-                </p>
+                <ReadError error={tail.error} transient={tail.errorIsTransient} retrying graceMs={10_000} className="text-center text-xs" />
               )}
             </MessageScrollerContent>
           </MessageScrollerViewport>

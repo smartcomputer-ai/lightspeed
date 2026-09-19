@@ -1,3 +1,4 @@
+import { ReadError } from "@/components/read-error";
 import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -144,11 +145,9 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
         onOpenChange={setConnectOpen}
       />
       {(accounts.isLoading || pairings.isLoading) && <LoadingNote />}
-      {accounts.error && <p className="mb-4 text-sm text-destructive">{accounts.error.message}</p>}
+      {accounts.error && <ReadError error={accounts.error} loading={!accounts.data} className="mb-4" />}
       {status.error && (
-        <p className="mb-4 text-sm text-destructive">
-          Connector health unavailable: {status.error.message}
-        </p>
+        <ReadError error={status.error} loading={!status.data} prefix="Connector health unavailable" className="mb-4" />
       )}
       {toggle.error && <p className="mb-4 text-sm text-destructive">{toggle.error.message}</p>}
 
@@ -238,7 +237,7 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
               </Button>
             </CardHeader>
             <CardContent>
-              {pairings.error && <p className="text-sm text-destructive">{pairings.error.message}</p>}
+              {pairings.error && <ReadError error={pairings.error} loading={!pairings.data} />}
               {pairings.data && pairingRows.length === 0 && (
                 <p className="text-sm text-muted-foreground">
                   No conversations have connected yet.
