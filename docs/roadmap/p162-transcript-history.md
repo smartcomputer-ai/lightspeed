@@ -85,6 +85,10 @@ Statistics remain beneath each run, with no context indicator in the composer.
 statistics popover from medium widths up and moves it into the opened run on
 narrow screens; the popover no longer repeats the duration. See
 `platform/README.md` for the current transcript model.)
+For finished runs without activity, disabling statistics also hides the
+standalone duration and removes an otherwise empty outcome row. Failure and
+cancellation messages remain visible. Activity strips retain their durations.
+Component coverage verifies toggling the preference and preserving status text.
 Context describes measured input to the last call, not a live tokenizer or a
 context-capacity gauge. No backend or API changes are needed.
 

@@ -57,9 +57,8 @@ export function RunStatsRow({ summary, className }: { summary: TranscriptRunSumm
   );
 }
 
-/// A finished run that did no tool work: its outcome on one quiet line —
-/// status when it is not success, duration, and the statistics button when
-/// statistics are wanted.
+/// A finished run without activity: failures and cancellations stay visible;
+/// duration and the statistics button follow the statistics preference.
 export function RunOutcomeLine({
   summary,
   showStatistics = true,
@@ -68,7 +67,7 @@ export function RunOutcomeLine({
   showStatistics?: boolean;
 }) {
   const { status, error, durationMs } = summary;
-  const duration = durationMs === undefined ? null : formatDuration(durationMs);
+  const duration = !showStatistics || durationMs === undefined ? null : formatDuration(durationMs);
   const stats = showStatistics && hasRunStats(summary);
   if (status === "completed" && !duration && !stats) return null;
   return (
@@ -81,10 +80,12 @@ export function RunOutcomeLine({
       ) : status === "cancelled" ? (
         <span>Run cancelled</span>
       ) : null}
-      <span className="ml-auto flex items-center gap-2">
-        {duration && <span className="tabular-nums">{duration}</span>}
-        {showStatistics && <RunStatsTrigger summary={summary} />}
-      </span>
+      {(duration || stats) && (
+        <span className="ml-auto flex items-center gap-2">
+          {duration && <span className="tabular-nums">{duration}</span>}
+          {stats && <RunStatsTrigger summary={summary} />}
+        </span>
+      )}
     </div>
   );
 }

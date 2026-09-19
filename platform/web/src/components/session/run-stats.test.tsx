@@ -38,9 +38,10 @@ it("puts the outcome on one line and keeps failures and cancellations visible", 
   expect(outcome({ ...summary, contextTokens: undefined, usage: undefined, durationMs: undefined })).toBe("");
 });
 
-it("keeps the duration and non-success status when statistics are switched off", () => {
-  expect(text(outcome(summary, false))).toBe("1m 24s");
-  expect(text(outcome({ ...summary, status: "failed", error: "Provider unavailable" }, false))).toBe("Run failed: Provider unavailable1m 24s");
+it("hides standalone durations but keeps non-success status when statistics are switched off", () => {
+  expect(outcome(summary, false)).toBe("");
+  expect(text(outcome({ ...summary, status: "failed", error: "Provider unavailable" }, false))).toBe("Run failed: Provider unavailable");
+  expect(text(outcome({ ...summary, status: "cancelled" }, false))).toBe("Run cancelled");
   expect(outcome({ ...summary, durationMs: undefined }, false)).toBe("");
 });
 

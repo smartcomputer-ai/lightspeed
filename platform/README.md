@@ -113,7 +113,8 @@ second under 10 s, then seconds, minutes and hours. Two preferences live in
 the session-title and active bot-conversation menus: "Collapse completed runs"
 (default on; applies when a session or older history loads, and a strip click
 overrides it per run until the preference changes) and "Show run statistics"
-(default on; hides the statistics button while failures stay visible). Both
+(default on; hides the statistics button and standalone duration lines for
+runs without activity, while failures and cancellations stay visible). Both
 are saved per user in local storage, shared across sessions, bots, universes,
 and tabs in this browser. A live run streams open with a status row at its
 foot; a folded run mounts none of its work.

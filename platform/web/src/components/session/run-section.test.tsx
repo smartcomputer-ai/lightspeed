@@ -164,6 +164,14 @@ it("shows a run that did no tool work as one quiet line with its statistics and 
   expect(container.textContent).toContain("2.0s");
   expect(container.textContent).toContain("Context 900");
   expect(container.querySelector(STRIP)).toBeNull();
+
+  await render(section, { stats: false });
+  expect(container.textContent).toBe("HiHello!");
+  expect(container.firstElementChild?.children).toHaveLength(2);
+
+  await render(section, { stats: true });
+  expect(container.textContent).toContain("2.0s");
+  expect(container.textContent).toContain("Context 900");
 });
 
 it("coalesces consecutive context updates into one row of chips inside the work", async () => {
