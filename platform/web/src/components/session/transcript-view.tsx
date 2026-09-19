@@ -22,10 +22,12 @@ export function TranscriptEntryView({
   entry,
   loadFullText,
   showRunStatistics = true,
+  pending = false,
 }: {
   entry: TranscriptEntry;
   loadFullText?: FullTextLoader;
   showRunStatistics?: boolean;
+  pending?: boolean;
 }) {
   switch (entry.kind) {
     case "message":
@@ -35,6 +37,7 @@ export function TranscriptEntryView({
           origin={entry.origin}
           steering={entry.steering === true}
           media={entry.media}
+          pending={pending}
         />
       ) : (
         <Message>
@@ -189,7 +192,7 @@ export function UserBand({
         <Bubble
           variant="muted"
           className={cn(
-            "w-full max-w-full",
+            "w-full max-w-full transition-opacity duration-200 ease-out motion-reduce:transition-none",
             pending && "opacity-60",
             event && "*:data-[slot=bubble-content]:border-l-2 *:data-[slot=bubble-content]:border-l-teal-600/60 *:data-[slot=bubble-content]:rounded-l-sm dark:*:data-[slot=bubble-content]:border-l-teal-300/50",
           )}

@@ -100,7 +100,7 @@ import {
 } from "@/components/session/transcript-view";
 import { RunSectionView } from "@/components/session/run-section";
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/tool-trace";
-import { sectionsByRun } from "@/lib/sessions/run-sections";
+import { sectionsByRun, withPendingRunInputs } from "@/lib/sessions/run-sections";
 import { CenteredNote, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useSessionTail } from "@/lib/sessions/tail";
 import {
@@ -1273,6 +1273,11 @@ export function SessionDetail({
       ),
   });
   const [pending, setPending] = useState<PendingMessage[]>([]);
+  // Retain only this view's local submission identities after pending cleanup.
+  // Historical acknowledgements must never rekey a backend-loaded run. Scope
+  // these records because run ids repeat across sessions.
+  const [localSubmissions, setLocalSubmissions] = useState<Map<string, Map<string, string | null>>>(() => new Map());
+  const submissionScope = JSON.stringify([universeId, sessionId]);
   const [pendingSteers, setPendingSteers] = useState<PendingSteer[]>([]);
   const [notices, setNotices] = useState<{ id: string; text: string }[]>([]);
   const [stoppingRunId, setStoppingRunId] = useState<string | null>(null);
@@ -1453,6 +1458,12 @@ export function SessionDetail({
     (message) =>
       !isQueuedPending(message) && !(message.runId && confirmedInputRuns.has(message.runId)),
   );
+  const submissionKeys = new Map<string, string>();
+  for (const [submissionId, acknowledgedRunId] of localSubmissions.get(submissionScope) ?? []) {
+    const runId = acknowledgedRunId ?? runBySubmission.get(submissionId);
+    if (runId) submissionKeys.set(runId, submissionId);
+  }
+  const displaySections = withPendingRunInputs(sections, pendingInTranscript, submissionKeys);
   const confirmedSteers = new Set(
     entries
       .filter((entry) => entry.kind === "message" && entry.role === "user" && entry.steering)
@@ -1564,6 +1575,9 @@ export function SessionDetail({
     // POST returns the original run instead of starting a second one.
     const submissionId = crypto.randomUUID();
     const expectQueued = runActive;
+    setLocalSubmissions((previous) => new Map(previous).set(
+      submissionScope, new Map(previous.get(submissionScope)).set(submissionId, null),
+    ));
     setPending((prev) => [
       ...prev,
       { id: submissionId, text, runId: null, status: "sending", expectQueued },
@@ -1575,6 +1589,9 @@ export function SessionDetail({
         { text, submissionId },
       );
       setFollowRequest((request) => request + 1);
+      setLocalSubmissions((previous) => new Map(previous).set(
+        submissionScope, new Map(previous.get(submissionScope)).set(submissionId, accepted.run.id),
+      ));
       setPending((prev) =>
         prev.map((message) =>
           message.id === submissionId
@@ -1987,7 +2004,7 @@ export function SessionDetail({
                 pendingInTranscript.length === 0 && (
                   <CenteredNote>No conversation yet — say something below.</CenteredNote>
                 )}
-              {sections.map((section) => (
+              {displaySections.map((section) => (
                 <MessageScrollerItem key={section.key} messageId={section.key}>
                   {section.kind === "run" ? (
                     <RunSectionView
@@ -2002,11 +2019,6 @@ export function SessionDetail({
                   ) : (
                     <TranscriptEntryView entry={section.entry} loadFullText={loadFullText} />
                   )}
-                </MessageScrollerItem>
-              ))}
-              {pendingInTranscript.map((message) => (
-                <MessageScrollerItem key={message.id} messageId={message.id}>
-                  <UserBand text={message.text} pending />
                 </MessageScrollerItem>
               ))}
               {visiblePendingSteers.map((steer) => (

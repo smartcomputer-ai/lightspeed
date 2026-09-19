@@ -67,6 +67,12 @@ label or color emphasis. All user-role messages collapse to
 about 206px when their rendered text exceeds 160px, with a bottom fade and
 keyboard-accessible Show more / Show less controls. Resizing rechecks wrapping,
 and expansion leaves bottom-following to keep the message in view.
+Locally submitted run inputs keep the same message element and expansion state
+through confirmation, whether acknowledgement arrives through the POST or event
+stream first. Their pending opacity eases to full over 200 ms; reduced-motion
+preferences disable the transition.
+Backend-loaded runs use run IDs as rendering keys. Loading an older input or
+submission acknowledgement does not remount the run or reset its expanded state.
 
 Session transcripts open with one recent event window from
 `session/events/read` with `direction: "backward"`, then follow `session/events/read` strictly after

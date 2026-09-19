@@ -13,6 +13,8 @@ export interface RunSection {
   runId?: string;
   /// The user message that started the run, when it is in the loaded window.
   input?: TranscriptMessage;
+  /// Local input awaiting its durable transcript entry.
+  pendingInput?: boolean;
   /// Everything the run did: thinking, tool calls, interim notes, steering
   /// input, and system entries appended mid-run, in order.
   work: TranscriptEntry[];
@@ -30,6 +32,42 @@ export type TranscriptSection =
   /// Consecutive instruction and catalog entries between runs, one chips row.
   | { kind: "system"; key: string; entries: TranscriptSystemEntry[] }
   | { kind: "entry"; key: string; entry: TranscriptEntry };
+
+/// Render local sends in the same section and component position as their
+/// eventual run input. Only local sends use submission keys; backend-loaded
+/// runs use their run id even when older history later reveals their input.
+export function withPendingRunInputs(
+  sections: TranscriptSection[],
+  pending: { id: string; text: string; runId: string | null }[],
+  submissionKeys: ReadonlyMap<string, string>,
+): TranscriptSection[] {
+  const attached = new Set<string>();
+  const result = sections.map((section) => {
+    if (section.kind !== "run") return section;
+    const message = pending.find((message) => message.runId !== null && message.runId === section.runId);
+    if (message) attached.add(message.id);
+    return {
+      ...section,
+      key: section.runId ? submissionKeys.get(section.runId) ?? `run-${section.runId}` : section.key,
+      ...(!section.input && message ? {
+        input: pendingInput(message),
+        pendingInput: true,
+      } : {}),
+    };
+  });
+  for (const message of pending) {
+    if (attached.has(message.id)) continue;
+    result.push({
+      kind: "run", key: message.id, runId: message.runId ?? undefined,
+      input: pendingInput(message), pendingInput: true, work: [], live: false,
+    });
+  }
+  return result;
+}
+
+function pendingInput(message: { id: string; text: string }): TranscriptMessage {
+  return { kind: "message", key: message.id, role: "user", text: message.text };
+}
 
 /// Group entries into run sections. Session-level markers outside any run
 /// stay top-level. A run whose end is not loaded (window cut, session closed

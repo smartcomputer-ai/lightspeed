@@ -4,6 +4,15 @@ Status: implemented and verified.
 
 ## Behavior
 
+- Local run inputs retain their submission identity and component position
+  through acknowledgement and durable input arrival. Confirmation transitions
+  opacity over 200 ms with reduced-motion support. DOM regression coverage
+  checks both acknowledgement orders, delayed input, pending-state cleanup,
+  and preservation of expanded long messages through run completion.
+  Backend-loaded runs use stable run-ID keys; only locally submitted inputs
+  use submission-ID keys. History prepend coverage verifies that discovering
+  an older input or acknowledgement preserves mounted activity and expansion.
+
 - Completed runs identify their reply using the recorded output reference and
   run identity, including when reasoning follows the reply in stored history.
   Completions reasoning displays before adjacent text from the same turn;
