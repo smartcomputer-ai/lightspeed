@@ -204,6 +204,9 @@ Built-in tools are registered by logical identity, such as `env.run_process`.
 The LLM activity selects their names, schemas, and argument adapters for the
 turn's model. Those definitions live in runtime code; externally authored tool
 definitions and conversation payloads continue to use CAS.
+Chat Completions defaults to read/write/exact-edit filesystem tools and
+`exec_command`/`write_stdin` shell execution. Patch tools require an explicit
+built-in presentation override; see [tools and MCP](docs/documentation/using-lightspeed/tools-and-mcp.md#built-in-tool-formats).
 
 CAS collection runs hourly with a seven-day default grace. Transactional roots
 retain session and bot content, while scans of up to 100,000 rows per universe,

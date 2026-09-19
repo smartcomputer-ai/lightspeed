@@ -13,7 +13,7 @@
       "tool_choice": "auto",
       "tools": [
         {
-          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
+          "description": "Apply a patch to create, edit, delete, or move files. Pass the patch text in the JSON `patch` argument. Use `apply_patch` syntax, starting with `*** Begin Patch` and ending with `*** End Patch`. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "name": "vfs_apply_patch",
           "parameters": {
             "additionalProperties": false,
@@ -276,7 +276,7 @@
       "tool_choice": "auto",
       "tools": [
         {
-          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
+          "description": "Apply a patch to create, edit, delete, or move files. Pass the patch text in the JSON `patch` argument. Use `apply_patch` syntax, starting with `*** Begin Patch` and ending with `*** End Patch`. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "apply_patch",
           "parameters": {
             "additionalProperties": false,
@@ -713,7 +713,7 @@
       "tool_choice": "auto",
       "tools": [
         {
-          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
+          "description": "Apply a patch to create, edit, delete, or move files. Pass the patch text in the JSON `patch` argument. Use `apply_patch` syntax, starting with `*** Begin Patch` and ending with `*** End Patch`. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "apply_patch",
           "parameters": {
             "additionalProperties": false,
@@ -1093,7 +1093,7 @@
       "tool_choice": "auto",
       "tools": [
         {
-          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
+          "description": "Create, edit, delete, or move files using a text patch. Pass the patch text in the JSON `patch` argument.\nStart with `*** Begin Patch` and finish with `*** End Patch`. Between them, use one or more file operations:\n- `*** Add File: path`: prefix every new content line with `+`.\n- `*** Delete File: path`: no content lines follow.\n- `*** Update File: path`: start each change with `@@` (no numeric line ranges). Prefix unchanged context lines with a space, removed lines with `-`, and added lines with `+`. Include enough context to locate the change uniquely.\n- To move an updated file, put `*** Move to: new_path` immediately after its Update File line.\nRead existing content before editing. Do not include Markdown fences or standard diff headers in the patch.\nExample patch text:\n*** Begin Patch\n*** Update File: src/example.py\n@@\n def greeting():\n-    return \"Hello\"\n+    return \"Hello, world!\"\n*** End Patch\n\n Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "name": "apply_patch",
           "parameters": {
             "additionalProperties": false,
@@ -3146,7 +3146,7 @@
       },
       "tools": [
         {
-          "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
+          "description": "Create, edit, delete, or move files using a text patch. Pass the patch text in the JSON `patch` argument.\nStart with `*** Begin Patch` and finish with `*** End Patch`. Between them, use one or more file operations:\n- `*** Add File: path`: prefix every new content line with `+`.\n- `*** Delete File: path`: no content lines follow.\n- `*** Update File: path`: start each change with `@@` (no numeric line ranges). Prefix unchanged context lines with a space, removed lines with `-`, and added lines with `+`. Include enough context to locate the change uniquely.\n- To move an updated file, put `*** Move to: new_path` immediately after its Update File line.\nRead existing content before editing. Do not include Markdown fences or standard diff headers in the patch.\nExample patch text:\n*** Begin Patch\n*** Update File: src/example.py\n@@\n def greeting():\n-    return \"Hello\"\n+    return \"Hello, world!\"\n*** End Patch\n\n Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -3969,27 +3969,6 @@
       "tools": [
         {
           "function": {
-            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
-            "name": "vfs_apply_patch",
-            "parameters": {
-              "additionalProperties": false,
-              "properties": {
-                "patch": {
-                  "description": "Full apply_patch text, including begin and end markers.",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "patch"
-              ],
-              "type": "object"
-            },
-            "strict": false
-          },
-          "type": "function"
-        },
-        {
-          "function": {
             "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
             "name": "vfs_edit_file",
             "parameters": {
@@ -4244,98 +4223,6 @@
       "tools": [
         {
           "function": {
-            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
-            "name": "apply_patch",
-            "parameters": {
-              "additionalProperties": false,
-              "properties": {
-                "patch": {
-                  "description": "Full apply_patch text, including begin and end markers.",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "patch"
-              ],
-              "type": "object"
-            },
-            "strict": false
-          },
-          "type": "function"
-        },
-        {
-          "function": {
-            "description": "Continue with a running handle: optionally send input or a signal, then wait up to `wait_ms` and return the output produced since the last call. With nothing but the handle it only waits. Once the process has exited it returns the remaining output and the exit code. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
-            "name": "continue_process",
-            "parameters": {
-              "additionalProperties": false,
-              "properties": {
-                "close_stdin": {
-                  "description": "Close the process's input after writing. Defaults to false.",
-                  "type": "boolean"
-                },
-                "handle": {
-                  "description": "Handle returned by `run_process`.",
-                  "type": "string"
-                },
-                "input": {
-                  "description": "Text to send to the process's input. Requires the command to have been started with `tty: true`.",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "max_output_bytes": {
-                  "anyOf": [
-                    {
-                      "description": "Output byte budget for this call.",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "signal": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "interrupt",
-                        "kill"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Send a signal to the process group: `interrupt` (SIGINT) or `kill`."
-                },
-                "wait_ms": {
-                  "anyOf": [
-                    {
-                      "description": "Collect output for this many milliseconds, returning early if the process exits. Defaults to waiting until it exits, up to 30 minutes.",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "handle"
-              ],
-              "type": "object"
-            },
-            "strict": false
-          },
-          "type": "function"
-        },
-        {
-          "function": {
             "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "edit_file",
             "parameters": {
@@ -4431,6 +4318,72 @@
                   ]
                 }
               },
+              "type": "object"
+            },
+            "strict": false
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "Runs a command in a shell (a PTY when `tty` is true), returning output or a session ID for ongoing interaction. A command may leave services running for later calls; they keep running until stopped or the environment closes. Operates only in the active environment; attached VFS files are not implicitly available.",
+            "name": "exec_command",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "cmd": {
+                  "description": "Shell command to execute.",
+                  "type": "string"
+                },
+                "login": {
+                  "description": "Run in a login shell. Defaults to true.",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "max_output_tokens": {
+                  "anyOf": [
+                    {
+                      "description": "Output token budget. Defaults to 10000 tokens.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "tty": {
+                  "description": "True allocates a PTY for the command; false or omitted uses plain pipes.",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "workdir": {
+                  "description": "Working directory for the command. Defaults to the environment's working directory.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "yield_time_ms": {
+                  "anyOf": [
+                    {
+                      "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-1800000 ms.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "cmd"
+              ],
               "type": "object"
             },
             "strict": false
@@ -4609,91 +4562,6 @@
               },
               "required": [
                 "path"
-              ],
-              "type": "object"
-            },
-            "strict": false
-          },
-          "type": "function"
-        },
-        {
-          "function": {
-            "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
-            "name": "run_process",
-            "parameters": {
-              "additionalProperties": false,
-              "properties": {
-                "argv": {
-                  "description": "Command and arguments.",
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                "cwd": {
-                  "description": "Working directory. Defaults to the environment's.",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "env": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "description": "Environment variables to add. Defaults to empty.",
-                  "type": "object"
-                },
-                "max_output_bytes": {
-                  "anyOf": [
-                    {
-                      "description": "Output byte budget for this call.",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "stdin": {
-                  "description": "Standard input, written and closed at start.",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "timeout_ms": {
-                  "anyOf": [
-                    {
-                      "description": "Kill the command after this many milliseconds. Absent means it is never killed by this call. Requests above the deployment ceiling (30 minutes) are clamped.",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "tty": {
-                  "description": "Allocate a pseudo-terminal so `continue_process` can send input. Defaults to false.",
-                  "type": "boolean"
-                },
-                "yield_ms": {
-                  "anyOf": [
-                    {
-                      "description": "Return after this many milliseconds with a handle if the command is still running. Defaults to waiting until it exits, up to 30 minutes.",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "argv"
               ],
               "type": "object"
             },
@@ -4726,6 +4594,58 @@
             "strict": false
           },
           "type": "function"
+        },
+        {
+          "function": {
+            "description": "Writes characters to an existing unified exec session and returns recent output. Empty `chars` polls without writing; Ctrl-C (\\u0003) interrupts the session. Operates only in the active environment; attached VFS files are not implicitly available.",
+            "name": "write_stdin",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "chars": {
+                  "description": "Bytes to write to stdin. Defaults to empty, which polls without writing.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "max_output_tokens": {
+                  "anyOf": [
+                    {
+                      "description": "Output token budget. Defaults to 10000 tokens.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "session_id": {
+                  "description": "Identifier of the running session, from `exec_command`.",
+                  "type": "string"
+                },
+                "yield_time_ms": {
+                  "anyOf": [
+                    {
+                      "description": "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls default to 60000 ms and cap at 1800000 ms.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "session_id"
+              ],
+              "type": "object"
+            },
+            "strict": false
+          },
+          "type": "function"
         }
       ]
     }
@@ -4741,27 +4661,6 @@
       "stream": false,
       "tool_choice": "auto",
       "tools": [
-        {
-          "function": {
-            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
-            "name": "apply_patch",
-            "parameters": {
-              "additionalProperties": false,
-              "properties": {
-                "patch": {
-                  "description": "Full apply_patch text, including begin and end markers.",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "patch"
-              ],
-              "type": "object"
-            },
-            "strict": false
-          },
-          "type": "function"
-        },
         {
           "function": {
             "description": "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
@@ -4859,6 +4758,65 @@
                   ]
                 }
               },
+              "type": "object"
+            },
+            "strict": false
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "Runs a command to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed. Operates only in the active environment; attached VFS files are not implicitly available.",
+            "name": "exec_command",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "cmd": {
+                  "description": "Shell command to execute.",
+                  "type": "string"
+                },
+                "login": {
+                  "description": "Run in a login shell. Defaults to true.",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "max_output_tokens": {
+                  "anyOf": [
+                    {
+                      "description": "Output token budget. Defaults to 10000 tokens.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "timeout_ms": {
+                  "anyOf": [
+                    {
+                      "description": "Kill the command after this many milliseconds. Defaults to 60000 ms.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "workdir": {
+                  "description": "Working directory for the command. Defaults to the environment's working directory.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "cmd"
+              ],
               "type": "object"
             },
             "strict": false
@@ -5037,79 +4995,6 @@
               },
               "required": [
                 "path"
-              ],
-              "type": "object"
-            },
-            "strict": false
-          },
-          "type": "function"
-        },
-        {
-          "function": {
-            "description": "Run a command and wait until it exits, returning its output. With `timeout_ms` the command is killed at that deadline. A command may leave services running; they keep running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
-            "name": "run_process",
-            "parameters": {
-              "additionalProperties": false,
-              "properties": {
-                "argv": {
-                  "description": "Command and arguments.",
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                "cwd": {
-                  "description": "Working directory. Defaults to the environment's.",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "env": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "description": "Environment variables to add. Defaults to empty.",
-                  "type": "object"
-                },
-                "max_output_bytes": {
-                  "anyOf": [
-                    {
-                      "description": "Output byte budget for this call.",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "stdin": {
-                  "description": "Standard input, written and closed at start.",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "timeout_ms": {
-                  "anyOf": [
-                    {
-                      "description": "Kill the command after this many milliseconds. Requests above the deployment ceiling (30 minutes) are clamped.",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "tty": {
-                  "description": "Allocate a pseudo-terminal. Defaults to false.",
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "argv"
               ],
               "type": "object"
             },
@@ -5159,7 +5044,7 @@
       "tools": [
         {
           "function": {
-            "description": "Apply a Codex-style apply_patch patch to the filesystem. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
+            "description": "Create, edit, delete, or move files using a text patch. Pass the patch text in the JSON `patch` argument.\nStart with `*** Begin Patch` and finish with `*** End Patch`. Between them, use one or more file operations:\n- `*** Add File: path`: prefix every new content line with `+`.\n- `*** Delete File: path`: no content lines follow.\n- `*** Update File: path`: start each change with `@@` (no numeric line ranges). Prefix unchanged context lines with a space, removed lines with `-`, and added lines with `+`. Include enough context to locate the change uniquely.\n- To move an updated file, put `*** Move to: new_path` immediately after its Update File line.\nRead existing content before editing. Do not include Markdown fences or standard diff headers in the patch.\nExample patch text:\n*** Begin Patch\n*** Update File: src/example.py\n@@\n def greeting():\n-    return \"Hello\"\n+    return \"Hello, world!\"\n*** End Patch\n\n Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
             "name": "apply_patch",
             "parameters": {
               "additionalProperties": false,

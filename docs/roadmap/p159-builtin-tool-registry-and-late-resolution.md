@@ -3,15 +3,21 @@
 **Status**
 
 - Implemented and verified offline and live 2026-09-05.
+- Completions presentation follow-up 2026-09-19: reuse shell command execution,
+  omit patch tools from the generic default, retain explicit presentation
+  overrides, and preserve already-admitted calls under the original format.
+  Canonical patch descriptions document the grammar and an executable example;
+  Codex-like patch descriptions stay concise, naming the `apply_patch` syntax
+  and its begin/end markers. Both retain filesystem-scope and domain guidance
+  and share their schema and implementation.
+  Offline validation: tools and LLM runtime unit suites plus captured provider
+  request contracts. No live provider tests were run for this follow-up.
 - Simplification is the goal: stable internal identity, one resolver, matching
   execution, and preserved provider transcript. No versioned tool registry.
-- Greenfield refactor. Engine records, activity inputs, API projections, and
-  internal interfaces may change together. No compatibility aliases, dual
-  registries, or legacy schema-materialization path are required.
-- Preserve the current model-facing tool behavior, which has been exercised
-  through benchmarks. Internal representation is free to change substantially;
-  names, descriptions, schemas, defaults, and visible results are the parity
-  boundary.
+- The original registry refactor preserved model-facing behavior. The later
+  Completions default change is tracked explicitly in request fixtures and
+  retains narrowly scoped execution support for already-admitted calls.
+  It does not add aliases to the advertised tool catalog or a second registry.
 - Builds on the provider presentations in
   [P151](p151-exec-leftover-processes.md), the filesystem boundaries in
   [P113](archive/p113-explicit-vfs-and-environment-tool-domains.md), and the
@@ -172,10 +178,13 @@ blobs just to reuse the old function-tool materializer.
 
 ### Presentations and expansion
 
-Preserve the existing defaults: OpenAI Responses uses the Codex-like surface,
-Anthropic Messages uses the Claude-Code-like surface, and OpenAI Completions
-uses Canonical. Use existing explicit presentation overrides where available.
-This refactor introduces no new model-name heuristics or prompt tuning.
+OpenAI Responses uses the Codex-like surface and Anthropic Messages uses the
+Claude-Code-like surface. OpenAI Completions reuses the Codex-like shell tools
+and neutral filesystem schemas, but its provider-default resolution omits
+`env.apply_patch` and `vfs.apply_patch`. Exact-text editing remains available.
+Explicit Codex-like and Canonical overrides retain patch tools when admitted;
+Canonical also retains `run_process(argv, ...)` and `continue_process`.
+There are no model-name heuristics or new public configuration fields.
 
 | Internal identity | Canonical | Codex-like | Claude-Code-like |
 | --- | --- | --- | --- |
@@ -243,6 +252,15 @@ catalog. The model cannot choose its grant options or execution destination.
 Both per-call and batch-unit execution use the admitted registration and original
 turn model, including one-shot policy and the original exposed variant. Retries
 and parked batches retain those facts rather than consulting current defaults.
+
+For already-admitted Completions calls under provider-default settings, execution
+also recognizes the former canonical `run_process`, `continue_process`,
+`apply_patch`, and `vfs_apply_patch` bindings. This requires the matching admitted
+logical identity and original exposed name and retains one-shot restrictions.
+It is execution-only: request catalogs and response normalization never accept
+these historical spellings as aliases for newly advertised tools. Provider-native
+context replays the original call JSON even when the next request has a different
+tool catalog.
 
 Delete the default all-provider `runtime_catalog` reconstruction path and the
 old built-in schema-document builders. A runtime lookup must use the shared

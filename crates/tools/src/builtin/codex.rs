@@ -46,6 +46,13 @@ const CTRL_C: &str = "\u{3}";
 
 pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> String {
     match tool.operation() {
+        BuiltinToolOperation::ApplyPatch => {
+            let mut description = "Apply a patch to create, edit, delete, or move files. Pass the patch text in the JSON `patch` argument. Use `apply_patch` syntax, starting with `*** Begin Patch` and ending with `*** End Patch`.".to_owned();
+            if scoped_paths {
+                description.push_str(" Paths are resolved within the configured filesystem scope.");
+            }
+            description
+        }
         BuiltinToolOperation::RunProcess if tool.one_shot() => {
             "Runs a command to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed.".to_owned()
         }

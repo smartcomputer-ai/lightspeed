@@ -34,6 +34,38 @@ changing the profile,
 create a new session or [apply the setup](profiles-and-instructions.md#apply-changes-deliberately)
 to an existing idle one.
 
+## Built-in tool formats
+
+Lightspeed selects model-facing names, arguments, and results from the effective
+turn model's API kind:
+
+| API kind | Filesystem editing | Process execution |
+| --- | --- | --- |
+| Chat Completions | `write_file`, exact-replacement `edit_file` | `exec_command`, `write_stdin` |
+| OpenAI Responses | `write_file`, `edit_file`, `apply_patch` | `exec_command`, `write_stdin` |
+| Anthropic Messages | `Write`, `Edit` | `Bash`, `BashOutput`, `KillShell` |
+
+Read, directory-listing, glob, and grep tools accompany these editing tools.
+Attached VFS workspaces have their own prefixed filesystem tools; they are
+separate from environment files. Each operation still requires its capability
+grant.
+
+`exec_command` accepts a shell command string. It normally returns within ten
+seconds with output and either an exit code or a handle for `write_stdin`.
+Yielding a handle does not kill the process. Polling or sending input continues
+that process; separate executions start fresh shells. Interactive input requires
+an opt-in PTY. Sessions without process continuation receive a one-shot command
+tool instead.
+
+Generic Completions does not advertise `apply_patch` or `vfs_apply_patch`.
+Integrators can explicitly select `BuiltinToolPresentation::CodexLike` to
+include patch tools, or `Canonical` to retain argument-array process execution
+and patch tools. These are Rust toolset options, not session UI settings;
+they never add permissions. Defaults do not guess a tool preference from a
+provider or model name. Historical calls retain their original names, arguments,
+and result formats, including already-admitted Completions calls issued before
+the default changed.
+
 ## Add web access
 
 Enable **Web**, then choose **Fetch pages**, **Search the web**, or both as

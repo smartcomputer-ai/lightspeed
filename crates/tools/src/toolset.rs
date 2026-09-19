@@ -177,16 +177,16 @@ pub enum BuiltinToolPresentation {
 }
 
 impl BuiltinToolPresentation {
-    /// The provider default gives OpenAI and Anthropic models the shapes
-    /// their harnesses trained them on. OpenAI Completions, the
-    /// compatibility API most other providers speak, gets the neutral
-    /// canonical surface.
+    /// Responses and Completions share neutral filesystem tools and shell
+    /// command execution. The resolver omits patch tools from the generic
+    /// Completions default; explicit presentations retain their full surface.
     pub(crate) fn surface(self, target: &ToolTarget) -> BuiltinToolSurface {
         match self {
             Self::ProviderDefault => match target.api_kind {
                 ProviderApiKind::AnthropicMessages => BuiltinToolSurface::ClaudeCodeLike,
-                ProviderApiKind::OpenAiResponses => BuiltinToolSurface::CodexLike,
-                ProviderApiKind::OpenAiCompletions => BuiltinToolSurface::Canonical,
+                ProviderApiKind::OpenAiResponses | ProviderApiKind::OpenAiCompletions => {
+                    BuiltinToolSurface::CodexLike
+                }
             },
             Self::Canonical => BuiltinToolSurface::Canonical,
             Self::CodexLike => BuiltinToolSurface::CodexLike,
@@ -588,8 +588,8 @@ mod tests {
     }
 
     #[test]
-    fn provider_defaults_pick_codex_claude_and_canonical_process_surfaces() {
-        let config = process_config();
+    fn provider_defaults_use_shell_commands_and_keep_explicit_canonical_execution() {
+        let mut config = process_config();
 
         let responses = target(ProviderApiKind::OpenAiResponses);
         let toolset = present_toolset(&responses, &config).expect("toolset");
@@ -658,6 +658,24 @@ mod tests {
 
         let completions = target(ProviderApiKind::OpenAiCompletions);
         let toolset = present_toolset(&completions, &config).expect("toolset");
+        assert_eq!(visible_names(&toolset), vec!["exec_command", "write_stdin"]);
+        assert_eq!(
+            input_schema(&toolset, "exec_command"),
+            input_schema(
+                &present_toolset(&responses, &config).unwrap(),
+                "exec_command"
+            )
+        );
+        assert_eq!(
+            input_schema(&toolset, "write_stdin"),
+            input_schema(
+                &present_toolset(&responses, &config).unwrap(),
+                "write_stdin"
+            )
+        );
+
+        config.builtin.presentation = BuiltinToolPresentation::Canonical;
+        let toolset = present_toolset(&completions, &config).expect("explicit canonical tools");
         assert_eq!(
             visible_names(&toolset),
             vec!["continue_process", "run_process"]
@@ -687,6 +705,48 @@ mod tests {
                 "wait_ms"
             ]
         );
+    }
+
+    #[test]
+    fn completions_patch_tools_require_an_explicit_presentation() {
+        let target = target(ProviderApiKind::OpenAiCompletions);
+        let mut config = ToolsetConfig::workspace();
+        config.builtin.environment = EnvironmentToolsetConfig::basic();
+        let names = visible_names(&present_toolset(&target, &config).unwrap());
+        for name in [
+            "read_file",
+            "write_file",
+            "edit_file",
+            "vfs_read_file",
+            "vfs_write_file",
+            "vfs_edit_file",
+        ] {
+            assert!(names.contains(&name.to_owned()), "missing {name}");
+        }
+        for name in [
+            "apply_patch",
+            "vfs_apply_patch",
+            "run_process",
+            "continue_process",
+        ] {
+            assert!(!names.contains(&name.to_owned()), "unexpected {name}");
+        }
+
+        for presentation in [
+            BuiltinToolPresentation::CodexLike,
+            BuiltinToolPresentation::Canonical,
+        ] {
+            config.builtin.presentation = presentation;
+            let names = visible_names(&present_toolset(&target, &config).unwrap());
+            assert!(names.contains(&"apply_patch".to_owned()));
+            assert!(names.contains(&"vfs_apply_patch".to_owned()));
+        }
+
+        config.builtin.vfs.apply_patch = false;
+        config.builtin.environment.filesystem.apply_patch = false;
+        let names = visible_names(&present_toolset(&target, &config).unwrap());
+        assert!(!names.contains(&"apply_patch".to_owned()));
+        assert!(!names.contains(&"vfs_apply_patch".to_owned()));
     }
 
     #[test]
@@ -721,10 +781,10 @@ mod tests {
 
         let completions = target(ProviderApiKind::OpenAiCompletions);
         let toolset = present_toolset(&completions, &config).expect("toolset");
-        assert_eq!(visible_names(&toolset), vec!["run_process"]);
+        assert_eq!(visible_names(&toolset), vec!["exec_command"]);
         assert!(
-            !property_names(&input_schema(&toolset, "run_process"))
-                .contains(&"yield_ms".to_owned())
+            !property_names(&input_schema(&toolset, "exec_command"))
+                .contains(&"yield_time_ms".to_owned())
         );
     }
 

@@ -2267,7 +2267,7 @@ mod tests {
                     "tool_calls": [{
                         "id":"call_reasoning",
                         "type":"function",
-                        "function":{"name":"lookup","arguments":"{\"id\":1}"}
+                        "function":{"name":"run_process","arguments":"{\"argv\":[\"echo\",\"hello\"]}"}
                     }]
                 }
             }]
@@ -2314,8 +2314,16 @@ mod tests {
                 supersedes: None,
             })
             .collect();
+        let mut replay_request = request(entries.clone());
+        let mut toolset = tools::toolset::ToolsetConfig::empty();
+        toolset.builtin.environment = tools::toolset::EnvironmentToolsetConfig::basic();
+        replay_request.tools = tools::toolset::register_toolset(&toolset)
+            .unwrap()
+            .tools
+            .into_values()
+            .collect();
         let replay = serde_json::to_value(
-            materialize_create_request(&blobs, &request(entries.clone()))
+            materialize_create_request(&blobs, &replay_request)
                 .await
                 .expect("replay"),
         )
@@ -2330,6 +2338,19 @@ mod tests {
             json!([{"type":"reasoning.text","text":"exact","signature":"sig_1"}])
         );
         assert_eq!(replayed["tool_calls"][0]["id"], "call_reasoning");
+        assert_eq!(
+            replayed["tool_calls"],
+            response.raw_json["choices"][0]["message"]["tool_calls"]
+        );
+        let tool_names: Vec<_> = replay["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap())
+            .collect();
+        assert!(tool_names.contains(&"exec_command"));
+        assert!(!tool_names.contains(&"run_process"));
+        assert!(!tool_names.contains(&"apply_patch"));
 
         let deepseek_replay = serde_json::to_value(
             materialize_messages(&blobs, &entries, CompletionDialect::DeepSeek)

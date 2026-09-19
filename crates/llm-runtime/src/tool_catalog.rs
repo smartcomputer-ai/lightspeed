@@ -351,6 +351,49 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn completions_admit_only_currently_advertised_process_and_editing_names() {
+        let blobs = InMemoryBlobStore::new();
+        let target = ToolTarget::api_kind(ProviderApiKind::OpenAiCompletions);
+        let registrations = [
+            builtin("env.run_process"),
+            builtin("env.continue_process"),
+            builtin("env.edit_file"),
+            builtin("env.apply_patch"),
+            builtin("vfs.apply_patch"),
+        ];
+        let catalog = ToolCatalog::resolve(&blobs, &target, &registrations)
+            .await
+            .unwrap();
+        for (name, id) in [
+            ("exec_command", "env.run_process"),
+            ("write_stdin", "env.continue_process"),
+            ("edit_file", "env.edit_file"),
+        ] {
+            assert_eq!(
+                catalog.names.call_ids.get(&ToolName::new(name)),
+                Some(&ToolName::new(id))
+            );
+        }
+        for name in [
+            "run_process",
+            "continue_process",
+            "apply_patch",
+            "vfs_apply_patch",
+            "Bash",
+        ] {
+            assert!(!catalog.names.call_ids.contains_key(&ToolName::new(name)));
+        }
+        for id in ["env.apply_patch", "vfs.apply_patch"] {
+            assert!(matches!(
+                catalog.tool_choice(Some(&ToolChoice::Specific {
+                    tool_name: ToolName::new(id)
+                })),
+                Err(LlmAdapterError::InvalidProviderRequest { .. })
+            ));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn collisions_and_provider_unsafe_authored_names_fail_before_transport() {
         let blobs = InMemoryBlobStore::new();
         let schema = blobs

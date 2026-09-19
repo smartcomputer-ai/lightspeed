@@ -151,17 +151,12 @@ impl InlineToolRuntime {
             .ok_or_else(|| ToolError::InvalidRequest {
                 message: "built-in call is missing its admitted identity".to_owned(),
             })?;
-        crate::definitions::resolve(
+        crate::definitions::resolve_call_binding(
             id,
             &builtin.spec,
             &crate::runtime::ToolTarget::from(&builtin.model),
-        )?
-        .into_iter()
-        .find(|tool| tool.name == call.tool_name)
-        .and_then(|tool| tool.binding)
-        .ok_or_else(|| ToolError::UnsupportedCapability {
-            message: format!("unknown tool: {}", call.tool_name),
-        })
+            &call.tool_name,
+        )
     }
 
     fn resolve_call_context(&self, binding: &ToolBinding) -> ToolResult<BuiltinToolContext<'_>> {
@@ -1094,56 +1089,191 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn codex_like_exec_command_is_the_openai_responses_default() {
+    async fn shell_execution_and_polling_are_the_responses_and_completions_defaults() {
+        for api_kind in [
+            engine::ProviderApiKind::OpenAiResponses,
+            engine::ProviderApiKind::OpenAiCompletions,
+        ] {
+            let blobs = Arc::new(InMemoryBlobStore::new());
+            let process = Arc::new(RecordingProcessExecutor::default());
+            let process_ctx: Arc<dyn ProcessExecutor> = process.clone();
+            let env_ctx = EnvironmentToolContext::new(Some(process_ctx), blobs.clone());
+            let catalog = catalog_for_operations_with_presentation(
+                api_kind,
+                BuiltinToolPresentation::ProviderDefault,
+                [
+                    BuiltinToolOperation::RunProcess,
+                    BuiltinToolOperation::ContinueProcess,
+                ],
+            );
+            let runtime = InlineToolRuntime::with_environment(env_ctx, catalog);
+
+            let output = runtime
+                .invoke_json(
+                    &ToolName::new("exec_command"),
+                    json!({ "cmd": "echo hi", "yield_time_ms": 250 }),
+                )
+                .await
+                .expect("exec_command");
+            assert!(output.model_visible_text.starts_with("Wall time: "));
+            assert!(
+                output
+                    .model_visible_text
+                    .contains("Process exited with code 0\nOutput:\nok")
+            );
+            {
+                let requests = process.requests.lock().expect("lock");
+                assert_eq!(requests[0].argv, ["bash", "-lc", "echo hi"]);
+                assert_eq!(requests[0].yield_ms, Some(250));
+                assert_eq!(requests[0].timeout_ms, None);
+            }
+
+            let polled = runtime
+                .invoke_json(
+                    &ToolName::new("write_stdin"),
+                    json!({ "session_id": "proc-1", "chars": "" }),
+                )
+                .await
+                .expect("write_stdin");
+            assert!(
+                polled
+                    .model_visible_text
+                    .contains("Process exited with code 0")
+            );
+            let continues = process.continues.lock().expect("lock");
+            assert_eq!(continues[0].input, None);
+            assert_eq!(continues[0].wait_ms, Some(60_000));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn serialized_completions_calls_keep_the_original_process_contract() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let process = Arc::new(RecordingProcessExecutor::default());
-        let process_ctx: Arc<dyn ProcessExecutor> = process.clone();
-        let env_ctx = EnvironmentToolContext::new(Some(process_ctx), blobs.clone());
-        let catalog = catalog_for_operations_with_presentation(
-            engine::ProviderApiKind::OpenAiResponses,
-            BuiltinToolPresentation::ProviderDefault,
-            [
-                BuiltinToolOperation::RunProcess,
-                BuiltinToolOperation::ContinueProcess,
-            ],
+        let runtime = InlineToolRuntime::with_environment(
+            EnvironmentToolContext::new(Some(process.clone()), blobs.clone()),
+            ToolCatalog::new(),
         );
-        let runtime = InlineToolRuntime::with_environment(env_ctx, catalog);
-
-        let output = runtime
-            .invoke_json(
-                &ToolName::new("exec_command"),
-                json!({ "cmd": "echo hi", "yield_time_ms": 250 }),
-            )
-            .await
-            .expect("exec_command");
-        assert!(output.model_visible_text.starts_with("Wall time: "));
-        assert!(
-            output
-                .model_visible_text
-                .contains("Process exited with code 0\nOutput:\nok")
-        );
-        {
-            let requests = process.requests.lock().expect("lock");
-            assert_eq!(requests[0].argv, ["bash", "-lc", "echo hi"]);
-            assert_eq!(requests[0].yield_ms, Some(250));
-            assert_eq!(requests[0].timeout_ms, None);
+        for (name, id, arguments, settings) in [
+            (
+                "run_process",
+                "env.run_process",
+                json!({"argv":["echo", "hello"], "yield_ms":0}),
+                json!({}),
+            ),
+            (
+                "run_process",
+                "env.run_process",
+                json!({"argv":["echo", "hello"], "yield_ms":0}),
+                json!({"one_shot":true}),
+            ),
+            (
+                "continue_process",
+                "env.continue_process",
+                json!({"handle":"proc-1", "wait_ms":123}),
+                Value::Null,
+            ),
+        ] {
+            let arguments_ref = blobs
+                .put_bytes(serde_json::to_vec(&arguments).unwrap())
+                .await
+                .unwrap();
+            let mut request = call(arguments_ref, "run_process");
+            request.tool_name = ToolName::new(name);
+            request.tool_id = Some(ToolName::new(id));
+            let builtin = request.builtin.as_mut().unwrap();
+            builtin.model.api_kind = engine::ProviderApiKind::OpenAiCompletions;
+            builtin.spec.settings = settings;
+            let restored = serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
+            let result = runtime.invoke_call(&restored).await.unwrap();
+            assert_eq!(result.status, ToolCallStatus::Succeeded);
+            let visible = blobs
+                .read_text(&visible_tool_result_ref(&result))
+                .await
+                .unwrap();
+            assert!(
+                !visible.starts_with("Wall time:"),
+                "keep the original result format"
+            );
         }
-
-        let polled = runtime
-            .invoke_json(
-                &ToolName::new("write_stdin"),
-                json!({ "session_id": "proc-1", "chars": "" }),
-            )
-            .await
-            .expect("write_stdin");
-        assert!(
-            polled
-                .model_visible_text
-                .contains("Process exited with code 0")
+        let requests = process.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].argv, ["echo", "hello"]);
+        assert_eq!(requests[0].yield_ms, Some(0));
+        assert_eq!(requests[1].argv, ["echo", "hello"]);
+        assert_eq!(
+            requests[1].yield_ms,
+            Some(ToolLimits::default().max_process_timeout_ms),
+            "one-shot calls ignore the requested early yield"
         );
-        let continues = process.continues.lock().expect("lock");
-        assert_eq!(continues[0].input, None);
-        assert_eq!(continues[0].wait_ms, Some(60_000));
+        let continues = process.continues.lock().unwrap();
+        assert_eq!(continues.len(), 1);
+        assert_eq!(continues[0].wait_ms, Some(123));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recorded_completions_patches_execute_in_their_original_filesystem_domain() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let vfs = InMemoryFileSystem::full_access();
+        let environment = InMemoryFileSystem::full_access();
+        let path = FsPath::new("/example.py").unwrap();
+        for fs in [&vfs, &environment] {
+            fs.write_file(&path, b"def greeting():\n    return \"Hello\"\n".to_vec())
+                .await
+                .unwrap();
+        }
+        let target = ToolTarget::api_kind(engine::ProviderApiKind::OpenAiCompletions);
+        let description = BuiltinTool::environment_canonical(BuiltinToolOperation::ApplyPatch)
+            .definition(&target, false)
+            .unwrap()
+            .description
+            .unwrap();
+        let example = description
+            .split_once("Example patch text:\n")
+            .unwrap()
+            .1
+            .split("\n\n")
+            .next()
+            .unwrap()
+            .replace("src/example.py", "/example.py");
+        let arguments_ref = blobs
+            .put_bytes(serde_json::to_vec(&json!({"patch":example})).unwrap())
+            .await
+            .unwrap();
+        let runtime = InlineToolRuntime::with_contexts_and_blob_store(
+            Some(fs_context(vfs.clone(), blobs.clone())),
+            Some(
+                EnvironmentToolContext::new(None, blobs.clone())
+                    .with_filesystem(fs_context(environment.clone(), blobs.clone())),
+            ),
+            blobs,
+            ToolLimits::default(),
+            ToolCatalog::new(),
+        );
+        for (id, name, fs) in [
+            ("vfs.apply_patch", "vfs_apply_patch", &vfs),
+            ("env.apply_patch", "apply_patch", &environment),
+        ] {
+            let mut request = call(arguments_ref.clone(), "run_process");
+            request.tool_id = Some(ToolName::new(id));
+            request.tool_name = ToolName::new(name);
+            let builtin = request.builtin.as_mut().unwrap();
+            builtin.model.api_kind = engine::ProviderApiKind::OpenAiCompletions;
+            builtin.spec.settings = json!({});
+            let restored = serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
+            let result = runtime.invoke_call(&restored).await.unwrap();
+            assert_eq!(result.status, ToolCallStatus::Succeeded);
+            assert_eq!(
+                fs.read_file_text(&path).await.unwrap(),
+                "def greeting():\n    return \"Hello, world!\"\n"
+            );
+            if name == "vfs_apply_patch" {
+                assert_eq!(
+                    environment.read_file_text(&path).await.unwrap(),
+                    "def greeting():\n    return \"Hello\"\n"
+                );
+            }
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

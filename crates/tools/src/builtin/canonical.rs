@@ -48,7 +48,23 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> String {
             "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true."
         }
         BuiltinToolOperation::ApplyPatch => {
-            "Apply a Codex-style apply_patch patch to the filesystem."
+            r#"Create, edit, delete, or move files using a text patch. Pass the patch text in the JSON `patch` argument.
+Start with `*** Begin Patch` and finish with `*** End Patch`. Between them, use one or more file operations:
+- `*** Add File: path`: prefix every new content line with `+`.
+- `*** Delete File: path`: no content lines follow.
+- `*** Update File: path`: start each change with `@@` (no numeric line ranges). Prefix unchanged context lines with a space, removed lines with `-`, and added lines with `+`. Include enough context to locate the change uniquely.
+- To move an updated file, put `*** Move to: new_path` immediately after its Update File line.
+Read existing content before editing. Do not include Markdown fences or standard diff headers in the patch.
+Example patch text:
+*** Begin Patch
+*** Update File: src/example.py
+@@
+ def greeting():
+-    return "Hello"
++    return "Hello, world!"
+*** End Patch
+
+"#
         }
         BuiltinToolOperation::Grep => "Search UTF-8 files recursively with a regular expression.",
         BuiltinToolOperation::Glob => "Find files recursively with a glob pattern.",

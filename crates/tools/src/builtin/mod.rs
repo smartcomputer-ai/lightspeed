@@ -1022,6 +1022,45 @@ mod tests {
     }
 
     #[test]
+    fn patch_descriptions_follow_the_surface_and_preserve_schema_and_scope() {
+        for (id, boundary) in [
+            (
+                "env.apply_patch",
+                " Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
+            ),
+            (
+                "vfs.apply_patch",
+                " Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
+            ),
+        ] {
+            let tool = BuiltinTool::from_logical_id(id).unwrap();
+            for scoped_paths in [false, true] {
+                let canonical = tool.definition(&target(), scoped_paths).unwrap();
+                let codex = tool
+                    .with_surface(BuiltinToolSurface::CodexLike)
+                    .definition(&target(), scoped_paths)
+                    .unwrap();
+                assert_eq!(canonical.input_schema, codex.input_schema);
+                let canonical = canonical.description.unwrap();
+                let codex = codex.description.unwrap();
+                assert!(canonical.contains("Example patch text:\n*** Begin Patch"));
+                assert!(codex.starts_with("Apply a patch to create, edit, delete, or move files."));
+                assert!(codex.contains("JSON `patch` argument"));
+                assert!(codex.contains("`*** Begin Patch`"));
+                assert!(codex.contains("`*** End Patch`"));
+                assert!(!codex.contains("Example patch text"));
+                for description in [&canonical, &codex] {
+                    assert_eq!(
+                        description.contains("configured filesystem scope"),
+                        scoped_paths
+                    );
+                    assert!(description.ends_with(boundary));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn claude_code_like_surface_rejects_unmapped_operations() {
         let tool = BuiltinTool::environment(
             BuiltinToolOperation::ApplyPatch,

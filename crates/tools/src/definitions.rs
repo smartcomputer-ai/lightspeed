@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    builtin::BuiltinTool,
+    builtin::{BuiltinTool, BuiltinToolOperation},
     concurrency::{ConcurrencyToolsetConfig, concurrency_tool_definitions},
     environment::control::environment_control_tool_definitions,
     error::{ToolError, ToolResult},
@@ -79,16 +79,14 @@ pub fn resolve(
     spec: &BuiltinToolSpec,
     target: &ToolTarget,
 ) -> ToolResult<Vec<ResolvedBuiltin>> {
-    let settings: BuiltinSettings = if spec.settings.is_null() {
-        BuiltinSettings::default()
-    } else {
-        serde_json::from_value(spec.settings.clone()).map_err(|error| {
-            ToolError::InvalidRequest {
-                message: format!("invalid settings for built-in {id}: {error}"),
-            }
-        })?
-    };
+    let settings = settings_from_spec(id, spec)?;
     if let Some(tool) = BuiltinTool::from_logical_id(id.as_str()) {
+        if settings.presentation == BuiltinToolPresentation::ProviderDefault
+            && target.api_kind == ProviderApiKind::OpenAiCompletions
+            && tool.operation() == BuiltinToolOperation::ApplyPatch
+        {
+            return Ok(Vec::new());
+        }
         let tool = tool
             .with_surface(settings.presentation.surface(target))
             .with_one_shot(settings.one_shot);
@@ -209,6 +207,56 @@ pub fn resolve(
     }])
 }
 
+fn settings_from_spec(id: &ToolName, spec: &BuiltinToolSpec) -> ToolResult<BuiltinSettings> {
+    if spec.settings.is_null() {
+        Ok(BuiltinSettings::default())
+    } else {
+        serde_json::from_value(spec.settings.clone()).map_err(|error| ToolError::InvalidRequest {
+            message: format!("invalid settings for built-in {id}: {error}"),
+        })
+    }
+}
+
+/// Resolve an already-admitted call using its original exposed name. New
+/// provider responses must still resolve identities against the advertised
+/// catalog; execution must not make historical names available to new calls.
+pub(crate) fn resolve_call_binding(
+    id: &ToolName,
+    spec: &BuiltinToolSpec,
+    target: &ToolTarget,
+    exposed_name: &ToolName,
+) -> ToolResult<ToolBinding> {
+    if let Some(binding) = resolve(id, spec, target)?
+        .into_iter()
+        .find(|tool| &tool.name == exposed_name)
+        .and_then(|tool| tool.binding)
+    {
+        return Ok(binding);
+    }
+
+    // Completions previously advertised canonical process and patch tools.
+    // Retried or parked calls retain their admitted identity, original name,
+    // settings, and model, including the one-shot execution restriction.
+    let settings = settings_from_spec(id, spec)?;
+    if target.api_kind == ProviderApiKind::OpenAiCompletions
+        && settings.presentation == BuiltinToolPresentation::ProviderDefault
+        && let Some(tool) = BuiltinTool::from_logical_id(id.as_str())
+        && matches!(
+            tool.operation(),
+            BuiltinToolOperation::RunProcess
+                | BuiltinToolOperation::ContinueProcess
+                | BuiltinToolOperation::ApplyPatch
+        )
+        && tool.name_str() == exposed_name.as_str()
+    {
+        return Ok(tool.with_one_shot(settings.one_shot).binding(target));
+    }
+
+    Err(ToolError::UnsupportedCapability {
+        message: format!("unknown tool: {exposed_name}"),
+    })
+}
+
 fn unknown(id: &ToolName) -> ToolError {
     ToolError::UnsupportedCapability {
         message: format!("unknown built-in tool {id}"),
@@ -218,6 +266,66 @@ fn unknown(id: &ToolName) -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recorded_completions_calls_keep_only_their_matching_historical_binding() {
+        let target = ToolTarget::api_kind(ProviderApiKind::OpenAiCompletions);
+        let spec = BuiltinToolSpec {
+            settings: json!({}),
+        };
+        for (id, name) in [
+            ("env.run_process", "run_process"),
+            ("env.continue_process", "continue_process"),
+            ("env.apply_patch", "apply_patch"),
+            ("vfs.apply_patch", "vfs_apply_patch"),
+        ] {
+            let id = ToolName::new(id);
+            let name = ToolName::new(name);
+            let binding = resolve_call_binding(&id, &spec, &target, &name).unwrap();
+            assert_eq!(binding.logical_id, id.as_str());
+            assert_eq!(binding.tool_name, name);
+            assert_eq!(binding.adapter_id.as_deref(), Some("canonical"));
+            assert!(
+                resolve(&id, &spec, &target)
+                    .unwrap()
+                    .iter()
+                    .all(|tool| tool.name != name)
+            );
+        }
+        for (id, name) in [
+            ("env.run_process", "Bash"),
+            ("env.run_process", "continue_process"),
+            ("env.apply_patch", "vfs_apply_patch"),
+            ("vfs.apply_patch", "apply_patch"),
+            ("env.edit_file", "apply_patch"),
+        ] {
+            assert!(matches!(
+                resolve_call_binding(&ToolName::new(id), &spec, &target, &ToolName::new(name)),
+                Err(ToolError::UnsupportedCapability { .. })
+            ));
+        }
+        for (target, settings) in [
+            (target, json!({"presentation":"codex_like"})),
+            (
+                ToolTarget::api_kind(ProviderApiKind::OpenAiResponses),
+                json!({}),
+            ),
+            (
+                ToolTarget::api_kind(ProviderApiKind::AnthropicMessages),
+                json!({}),
+            ),
+        ] {
+            assert!(matches!(
+                resolve_call_binding(
+                    &ToolName::new("env.run_process"),
+                    &BuiltinToolSpec { settings },
+                    &target,
+                    &ToolName::new("run_process")
+                ),
+                Err(ToolError::UnsupportedCapability { .. })
+            ));
+        }
+    }
 
     #[test]
     fn registrations_store_only_logical_operations_and_contract_options() {
