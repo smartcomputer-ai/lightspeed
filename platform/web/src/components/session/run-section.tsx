@@ -7,6 +7,7 @@ import { SystemChips, TranscriptEntryView } from "@/components/session/transcrip
 import { sectionActivity, type RunSection } from "@/lib/sessions/run-sections";
 import { formatDuration, type ActiveRun, type TranscriptEntry } from "@/lib/sessions/transcript";
 import { cn } from "@/lib/utils";
+import { TranscriptEntrance } from "./transcript-motion";
 
 /// A run as the transcript shows it: the input band, the work, the reply.
 /// Live work streams inside a soft frame with a status row at its foot. A
@@ -35,12 +36,12 @@ export function RunSectionView({
     <div className="flex min-w-0 flex-col gap-3">
       {section.input && <TranscriptEntryView entry={section.input} pending={section.pendingInput} />}
       {section.live ? (
-        <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-amber-500/25 bg-card px-1 py-1">
+        <TranscriptEntrance motionKey={`activity:${section.key}`} className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-amber-500/25 bg-card px-1 py-1">
           <WorkList entries={section.work} loadFullText={loadFullText} />
           <RunStatusRow run={activeRun} />
-        </div>
+        </TranscriptEntrance>
       ) : section.work.length > 0 ? (
-        <div className="min-w-0 rounded-lg border bg-card">
+        <TranscriptEntrance motionKey={`activity:${section.key}`} className="min-w-0 rounded-lg border bg-card">
           <RunStrip
             section={section}
             open={open}
@@ -53,7 +54,7 @@ export function RunSectionView({
               <WorkList entries={section.work} loadFullText={loadFullText} />
             </div>
           )}
-        </div>
+        </TranscriptEntrance>
       ) : section.summary ? (
         <RunOutcomeLine summary={section.summary} showStatistics={showRunStatistics} />
       ) : null}

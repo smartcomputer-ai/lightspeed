@@ -6,6 +6,17 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@keyframes transcript-enter {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .transcript-enter {
+        animation: transcript-enter 180ms ease-out;
+    }
+}
+
 @theme inline {
     --font-heading: 'Space Grotesk Variable', sans-serif;
     --font-sans: 'Geist Variable', sans-serif;

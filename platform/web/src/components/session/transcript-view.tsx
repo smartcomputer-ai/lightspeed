@@ -14,6 +14,7 @@ import { TranscriptLinksContext } from "@/components/session/transcript-links";
 import { type TranscriptEntry, type TranscriptMedia } from "@/lib/sessions/transcript";
 import { MediaStrip } from "@/components/session/media";
 import { cn } from "@/lib/utils";
+import { TranscriptEntrance } from "./transcript-motion";
 
 /// Full-width transcript rows without avatars. User inputs use muted bands;
 /// assistant output is plain rendered text, with compact tool and lifecycle markers.
@@ -31,7 +32,7 @@ export function TranscriptEntryView({
 }) {
   switch (entry.kind) {
     case "message":
-      return entry.role === "user" ? (
+      return <TranscriptEntrance motionKey={entry.key}>{entry.role === "user" ? (
         <UserBand
           text={entry.text}
           origin={entry.origin}
@@ -66,7 +67,7 @@ export function TranscriptEntryView({
             </Bubble>
           </MessageContent>
         </Message>
-      );
+      )}</TranscriptEntrance>;
     case "system":
       return <SystemChips entries={[entry]} />;
     case "reasoning":
@@ -192,7 +193,7 @@ export function UserBand({
         <Bubble
           variant="muted"
           className={cn(
-            "w-full max-w-full transition-opacity duration-200 ease-out motion-reduce:transition-none",
+            "w-full max-w-full transition-opacity duration-100 ease-out motion-reduce:transition-none",
             pending && "opacity-60",
             event && "*:data-[slot=bubble-content]:border-l-2 *:data-[slot=bubble-content]:border-l-teal-600/60 *:data-[slot=bubble-content]:rounded-l-sm dark:*:data-[slot=bubble-content]:border-l-teal-300/50",
           )}

@@ -99,6 +99,7 @@ import {
   type QueuedRunItem,
 } from "@/components/session/transcript-view";
 import { RunSectionView } from "@/components/session/run-section";
+import { TranscriptEntrance, TranscriptMotionProvider } from "@/components/session/transcript-motion";
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/tool-trace";
 import { sectionsByRun, withPendingRunInputs } from "@/lib/sessions/run-sections";
 import { CenteredNote, LoadingNote, UniverseNotFound } from "@/components/page";
@@ -1989,6 +1990,7 @@ export function SessionDetail({
       />
       <TranscriptLinksContext.Provider value={transcriptLinks}>
       <MessageScrollerProvider key={`${universeId}/${sessionId}`} autoScroll defaultScrollPosition="end">
+        <TranscriptMotionProvider sections={displaySections} pendingKeys={visiblePendingSteers.map((steer) => steer.id)} ready={tail.phase === "live"} historyRevision={tail.historyRevision}>
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport preserveScrollOnPrepend>
             <SessionHistoryLoader tail={tail} />
@@ -2023,7 +2025,7 @@ export function SessionDetail({
               ))}
               {visiblePendingSteers.map((steer) => (
                 <MessageScrollerItem key={steer.id} messageId={steer.id}>
-                  <UserBand text={steer.text} pending steering />
+                  <TranscriptEntrance motionKey={steer.id}><UserBand text={steer.text} pending steering /></TranscriptEntrance>
                 </MessageScrollerItem>
               ))}
               {notices.map((notice) => (
@@ -2061,6 +2063,7 @@ export function SessionDetail({
           pending={pendingInTranscript}
           activeRun={activeRun}
         />
+        </TranscriptMotionProvider>
       </MessageScrollerProvider>
       </TranscriptLinksContext.Provider>
       {!closed && (

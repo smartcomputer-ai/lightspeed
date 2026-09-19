@@ -6,12 +6,16 @@ Status: implemented and verified.
 
 - Local run inputs retain their submission identity and component position
   through acknowledgement and durable input arrival. Confirmation transitions
-  opacity over 200 ms with reduced-motion support. DOM regression coverage
+  opacity over 100 ms with reduced-motion support. DOM regression coverage
   checks both acknowledgement orders, delayed input, pending-state cleanup,
   and preservation of expanded long messages through run completion.
   Backend-loaded runs use stable run-ID keys; only locally submitted inputs
   use submission-ID keys. History prepend coverage verifies that discovering
   an older input or acknowledgement preserves mounted activity and expansion.
+  New messages and activity boxes use a restrained 180 ms opacity/translation
+  entrance with reduced-motion support. Arrival tracking excludes initial and
+  older history, records hidden work, and prevents replay on text updates or
+  final-answer promotion. Component tests cover these transitions.
 
 - Completed runs identify their reply using the recorded output reference and
   run identity, including when reasoning follows the reply in stored history.
