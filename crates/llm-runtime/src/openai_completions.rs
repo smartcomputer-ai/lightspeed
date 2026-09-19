@@ -417,7 +417,9 @@ async fn materialize_messages(
                 let can_fold = messages
                     .last()
                     .is_some_and(|message: &oai_c::CompletionMessage| message.role == "assistant")
-                    && last_assistant_source.as_ref() == Some(&entry.source);
+                    && last_assistant_source
+                        .as_ref()
+                        .is_some_and(|source| same_assistant_turn(source, &entry.source));
                 if can_fold {
                     messages
                         .last_mut()
@@ -457,7 +459,9 @@ async fn materialize_messages(
                 let can_fold = messages
                     .last()
                     .is_some_and(|message: &oai_c::CompletionMessage| message.role == "assistant")
-                    && last_assistant_source.as_ref() == Some(&entry.source);
+                    && last_assistant_source
+                        .as_ref()
+                        .is_some_and(|source| same_assistant_turn(source, &entry.source));
                 if can_fold {
                     messages
                         .last_mut()
@@ -504,6 +508,32 @@ async fn materialize_messages(
         }
     }
     Ok(messages)
+}
+
+// Reasoning and visible output have distinct provenance labels, but belong
+// to the same native assistant message when their run and turn agree.
+fn same_assistant_turn(left: &ContextEntrySource, right: &ContextEntrySource) -> bool {
+    match (left, right) {
+        (
+            ContextEntrySource::AssistantOutput {
+                run_id: left_run,
+                turn_id: left_turn,
+            }
+            | ContextEntrySource::Reasoning {
+                run_id: left_run,
+                turn_id: left_turn,
+            },
+            ContextEntrySource::AssistantOutput {
+                run_id: right_run,
+                turn_id: right_turn,
+            }
+            | ContextEntrySource::Reasoning {
+                run_id: right_run,
+                turn_id: right_turn,
+            },
+        ) => left_run == right_run && left_turn == right_turn,
+        _ => left == right,
+    }
 }
 
 fn reject_foreign_provider_kind(entry: &ContextEntry) -> LlmAdapterResult<()> {
@@ -2258,10 +2288,6 @@ mod tests {
             ContextEntryKind::ReasoningState
         ));
 
-        let source = ContextEntrySource::AssistantOutput {
-            run_id: RunId::new(2),
-            turn_id: TurnId::new(3),
-        };
         let entries: Vec<ContextEntry> = result
             .context_entries
             .into_iter()
@@ -2269,8 +2295,17 @@ mod tests {
             .map(|(index, input)| ContextEntry {
                 entry_id: ContextEntryId::new(index as u64 + 1),
                 key: None,
+                source: match input.kind {
+                    ContextEntryKind::ReasoningState => ContextEntrySource::Reasoning {
+                        run_id: result.run_id,
+                        turn_id: result.turn_id,
+                    },
+                    _ => ContextEntrySource::AssistantOutput {
+                        run_id: result.run_id,
+                        turn_id: result.turn_id,
+                    },
+                },
                 kind: input.kind,
-                source: source.clone(),
                 content: input.content,
                 preview: input.preview,
                 origin: input.origin,

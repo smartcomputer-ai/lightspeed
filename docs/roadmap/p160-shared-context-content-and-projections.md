@@ -75,6 +75,12 @@ Progress:
 
 Implementation notes:
 
+- Completions replay now matches reasoning and assistant-output provenance by
+  run and turn. Regression coverage passes raw responses through engine context
+  construction, checks the complete reconstructed message under the documented
+  text/refusal lowering policy, and checks prefix stability after follow-up
+  input. Adjacent turns and runs remain separate.
+
 - Removed the old flat context fields and copying accessors. Prompt/skill/audio
   provenance is now a blob reference; native IDs are read from payloads for views.
 - Shared text projection serves messages, visible reasoning, transcript

@@ -18,6 +18,59 @@ const marker = (key: string): TranscriptEntry => ({ kind: "marker", key, text: k
 const system = (key: string): TranscriptEntry => ({ kind: "system", key, text: key });
 
 describe("run sections", () => {
+  it.each(["before", "after"])("uses the recorded final output when reasoning appears %s it", (order) => {
+    const reply = { ...assistant("reply", "r1"), contentRef: "sha256:output" };
+    const reason = thinking("think", "r1");
+    const entries: TranscriptEntry[] = [
+      user("ask", "r1"), ...(order === "before" ? [reason, reply] : [reply, reason]),
+      { ...summary("done", "r1"), outputContentRef: "sha256:output" } as TranscriptEntry,
+    ];
+    expect(sectionsByRun(entries, null)).toMatchObject([{ work: [reason], reply }]);
+  });
+
+  it.each([null, "sha256:not-loaded"])("does not promote an interim message when output is %s", (outputContentRef) => {
+    const interim = { ...assistant("interim", "r1"), contentRef: "sha256:interim" };
+    const section = sectionsByRun([
+      user("ask", "r1"), interim,
+      { ...summary("done", "r1"), outputContentRef } as TranscriptEntry,
+    ], null)[0] as RunSection;
+    expect(section.reply).toBeUndefined();
+    expect(section.work).toEqual([interim]);
+  });
+
+  it("matches the latest occurrence of the output only within its own run", () => {
+    const message = (key: string, runId: string) => ({ ...assistant(key, runId), contentRef: "sha256:same" });
+    const first = message("first", "r1");
+    const last = message("last", "r1");
+    const foreign = message("foreign", "r2");
+    const section = sectionsByRun([
+      user("ask", "r1"), first, last, foreign,
+      { ...summary("done", "r1"), outputContentRef: "sha256:same" } as TranscriptEntry,
+    ], null)[0] as RunSection;
+    expect(section.reply).toEqual(last);
+    expect(section.work).toEqual([first, foreign]);
+  });
+
+  it("only moves Completions reasoning ahead of its own turn's adjacent message", () => {
+    const message = (key: string, turnId: string, providerKind = "openai.completions.message") =>
+      ({ ...assistant(key, "r1"), turnId, providerKind });
+    const reason = (key: string, turnId: string, providerKind = "openai.completions.reasoning_state") =>
+      ({ ...thinking(key, "r1"), turnId, providerKind });
+    const entries = [
+      message("a", "t1"), reason("a-think", "t1"), tools("tools", "r1", [call("c1", "explore")]),
+      message("b", "t2"), reason("b-think", "t2"),
+      message("different-turn", "t3"), reason("later-think", "t4"),
+      message("responses", "t5", "openai.responses.message"), reason("responses-think", "t5", "openai.responses.reasoning"),
+      message("anthropic", "t6", "anthropic.messages.text_blocks"), reason("anthropic-think", "t6", "anthropic.messages.thinking"),
+    ];
+    const section = sectionsByRun(entries, { runId: "r1", label: "thinking", cancelling: false })[0] as RunSection;
+    expect(section.work.map((entry) => entry.key)).toEqual([
+      "a-think", "a", "tools", "b-think", "b", "different-turn", "later-think",
+      "responses", "responses-think", "anthropic", "anthropic-think",
+    ]);
+    expect(entries[0]!.key).toBe("a"); // Display ordering never mutates history.
+  });
+
   it("groups a run between its input and its summary and keeps the last reply outside the fold", () => {
     const entries = [
       user("ask", "r1"), thinking("think", "r1"), tools("batch", "r1", [call("c1", "explore")]),

@@ -33,6 +33,9 @@ export type TranscriptEntry =
       citations?: Array<{ url: string; title?: string | null; citedText?: string | null }>;
       /// The run this entry belongs to, when the engine recorded one.
       runId?: string;
+      turnId?: string;
+      contentRef?: string;
+      providerKind?: string;
       /// A user message injected into a running run (steering) rather than
       /// the input that started it.
       steering?: boolean;
@@ -45,7 +48,7 @@ export type TranscriptEntry =
       /// the rendered prefix stays cacheable, shown dimmed.
       superseded?: boolean;
     }
-  | { kind: "reasoning"; key: string; text: string; runId?: string }
+  | { kind: "reasoning"; key: string; text: string; runId?: string; turnId?: string; providerKind?: string }
   | TranscriptToolGroup
   | TranscriptRunSummary
   | { kind: "marker"; key: string; text: string; tone: "muted" | "error" };
@@ -55,6 +58,8 @@ export interface TranscriptRunSummary {
   key: string;
   runId: string;
   status: "completed" | "failed" | "cancelled";
+  /// null means the completed run explicitly has no output; undefined means unknown.
+  outputContentRef?: string | null;
   error?: string;
   contextTokens?: number;
   usage?: RunUsage;
@@ -365,7 +370,10 @@ export function applyEvents(
       case "runCompleted": {
         const runId = String(kind.runId);
         finishRun(next, runId);
-        next.entries.push(runSummary(next, event, runId, "completed"));
+        next.entries.push({
+          ...runSummary(next, event, runId, "completed"),
+          outputContentRef: kind.output?.contentRef ?? null,
+        });
         break;
       }
       case "runFailed": {
@@ -669,6 +677,9 @@ function applyNonToolCallItem(
           key: item.id,
           role: kind.role,
           text: item.text,
+          contentRef: item.content.contentRef,
+          ...(item.content.providerKind ? { providerKind: item.content.providerKind } : {}),
+          ...(source && "turnId" in source ? { turnId: String(source.turnId) } : {}),
           ...(item.origin ? { origin: item.origin } : {}),
           ...(kind.role === "assistant" && item.citations?.length
             ? { citations: item.citations }
@@ -683,7 +694,11 @@ function applyNonToolCallItem(
       if (displayableReasoningText(text)) {
         const source = item.source;
         const runId = source && "runId" in source ? String(source.runId) : undefined;
-        state.entries.push({ kind: "reasoning", key: item.id, text, ...(runId ? { runId } : {}) });
+        state.entries.push({
+          kind: "reasoning", key: item.id, text, ...(runId ? { runId } : {}),
+          ...(source && "turnId" in source ? { turnId: String(source.turnId) } : {}),
+          ...(item.content.providerKind ? { providerKind: item.content.providerKind } : {}),
+        });
       }
       break;
     }

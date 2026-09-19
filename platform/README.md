@@ -90,6 +90,11 @@ time, duration, output size. Activity families come from the API's
 other); bot rows use the bot mark, and Emit rows resolve peer bot ids to
 display names through the bot roster. Delivered bot events (`origin: "event"`)
 render as bands headed by sender, kind and `#N`.
+Completed replies are selected by the run's recorded output reference, not by
+the last transcript row. Chat Completions reasoning appears before the message
+from the same turn; this display ordering does not rewrite stored context or
+reorder other providers' native output items. Missing output entries become
+visible as their history page loads, without promoting an interim message.
 A finished run's work folds behind one strip naming the outcome and duration
 ("Worked for 2m 14s", "Failed after 38s"), the tool call count and failures.
 From medium widths up the strip ends with a hoverable statistics button

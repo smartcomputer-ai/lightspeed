@@ -4,6 +4,13 @@ Status: implemented and verified.
 
 ## Behavior
 
+- Completed runs identify their reply using the recorded output reference and
+  run identity, including when reasoning follows the reply in stored history.
+  Completions reasoning displays before adjacent text from the same turn;
+  Responses and Anthropic preserve native order. Live updates and older-page
+  reconstruction share this behavior, with regression coverage for repeated
+  content, missing output, and collapsed final-answer visibility.
+
 - Open with the latest 500 events, position at the end, and begin independent
   forward long-polling from the initial response's fenced head.
 - Automatically fetch older pages near the top, without a load-more button or

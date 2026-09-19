@@ -68,6 +68,16 @@ not replace the native payload with a second authoritative text copy. Opaque
 reasoning data can therefore remain intact while the UI shows only the visible
 reasoning text the provider exposed.
 
+Chat Completions reconstruction groups assistant content, reasoning, and tool
+calls by their shared run and turn, despite their distinct provenance labels.
+It retains native reasoning fields and tool-call arguments while lowering
+visible message content to the established text/refusal input shape; response
+annotations and other message metadata remain stored for projection rather than
+being sent as request fields. Replay fidelity tests cover these intentional
+transformations separately from request-prefix stability. Transcript display
+order is independent of this reconstruction, and final replies use the run's
+recorded output reference.
+
 The runtime performs explicit provider-specific lowering, including tool definitions,
 content formats, and allowed request fields. Keeping native material does
 not make arbitrary histories interchangeable across API kinds. A session's

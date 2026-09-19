@@ -63,6 +63,19 @@ async function render(section: RunSection, options: {
 const STRIP = 'button[aria-label$="this run\'s activity"]';
 const strip = () => container.querySelector<HTMLButtonElement>(STRIP)!;
 
+it("keeps the recorded final answer visible when trailing reasoning is collapsed", async () => {
+  const entries: TranscriptEntry[] = [
+    { kind: "message", key: "input", role: "user", text: "super", runId: "r1" },
+    { kind: "message", key: "answer", role: "assistant", text: "Awesome!", runId: "r1", contentRef: "sha256:answer" },
+    { kind: "reasoning", key: "reasoning", text: "Keep it light.", runId: "r1" },
+    { kind: "run-summary", key: "done", runId: "r1", status: "completed", usageComplete: true, outputContentRef: "sha256:answer" },
+  ];
+  await render(sectionsByRun(entries, null)[0] as RunSection);
+  expect(strip().getAttribute("aria-expanded")).toBe("false");
+  expect(container.textContent).toContain("Awesome!");
+  expect(container.textContent).not.toContain("Keep it light.");
+});
+
 it("folds a finished run behind one strip that names the outcome, keeps the reply visible, and mounts nothing inside", async () => {
   await render(finished());
   expect(container.textContent).toContain("Fix the test");

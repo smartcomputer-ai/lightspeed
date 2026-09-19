@@ -14,6 +14,7 @@ import {
 } from "./transcript";
 import type { SessionRunView } from "@/api";
 import { TranscriptWindow } from "./transcript-window";
+import { sectionsByRun, type RunSection } from "./run-sections";
 
 type EventKind = SessionEvent["kind"];
 type EventInput<T extends EventKind["type"]> =
@@ -58,6 +59,41 @@ const runView = (
 });
 
 describe("transcript history windows", () => {
+  it("keeps completion output identity across live pages, missing output, and prepended history", () => {
+    const message = (id: string, turnId: string): SessionItem => item(id, { type: "message", role: "assistant" }, {
+      text: "Same answer", source: { type: "assistantOutput", runId: "run-test", turnId },
+      content: { contentRef: "sha256:answer", providerKind: "openai.completions.message" },
+    });
+    const reasoning = item("thinking", { type: "reasoningState" }, {
+      text: "A visible plan", source: { type: "reasoning", runId: "run-test", turnId: "t2" },
+      content: { contentRef: "sha256:thinking", providerKind: "openai.completions.reasoning_state" },
+    });
+    const events = [
+      event(1, { type: "runStarted" }),
+      event(2, { type: "contextEntriesApplied", entries: [message("interim", "t1")] }),
+      event(3, { type: "contextEntriesApplied", entries: [message("answer", "t2")] }),
+      event(4, { type: "contextEntriesApplied", entries: [reasoning] }),
+      event(5, { type: "runCompleted", output: { contentRef: "sha256:answer" } }),
+    ];
+    const section = (window: TranscriptWindow) => sectionsByRun(window.state.entries, window.state.activeRun)[0] as RunSection;
+    const live = new TranscriptWindow();
+    live.append(events.slice(0, 3));
+    expect(section(live).reply).toBeUndefined();
+    live.append(events.slice(3, 4));
+    expect(section(live).work.map((entry) => entry.key)).toEqual(["interim", "thinking", "answer"]);
+    live.append(events.slice(4));
+    expect(section(live).reply?.key).toBe("answer");
+    expect(section(live).work.map((entry) => entry.key)).toEqual(["interim", "thinking"]);
+
+    const history = new TranscriptWindow();
+    history.append(events.slice(3));
+    expect(section(history).reply).toBeUndefined();
+    history.prepend(events.slice(2, 3));
+    expect(section(history).reply?.key).toBe("answer");
+    history.prepend(events.slice(0, 2));
+    expect(section(history)).toEqual(section(live));
+    expect(history.state.entries).toEqual(applyEvents(emptyTranscript(), events).entries);
+  });
   it("retains the completion entry when a newer session snapshot arrives before its event", () => {
     const window = new TranscriptWindow();
     window.append([event(1, { type: "runStarted" })]);
@@ -229,7 +265,7 @@ describe("session transcript traces", () => {
       })],
     })]);
     expect(state.entries).toEqual([{
-      kind: "reasoning", key: "reasoning", text,
+      kind: "reasoning", key: "reasoning", text, providerKind: content.providerKind,
     }]);
   });
 
@@ -256,6 +292,7 @@ describe("session transcript traces", () => {
       key: "answer",
       role: "assistant",
       text: "A sourced answer.",
+      contentRef: "sha256:answer",
       citations: [{
         url: "https://example.com/source",
         title: "Example source",
@@ -288,6 +325,7 @@ describe("session transcript traces", () => {
       key: "answer",
       role: "assistant",
       text: "A fetched answer.",
+      contentRef: "sha256:answer",
       citations: [{
         url: "https://example.com/fetched",
         title: "Fetched source",
@@ -645,7 +683,7 @@ describe("session transcript run control", () => {
     expect(state.queuedRuns).toEqual([]);
     expect(state.entries).toEqual([
       { kind: "marker", key: "evt-5", text: "queued message cancelled", tone: "muted" },
-      { kind: "run-summary", key: "evt-6", runId: "run_1", status: "completed", durationMs: 4, contextTokens: undefined, usage: undefined, usageComplete: true, toolCalls: 0 },
+      { kind: "run-summary", key: "evt-6", runId: "run_1", status: "completed", outputContentRef: null, durationMs: 4, contextTokens: undefined, usage: undefined, usageComplete: true, toolCalls: 0 },
     ]);
 
     state = applyEvents(state, [event(8, { type: "runCompleted", runId: "run_3" })]);

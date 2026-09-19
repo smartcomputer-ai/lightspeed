@@ -16,7 +16,7 @@ export interface RunSection {
   /// Everything the run did: thinking, tool calls, interim notes, steering
   /// input, and system entries appended mid-run, in order.
   work: TranscriptEntry[];
-  /// The last assistant message of a finished run, shown outside the fold.
+  /// The recorded output of a finished run, shown outside the fold.
   reply?: TranscriptMessage;
   summary?: TranscriptRunSummary;
   /// The engine is still executing this run.
@@ -44,10 +44,20 @@ export function sectionsByRun(
   let open: RunSection | null = null;
 
   const close = (section: RunSection) => {
-    const last = section.work.at(-1);
-    if (last?.kind === "message" && last.role === "assistant") {
-      section.reply = last;
-      section.work = section.work.slice(0, -1);
+    const outputRef = section.summary?.outputContentRef;
+    for (let index = section.work.length - 1; index >= 0; index -= 1) {
+      const entry = section.work[index]!;
+      // A loaded completion is authoritative, including an explicit empty
+      // output. Never substitute an interim note when its output isn't loaded.
+      const matches = outputRef !== undefined
+        ? outputRef !== null && entry.kind === "message"
+          && entry.contentRef === outputRef && entry.runId === section.runId
+        : index === section.work.length - 1;
+      if (matches && entry.kind === "message" && entry.role === "assistant") {
+        section.reply = entry;
+        section.work = section.work.filter((_, i) => i !== index);
+        break;
+      }
     }
     sections.push(section);
   };
@@ -92,7 +102,7 @@ export function sectionsByRun(
     }
     if (!open) open = start(undefined, entry);
     if (!open.runId && "runId" in entry && entry.runId) open.runId = entry.runId;
-    open.work.push(entry);
+    appendWork(open.work, entry);
   }
 
   if (open) {
@@ -107,6 +117,24 @@ export function sectionsByRun(
     sections.push({ kind: "run", key: `run-${activeRun.runId}`, runId: activeRun.runId, work: [], live: true });
   }
   return sections;
+}
+
+/// Completions splits fields of one native message into separate entries.
+/// Present its reasoning before its text, within that turn only. Providers
+/// with ordered output items retain their original order.
+function appendWork(work: TranscriptEntry[], entry: TranscriptEntry) {
+  let index = work.length;
+  if (entry.kind === "reasoning" && entry.providerKind === "openai.completions.reasoning_state"
+    && entry.runId !== undefined && entry.turnId !== undefined) {
+    while (index > 0) {
+      const previous = work[index - 1]!;
+      if (previous.kind !== "message" || previous.role !== "assistant"
+        || previous.providerKind !== "openai.completions.message"
+        || previous.runId !== entry.runId || previous.turnId !== entry.turnId) break;
+      index -= 1;
+    }
+  }
+  work.splice(index, 0, entry);
 }
 
 /// Tool call counts and the activity families a section touched, for the
