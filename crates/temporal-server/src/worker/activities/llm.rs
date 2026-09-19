@@ -86,7 +86,7 @@ fn observe_prompt_cache(session_id: &SessionId, usage: &LlmUsage) {
     } else {
         f64::from(cached_input_tokens) / f64::from(input_tokens)
     };
-    tracing::info!(
+    tracing::debug!(
         session_id = %session_id,
         input_tokens,
         cached_input_tokens,
