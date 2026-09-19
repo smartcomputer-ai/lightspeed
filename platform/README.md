@@ -69,7 +69,7 @@ keyboard-accessible Show more / Show less controls. Resizing rechecks wrapping,
 and expansion leaves bottom-following to keep the message in view.
 Locally submitted run inputs keep the same message element and expansion state
 through confirmation, whether acknowledgement arrives through the POST or event
-stream first. Backend acceptance starts the 100 ms fade to full opacity without
+stream first. Backend acceptance starts the 50 ms fade to full opacity without
 waiting for the durable input entry, so it starts no later than the run's activity
 box appears. Reduced-motion
 preferences disable the transition.
@@ -79,6 +79,9 @@ New inputs, activity boxes, and assistant messages enter with a 200 ms fade and
 4 px rise. Initial history and older-page arrivals stay still; confirmation,
 text updates, final-answer promotion, and opening hidden activity do not replay
 entrances. Reduced-motion preferences disable them, and layout height is not animated.
+Messages arriving while their activity box is entering share that animation;
+only messages arriving after it ends get an individual entrance. Thinking traces
+and tool batches do not animate separately inside the box.
 
 Session transcripts open with one recent event window from
 `session/events/read` with `direction: "backward"`, then follow `session/events/read` strictly after

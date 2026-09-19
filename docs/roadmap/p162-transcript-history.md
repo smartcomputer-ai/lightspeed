@@ -6,7 +6,7 @@ Status: implemented and verified.
 
 - Local run inputs retain their submission identity and component position
   through acknowledgement and durable input arrival. Confirmation transitions
-  opacity over 100 ms from backend acceptance, without waiting for the durable
+  opacity over 50 ms from backend acceptance, without waiting for the durable
   input entry, with reduced-motion support. DOM regression coverage
   checks both acknowledgement orders, delayed input, pending-state cleanup,
   and preservation of expanded long messages through run completion.
@@ -17,6 +17,9 @@ Status: implemented and verified.
   entrance with reduced-motion support. Arrival tracking excludes initial and
   older history, records hidden work, and prevents replay on text updates or
   final-answer promotion. Component tests cover these transitions.
+  Nested message entrances stay suppressed until the activity box animation
+  ends or is cancelled, including messages arriving in later renders during
+  that interval. Reduced-motion mode does not wait for an animation event.
 
 - Completed runs identify their reply using the recorded output reference and
   run identity, including when reasoning follows the reply in stored history.

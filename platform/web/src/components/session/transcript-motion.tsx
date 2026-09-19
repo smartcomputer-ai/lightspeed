@@ -43,12 +43,33 @@ export function TranscriptEntrance({ motionKey, className, children }: {
   children: ReactNode;
 }) {
   const canAnimate = useContext(MotionContext);
-  const [animate] = useState(() => canAnimate(motionKey));
+  const [entering, setEntering] = useState(() => canAnimate(motionKey));
+  const element = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = element.current;
+    if (!entering || !node) return;
+    const finish = (event: AnimationEvent) => {
+      if (event.target === node && event.animationName === "transcript-enter") setEntering(false);
+    };
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const checkMotion = () => {
+      if (reducedMotion?.matches) setEntering(false);
+    };
+    node.addEventListener("animationend", finish);
+    node.addEventListener("animationcancel", finish);
+    reducedMotion?.addEventListener("change", checkMotion);
+    checkMotion();
+    return () => {
+      node.removeEventListener("animationend", finish);
+      node.removeEventListener("animationcancel", finish);
+      reducedMotion?.removeEventListener("change", checkMotion);
+    };
+  }, [entering]);
   // When a whole activity box arrives, its contents move with it. Later
-  // messages can enter individually after the box has been committed.
+  // messages can enter individually only after its animation has finished.
   return (
-    <MotionContext.Provider value={(key) => !canAnimate(motionKey) && canAnimate(key)}>
-      <div className={cn("min-w-0", className, animate && "transcript-enter")}>{children}</div>
+    <MotionContext.Provider value={(key) => !entering && canAnimate(key)}>
+      <div ref={element} className={cn("min-w-0", className, entering && "transcript-enter")}>{children}</div>
     </MotionContext.Provider>
   );
 }

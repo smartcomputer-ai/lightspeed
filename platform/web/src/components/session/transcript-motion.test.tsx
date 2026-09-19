@@ -36,6 +36,12 @@ async function render(sections: RunSection[], historyRevision = 0, ready = true)
   ));
 }
 
+async function finishEntrance(element: Element, type = "animationend") {
+  const event = new Event(type, { bubbles: true });
+  Object.defineProperty(event, "animationName", { value: "transcript-enter" });
+  await act(async () => element.dispatchEvent(event));
+}
+
 it("keeps initial history and older-page arrivals still, then animates new inputs", async () => {
   await render([], 0, false);
   const current = run("current");
@@ -65,6 +71,7 @@ it("enters input, activity, and later replies once without replaying confirmatio
   expect(activity.classList.contains("transcript-enter")).toBe(true);
   // Contents arriving with the activity box share its entrance.
   expect(activity.querySelector(".transcript-enter")).toBeNull();
+  await finishEntrance(activity);
 
   const reply = { kind: "message" as const, key: "reply", role: "assistant" as const, text: "Answer" };
   await render([{ ...confirmed, work: [...confirmed.work, reply] }]);
@@ -76,6 +83,36 @@ it("enters input, activity, and later replies once without replaying confirmatio
   await render([{ ...confirmed, live: false, work: [], reply: updated }]);
   expect(container.querySelector('[data-variant="ghost"]')!.closest(".transcript-enter")).toBeNull();
   expect(container.querySelector(".transcript-enter")).toBe(input);
+});
+
+it.each(["animationend", "animationcancel"])("suppresses arrivals throughout the box entrance until %s", async (eventType) => {
+  await render([]);
+  const section = { ...run("active"), live: true };
+  await render([section]);
+  const activity = container.querySelector('[role="status"]')!.parentElement!;
+  const early = { kind: "message" as const, key: "early", role: "assistant" as const, text: "Early progress" };
+  await render([{ ...section, work: [early] }]);
+  expect(activity.classList.contains("transcript-enter")).toBe(true);
+  expect(activity.querySelector(".transcript-enter")).toBeNull();
+  // An unrelated descendant animation must not finish the box's entrance.
+  await finishEntrance(activity.querySelector('[data-slot="message"]')!, eventType);
+  expect(activity.classList.contains("transcript-enter")).toBe(true);
+  await finishEntrance(activity, eventType);
+  expect(activity.classList.contains("transcript-enter")).toBe(false);
+  expect(activity.querySelector(".transcript-enter")).toBeNull();
+  const later = { ...early, key: "later", text: "Later progress" };
+  await render([{ ...section, work: [early, later] }]);
+  expect(activity.querySelectorAll(".transcript-enter")).toHaveLength(1);
+  expect(activity.querySelector(".transcript-enter")!.textContent).toBe("Later progress");
+});
+
+it("does not wait for an animation event when reduced motion disables entrances", async () => {
+  const preference = { matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+  vi.stubGlobal("matchMedia", vi.fn(() => preference));
+  await render([]);
+  await render([{ ...run("reduced"), live: true }]);
+  expect(container.querySelector(".transcript-enter")).toBeNull();
+  expect(preference.removeEventListener).toHaveBeenCalled();
 });
 
 it("does not animate previously hidden messages when activity is expanded", async () => {

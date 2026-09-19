@@ -193,7 +193,7 @@ export function UserBand({
         <Bubble
           variant="muted"
           className={cn(
-            "w-full max-w-full transition-opacity duration-100 ease-out motion-reduce:transition-none",
+            "w-full max-w-full transition-opacity duration-[50ms] ease-out motion-reduce:transition-none",
             pending && "opacity-60",
             event && "*:data-[slot=bubble-content]:border-l-2 *:data-[slot=bubble-content]:border-l-teal-600/60 *:data-[slot=bubble-content]:rounded-l-sm dark:*:data-[slot=bubble-content]:border-l-teal-300/50",
           )}
