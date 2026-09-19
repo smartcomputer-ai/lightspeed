@@ -5,9 +5,11 @@ Status: implemented and verified.
 ## Behavior
 
 - Local run inputs retain their submission identity and component position
-  through acknowledgement and durable input arrival. Confirmation transitions
-  opacity over 50 ms from backend acceptance, without waiting for the durable
-  input entry, with reduced-motion support. DOM regression coverage
+  through acknowledgement and durable input arrival. Submitted messages,
+  steering, and queued inputs use normal opacity immediately, with no visual
+  change on acceptance. Failed sends remove the optimistic message and show
+  an error in the composer.
+  DOM regression coverage
   checks both acknowledgement orders, delayed input, pending-state cleanup,
   and preservation of expanded long messages through run completion.
   Backend-loaded runs use stable run-ID keys; only locally submitted inputs

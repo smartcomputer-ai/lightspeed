@@ -34,7 +34,7 @@ export function RunSectionView({
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
-      {section.input && <TranscriptEntryView entry={section.input} pending={section.pendingInput} />}
+      {section.input && <TranscriptEntryView entry={section.input} />}
       {section.live ? (
         <TranscriptEntrance motionKey={`activity:${section.key}`} className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-amber-500/25 bg-card px-1 py-1">
           <WorkList entries={section.work} loadFullText={loadFullText} />

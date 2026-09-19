@@ -168,7 +168,14 @@ describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pat
       mode === "steer" ? { text: "send this" } : { text: "send this", submissionId: expect.any(String) },
     );
     expect(mocks.scrollToEnd).not.toHaveBeenCalled();
+    const messageSelector = mode === "queue" ? '[aria-label="Queued messages"] li' : '[data-slot="bubble"]';
+    const message = container.querySelector(messageSelector)!;
+    expect(message.textContent).toContain("send this");
+    expect(message.className).not.toContain("opacity-60");
+    expect(message.className).not.toContain("transition-opacity");
+    const messageClass = message.className;
     await act(async () => accept({ run: { id: "accepted-run", status: mode === "queue" ? "queued" : "running" } }));
+    expect(container.querySelector(messageSelector)!.className).toBe(messageClass);
     expect(mocks.scrollToEnd).toHaveBeenCalledWith({ behavior: "auto" });
     expect(input().value).toBe("");
     expect(window.localStorage.getItem(sessionDraftKey("universe", "session"))).toBeNull();
@@ -189,14 +196,19 @@ describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pat
     expect(input().value).toBe("");
   });
 
-  it("does not resume following when submission fails", async () => {
+  it.each(["message", "queue", "steer"] as const)("shows a rejected %s and removes its echo without resuming following", async (mode) => {
+    if (mode !== "message") {
+      transcript.activeRun = { runId: "active-run", label: "running", cancelling: false };
+    }
     mocks.api.mockRejectedValue(new Error("Message rejected"));
     await show(pathway);
     pauseFollowing();
     await type("message");
-    await enter();
+    await enter(mode === "steer" ? { ctrlKey: true } : {});
     expect(mocks.scrollToEnd).not.toHaveBeenCalled();
     expect(container.textContent).toContain("Message rejected");
+    expect(container.querySelector('[data-slot="bubble"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Queued messages"]')).toBeNull();
   });
 
   it("lets the scroller preserve a history prepend without requesting the end", async () => {
@@ -245,7 +257,7 @@ it("keeps editing and submitting usable when local storage access is blocked", a
 });
 
 it.each(["post-first", "post-without-submission", "tail-first", "tail-with-input"] as const)(
-  "preserves the message element and expansion through confirmation (%s)", async (order) => {
+  "preserves the message appearance, element, and expansion through confirmation (%s)", async (order) => {
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(700);
     let accept!: (value: unknown) => void;
     mocks.api.mockReturnValue(new Promise((resolve) => { accept = resolve; }));
@@ -255,7 +267,9 @@ it.each(["post-first", "post-without-submission", "tail-first", "tail-with-input
     await enter();
     const submissionId = mocks.api.mock.calls[0]![2].submissionId as string;
     const bubble = container.querySelector('[data-slot="bubble"]')!;
-    expect(bubble.className).toContain("opacity-60");
+    expect(bubble.className).not.toContain("opacity-60");
+    expect(bubble.className).not.toContain("transition-opacity");
+    const messageClass = bubble.className;
     const expand = bubble.querySelector<HTMLButtonElement>("[data-message-expansion]")!;
     await act(async () => expand.click());
     expect(expand.getAttribute("aria-expanded")).toBe("true");
@@ -269,7 +283,7 @@ it.each(["post-first", "post-without-submission", "tail-first", "tail-with-input
     const acknowledge = async () => {
       await act(async () => accept({ run: { id: "run_1", status: "running" } }));
       expect(container.querySelector('[data-slot="bubble"]')).toBe(bubble);
-      expect(bubble.className).not.toContain("opacity-60");
+      expect(bubble.className).toBe(messageClass);
     };
     const postFirst = order === "post-first" || order === "post-without-submission";
     if (postFirst) await acknowledge();
@@ -283,16 +297,14 @@ it.each(["post-first", "post-without-submission", "tail-first", "tail-with-input
     expect(container.querySelector('[data-slot="bubble"]')).toBe(bubble);
     expect(expand.getAttribute("aria-expanded")).toBe("true");
     if (order !== "tail-with-input") {
-      // Acceptance starts the fade even if the durable input arrives later.
-      expect(bubble.className).not.toContain("opacity-60");
+      // Acceptance leaves the appearance unchanged, including before durable input.
+      expect(bubble.className).toBe(messageClass);
       confirmInput();
       await show("session");
     }
     if (!postFirst) await acknowledge();
     expect(container.querySelector('[data-slot="bubble"]')).toBe(bubble);
-    expect(bubble.className).not.toContain("opacity-60");
-    expect(bubble.className).toContain("transition-opacity");
-    expect(bubble.className).toContain("motion-reduce:transition-none");
+    expect(bubble.className).toBe(messageClass);
     expect(expand.getAttribute("aria-expanded")).toBe("true");
 
     transcript.activeRun = null;

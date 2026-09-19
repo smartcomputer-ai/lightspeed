@@ -77,9 +77,12 @@ it("rechecks overflow on resize and text changes, and disconnects on unmount", a
   expect(disconnect).toHaveBeenCalledTimes(2);
 });
 
-it("uses the standard muted palette for an optimistic message", async () => {
-  await act(async () => root.render(<UserBand text="Sending" pending />));
-  expect(container.querySelector('[data-slot="bubble"]')?.getAttribute("data-variant")).toBe("muted");
+it("uses the standard muted palette at full opacity for a local message", async () => {
+  await act(async () => root.render(<UserBand text="Sending" />));
+  const bubble = container.querySelector('[data-slot="bubble"]')!;
+  expect(bubble.getAttribute("data-variant")).toBe("muted");
+  expect(bubble.className).not.toContain("opacity-60");
+  expect(bubble.className).not.toContain("transition-opacity");
 });
 
 it("shows a delivered bot event with its sender, kind and number as a header above the body", async () => {

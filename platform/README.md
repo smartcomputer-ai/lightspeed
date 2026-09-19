@@ -69,10 +69,9 @@ keyboard-accessible Show more / Show less controls. Resizing rechecks wrapping,
 and expansion leaves bottom-following to keep the message in view.
 Locally submitted run inputs keep the same message element and expansion state
 through confirmation, whether acknowledgement arrives through the POST or event
-stream first. Backend acceptance starts the 50 ms fade to full opacity without
-waiting for the durable input entry, so it starts no later than the run's activity
-box appears. Reduced-motion
-preferences disable the transition.
+stream first. Submitted messages, steering, and queued inputs use their normal
+opacity immediately; acceptance causes no visual change. Failed sends remove
+the optimistic message and show an error in the composer.
 Backend-loaded runs use run IDs as rendering keys. Loading an older input or
 submission acknowledgement does not remount the run or reset its expanded state.
 New inputs, activity boxes, and assistant messages enter with a 200 ms fade and

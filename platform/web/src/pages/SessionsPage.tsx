@@ -1508,7 +1508,6 @@ export function SessionDetail({
         key: message.id,
         runId: message.runId ?? null,
         text: message.text,
-        pending: true,
       })),
   ];
   const closed = session.data?.status === "closed";
@@ -2026,7 +2025,7 @@ export function SessionDetail({
               ))}
               {visiblePendingSteers.map((steer) => (
                 <MessageScrollerItem key={steer.id} messageId={steer.id}>
-                  <TranscriptEntrance motionKey={steer.id}><UserBand text={steer.text} pending steering /></TranscriptEntrance>
+                  <TranscriptEntrance motionKey={steer.id}><UserBand text={steer.text} steering /></TranscriptEntrance>
                 </MessageScrollerItem>
               ))}
               {notices.map((notice) => (

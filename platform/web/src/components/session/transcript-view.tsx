@@ -23,12 +23,10 @@ export function TranscriptEntryView({
   entry,
   loadFullText,
   showRunStatistics = true,
-  pending = false,
 }: {
   entry: TranscriptEntry;
   loadFullText?: FullTextLoader;
   showRunStatistics?: boolean;
-  pending?: boolean;
 }) {
   switch (entry.kind) {
     case "message":
@@ -38,7 +36,6 @@ export function TranscriptEntryView({
           origin={entry.origin}
           steering={entry.steering === true}
           media={entry.media}
-          pending={pending}
         />
       ) : (
         <Message>
@@ -151,7 +148,6 @@ const COLLAPSED_TEXT_HEIGHT = 160;
 export function UserBand({
   text,
   origin,
-  pending = false,
   steering = false,
   media,
 }: {
@@ -159,7 +155,6 @@ export function UserBand({
   /// Application-supplied origin of the input; `event` marks a delivered bot
   /// event, which gets a sender header instead of a plain band.
   origin?: string;
-  pending?: boolean;
   /// A message injected into a running run rather than its initial input.
   steering?: boolean;
   /// Images and documents sent with the input.
@@ -193,8 +188,7 @@ export function UserBand({
         <Bubble
           variant="muted"
           className={cn(
-            "w-full max-w-full transition-opacity duration-[50ms] ease-out motion-reduce:transition-none",
-            pending && "opacity-60",
+            "w-full max-w-full",
             event && "*:data-[slot=bubble-content]:border-l-2 *:data-[slot=bubble-content]:border-l-teal-600/60 *:data-[slot=bubble-content]:rounded-l-sm dark:*:data-[slot=bubble-content]:border-l-teal-300/50",
           )}
         >
@@ -280,8 +274,6 @@ export interface QueuedRunItem {
   key: string;
   runId: string | null;
   text: string;
-  /// Still being submitted or awaiting the engine's acknowledgement.
-  pending?: boolean;
   /// A cancel is in flight for this queued run.
   cancelling?: boolean;
 }
@@ -310,7 +302,7 @@ export function QueuedRunsBar({
             key={item.key}
             className={cn(
               "flex items-center gap-2 text-sm",
-              (item.pending || item.cancelling) && "opacity-60",
+              item.cancelling && "opacity-60",
             )}
           >
             <span className="w-5 shrink-0 text-right text-xs text-muted-foreground">

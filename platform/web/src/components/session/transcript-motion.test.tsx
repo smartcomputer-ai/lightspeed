@@ -57,11 +57,11 @@ it("keeps initial history and older-page arrivals still, then animates new input
 
 it("enters input, activity, and later replies once without replaying confirmation or final promotion", async () => {
   await render([]);
-  const section = { ...run("local"), pendingInput: true };
+  const section = run("local");
   await render([section]);
   const input = container.querySelector(".transcript-enter")!;
   const confirmed: RunSection = {
-    ...section, pendingInput: false, live: true,
+    ...section, live: true,
     input: { ...section.input!, key: "backend-input" },
     work: [{ kind: "message", key: "note", role: "assistant", text: "Starting" }],
   };
