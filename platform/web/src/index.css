@@ -13,7 +13,7 @@
 
 @media (prefers-reduced-motion: no-preference) {
     .transcript-enter {
-        animation: transcript-enter 180ms ease-out;
+        animation: transcript-enter 200ms ease-out;
     }
 }
 

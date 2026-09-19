@@ -269,6 +269,7 @@ it.each(["post-first", "post-without-submission", "tail-first", "tail-with-input
     const acknowledge = async () => {
       await act(async () => accept({ run: { id: "run_1", status: "running" } }));
       expect(container.querySelector('[data-slot="bubble"]')).toBe(bubble);
+      expect(bubble.className).not.toContain("opacity-60");
     };
     const postFirst = order === "post-first" || order === "post-without-submission";
     if (postFirst) await acknowledge();
@@ -282,7 +283,8 @@ it.each(["post-first", "post-without-submission", "tail-first", "tail-with-input
     expect(container.querySelector('[data-slot="bubble"]')).toBe(bubble);
     expect(expand.getAttribute("aria-expanded")).toBe("true");
     if (order !== "tail-with-input") {
-      expect(bubble.className).toContain("opacity-60");
+      // Acceptance starts the fade even if the durable input arrives later.
+      expect(bubble.className).not.toContain("opacity-60");
       confirmInput();
       await show("session");
     }

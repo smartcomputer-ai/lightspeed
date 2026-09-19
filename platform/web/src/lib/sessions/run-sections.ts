@@ -13,7 +13,7 @@ export interface RunSection {
   runId?: string;
   /// The user message that started the run, when it is in the loaded window.
   input?: TranscriptMessage;
-  /// Local input awaiting its durable transcript entry.
+  /// Local input awaiting backend acceptance, rather than transcript arrival.
   pendingInput?: boolean;
   /// Everything the run did: thinking, tool calls, interim notes, steering
   /// input, and system entries appended mid-run, in order.
@@ -51,7 +51,8 @@ export function withPendingRunInputs(
       key: section.runId ? submissionKeys.get(section.runId) ?? `run-${section.runId}` : section.key,
       ...(!section.input && message ? {
         input: pendingInput(message),
-        pendingInput: true,
+        // Matching a backend run already confirms acceptance.
+        pendingInput: false,
       } : {}),
     };
   });
@@ -59,7 +60,7 @@ export function withPendingRunInputs(
     if (attached.has(message.id)) continue;
     result.push({
       kind: "run", key: message.id, runId: message.runId ?? undefined,
-      input: pendingInput(message), pendingInput: true, work: [], live: false,
+      input: pendingInput(message), pendingInput: message.runId === null, work: [], live: false,
     });
   }
   return result;
