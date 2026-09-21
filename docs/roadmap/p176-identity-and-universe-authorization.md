@@ -186,8 +186,12 @@ Validation for steps 1–2 (2026-09-21):
 - `npm install`, contract/client regeneration, and `npm run check` passed.
 - Release schema metadata, changed-document links, formatting, and whitespace
   checks passed.
-- The isolated PostgreSQL lifecycle suite compiles. Its live execution requires
-  the repository's explicit test-service approval and has not been run.
+- Live validation passed against disposable PostgreSQL 17.10: identity lifecycle,
+  migration locking/checksums, and universe-scoped API-key management (three tests).
+  A separate fresh database passed 34 server CLI checks covering explicit migration,
+  bootstrap retries, creator ownership, groups, denied mutations, last-admin
+  rollback, disablement, orphan recovery, and scoped capabilities. Existing databases
+  and the local `.env` were not used; the disposable container was removed afterward.
 
 ## Boundary and follow-up
 
