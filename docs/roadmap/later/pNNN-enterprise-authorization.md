@@ -88,9 +88,10 @@ both use the same underlying secret/credential-grant storage.
 Using a configured connection includes brokered use of its bound credential;
 raw secret access and configuration are separate permissions. Operators manage
 shared resources within assigned scope; configuration changes cannot bypass
-resource access policies. The role does not grant access to restricted personal resources,
-authority to widen their audience, or permission to change universe membership,
-execution eligibility, deployment bindings, or its own access-management limits.
+resource access policies. The role does not grant access to restricted personal
+resources, authority to widen their audience, or permission to change universe
+membership, execution eligibility, deployment bindings, or its own access-management
+limits.
 Managing a shared template does not grant control of personal sessions created
 from it. Owners retain the sharing rights below; administrative content access is
 separately authorized.
