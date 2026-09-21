@@ -14,7 +14,7 @@ own bot-routing decisions.
 ## Follow the message path
 
 The host discovers channel accounts with
-`operator/channels/accounts/list`. For each selected account it creates a
+`deployment/channels/accounts/list`. For each selected account it creates a
 universe-scoped API client, starts provider ingress, and runs a Temporal
 activity worker on that account's queue.
 

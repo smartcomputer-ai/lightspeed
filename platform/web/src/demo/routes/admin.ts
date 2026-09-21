@@ -1,16 +1,16 @@
-/// Deployment-scoped administration: operator environment providers and
+/// Deployment-scoped administration: deployment environment providers and
 /// their per-universe bindings, the operator channel-account listing, and
 /// connector health.
 import { Hono } from "hono";
 import type { EnvironmentProviderBinding, EnvironmentTemplate } from "@/api";
 import type {
-  OperatorChannelAccountView,
-  OperatorEnvironmentProviderView,
+  DeploymentChannelAccountView,
+  DeploymentEnvironmentProviderView,
 } from "@lightspeed-ai/agent-client";
 import type { DemoStore, UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody } from "./common";
 
-type ControllerConnection = OperatorEnvironmentProviderView["controllerConnection"];
+type ControllerConnection = DeploymentEnvironmentProviderView["controllerConnection"];
 
 /// What a fresh binding provisions from when no other universe already
 /// lists this provider's templates.
@@ -114,7 +114,7 @@ export function adminRoutes(store: DemoStore): Hono {
     }
     const existing = store.environmentProviders.get(providerId);
     const now = Date.now();
-    const provider: OperatorEnvironmentProviderView = {
+    const provider: DeploymentEnvironmentProviderView = {
       providerId,
       ...(optionalString(body.displayName) ? { displayName: optionalString(body.displayName) } : {}),
       controllerConnection,
@@ -208,11 +208,11 @@ export function adminRoutes(store: DemoStore): Hono {
     return c.json(binding);
   });
 
-  /// Deployment-wide listing from the core's operator scope: every account
+  /// Deployment-wide listing from the core's deployment scope: every account
   /// across universes, each row carrying its universe id. The demo uses the
   /// platform universe id as the core `universeId`.
   app.get("/channel-accounts", (c) => {
-    const accounts: OperatorChannelAccountView[] = [];
+    const accounts: DeploymentChannelAccountView[] = [];
     for (const state of store.universes.values()) {
       for (const account of state.channelAccounts.values()) {
         accounts.push({ ...account, universeId: state.universe.id });

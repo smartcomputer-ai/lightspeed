@@ -12,7 +12,7 @@ import {
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";
 import { parseBody } from "../http.js";
-import { operatorClientFor, withGateway } from "./gateway.js";
+import { deploymentClientFor, withGateway } from "./gateway.js";
 
 const { universes, organization, member, user } = schema;
 
@@ -170,10 +170,10 @@ export function universeRoutes(ctx: AppContext) {
     // anything addresses it, so the engine create comes first. Idempotent
     // — if the platform transaction below fails, the orphaned engine
     // universe is empty, harmless, and reused on retry-by-name (fresh id)
-    // or reaped by an operator purge.
+    // or reaped by an deployment purge.
     const lightspeedUniverseId = crypto.randomUUID();
     return withGateway(c, async () => {
-      await operatorClientFor(ctx).call("operator/universes/create", {
+      await deploymentClientFor(ctx).call("deployment/universes/create", {
         universeId: lightspeedUniverseId,
       });
       const created = await createUniverseRows(
@@ -199,7 +199,7 @@ export function universeRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const rows = await ctx.db.select().from(universes);
-      const listed = await operatorClientFor(ctx).call("operator/universes/list", {});
+      const listed = await deploymentClientFor(ctx).call("deployment/universes/list", {});
       const engineViews = listed.result.universes ?? [];
       const engineIds = new Set(engineViews.map((view) => view.universeId));
       const linked = new Set(rows.map((row) => row.lightspeedUniverseId));
@@ -240,7 +240,7 @@ export function universeRoutes(ctx: AppContext) {
       return c.json({ error: "already linked to a universe" }, 409);
     }
     return withGateway(c, async () => {
-      await operatorClientFor(ctx).call("operator/universes/read", {
+      await deploymentClientFor(ctx).call("deployment/universes/read", {
         universeId: input.lightspeedUniverseId,
       });
       const created = await createUniverseRows(
@@ -268,15 +268,15 @@ export function universeRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const created = await operatorClientFor(ctx, access.universe.gatewayUrl).call(
-        "operator/universes/create",
+      const created = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
+        "deployment/universes/create",
         { universeId: access.universe.lightspeedUniverseId },
       );
       return c.json({ created: created.result.created });
     });
   });
 
-  /// Universe API-key management stays operator-scoped engine-side: the platform
+  /// Universe API-key management stays deployment-scoped engine-side: the platform
   /// authenticates the human, enforces owner/admin access, and supplies the
   /// engine universe id. The plaintext secret exists only in the create
   /// response and is never persisted by the platform.
@@ -286,8 +286,8 @@ export function universeRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const response = await operatorClientFor(ctx, access.universe.gatewayUrl).call(
-        "operator/api-keys/list",
+      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
+        "deployment/api-keys/list",
         { universeId: access.universe.lightspeedUniverseId },
       );
       return c.json(response.result.apiKeys ?? []);
@@ -305,8 +305,8 @@ export function universeRoutes(ctx: AppContext) {
     }
     const session = c.get("session");
     return withGateway(c, async () => {
-      const response = await operatorClientFor(ctx, access.universe.gatewayUrl).call(
-        "operator/api-keys/create",
+      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
+        "deployment/api-keys/create",
         {
           universeId: access.universe.lightspeedUniverseId,
           displayName: body.data.displayName,
@@ -323,8 +323,8 @@ export function universeRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const response = await operatorClientFor(ctx, access.universe.gatewayUrl).call(
-        "operator/api-keys/revoke",
+      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
+        "deployment/api-keys/revoke",
         {
           universeId: access.universe.lightspeedUniverseId,
           keyPrefix: c.req.param("keyPrefix"),
@@ -352,14 +352,14 @@ export function universeRoutes(ctx: AppContext) {
       return c.json({ error: "linked to a universe — archive and delete it instead" }, 409);
     }
     return withGateway(c, async () => {
-      const report = await operatorClientFor(ctx).call("operator/universes/delete", {
+      const report = await deploymentClientFor(ctx).call("deployment/universes/delete", {
         universeId: lightspeedUniverseId,
       });
       return c.json({ ok: true, purge: report.result });
     });
   });
 
-  /// Permanent removal: engine purge (operator scope) then the platform
+  /// Permanent removal: engine purge (deployment scope) then the platform
   /// rows (org cascade deletes membership, universe, bindings). Gated to
   /// platform admins and archived universes — archive first, purge second,
   /// so no traffic races the purge.
@@ -378,8 +378,8 @@ export function universeRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       let purge: unknown = null;
       try {
-        const report = await operatorClientFor(ctx, access.universe.gatewayUrl).call(
-          "operator/universes/delete",
+        const report = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
+          "deployment/universes/delete",
           { universeId: access.universe.lightspeedUniverseId },
         );
         purge = report.result;

@@ -10,13 +10,13 @@ mod blob_cache;
 mod bots;
 mod cas_sweep;
 mod channels;
+mod deployment;
 mod environment;
 mod environment_registration;
 mod mcp;
 mod migrations;
 mod oauth;
 mod object;
-mod operator;
 mod profile;
 mod providers;
 mod session;
@@ -346,6 +346,10 @@ pub use cas_sweep::{
     CasSweepPage,
 };
 pub use channels::list_channel_accounts_all;
+pub use deployment::{
+    UniverseStats, create_universe, delete_universe, list_universe_object_keys,
+    list_universe_session_ids, list_universe_stats, read_universe_stats,
+};
 pub use environment_registration::{
     find_registered_environment_universe, find_registration_key_universe,
 };
@@ -353,10 +357,6 @@ pub use migrations::{
     MIGRATIONS, REQUIRED_SCHEMA_REVISION, SchemaStatus, schema_status, verify_schema,
 };
 pub use object::{delete_objects_under_prefix, universe_cas_object_prefix};
-pub use operator::{
-    UniverseStats, create_universe, delete_universe, list_universe_object_keys,
-    list_universe_session_ids, list_universe_stats, read_universe_stats,
-};
 
 /// Deployment-level universe listing for admin surfaces.
 pub async fn list_universes(pool: &PgPool) -> Result<Vec<(Uuid, Option<String>)>, PgStoreError> {

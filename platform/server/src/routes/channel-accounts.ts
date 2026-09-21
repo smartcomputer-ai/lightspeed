@@ -17,7 +17,7 @@ import { readChannelsStatus } from "../channels-status.js";
 import type { AppContext, ApiVariables } from "../context.js";
 import { parseBody } from "../http.js";
 import { isPlatformAdmin } from "../context.js";
-import { engineClientFor, operatorClientFor, withGateway } from "./gateway.js";
+import { engineClientFor, deploymentClientFor, withGateway } from "./gateway.js";
 import { universeForSession } from "./universes.js";
 
 /// Channel accounts are universe resources in the core (`channels/*`): a
@@ -55,7 +55,7 @@ const channelConnectionSchema = z.discriminatedUnion("provider", [
 
 /// Deployment-wide listing for the admin page and the connector-host
 /// operator view: every enabled account across universes, from the
-/// core's operator scope. Platform-admin only.
+/// core's deployment scope. Platform-admin only.
 export function channelAccountAdminRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
@@ -64,8 +64,8 @@ export function channelAccountAdminRoutes(ctx: AppContext) {
       return c.json({ error: "platform admin required" }, 403);
     }
     return withGateway(c, async () => {
-      const client = operatorClientFor(ctx);
-      const response = await client.call("operator/channels/accounts/list", {
+      const client = deploymentClientFor(ctx);
+      const response = await client.call("deployment/channels/accounts/list", {
         includeDisabled: true,
       });
       return c.json(response.result);

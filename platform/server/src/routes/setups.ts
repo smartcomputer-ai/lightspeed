@@ -9,7 +9,7 @@ import {
 import { schema } from "@lightspeed/platform-db";
 import type { UniverseSetupState } from "@lightspeed/platform-db/schema";
 import type { AppContext, ApiVariables } from "../context.js";
-import { engineClientFor, operatorClientFor } from "./gateway.js";
+import { engineClientFor, deploymentClientFor } from "./gateway.js";
 import { universeForSession } from "./universes.js";
 
 const SETUP_ID = "configurator";
@@ -186,17 +186,17 @@ async function installConfigurator(
 
   const principal = `user:${userId}`;
   const client = engineClientFor(ctx, universe, principal);
-  const operator = operatorClientFor(ctx, universe.gatewayUrl);
+  const deployment = deploymentClientFor(ctx, universe.gatewayUrl);
   let state = { ...installation.state };
 
   state = ctx.env.configuratorMcpInternalTrustedHeader
-    ? await removeCredential(ctx, installation.id, universe, client, operator, state)
+    ? await removeCredential(ctx, installation.id, universe, client, deployment, state)
     : await ensureCredential(
         ctx,
         installation.id,
         universe,
         client,
-        operator,
+        deployment,
         state,
         mcpUrl,
       );
@@ -233,7 +233,7 @@ async function removeCredential(
   installationId: string,
   universe: Universe,
   client: LightspeedClient,
-  operator: LightspeedClient,
+  deployment: LightspeedClient,
   state: UniverseSetupState,
 ): Promise<UniverseSetupState> {
   if (state.grantId) {
@@ -243,14 +243,14 @@ async function removeCredential(
     }
   }
   if (state.keyPrefix) {
-    const keys = await operator.call("operator/api-keys/list", {
+    const keys = await deployment.call("deployment/api-keys/list", {
       universeId: universe.lightspeedUniverseId,
     });
     const key = (keys.result.apiKeys ?? []).find(
       (candidate) => candidate.keyPrefix === state.keyPrefix,
     );
     if (key && key.revokedAtMs == null) {
-      await operator.call("operator/api-keys/revoke", {
+      await deployment.call("deployment/api-keys/revoke", {
         universeId: universe.lightspeedUniverseId,
         keyPrefix: state.keyPrefix,
       });
@@ -268,11 +268,11 @@ async function ensureCredential(
   installationId: string,
   universe: Universe,
   client: LightspeedClient,
-  operator: LightspeedClient,
+  deployment: LightspeedClient,
   state: UniverseSetupState,
   mcpUrl: string,
 ): Promise<UniverseSetupState> {
-  const keys = await operator.call("operator/api-keys/list", {
+  const keys = await deployment.call("deployment/api-keys/list", {
     universeId: universe.lightspeedUniverseId,
   });
   const key = state.keyPrefix
@@ -295,13 +295,13 @@ async function ensureCredential(
     await client.call("auth/grants/revoke", { grantId: state.grantId });
   }
   if (key && key.revokedAtMs == null && state.keyPrefix) {
-    await operator.call("operator/api-keys/revoke", {
+    await deployment.call("deployment/api-keys/revoke", {
       universeId: universe.lightspeedUniverseId,
       keyPrefix: state.keyPrefix,
     });
   }
 
-  const minted = await operator.call("operator/api-keys/create", {
+  const minted = await deployment.call("deployment/api-keys/create", {
     universeId: universe.lightspeedUniverseId,
     displayName: KEY_DISPLAY_NAME,
     principal: { kind: "serviceAccount", id: SERVER_ID },
@@ -316,8 +316,8 @@ async function ensureCredential(
       audience: mcpUrl,
     });
   } catch (error) {
-    await operator
-      .call("operator/api-keys/revoke", {
+    await deployment
+      .call("deployment/api-keys/revoke", {
         universeId: universe.lightspeedUniverseId,
         keyPrefix: minted.result.apiKey.keyPrefix,
       })

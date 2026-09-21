@@ -35,7 +35,7 @@ pub fn universe_id_from_env() -> anyhow::Result<Uuid> {
 /// by an upstream gateway that owns authentication; requests without the
 /// header are rejected (fail closed), and unknown universes are never
 /// auto-created — universes exist only through explicit creation
-/// (`operator/universes/create` or `server universe create`). `ApiKey`
+/// (`deployment/universes/create` or `server universe create`). `ApiKey`
 /// resolves `Authorization: Bearer lsk_…` against the deployment-level
 /// api_keys table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,7 +67,7 @@ pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
     if optional_env("LIGHTSPEED_UNIVERSE_AUTO_CREATE").is_some() {
         anyhow::bail!(
             "LIGHTSPEED_UNIVERSE_AUTO_CREATE is retired: universes are created explicitly \
-             via operator/universes/create (or `server universe create`); remove the variable"
+             via deployment/universes/create (or `server universe create`); remove the variable"
         );
     }
     let mode = env::var("LIGHTSPEED_AUTH_MODE").unwrap_or_else(|_| "single".to_owned());

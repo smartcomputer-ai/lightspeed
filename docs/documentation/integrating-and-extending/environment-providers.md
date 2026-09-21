@@ -221,7 +221,7 @@ deliberately configured disposable account or project.
 
 ## Register and verify it in Lightspeed
 
-Register the provider through `operator/environment-providers/put`, create an
+Register the provider through `deployment/environment-providers/put`, create an
 enabled universe binding, and inspect the returned templates. The
 [Incus setup guide](../environments/incus-vms.md) shows the current registration
 and binding procedure; use your provider's controller URL and templates.

@@ -2,7 +2,7 @@
 
 Streamable HTTP MCP facade over a configurable generated subset of the
 universe-scoped Lightspeed JSON-RPC contract. Tools are generated from
-`crates/api/contract`; deployment-level `operator/*` methods can never be
+`crates/api/contract`; deployment-level `deployment/*` methods can never be
 exposed.
 
 The product guide, [Configurator MCP](../../docs/documentation/integrating-and-extending/configurator-mcp.md),

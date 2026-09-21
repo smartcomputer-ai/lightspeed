@@ -11,11 +11,11 @@ mod support;
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use api::{
-    AgentApiService, EnvironmentCloseParams, EnvironmentIdentityModeView,
-    EnvironmentLifecycleStatusView, EnvironmentListParams, EnvironmentReadParams,
-    EnvironmentRegistrationKeyCreateParams, EnvironmentRegistrationKeyReadParams,
-    EnvironmentRegistrationKeyRevokeParams, EnvironmentSourceView, EnvironmentView,
-    OperatorApiService, OperatorUniverseCreateParams,
+    AgentApiService, DeploymentApiService, DeploymentUniverseCreateParams, EnvironmentCloseParams,
+    EnvironmentIdentityModeView, EnvironmentLifecycleStatusView, EnvironmentListParams,
+    EnvironmentReadParams, EnvironmentRegistrationKeyCreateParams,
+    EnvironmentRegistrationKeyReadParams, EnvironmentRegistrationKeyRevokeParams,
+    EnvironmentSourceView, EnvironmentView,
 };
 use environment_client::{EnvironmentDataClient, JsonRpcTransport};
 use environment_daemon::{
@@ -39,7 +39,7 @@ use support::live::{LIVE_TEST_LOCK, require_storage_live_env};
 use temporal_server::{
     DeploymentStores, GatewayAuthMode, UniverseRuntime,
     gateway::{
-        DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayAgentApi, GatewayOperatorApi, GatewayRoutes,
+        DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayAgentApi, GatewayDeploymentApi, GatewayRoutes,
         GatewayState, gateway_router,
     },
 };
@@ -85,9 +85,9 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
         Some(base_url.clone()),
         stores,
     )?);
-    let operator = GatewayOperatorApi::new(runtime.clone());
+    let operator = GatewayDeploymentApi::new(runtime.clone());
     operator
-        .create_universe(OperatorUniverseCreateParams {
+        .create_universe(DeploymentUniverseCreateParams {
             universe_id: universe_id.to_string(),
         })
         .await?;

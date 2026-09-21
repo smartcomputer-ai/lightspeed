@@ -13,16 +13,16 @@ use serde_json::{Value, json};
 
 use crate::{
     AgentNotification, JsonRpcError, MethodSpec, NOTIFICATION_METHODS, PROTOCOL_VERSION,
-    method_manifest, operator_method_manifest,
+    deployment_method_manifest, method_manifest,
 };
 
 /// Every dispatchable method across both scope classes: the universe-scoped
-/// manifest followed by the operator-scoped one. The wire contract is one
+/// manifest followed by the deployment-scoped one. The wire contract is one
 /// document; `scope` on each entry tells clients which authorization class a
-/// method belongs to (operator methods never carry the universe header).
+/// method belongs to (deployment methods never carry the universe header).
 pub fn full_method_manifest() -> Vec<MethodSpec> {
     let mut methods = method_manifest();
-    methods.extend(operator_method_manifest());
+    methods.extend(deployment_method_manifest());
     methods
 }
 
@@ -56,7 +56,7 @@ pub fn export_schemas() -> ExportedSchemas {
             let title = match spec.scope {
                 crate::MethodScope::Universe => "Universe methods",
                 crate::MethodScope::Service => "Service methods",
-                crate::MethodScope::Operator => "Operator methods",
+                crate::MethodScope::Deployment => "Deployment methods",
             };
             write!(api_reference, "\n## {title}\n\n").expect("write string");
         }
@@ -180,7 +180,7 @@ mod tests {
         assert_eq!(
             manifest
                 .iter()
-                .filter(|spec| spec.scope == crate::MethodScope::Operator)
+                .filter(|spec| spec.scope == crate::MethodScope::Deployment)
                 .count(),
             15
         );
@@ -236,10 +236,10 @@ mod tests {
     fn method_names_carry_their_scope_prefix() {
         for spec in full_method_manifest()
             .into_iter()
-            .filter(|spec| spec.scope == crate::MethodScope::Operator)
+            .filter(|spec| spec.scope == crate::MethodScope::Deployment)
         {
             assert!(
-                crate::is_operator_method(spec.method),
+                crate::is_deployment_method(spec.method),
                 "scope of {} must match its method-name prefix",
                 spec.method
             );

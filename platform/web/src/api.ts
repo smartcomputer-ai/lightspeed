@@ -81,7 +81,7 @@ export interface Universe {
   role?: string | null;
 }
 
-/// Engine-side universe inventory entry (operator/universes/list view).
+/// Engine-side universe inventory entry (deployment/universes/list view).
 export interface EngineUniverse {
   universeId: string;
   sessions: number;
@@ -643,8 +643,8 @@ export type {
   ChatScope,
   ChatTurnAccess,
   LlmUsageView,
-  OperatorChannelAccountListResponse,
-  OperatorChannelAccountView,
+  DeploymentChannelAccountListResponse,
+  DeploymentChannelAccountView,
   PollCursorSpec,
   PollCursorState,
   PollHttpAuth,

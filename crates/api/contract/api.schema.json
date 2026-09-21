@@ -904,6 +904,261 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfDeploymentApiKeyCreateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentApiKeyCreateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentApiKeyListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentApiKeyListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentApiKeyRevokeResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentApiKeyRevokeResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentChannelAccountListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentChannelAccountListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentEnvironmentAdoptResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentEnvironmentProviderDeleteResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentEnvironmentProviderListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentEnvironmentProviderPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentEnvironmentProviderReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentProviderBindingDeleteResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentProviderBindingPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentProviderBindingPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentUniverseCreateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentUniverseCreateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentUniverseDeleteResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentUniverseDeleteResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentUniverseListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentUniverseListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentUniverseReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentUniverseReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfEnvironmentCloseResponse": {
       "properties": {
         "notifications": {
@@ -1407,261 +1662,6 @@
         },
         "result": {
           "$ref": "#/definitions/ModelListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorApiKeyCreateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorApiKeyCreateResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorApiKeyListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorApiKeyListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorApiKeyRevokeResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorApiKeyRevokeResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorChannelAccountListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorChannelAccountListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorEnvironmentAdoptResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorEnvironmentAdoptResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderDeleteResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorEnvironmentProviderListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderPutResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorProviderBindingDeleteResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorProviderBindingDeleteResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorProviderBindingPutResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorProviderBindingPutResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorUniverseCreateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorUniverseCreateResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorUniverseDeleteResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorUniverseDeleteResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorUniverseListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorUniverseListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfOperatorUniverseReadResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/OperatorUniverseReadResponse"
         }
       },
       "required": [
@@ -7736,6 +7736,736 @@
       ],
       "type": "object"
     },
+    "DeploymentApiKeyCreateParams": {
+      "properties": {
+        "displayName": {
+          "description": "Human-readable purpose shown in key-management interfaces.",
+          "type": "string"
+        },
+        "principal": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PrincipalRefView"
+            }
+          ],
+          "description": "Audit principal applied to grants and flows created through this key.\nThis does not grant platform/deployment authority."
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "displayName",
+        "principal"
+      ],
+      "type": "object"
+    },
+    "DeploymentApiKeyCreateResponse": {
+      "description": "A newly minted key. `secret` is returned only by create and cannot be\nrecovered later. Its custom `Debug` implementation redacts the DTO before\nJSON-RPC serialization; the serialized response payload remains sensitive\nand must not be logged.",
+      "properties": {
+        "apiKey": {
+          "$ref": "#/definitions/DeploymentApiKeyView"
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiKey",
+        "secret"
+      ],
+      "type": "object"
+    },
+    "DeploymentApiKeyListParams": {
+      "properties": {
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "DeploymentApiKeyListResponse": {
+      "properties": {
+        "apiKeys": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/DeploymentApiKeyView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentApiKeyRevokeParams": {
+      "properties": {
+        "keyPrefix": {
+          "type": "string"
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "keyPrefix"
+      ],
+      "type": "object"
+    },
+    "DeploymentApiKeyRevokeResponse": {
+      "properties": {
+        "apiKey": {
+          "$ref": "#/definitions/DeploymentApiKeyView"
+        }
+      },
+      "required": [
+        "apiKey"
+      ],
+      "type": "object"
+    },
+    "DeploymentApiKeyView": {
+      "description": "Non-secret API-key metadata. The owning universe is supplied by every\nrequest and intentionally omitted from entries so list responses cannot\nbecome a deployment-wide tenant catalog by accident.",
+      "properties": {
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keyPrefix": {
+          "type": "string"
+        },
+        "lastUsedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "revokedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keyPrefix",
+        "createdAtMs"
+      ],
+      "type": "object"
+    },
+    "DeploymentChannelAccountListParams": {
+      "properties": {
+        "includeDisabled": {
+          "default": false,
+          "description": "Include disabled accounts; by default only enabled ones are listed.",
+          "type": "boolean"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ChannelProvider"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentChannelAccountListResponse": {
+      "properties": {
+        "accounts": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/DeploymentChannelAccountView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentChannelAccountView": {
+      "description": "One channel account of any universe, for the connector host's discovery\npass.",
+      "properties": {
+        "accountId": {
+          "$ref": "#/definitions/ChannelAccountId"
+        },
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "credentialGrantId": {
+          "description": "Retrievable auth grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "provider": {
+          "$ref": "#/definitions/ChannelProvider"
+        },
+        "providerAccountId": {
+          "description": "Provider-native account identity: the Telegram bot username or\nnumeric id, the WhatsApp phone number. Unique per universe and\nprovider.",
+          "type": "string"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settings": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ChannelAccountSettings"
+            }
+          ],
+          "default": {}
+        },
+        "universeId": {
+          "type": "string"
+        },
+        "updatedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "universeId",
+        "accountId",
+        "revision",
+        "provider",
+        "providerAccountId",
+        "displayName",
+        "createdAtMs",
+        "updatedAtMs"
+      ],
+      "type": "object"
+    },
+    "DeploymentEnvironmentAdoptParams": {
+      "properties": {
+        "bindingId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "requestId": {
+          "description": "Stable caller-generated retry identity inside the destination universe.",
+          "type": "string"
+        },
+        "sourceTarget": {
+          "description": "Provider-native source reference. The Incus provider accepts\n`<project>/<instance>` or an instance name in the `default` project.",
+          "type": "string"
+        },
+        "takeOwnership": {
+          "description": "Required acknowledgement that Lightspeed will move, reconfigure, and\ndelete the target as part of its ordinary managed lifecycle.",
+          "type": "boolean"
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "requestId",
+        "bindingId",
+        "sourceTarget",
+        "takeOwnership"
+      ],
+      "type": "object"
+    },
+    "DeploymentEnvironmentAdoptResponse": {
+      "properties": {
+        "environment": {
+          "$ref": "#/definitions/EnvironmentView"
+        }
+      },
+      "required": [
+        "environment"
+      ],
+      "type": "object"
+    },
+    "DeploymentEnvironmentProviderConnection": {
+      "properties": {
+        "endpoint": {
+          "type": "string"
+        },
+        "transport": {
+          "$ref": "#/definitions/DeploymentEnvironmentProviderTransport"
+        }
+      },
+      "required": [
+        "endpoint",
+        "transport"
+      ],
+      "type": "object"
+    },
+    "DeploymentEnvironmentProviderDeleteParams": {
+      "properties": {
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "type": "object"
+    },
+    "DeploymentEnvironmentProviderDeleteResponse": {
+      "properties": {
+        "provider": {
+          "$ref": "#/definitions/DeploymentEnvironmentProviderView"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "DeploymentEnvironmentProviderListParams": {
+      "type": "object"
+    },
+    "DeploymentEnvironmentProviderListResponse": {
+      "properties": {
+        "providers": {
+          "items": {
+            "$ref": "#/definitions/DeploymentEnvironmentProviderView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "providers"
+      ],
+      "type": "object"
+    },
+    "DeploymentEnvironmentProviderPutParams": {
+      "properties": {
+        "controllerConnection": {
+          "$ref": "#/definitions/DeploymentEnvironmentProviderConnection"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "controllerConnection"
+      ],
+      "type": "object"
+    },
+    "DeploymentEnvironmentProviderPutResponse": {
+      "properties": {
+        "provider": {
+          "$ref": "#/definitions/DeploymentEnvironmentProviderView"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "DeploymentEnvironmentProviderReadParams": {
+      "properties": {
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "type": "object"
+    },
+    "DeploymentEnvironmentProviderReadResponse": {
+      "properties": {
+        "provider": {
+          "$ref": "#/definitions/DeploymentEnvironmentProviderView"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "DeploymentEnvironmentProviderTransport": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "webSocket",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "http",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "stdio",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "ssh",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "providerType": {
+              "type": "string"
+            },
+            "type": {
+              "const": "provider",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "providerType"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DeploymentEnvironmentProviderView": {
+      "properties": {
+        "controllerConnection": {
+          "$ref": "#/definitions/DeploymentEnvironmentProviderConnection"
+        },
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "updatedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "providerId",
+        "controllerConnection",
+        "createdAtMs",
+        "updatedAtMs"
+      ],
+      "type": "object"
+    },
+    "DeploymentProviderBindingDeleteParams": {
+      "properties": {
+        "bindingId": {
+          "type": "string"
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "bindingId"
+      ],
+      "type": "object"
+    },
+    "DeploymentProviderBindingDeleteResponse": {
+      "properties": {
+        "binding": {
+          "$ref": "#/definitions/EnvironmentProviderBindingView"
+        }
+      },
+      "required": [
+        "binding"
+      ],
+      "type": "object"
+    },
+    "DeploymentProviderBindingPutParams": {
+      "properties": {
+        "bindingId": {
+          "type": "string"
+        },
+        "expectedRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/EnvironmentProviderBindingStatusView"
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "bindingId",
+        "providerId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "DeploymentProviderBindingPutResponse": {
+      "properties": {
+        "binding": {
+          "$ref": "#/definitions/EnvironmentProviderBindingView"
+        }
+      },
+      "required": [
+        "binding"
+      ],
+      "type": "object"
+    },
+    "DeploymentUniverseCreateParams": {
+      "properties": {
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "DeploymentUniverseCreateResponse": {
+      "properties": {
+        "created": {
+          "description": "False when the universe already existed (create is idempotent).",
+          "type": "boolean"
+        },
+        "universe": {
+          "$ref": "#/definitions/DeploymentUniverseView"
+        }
+      },
+      "required": [
+        "universe",
+        "created"
+      ],
+      "type": "object"
+    },
+    "DeploymentUniverseDeleteParams": {
+      "properties": {
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "DeploymentUniverseDeleteResponse": {
+      "description": "Purge report. The purge is idempotent: rerunning after a partial failure\nresumes where it stopped, and the universe row is deleted last so a\nhalf-purged universe is still visible to `deployment/universes/read`.",
+      "properties": {
+        "blobObjectsDeleted": {
+          "description": "External object-store blobs deleted during the purge.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "universeId": {
+          "type": "string"
+        },
+        "workflowsTerminated": {
+          "description": "Live session workflows terminated during the purge.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "universeId",
+        "workflowsTerminated",
+        "blobObjectsDeleted"
+      ],
+      "type": "object"
+    },
+    "DeploymentUniverseListParams": {
+      "type": "object"
+    },
+    "DeploymentUniverseListResponse": {
+      "properties": {
+        "universes": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/DeploymentUniverseView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentUniverseReadParams": {
+      "properties": {
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "DeploymentUniverseReadResponse": {
+      "properties": {
+        "universe": {
+          "$ref": "#/definitions/DeploymentUniverseView"
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "type": "object"
+    },
+    "DeploymentUniverseView": {
+      "description": "Per-universe stats view. Counts are cheap aggregates computed at read\ntime, not maintained counters — approximate under concurrent writes.",
+      "properties": {
+        "blobBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lastActivityAtMs": {
+          "description": "Most recent session activity (`max(sessions.updated_at_ms)`); absent\nwhen the universe has no sessions.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "profiles": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slug": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "universeId": {
+          "type": "string"
+        },
+        "workspaces": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "universeId",
+        "createdAtMs",
+        "sessions",
+        "workspaces",
+        "profiles",
+        "blobBytes"
+      ],
+      "type": "object"
+    },
     "EnvironmentAccess": {
       "description": "Per-attachment environment access, an ordered ladder: `edit` adds file\nediting to `read`, `exec` adds processes, `jobs` adds durable jobs.\nProcesses can write files regardless of the file-tool level, so\nread-only files with commands is deliberately not expressible.",
       "enum": [
@@ -10947,736 +11677,6 @@
         "tokenEndpointAuthMethod",
         "createdAtMs",
         "updatedAtMs"
-      ],
-      "type": "object"
-    },
-    "OperatorApiKeyCreateParams": {
-      "properties": {
-        "displayName": {
-          "description": "Human-readable purpose shown in key-management interfaces.",
-          "type": "string"
-        },
-        "principal": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/PrincipalRefView"
-            }
-          ],
-          "description": "Audit principal applied to grants and flows created through this key.\nThis does not grant platform/operator authority."
-        },
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId",
-        "displayName",
-        "principal"
-      ],
-      "type": "object"
-    },
-    "OperatorApiKeyCreateResponse": {
-      "description": "A newly minted key. `secret` is returned only by create and cannot be\nrecovered later. Its custom `Debug` implementation redacts the DTO before\nJSON-RPC serialization; the serialized response payload remains sensitive\nand must not be logged.",
-      "properties": {
-        "apiKey": {
-          "$ref": "#/definitions/OperatorApiKeyView"
-        },
-        "secret": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "apiKey",
-        "secret"
-      ],
-      "type": "object"
-    },
-    "OperatorApiKeyListParams": {
-      "properties": {
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId"
-      ],
-      "type": "object"
-    },
-    "OperatorApiKeyListResponse": {
-      "properties": {
-        "apiKeys": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/OperatorApiKeyView"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "OperatorApiKeyRevokeParams": {
-      "properties": {
-        "keyPrefix": {
-          "type": "string"
-        },
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId",
-        "keyPrefix"
-      ],
-      "type": "object"
-    },
-    "OperatorApiKeyRevokeResponse": {
-      "properties": {
-        "apiKey": {
-          "$ref": "#/definitions/OperatorApiKeyView"
-        }
-      },
-      "required": [
-        "apiKey"
-      ],
-      "type": "object"
-    },
-    "OperatorApiKeyView": {
-      "description": "Non-secret API-key metadata. The owning universe is supplied by every\nrequest and intentionally omitted from entries so list responses cannot\nbecome a deployment-wide tenant catalog by accident.",
-      "properties": {
-        "createdAtMs": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "keyPrefix": {
-          "type": "string"
-        },
-        "lastUsedAtMs": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "revokedAtMs": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "keyPrefix",
-        "createdAtMs"
-      ],
-      "type": "object"
-    },
-    "OperatorChannelAccountListParams": {
-      "properties": {
-        "includeDisabled": {
-          "default": false,
-          "description": "Include disabled accounts; by default only enabled ones are listed.",
-          "type": "boolean"
-        },
-        "provider": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ChannelProvider"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "OperatorChannelAccountListResponse": {
-      "properties": {
-        "accounts": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/OperatorChannelAccountView"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "OperatorChannelAccountView": {
-      "description": "One channel account of any universe, for the connector host's discovery\npass.",
-      "properties": {
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        },
-        "createdAtMs": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "credentialGrantId": {
-          "description": "Retrievable auth grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "displayName": {
-          "type": "string"
-        },
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "provider": {
-          "$ref": "#/definitions/ChannelProvider"
-        },
-        "providerAccountId": {
-          "description": "Provider-native account identity: the Telegram bot username or\nnumeric id, the WhatsApp phone number. Unique per universe and\nprovider.",
-          "type": "string"
-        },
-        "revision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "settings": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ChannelAccountSettings"
-            }
-          ],
-          "default": {}
-        },
-        "universeId": {
-          "type": "string"
-        },
-        "updatedAtMs": {
-          "format": "int64",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "universeId",
-        "accountId",
-        "revision",
-        "provider",
-        "providerAccountId",
-        "displayName",
-        "createdAtMs",
-        "updatedAtMs"
-      ],
-      "type": "object"
-    },
-    "OperatorEnvironmentAdoptParams": {
-      "properties": {
-        "bindingId": {
-          "type": "string"
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "metadata": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "requestId": {
-          "description": "Stable caller-generated retry identity inside the destination universe.",
-          "type": "string"
-        },
-        "sourceTarget": {
-          "description": "Provider-native source reference. The Incus provider accepts\n`<project>/<instance>` or an instance name in the `default` project.",
-          "type": "string"
-        },
-        "takeOwnership": {
-          "description": "Required acknowledgement that Lightspeed will move, reconfigure, and\ndelete the target as part of its ordinary managed lifecycle.",
-          "type": "boolean"
-        },
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId",
-        "requestId",
-        "bindingId",
-        "sourceTarget",
-        "takeOwnership"
-      ],
-      "type": "object"
-    },
-    "OperatorEnvironmentAdoptResponse": {
-      "properties": {
-        "environment": {
-          "$ref": "#/definitions/EnvironmentView"
-        }
-      },
-      "required": [
-        "environment"
-      ],
-      "type": "object"
-    },
-    "OperatorEnvironmentProviderConnection": {
-      "properties": {
-        "endpoint": {
-          "type": "string"
-        },
-        "transport": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderTransport"
-        }
-      },
-      "required": [
-        "endpoint",
-        "transport"
-      ],
-      "type": "object"
-    },
-    "OperatorEnvironmentProviderDeleteParams": {
-      "properties": {
-        "providerId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "providerId"
-      ],
-      "type": "object"
-    },
-    "OperatorEnvironmentProviderDeleteResponse": {
-      "properties": {
-        "provider": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderView"
-        }
-      },
-      "required": [
-        "provider"
-      ],
-      "type": "object"
-    },
-    "OperatorEnvironmentProviderListParams": {
-      "type": "object"
-    },
-    "OperatorEnvironmentProviderListResponse": {
-      "properties": {
-        "providers": {
-          "items": {
-            "$ref": "#/definitions/OperatorEnvironmentProviderView"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "providers"
-      ],
-      "type": "object"
-    },
-    "OperatorEnvironmentProviderPutParams": {
-      "properties": {
-        "controllerConnection": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderConnection"
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "metadata": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "providerId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "providerId",
-        "controllerConnection"
-      ],
-      "type": "object"
-    },
-    "OperatorEnvironmentProviderPutResponse": {
-      "properties": {
-        "provider": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderView"
-        }
-      },
-      "required": [
-        "provider"
-      ],
-      "type": "object"
-    },
-    "OperatorEnvironmentProviderReadParams": {
-      "properties": {
-        "providerId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "providerId"
-      ],
-      "type": "object"
-    },
-    "OperatorEnvironmentProviderReadResponse": {
-      "properties": {
-        "provider": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderView"
-        }
-      },
-      "required": [
-        "provider"
-      ],
-      "type": "object"
-    },
-    "OperatorEnvironmentProviderTransport": {
-      "oneOf": [
-        {
-          "properties": {
-            "type": {
-              "const": "webSocket",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "type": {
-              "const": "http",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "type": {
-              "const": "stdio",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "type": {
-              "const": "ssh",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "providerType": {
-              "type": "string"
-            },
-            "type": {
-              "const": "provider",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "providerType"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "OperatorEnvironmentProviderView": {
-      "properties": {
-        "controllerConnection": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderConnection"
-        },
-        "createdAtMs": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "metadata": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "providerId": {
-          "type": "string"
-        },
-        "updatedAtMs": {
-          "format": "int64",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "providerId",
-        "controllerConnection",
-        "createdAtMs",
-        "updatedAtMs"
-      ],
-      "type": "object"
-    },
-    "OperatorProviderBindingDeleteParams": {
-      "properties": {
-        "bindingId": {
-          "type": "string"
-        },
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId",
-        "bindingId"
-      ],
-      "type": "object"
-    },
-    "OperatorProviderBindingDeleteResponse": {
-      "properties": {
-        "binding": {
-          "$ref": "#/definitions/EnvironmentProviderBindingView"
-        }
-      },
-      "required": [
-        "binding"
-      ],
-      "type": "object"
-    },
-    "OperatorProviderBindingPutParams": {
-      "properties": {
-        "bindingId": {
-          "type": "string"
-        },
-        "expectedRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "metadata": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "providerId": {
-          "type": "string"
-        },
-        "status": {
-          "$ref": "#/definitions/EnvironmentProviderBindingStatusView"
-        },
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId",
-        "bindingId",
-        "providerId",
-        "status"
-      ],
-      "type": "object"
-    },
-    "OperatorProviderBindingPutResponse": {
-      "properties": {
-        "binding": {
-          "$ref": "#/definitions/EnvironmentProviderBindingView"
-        }
-      },
-      "required": [
-        "binding"
-      ],
-      "type": "object"
-    },
-    "OperatorUniverseCreateParams": {
-      "properties": {
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId"
-      ],
-      "type": "object"
-    },
-    "OperatorUniverseCreateResponse": {
-      "properties": {
-        "created": {
-          "description": "False when the universe already existed (create is idempotent).",
-          "type": "boolean"
-        },
-        "universe": {
-          "$ref": "#/definitions/OperatorUniverseView"
-        }
-      },
-      "required": [
-        "universe",
-        "created"
-      ],
-      "type": "object"
-    },
-    "OperatorUniverseDeleteParams": {
-      "properties": {
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId"
-      ],
-      "type": "object"
-    },
-    "OperatorUniverseDeleteResponse": {
-      "description": "Purge report. The purge is idempotent: rerunning after a partial failure\nresumes where it stopped, and the universe row is deleted last so a\nhalf-purged universe is still visible to `operator/universes/read`.",
-      "properties": {
-        "blobObjectsDeleted": {
-          "description": "External object-store blobs deleted during the purge.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "universeId": {
-          "type": "string"
-        },
-        "workflowsTerminated": {
-          "description": "Live session workflows terminated during the purge.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "universeId",
-        "workflowsTerminated",
-        "blobObjectsDeleted"
-      ],
-      "type": "object"
-    },
-    "OperatorUniverseListParams": {
-      "type": "object"
-    },
-    "OperatorUniverseListResponse": {
-      "properties": {
-        "universes": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/OperatorUniverseView"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "OperatorUniverseReadParams": {
-      "properties": {
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId"
-      ],
-      "type": "object"
-    },
-    "OperatorUniverseReadResponse": {
-      "properties": {
-        "universe": {
-          "$ref": "#/definitions/OperatorUniverseView"
-        }
-      },
-      "required": [
-        "universe"
-      ],
-      "type": "object"
-    },
-    "OperatorUniverseView": {
-      "description": "Per-universe stats view. Counts are cheap aggregates computed at read\ntime, not maintained counters — approximate under concurrent writes.",
-      "properties": {
-        "blobBytes": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "createdAtMs": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "lastActivityAtMs": {
-          "description": "Most recent session activity (`max(sessions.updated_at_ms)`); absent\nwhen the universe has no sessions.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "profiles": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "sessions": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "slug": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "universeId": {
-          "type": "string"
-        },
-        "workspaces": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "universeId",
-        "createdAtMs",
-        "sessions",
-        "workspaces",
-        "profiles",
-        "blobBytes"
       ],
       "type": "object"
     },

@@ -3,7 +3,7 @@ import { schema } from "@lightspeed/platform-db";
 import type { AppContext, ApiVariables } from "./context.js";
 import { botRoutes } from "./routes/bots.js";
 import { channelAccountAdminRoutes, channelUniverseRoutes } from "./routes/channel-accounts.js";
-import { environmentOperatorRoutes } from "./routes/environment-operators.js";
+import { environmentDeploymentRoutes } from "./routes/environment-deployment.js";
 import { gatewayRoutes } from "./routes/gateway.js";
 import { setupRoutes } from "./routes/setups.js";
 import { universeRoutes } from "./routes/universes.js";
@@ -64,7 +64,7 @@ export function buildApp(ctx: AppContext) {
   api.route("/universes", gatewayRoutes(ctx));
   api.route("/universes", botRoutes(ctx));
   api.route("/universes", channelUniverseRoutes(ctx));
-  api.route("/admin", environmentOperatorRoutes(ctx));
+  api.route("/admin", environmentDeploymentRoutes(ctx));
   api.route("/channel-accounts", channelAccountAdminRoutes(ctx));
 
   app.route("/api/v1", api);

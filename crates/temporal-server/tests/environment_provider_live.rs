@@ -10,13 +10,13 @@ mod support;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use api::{
-    AgentApiService, EnvironmentCloseParams, EnvironmentCreateParams, EnvironmentIngressPutParams,
-    EnvironmentLifecycleStatusView, EnvironmentListParams, EnvironmentProviderBindingStatusView,
-    EnvironmentTemplateListParams, OperatorApiService, OperatorEnvironmentAdoptParams,
-    OperatorEnvironmentProviderConnection, OperatorEnvironmentProviderDeleteParams,
-    OperatorEnvironmentProviderPutParams, OperatorEnvironmentProviderTransport,
-    OperatorProviderBindingPutParams, OperatorUniverseCreateParams, SessionConfig,
-    SessionStartParams,
+    AgentApiService, DeploymentApiService, DeploymentEnvironmentAdoptParams,
+    DeploymentEnvironmentProviderConnection, DeploymentEnvironmentProviderDeleteParams,
+    DeploymentEnvironmentProviderPutParams, DeploymentEnvironmentProviderTransport,
+    DeploymentProviderBindingPutParams, DeploymentUniverseCreateParams, EnvironmentCloseParams,
+    EnvironmentCreateParams, EnvironmentIngressPutParams, EnvironmentLifecycleStatusView,
+    EnvironmentListParams, EnvironmentProviderBindingStatusView, EnvironmentTemplateListParams,
+    SessionConfig, SessionStartParams,
 };
 use api_projection::model_to_api;
 use engine::SessionId;
@@ -26,7 +26,7 @@ use support::live::{
 };
 use temporal_server::{
     DeploymentStores, UniverseRuntime, default_model_from_env,
-    gateway::{GatewayAgentApi, GatewayOperatorApi},
+    gateway::{GatewayAgentApi, GatewayDeploymentApi},
     pg_store_from_env,
 };
 use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
@@ -56,24 +56,24 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
         Some("http://127.0.0.1:18080".to_owned()),
         stores,
     )?);
-    let operator = GatewayOperatorApi::new(runtime.clone());
+    let operator = GatewayDeploymentApi::new(runtime.clone());
     let reconciler = tokio::spawn(runtime.clone().run_environment_reconciler());
 
     let result = async {
         for universe_id in [universe_a, universe_b] {
             operator
-                .create_universe(OperatorUniverseCreateParams {
+                .create_universe(DeploymentUniverseCreateParams {
                     universe_id: universe_id.to_string(),
                 })
                 .await?;
         }
         operator
-            .put_environment_provider(OperatorEnvironmentProviderPutParams {
+            .put_environment_provider(DeploymentEnvironmentProviderPutParams {
                 provider_id: provider_id.clone(),
                 display_name: Some("Live fake provider".to_owned()),
-                controller_connection: OperatorEnvironmentProviderConnection {
+                controller_connection: DeploymentEnvironmentProviderConnection {
                     endpoint: "in-process".to_owned(),
-                    transport: OperatorEnvironmentProviderTransport::Provider {
+                    transport: DeploymentEnvironmentProviderTransport::Provider {
                         provider_type: "fake".to_owned(),
                     },
                 },
@@ -82,7 +82,7 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
             .await?;
         for (universe_id, binding_id) in [(universe_a, "primary-a"), (universe_b, "primary-b")] {
             operator
-                .put_environment_provider_binding(OperatorProviderBindingPutParams {
+                .put_environment_provider_binding(DeploymentProviderBindingPutParams {
                     universe_id: universe_id.to_string(),
                     binding_id: binding_id.to_owned(),
                     provider_id: provider_id.clone(),
@@ -133,7 +133,7 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
         assert_eq!(create_retry.environment_id, created.environment_id);
 
         let adopted = operator
-            .adopt_environment(OperatorEnvironmentAdoptParams {
+            .adopt_environment(DeploymentEnvironmentAdoptParams {
                 universe_id: universe_b.to_string(),
                 request_id: format!("adopt-{suffix}"),
                 binding_id: "primary-b".to_owned(),
@@ -147,7 +147,7 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
             .environment;
         assert_eq!(adopted.incarnation.template_id, None);
         let adopt_retry = operator
-            .adopt_environment(OperatorEnvironmentAdoptParams {
+            .adopt_environment(DeploymentEnvironmentAdoptParams {
                 universe_id: universe_b.to_string(),
                 request_id: format!("adopt-{suffix}"),
                 binding_id: "primary-b".to_owned(),
@@ -227,7 +227,7 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
     let _ = store_pg::delete_universe(&pool, universe_a).await;
     let _ = store_pg::delete_universe(&pool, universe_b).await;
     let _ = operator
-        .delete_environment_provider(OperatorEnvironmentProviderDeleteParams { provider_id })
+        .delete_environment_provider(DeploymentEnvironmentProviderDeleteParams { provider_id })
         .await;
     result
 }

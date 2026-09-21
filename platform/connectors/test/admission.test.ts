@@ -103,12 +103,12 @@ describe("inbound admission", () => {
 });
 
 describe("core client", () => {
-  it("stamps universe calls and keeps operator calls universe-free", async () => {
+  it("stamps universe calls and keeps deployment calls universe-free", async () => {
     const rpc = fakeRpc((method) =>
-      method === "operator/channels/accounts/list" ? { accounts: [] } : { decision: "bound" },
+      method === "deployment/channels/accounts/list" ? { accounts: [] } : { decision: "bound" },
     );
     const core = new CoreClient({ endpoint: "http://core.test/rpc", fetch: rpc.fetch });
-    await core.operator().call("operator/channels/accounts/list", { includeDisabled: false });
+    await core.deployment().call("deployment/channels/accounts/list", { includeDisabled: false });
     await core.forUniverse(UNIVERSE_A).call("channels/inbound/admit", { accountId: "a", inbound });
     expect(rpc.calls[0]?.headers.has(UNIVERSE_HEADER)).toBe(false);
     expect(rpc.calls[0]?.headers.get(PRINCIPAL_HEADER)).toBe("service_account:lightspeed-connectors");

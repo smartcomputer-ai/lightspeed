@@ -69,7 +69,7 @@ async fn run_profile_environment_selection_live_client(
     let profile_id = ProfileId::new(format!("live_selection_{suffix}"));
 
     // Register the in-process fake provider and bind it to this universe
-    // directly through the store: the operator API is deployment-scoped and
+    // directly through the store: the deployment API is deployment-scoped and
     // this test drives one universe's gateway.
     store
         .put_provider(PutEnvironmentProvider {

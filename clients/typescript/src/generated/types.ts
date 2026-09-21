@@ -1286,6 +1286,32 @@ export type EnvironmentLifecycleStatusView =
   | "offline";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentProviderTransport".
+ */
+export type DeploymentEnvironmentProviderTransport =
+  | {
+      type: "webSocket";
+    }
+  | {
+      type: "http";
+    }
+  | {
+      type: "stdio";
+    }
+  | {
+      type: "ssh";
+    }
+  | {
+      providerType: string;
+      type: "provider";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderBindingStatusView".
+ */
+export type EnvironmentProviderBindingStatusView = "enabled" | "disabled";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EnvironmentCredentialSourceView".
  */
 export type EnvironmentCredentialSourceView =
@@ -1322,11 +1348,6 @@ export type SessionJobStatusView =
  * via the `definition` "SessionJobOutputStreamView".
  */
 export type SessionJobOutputStreamView = "stdout" | "stderr";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentProviderBindingStatusView".
- */
-export type EnvironmentProviderBindingStatusView = "enabled" | "disabled";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EnvironmentRegistrationKeyStatusView".
@@ -1446,27 +1467,6 @@ export type ModelProviderCredentialStatus = "configured" | "missing" | "invalid"
  * via the `definition` "ModelProviderCredentialSource".
  */
 export type ModelProviderCredentialSource = "none" | "universe" | "deployment";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderTransport".
- */
-export type OperatorEnvironmentProviderTransport =
-  | {
-      type: "webSocket";
-    }
-  | {
-      type: "http";
-    }
-  | {
-      type: "stdio";
-    }
-  | {
-      type: "ssh";
-    }
-  | {
-      providerType: string;
-      type: "provider";
-    };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProfileInstructions".
@@ -4140,17 +4140,128 @@ export interface ContextRemoveResult {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentCloseResponse".
+ * via the `definition` "AgentApiOutcomeOfDeploymentApiKeyCreateResponse".
  */
-export interface AgentApiOutcomeOfEnvironmentCloseResponse {
+export interface AgentApiOutcomeOfDeploymentApiKeyCreateResponse {
   notifications?: AgentNotification[];
-  result: EnvironmentCloseResponse;
+  result: DeploymentApiKeyCreateResponse;
+}
+/**
+ * A newly minted key. `secret` is returned only by create and cannot be
+ * recovered later. Its custom `Debug` implementation redacts the DTO before
+ * JSON-RPC serialization; the serialized response payload remains sensitive
+ * and must not be logged.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentApiKeyCreateResponse".
+ */
+export interface DeploymentApiKeyCreateResponse {
+  apiKey: DeploymentApiKeyView;
+  secret: string;
+}
+/**
+ * Non-secret API-key metadata. The owning universe is supplied by every
+ * request and intentionally omitted from entries so list responses cannot
+ * become a deployment-wide tenant catalog by accident.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentApiKeyView".
+ */
+export interface DeploymentApiKeyView {
+  createdAtMs: number;
+  displayName?: string | null;
+  keyPrefix: string;
+  lastUsedAtMs?: number | null;
+  revokedAtMs?: number | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCloseResponse".
+ * via the `definition` "AgentApiOutcomeOfDeploymentApiKeyListResponse".
  */
-export interface EnvironmentCloseResponse {
+export interface AgentApiOutcomeOfDeploymentApiKeyListResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentApiKeyListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentApiKeyListResponse".
+ */
+export interface DeploymentApiKeyListResponse {
+  apiKeys?: DeploymentApiKeyView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentApiKeyRevokeResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentApiKeyRevokeResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentApiKeyRevokeResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentApiKeyRevokeResponse".
+ */
+export interface DeploymentApiKeyRevokeResponse {
+  apiKey: DeploymentApiKeyView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentChannelAccountListResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentChannelAccountListResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentChannelAccountListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentChannelAccountListResponse".
+ */
+export interface DeploymentChannelAccountListResponse {
+  accounts?: DeploymentChannelAccountView[];
+}
+/**
+ * One channel account of any universe, for the connector host's discovery
+ * pass.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentChannelAccountView".
+ */
+export interface DeploymentChannelAccountView {
+  accountId: ChannelAccountId;
+  createdAtMs: number;
+  /**
+   * Retrievable auth grant holding the provider token (a Telegram bot
+   * token); the connector host leases it. Absent for providers whose
+   * credential is a session state directory (WhatsApp).
+   */
+  credentialGrantId?: string | null;
+  displayName: string;
+  enabled?: boolean;
+  provider: ChannelProvider;
+  /**
+   * Provider-native account identity: the Telegram bot username or
+   * numeric id, the WhatsApp phone number. Unique per universe and
+   * provider.
+   */
+  providerAccountId: string;
+  revision: number;
+  settings?: ChannelAccountSettings;
+  universeId: string;
+  updatedAtMs: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentEnvironmentAdoptResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentAdoptResponse".
+ */
+export interface DeploymentEnvironmentAdoptResponse {
   environment: EnvironmentView;
 }
 /**
@@ -4220,6 +4331,245 @@ export interface EnvironmentIncarnationView {
 export interface EnvironmentConnectionView {
   endpoint: string;
   transport: EnvironmentConnectionTransportView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentEnvironmentProviderDeleteResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentProviderDeleteResponse".
+ */
+export interface DeploymentEnvironmentProviderDeleteResponse {
+  provider: DeploymentEnvironmentProviderView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentProviderView".
+ */
+export interface DeploymentEnvironmentProviderView {
+  controllerConnection: DeploymentEnvironmentProviderConnection;
+  createdAtMs: number;
+  displayName?: string | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  providerId: string;
+  updatedAtMs: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentProviderConnection".
+ */
+export interface DeploymentEnvironmentProviderConnection {
+  endpoint: string;
+  transport: DeploymentEnvironmentProviderTransport;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentEnvironmentProviderListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentProviderListResponse".
+ */
+export interface DeploymentEnvironmentProviderListResponse {
+  providers: DeploymentEnvironmentProviderView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentEnvironmentProviderPutResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentProviderPutResponse".
+ */
+export interface DeploymentEnvironmentProviderPutResponse {
+  provider: DeploymentEnvironmentProviderView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentEnvironmentProviderReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentProviderReadResponse".
+ */
+export interface DeploymentEnvironmentProviderReadResponse {
+  provider: DeploymentEnvironmentProviderView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentProviderBindingDeleteResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentProviderBindingDeleteResponse".
+ */
+export interface DeploymentProviderBindingDeleteResponse {
+  binding: EnvironmentProviderBindingView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderBindingView".
+ */
+export interface EnvironmentProviderBindingView {
+  bindingId: string;
+  createdAtMs: number;
+  metadata?: {
+    [k: string]: string;
+  };
+  providerId: string;
+  revision: number;
+  status: EnvironmentProviderBindingStatusView;
+  updatedAtMs: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentProviderBindingPutResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentProviderBindingPutResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentProviderBindingPutResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentProviderBindingPutResponse".
+ */
+export interface DeploymentProviderBindingPutResponse {
+  binding: EnvironmentProviderBindingView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentUniverseCreateResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentUniverseCreateResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentUniverseCreateResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentUniverseCreateResponse".
+ */
+export interface DeploymentUniverseCreateResponse {
+  /**
+   * False when the universe already existed (create is idempotent).
+   */
+  created: boolean;
+  universe: DeploymentUniverseView;
+}
+/**
+ * Per-universe stats view. Counts are cheap aggregates computed at read
+ * time, not maintained counters — approximate under concurrent writes.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentUniverseView".
+ */
+export interface DeploymentUniverseView {
+  blobBytes: number;
+  createdAtMs: number;
+  /**
+   * Most recent session activity (`max(sessions.updated_at_ms)`); absent
+   * when the universe has no sessions.
+   */
+  lastActivityAtMs?: number | null;
+  profiles: number;
+  sessions: number;
+  slug?: string | null;
+  universeId: string;
+  workspaces: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentUniverseDeleteResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentUniverseDeleteResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentUniverseDeleteResponse;
+}
+/**
+ * Purge report. The purge is idempotent: rerunning after a partial failure
+ * resumes where it stopped, and the universe row is deleted last so a
+ * half-purged universe is still visible to `deployment/universes/read`.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentUniverseDeleteResponse".
+ */
+export interface DeploymentUniverseDeleteResponse {
+  /**
+   * External object-store blobs deleted during the purge.
+   */
+  blobObjectsDeleted: number;
+  universeId: string;
+  /**
+   * Live session workflows terminated during the purge.
+   */
+  workflowsTerminated: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentUniverseListResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentUniverseListResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentUniverseListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentUniverseListResponse".
+ */
+export interface DeploymentUniverseListResponse {
+  universes?: DeploymentUniverseView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentUniverseReadResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentUniverseReadResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentUniverseReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentUniverseReadResponse".
+ */
+export interface DeploymentUniverseReadResponse {
+  universe: DeploymentUniverseView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfEnvironmentCloseResponse".
+ */
+export interface AgentApiOutcomeOfEnvironmentCloseResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentCloseResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentCloseResponse".
+ */
+export interface EnvironmentCloseResponse {
+  environment: EnvironmentView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -4514,21 +4864,6 @@ export interface AgentApiOutcomeOfEnvironmentProviderBindingListResponse {
  */
 export interface EnvironmentProviderBindingListResponse {
   bindings: EnvironmentProviderBindingView[];
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentProviderBindingView".
- */
-export interface EnvironmentProviderBindingView {
-  bindingId: string;
-  createdAtMs: number;
-  metadata?: {
-    [k: string]: string;
-  };
-  providerId: string;
-  revision: number;
-  status: EnvironmentProviderBindingStatusView;
-  updatedAtMs: number;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -5005,341 +5340,6 @@ export interface ModelProviderDiscoveryView {
   error?: string | null;
   fetchedAtMs?: number | null;
   providerId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorApiKeyCreateResponse".
- */
-export interface AgentApiOutcomeOfOperatorApiKeyCreateResponse {
-  notifications?: AgentNotification[];
-  result: OperatorApiKeyCreateResponse;
-}
-/**
- * A newly minted key. `secret` is returned only by create and cannot be
- * recovered later. Its custom `Debug` implementation redacts the DTO before
- * JSON-RPC serialization; the serialized response payload remains sensitive
- * and must not be logged.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorApiKeyCreateResponse".
- */
-export interface OperatorApiKeyCreateResponse {
-  apiKey: OperatorApiKeyView;
-  secret: string;
-}
-/**
- * Non-secret API-key metadata. The owning universe is supplied by every
- * request and intentionally omitted from entries so list responses cannot
- * become a deployment-wide tenant catalog by accident.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorApiKeyView".
- */
-export interface OperatorApiKeyView {
-  createdAtMs: number;
-  displayName?: string | null;
-  keyPrefix: string;
-  lastUsedAtMs?: number | null;
-  revokedAtMs?: number | null;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorApiKeyListResponse".
- */
-export interface AgentApiOutcomeOfOperatorApiKeyListResponse {
-  notifications?: AgentNotification[];
-  result: OperatorApiKeyListResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorApiKeyListResponse".
- */
-export interface OperatorApiKeyListResponse {
-  apiKeys?: OperatorApiKeyView[];
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorApiKeyRevokeResponse".
- */
-export interface AgentApiOutcomeOfOperatorApiKeyRevokeResponse {
-  notifications?: AgentNotification[];
-  result: OperatorApiKeyRevokeResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorApiKeyRevokeResponse".
- */
-export interface OperatorApiKeyRevokeResponse {
-  apiKey: OperatorApiKeyView;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorChannelAccountListResponse".
- */
-export interface AgentApiOutcomeOfOperatorChannelAccountListResponse {
-  notifications?: AgentNotification[];
-  result: OperatorChannelAccountListResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorChannelAccountListResponse".
- */
-export interface OperatorChannelAccountListResponse {
-  accounts?: OperatorChannelAccountView[];
-}
-/**
- * One channel account of any universe, for the connector host's discovery
- * pass.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorChannelAccountView".
- */
-export interface OperatorChannelAccountView {
-  accountId: ChannelAccountId;
-  createdAtMs: number;
-  /**
-   * Retrievable auth grant holding the provider token (a Telegram bot
-   * token); the connector host leases it. Absent for providers whose
-   * credential is a session state directory (WhatsApp).
-   */
-  credentialGrantId?: string | null;
-  displayName: string;
-  enabled?: boolean;
-  provider: ChannelProvider;
-  /**
-   * Provider-native account identity: the Telegram bot username or
-   * numeric id, the WhatsApp phone number. Unique per universe and
-   * provider.
-   */
-  providerAccountId: string;
-  revision: number;
-  settings?: ChannelAccountSettings;
-  universeId: string;
-  updatedAtMs: number;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorEnvironmentAdoptResponse".
- */
-export interface AgentApiOutcomeOfOperatorEnvironmentAdoptResponse {
-  notifications?: AgentNotification[];
-  result: OperatorEnvironmentAdoptResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentAdoptResponse".
- */
-export interface OperatorEnvironmentAdoptResponse {
-  environment: EnvironmentView;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse".
- */
-export interface AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse {
-  notifications?: AgentNotification[];
-  result: OperatorEnvironmentProviderDeleteResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderDeleteResponse".
- */
-export interface OperatorEnvironmentProviderDeleteResponse {
-  provider: OperatorEnvironmentProviderView;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderView".
- */
-export interface OperatorEnvironmentProviderView {
-  controllerConnection: OperatorEnvironmentProviderConnection;
-  createdAtMs: number;
-  displayName?: string | null;
-  metadata?: {
-    [k: string]: string;
-  };
-  providerId: string;
-  updatedAtMs: number;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderConnection".
- */
-export interface OperatorEnvironmentProviderConnection {
-  endpoint: string;
-  transport: OperatorEnvironmentProviderTransport;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorEnvironmentProviderListResponse".
- */
-export interface AgentApiOutcomeOfOperatorEnvironmentProviderListResponse {
-  notifications?: AgentNotification[];
-  result: OperatorEnvironmentProviderListResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderListResponse".
- */
-export interface OperatorEnvironmentProviderListResponse {
-  providers: OperatorEnvironmentProviderView[];
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse".
- */
-export interface AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse {
-  notifications?: AgentNotification[];
-  result: OperatorEnvironmentProviderPutResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderPutResponse".
- */
-export interface OperatorEnvironmentProviderPutResponse {
-  provider: OperatorEnvironmentProviderView;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse".
- */
-export interface AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse {
-  notifications?: AgentNotification[];
-  result: OperatorEnvironmentProviderReadResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderReadResponse".
- */
-export interface OperatorEnvironmentProviderReadResponse {
-  provider: OperatorEnvironmentProviderView;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorProviderBindingDeleteResponse".
- */
-export interface AgentApiOutcomeOfOperatorProviderBindingDeleteResponse {
-  notifications?: AgentNotification[];
-  result: OperatorProviderBindingDeleteResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorProviderBindingDeleteResponse".
- */
-export interface OperatorProviderBindingDeleteResponse {
-  binding: EnvironmentProviderBindingView;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorProviderBindingPutResponse".
- */
-export interface AgentApiOutcomeOfOperatorProviderBindingPutResponse {
-  notifications?: AgentNotification[];
-  result: OperatorProviderBindingPutResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorProviderBindingPutResponse".
- */
-export interface OperatorProviderBindingPutResponse {
-  binding: EnvironmentProviderBindingView;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorUniverseCreateResponse".
- */
-export interface AgentApiOutcomeOfOperatorUniverseCreateResponse {
-  notifications?: AgentNotification[];
-  result: OperatorUniverseCreateResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorUniverseCreateResponse".
- */
-export interface OperatorUniverseCreateResponse {
-  /**
-   * False when the universe already existed (create is idempotent).
-   */
-  created: boolean;
-  universe: OperatorUniverseView;
-}
-/**
- * Per-universe stats view. Counts are cheap aggregates computed at read
- * time, not maintained counters — approximate under concurrent writes.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorUniverseView".
- */
-export interface OperatorUniverseView {
-  blobBytes: number;
-  createdAtMs: number;
-  /**
-   * Most recent session activity (`max(sessions.updated_at_ms)`); absent
-   * when the universe has no sessions.
-   */
-  lastActivityAtMs?: number | null;
-  profiles: number;
-  sessions: number;
-  slug?: string | null;
-  universeId: string;
-  workspaces: number;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorUniverseDeleteResponse".
- */
-export interface AgentApiOutcomeOfOperatorUniverseDeleteResponse {
-  notifications?: AgentNotification[];
-  result: OperatorUniverseDeleteResponse;
-}
-/**
- * Purge report. The purge is idempotent: rerunning after a partial failure
- * resumes where it stopped, and the universe row is deleted last so a
- * half-purged universe is still visible to `operator/universes/read`.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorUniverseDeleteResponse".
- */
-export interface OperatorUniverseDeleteResponse {
-  /**
-   * External object-store blobs deleted during the purge.
-   */
-  blobObjectsDeleted: number;
-  universeId: string;
-  /**
-   * Live session workflows terminated during the purge.
-   */
-  workflowsTerminated: number;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorUniverseListResponse".
- */
-export interface AgentApiOutcomeOfOperatorUniverseListResponse {
-  notifications?: AgentNotification[];
-  result: OperatorUniverseListResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorUniverseListResponse".
- */
-export interface OperatorUniverseListResponse {
-  universes?: OperatorUniverseView[];
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfOperatorUniverseReadResponse".
- */
-export interface AgentApiOutcomeOfOperatorUniverseReadResponse {
-  notifications?: AgentNotification[];
-  result: OperatorUniverseReadResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorUniverseReadResponse".
- */
-export interface OperatorUniverseReadResponse {
-  universe: OperatorUniverseView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6695,6 +6695,153 @@ export interface ContextRemoveParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentApiKeyCreateParams".
+ */
+export interface DeploymentApiKeyCreateParams {
+  /**
+   * Human-readable purpose shown in key-management interfaces.
+   */
+  displayName: string;
+  /**
+   * Audit principal applied to grants and flows created through this key.
+   * This does not grant platform/deployment authority.
+   */
+  principal: PrincipalRefView;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentApiKeyListParams".
+ */
+export interface DeploymentApiKeyListParams {
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentApiKeyRevokeParams".
+ */
+export interface DeploymentApiKeyRevokeParams {
+  keyPrefix: string;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentChannelAccountListParams".
+ */
+export interface DeploymentChannelAccountListParams {
+  /**
+   * Include disabled accounts; by default only enabled ones are listed.
+   */
+  includeDisabled?: boolean;
+  provider?: ChannelProvider | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentAdoptParams".
+ */
+export interface DeploymentEnvironmentAdoptParams {
+  bindingId: string;
+  displayName?: string | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * Stable caller-generated retry identity inside the destination universe.
+   */
+  requestId: string;
+  /**
+   * Provider-native source reference. The Incus provider accepts
+   * `<project>/<instance>` or an instance name in the `default` project.
+   */
+  sourceTarget: string;
+  /**
+   * Required acknowledgement that Lightspeed will move, reconfigure, and
+   * delete the target as part of its ordinary managed lifecycle.
+   */
+  takeOwnership: boolean;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentProviderDeleteParams".
+ */
+export interface DeploymentEnvironmentProviderDeleteParams {
+  providerId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentProviderListParams".
+ */
+export interface DeploymentEnvironmentProviderListParams {}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentProviderPutParams".
+ */
+export interface DeploymentEnvironmentProviderPutParams {
+  controllerConnection: DeploymentEnvironmentProviderConnection;
+  displayName?: string | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  providerId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentEnvironmentProviderReadParams".
+ */
+export interface DeploymentEnvironmentProviderReadParams {
+  providerId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentProviderBindingDeleteParams".
+ */
+export interface DeploymentProviderBindingDeleteParams {
+  bindingId: string;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentProviderBindingPutParams".
+ */
+export interface DeploymentProviderBindingPutParams {
+  bindingId: string;
+  expectedRevision?: number | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  providerId: string;
+  status: EnvironmentProviderBindingStatusView;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentUniverseCreateParams".
+ */
+export interface DeploymentUniverseCreateParams {
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentUniverseDeleteParams".
+ */
+export interface DeploymentUniverseDeleteParams {
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentUniverseListParams".
+ */
+export interface DeploymentUniverseListParams {}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentUniverseReadParams".
+ */
+export interface DeploymentUniverseReadParams {
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EnvironmentCloseParams".
  */
 export interface EnvironmentCloseParams {
@@ -7122,153 +7269,6 @@ export interface ModelListParams {
    * It is an ID policy, not a provider capability claim.
    */
   selectableOnly?: boolean;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorApiKeyCreateParams".
- */
-export interface OperatorApiKeyCreateParams {
-  /**
-   * Human-readable purpose shown in key-management interfaces.
-   */
-  displayName: string;
-  /**
-   * Audit principal applied to grants and flows created through this key.
-   * This does not grant platform/operator authority.
-   */
-  principal: PrincipalRefView;
-  universeId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorApiKeyListParams".
- */
-export interface OperatorApiKeyListParams {
-  universeId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorApiKeyRevokeParams".
- */
-export interface OperatorApiKeyRevokeParams {
-  keyPrefix: string;
-  universeId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorChannelAccountListParams".
- */
-export interface OperatorChannelAccountListParams {
-  /**
-   * Include disabled accounts; by default only enabled ones are listed.
-   */
-  includeDisabled?: boolean;
-  provider?: ChannelProvider | null;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentAdoptParams".
- */
-export interface OperatorEnvironmentAdoptParams {
-  bindingId: string;
-  displayName?: string | null;
-  metadata?: {
-    [k: string]: string;
-  };
-  /**
-   * Stable caller-generated retry identity inside the destination universe.
-   */
-  requestId: string;
-  /**
-   * Provider-native source reference. The Incus provider accepts
-   * `<project>/<instance>` or an instance name in the `default` project.
-   */
-  sourceTarget: string;
-  /**
-   * Required acknowledgement that Lightspeed will move, reconfigure, and
-   * delete the target as part of its ordinary managed lifecycle.
-   */
-  takeOwnership: boolean;
-  universeId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderDeleteParams".
- */
-export interface OperatorEnvironmentProviderDeleteParams {
-  providerId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderListParams".
- */
-export interface OperatorEnvironmentProviderListParams {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderPutParams".
- */
-export interface OperatorEnvironmentProviderPutParams {
-  controllerConnection: OperatorEnvironmentProviderConnection;
-  displayName?: string | null;
-  metadata?: {
-    [k: string]: string;
-  };
-  providerId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorEnvironmentProviderReadParams".
- */
-export interface OperatorEnvironmentProviderReadParams {
-  providerId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorProviderBindingDeleteParams".
- */
-export interface OperatorProviderBindingDeleteParams {
-  bindingId: string;
-  universeId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorProviderBindingPutParams".
- */
-export interface OperatorProviderBindingPutParams {
-  bindingId: string;
-  expectedRevision?: number | null;
-  metadata?: {
-    [k: string]: string;
-  };
-  providerId: string;
-  status: EnvironmentProviderBindingStatusView;
-  universeId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorUniverseCreateParams".
- */
-export interface OperatorUniverseCreateParams {
-  universeId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorUniverseDeleteParams".
- */
-export interface OperatorUniverseDeleteParams {
-  universeId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorUniverseListParams".
- */
-export interface OperatorUniverseListParams {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OperatorUniverseReadParams".
- */
-export interface OperatorUniverseReadParams {
-  universeId: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

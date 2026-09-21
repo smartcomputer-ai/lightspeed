@@ -1,14 +1,14 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type {
-  OperatorEnvironmentProviderPutParams,
-  OperatorProviderBindingPutParams,
+  DeploymentEnvironmentProviderPutParams,
+  DeploymentProviderBindingPutParams,
 } from "@lightspeed-ai/agent-client";
 import { schema } from "@lightspeed/platform-db";
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";
 import { parseBody } from "../http.js";
-import { engineClientFor, operatorClientFor, withGateway } from "./gateway.js";
+import { engineClientFor, deploymentClientFor, withGateway } from "./gateway.js";
 
 const metadataSchema = z.record(z.string(), z.string()).optional();
 const providerPutSchema = z.object({
@@ -29,10 +29,10 @@ const bindingPutSchema = z.object({
   metadata: metadataSchema,
 });
 
-/// Deployment/operator environment administration. Universe owners consume
+/// Deployment/deployment environment administration. Universe owners consume
 /// enabled bindings elsewhere; only platform admins may mutate physical
 /// provider registrations or universe admission bindings here.
-export function environmentOperatorRoutes(ctx: AppContext) {
+export function environmentDeploymentRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   app.use("*", async (c, next) => {
@@ -43,7 +43,7 @@ export function environmentOperatorRoutes(ctx: AppContext) {
   });
 
   app.get("/environment-providers", (c) => withGateway(c, async () => {
-    const response = await operatorClientFor(ctx).call("operator/environment-providers/list", {});
+    const response = await deploymentClientFor(ctx).call("deployment/environment-providers/list", {});
     return c.json(response.result.providers);
   }));
 
@@ -84,20 +84,20 @@ export function environmentOperatorRoutes(ctx: AppContext) {
     const body = await parseBody(c, providerPutSchema);
     if (!body.ok) return body.response;
     return withGateway(c, async () => {
-      const response = await operatorClientFor(ctx).call(
-        "operator/environment-providers/put",
+      const response = await deploymentClientFor(ctx).call(
+        "deployment/environment-providers/put",
         {
           providerId: c.req.param("providerId"),
           ...body.data,
-        } as OperatorEnvironmentProviderPutParams,
+        } as DeploymentEnvironmentProviderPutParams,
       );
       return c.json(response.result.provider);
     });
   });
 
   app.delete("/environment-providers/:providerId", (c) => withGateway(c, async () => {
-    const response = await operatorClientFor(ctx).call(
-      "operator/environment-providers/delete",
+    const response = await deploymentClientFor(ctx).call(
+      "deployment/environment-providers/delete",
       { providerId: c.req.param("providerId") },
     );
     return c.json(response.result.provider);
@@ -107,13 +107,13 @@ export function environmentOperatorRoutes(ctx: AppContext) {
     const body = await parseBody(c, bindingPutSchema);
     if (!body.ok) return body.response;
     return withGateway(c, async () => {
-      const response = await operatorClientFor(ctx).call(
-        "operator/environment-providers/bindings/put",
+      const response = await deploymentClientFor(ctx).call(
+        "deployment/environment-providers/bindings/put",
         {
           universeId: c.req.param("universeId"),
           bindingId: c.req.param("bindingId"),
           ...body.data,
-        } as OperatorProviderBindingPutParams,
+        } as DeploymentProviderBindingPutParams,
       );
       return c.json(response.result.binding);
     });
@@ -121,8 +121,8 @@ export function environmentOperatorRoutes(ctx: AppContext) {
 
   app.delete("/universes/:universeId/environment-provider-bindings/:bindingId", (c) =>
     withGateway(c, async () => {
-      const response = await operatorClientFor(ctx).call(
-        "operator/environment-providers/bindings/delete",
+      const response = await deploymentClientFor(ctx).call(
+        "deployment/environment-providers/bindings/delete",
         {
           universeId: c.req.param("universeId"),
           bindingId: c.req.param("bindingId"),

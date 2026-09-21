@@ -9,7 +9,7 @@ dependencies are the core JSON-RPC API and Temporal; it reads no database.
 ## What it does
 
 1. **Discovery.** Every `LIGHTSPEED_CONNECTOR_DISCOVERY_INTERVAL_MS` the host
-   calls `operator/channels/accounts/list { includeDisabled: false }`, keeps the
+   calls `deployment/channels/accounts/list { includeDisabled: false }`, keeps the
    accounts of its providers (`LIGHTSPEED_CONNECTOR_PROVIDERS`) and, when set,
    of `LIGHTSPEED_CONNECTOR_ACCOUNTS`, and reconciles the running set: new
    accounts start, missing or disabled ones stop, a changed document revision
@@ -44,7 +44,7 @@ dependencies are the core JSON-RPC API and Temporal; it reads no database.
 The host is a first-party deployment process. It talks to a core running in
 `trusted-header` auth mode, stamping every universe-scoped call
 with `x-lightspeed-universe: <universeId>` and
-`x-lightspeed-principal: service_account:lightspeed-connectors`; `operator/*`
+`x-lightspeed-principal: service_account:lightspeed-connectors`; `deployment/*`
 calls carry only the principal. An `api-key` mode — a static account list with
 one universe key each, for deployments without the Platform — is not
 implemented yet.

@@ -14,7 +14,7 @@ export interface CoreClientOptions {
 
 /**
  * The host's view of the core: one endpoint, one service principal, and
- * per-call universe scoping. Discovery is deployment-scoped (`operator/*`
+ * per-call universe scoping. Discovery is deployment-scoped (`deployment/*`
  * never carries a universe header); everything an account does is stamped
  * with that account's universe.
  */
@@ -23,7 +23,7 @@ export class CoreClient {
   private readonly principal: string;
   private readonly fetchImpl: typeof fetch | undefined;
   private readonly universes = new Map<string, LightspeedClient>();
-  private operatorClient: LightspeedClient | undefined;
+  private deploymentClient: LightspeedClient | undefined;
 
   constructor(options: CoreClientOptions) {
     if (options.endpoint.length === 0) {
@@ -34,10 +34,10 @@ export class CoreClient {
     this.fetchImpl = options.fetch;
   }
 
-  /** Deployment-scoped `operator/*` calls: the gateway rejects a universe header on them. */
-  operator(): LightspeedClient {
-    this.operatorClient ??= this.create({ [PRINCIPAL_HEADER]: this.principal });
-    return this.operatorClient;
+  /** Deployment-scoped `deployment/*` calls: the gateway rejects a universe header on them. */
+  deployment(): LightspeedClient {
+    this.deploymentClient ??= this.create({ [PRINCIPAL_HEADER]: this.principal });
+    return this.deploymentClient;
   }
 
   /** Universe-scoped calls for one account's universe. */

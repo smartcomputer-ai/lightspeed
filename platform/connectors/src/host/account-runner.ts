@@ -1,4 +1,4 @@
-import type { LightspeedClient, OperatorChannelAccountView } from "@lightspeed-ai/agent-client";
+import type { LightspeedClient, DeploymentChannelAccountView } from "@lightspeed-ai/agent-client";
 import {
   CHANNEL_CONNECTOR_ACTIVITIES,
   connectorTaskQueue,
@@ -20,7 +20,7 @@ type Log = Pick<Console, "log" | "warn" | "error">;
 /** What the host needs from a runner; `AccountRunner` is the real one. */
 export interface AccountRunnerLike {
   readonly key: string;
-  readonly account: OperatorChannelAccountView;
+  readonly account: DeploymentChannelAccountView;
   readonly metrics: ConnectorMetrics;
   /** Start in the background; failures land in `health()` and `failed()`. */
   start(): void;
@@ -66,7 +66,7 @@ export interface AccountRunnerDeps {
   log?: Log;
   /** Test seam: build the provider connector for an account. */
   createConnector?: (
-    account: OperatorChannelAccountView,
+    account: DeploymentChannelAccountView,
     context: ProviderConnectorContext,
   ) => ProviderConnector;
   /** Test seam: create the per-account activity worker. */
@@ -92,7 +92,7 @@ export class AccountRunner implements AccountRunnerLike {
   private worker: WorkerLike | undefined;
 
   constructor(
-    readonly account: OperatorChannelAccountView,
+    readonly account: DeploymentChannelAccountView,
     private readonly deps: AccountRunnerDeps,
   ) {
     this.key = accountKey(account.universeId, account.accountId);
@@ -205,7 +205,7 @@ export class AccountRunner implements AccountRunnerLike {
 }
 
 export function createProviderConnector(
-  account: OperatorChannelAccountView,
+  account: DeploymentChannelAccountView,
   context: ProviderConnectorContext,
 ): ProviderConnector {
   switch (account.provider) {
@@ -255,7 +255,7 @@ export function createProviderConnector(
 /** `<authDir>/<universeId>/<accountId>`: one Baileys session directory per served account. */
 export function whatsAppAuthDir(
   root: string,
-  account: Pick<OperatorChannelAccountView, "universeId" | "accountId">,
+  account: Pick<DeploymentChannelAccountView, "universeId" | "accountId">,
 ): string {
   if (account.accountId.includes("/") || account.accountId.includes("\\") || account.accountId.startsWith(".")) {
     throw new TypeError(`WhatsApp account id ${JSON.stringify(account.accountId)} is not a directory name`);

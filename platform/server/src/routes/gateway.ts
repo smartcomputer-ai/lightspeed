@@ -362,10 +362,10 @@ export function engineClientFor(
   });
 }
 
-/// Client for operator-scoped calls (`operator/*`): no universe header —
+/// Client for deployment-scoped calls (`deployment/*`): no universe header —
 /// these address the deployment, and the gateway rejects a universe
 /// header on them.
-export function operatorClientFor(ctx: AppContext, endpoint?: string | null): LightspeedClient {
+export function deploymentClientFor(ctx: AppContext, endpoint?: string | null): LightspeedClient {
   const resolved = endpoint ?? ctx.env.lightspeedApiUrl;
   if (!resolved) {
     throw new GatewayUnconfigured();
@@ -1490,7 +1490,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   /// Universe-scoped admission bindings. Physical provider registration is
-  /// deployment/operator state and is never exposed through this member API.
+  /// deployment state and is never exposed through this member API.
   app.get("/:id/environment-provider-bindings", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"), true);
     if (!access) {

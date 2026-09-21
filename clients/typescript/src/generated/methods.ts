@@ -117,21 +117,21 @@ export const METHODS = [
   "channels/pairings/list",
   "channels/pairings/delete",
   "channels/conversations/read",
-  "operator/universes/create",
-  "operator/universes/list",
-  "operator/universes/read",
-  "operator/universes/delete",
-  "operator/api-keys/create",
-  "operator/api-keys/list",
-  "operator/api-keys/revoke",
-  "operator/environment-providers/put",
-  "operator/environment-providers/list",
-  "operator/environment-providers/read",
-  "operator/environment-providers/delete",
-  "operator/environment-providers/bindings/put",
-  "operator/environment-providers/bindings/delete",
-  "operator/environments/adopt",
-  "operator/channels/accounts/list",
+  "deployment/universes/create",
+  "deployment/universes/list",
+  "deployment/universes/read",
+  "deployment/universes/delete",
+  "deployment/api-keys/create",
+  "deployment/api-keys/list",
+  "deployment/api-keys/revoke",
+  "deployment/environment-providers/put",
+  "deployment/environment-providers/list",
+  "deployment/environment-providers/read",
+  "deployment/environment-providers/delete",
+  "deployment/environment-providers/bindings/put",
+  "deployment/environment-providers/bindings/delete",
+  "deployment/environments/adopt",
+  "deployment/channels/accounts/list",
 ] as const;
 
 export const METHOD_INFO = {
@@ -695,78 +695,78 @@ export const METHOD_INFO = {
     summary: "Read a conversation snapshot",
     description: "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
   },
-  "operator/universes/create": {
-    scope: "operator",
+  "deployment/universes/create": {
+    scope: "deployment",
     summary: "Create a universe",
     description: "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
   },
-  "operator/universes/list": {
-    scope: "operator",
+  "deployment/universes/list": {
+    scope: "deployment",
     summary: "List universes",
     description: "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.",
   },
-  "operator/universes/read": {
-    scope: "operator",
+  "deployment/universes/read": {
+    scope: "deployment",
     summary: "Read a universe",
     description: "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
   },
-  "operator/universes/delete": {
-    scope: "operator",
+  "deployment/universes/delete": {
+    scope: "deployment",
     summary: "Purge a universe",
     description: "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
   },
-  "operator/api-keys/create": {
-    scope: "operator",
+  "deployment/api-keys/create": {
+    scope: "deployment",
     summary: "Create a universe API key",
     description: "Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
   },
-  "operator/api-keys/list": {
-    scope: "operator",
+  "deployment/api-keys/list": {
+    scope: "deployment",
     summary: "List universe API keys",
     description: "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
   },
-  "operator/api-keys/revoke": {
-    scope: "operator",
+  "deployment/api-keys/revoke": {
+    scope: "deployment",
     summary: "Revoke a universe API key",
     description: "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.",
   },
-  "operator/environment-providers/put": {
-    scope: "operator",
+  "deployment/environment-providers/put": {
+    scope: "deployment",
     summary: "Put an environment provider",
     description: "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
   },
-  "operator/environment-providers/list": {
-    scope: "operator",
+  "deployment/environment-providers/list": {
+    scope: "deployment",
     summary: "List environment providers",
-    description: "Returns every operator-registered deployment provider and its controller connection.",
+    description: "Returns every deployment-registered deployment provider and its controller connection.",
   },
-  "operator/environment-providers/read": {
-    scope: "operator",
+  "deployment/environment-providers/read": {
+    scope: "deployment",
     summary: "Read an environment provider",
-    description: "Returns one operator-registered deployment provider and its controller connection.",
+    description: "Returns one deployment-registered deployment provider and its controller connection.",
   },
-  "operator/environment-providers/delete": {
-    scope: "operator",
+  "deployment/environment-providers/delete": {
+    scope: "deployment",
     summary: "Delete an environment provider",
     description: "Deletes a deployment provider only when no universe binding references it.",
   },
-  "operator/environment-providers/bindings/put": {
-    scope: "operator",
+  "deployment/environment-providers/bindings/put": {
+    scope: "deployment",
     summary: "Put an environment provider binding",
     description: "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.",
   },
-  "operator/environment-providers/bindings/delete": {
-    scope: "operator",
+  "deployment/environment-providers/bindings/delete": {
+    scope: "deployment",
     summary: "Delete an environment provider binding",
     description: "Deletes a universe provider binding only after every referencing environment has reached Closed.",
   },
-  "operator/environments/adopt": {
-    scope: "operator",
+  "deployment/environments/adopt": {
+    scope: "deployment",
     summary: "Adopt a provider environment",
     description: "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.",
   },
-  "operator/channels/accounts/list": {
-    scope: "operator",
+  "deployment/channels/accounts/list": {
+    scope: "deployment",
     summary: "List channel accounts across universes",
     description: "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.",
   },
@@ -1798,135 +1798,135 @@ export interface MethodMap {
    *
    * Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
    */
-  "operator/universes/create": {
-    params: Api.OperatorUniverseCreateParams;
-    result: Api.AgentApiOutcomeOfOperatorUniverseCreateResponse;
+  "deployment/universes/create": {
+    params: Api.DeploymentUniverseCreateParams;
+    result: Api.AgentApiOutcomeOfDeploymentUniverseCreateResponse;
   };
   /**
    * List universes
    *
    * Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.
    */
-  "operator/universes/list": {
-    params: Api.OperatorUniverseListParams;
-    result: Api.AgentApiOutcomeOfOperatorUniverseListResponse;
+  "deployment/universes/list": {
+    params: Api.DeploymentUniverseListParams;
+    result: Api.AgentApiOutcomeOfDeploymentUniverseListResponse;
   };
   /**
    * Read a universe
    *
    * Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
    */
-  "operator/universes/read": {
-    params: Api.OperatorUniverseReadParams;
-    result: Api.AgentApiOutcomeOfOperatorUniverseReadResponse;
+  "deployment/universes/read": {
+    params: Api.DeploymentUniverseReadParams;
+    result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
   };
   /**
    * Purge a universe
    *
    * Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.
    */
-  "operator/universes/delete": {
-    params: Api.OperatorUniverseDeleteParams;
-    result: Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse;
+  "deployment/universes/delete": {
+    params: Api.DeploymentUniverseDeleteParams;
+    result: Api.AgentApiOutcomeOfDeploymentUniverseDeleteResponse;
   };
   /**
    * Create a universe API key
    *
    * Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
    */
-  "operator/api-keys/create": {
-    params: Api.OperatorApiKeyCreateParams;
-    result: Api.AgentApiOutcomeOfOperatorApiKeyCreateResponse;
+  "deployment/api-keys/create": {
+    params: Api.DeploymentApiKeyCreateParams;
+    result: Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse;
   };
   /**
    * List universe API keys
    *
    * Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
    */
-  "operator/api-keys/list": {
-    params: Api.OperatorApiKeyListParams;
-    result: Api.AgentApiOutcomeOfOperatorApiKeyListResponse;
+  "deployment/api-keys/list": {
+    params: Api.DeploymentApiKeyListParams;
+    result: Api.AgentApiOutcomeOfDeploymentApiKeyListResponse;
   };
   /**
    * Revoke a universe API key
    *
    * Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.
    */
-  "operator/api-keys/revoke": {
-    params: Api.OperatorApiKeyRevokeParams;
-    result: Api.AgentApiOutcomeOfOperatorApiKeyRevokeResponse;
+  "deployment/api-keys/revoke": {
+    params: Api.DeploymentApiKeyRevokeParams;
+    result: Api.AgentApiOutcomeOfDeploymentApiKeyRevokeResponse;
   };
   /**
    * Put an environment provider
    *
    * Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.
    */
-  "operator/environment-providers/put": {
-    params: Api.OperatorEnvironmentProviderPutParams;
-    result: Api.AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse;
+  "deployment/environment-providers/put": {
+    params: Api.DeploymentEnvironmentProviderPutParams;
+    result: Api.AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse;
   };
   /**
    * List environment providers
    *
-   * Returns every operator-registered deployment provider and its controller connection.
+   * Returns every deployment-registered deployment provider and its controller connection.
    */
-  "operator/environment-providers/list": {
-    params: Api.OperatorEnvironmentProviderListParams;
-    result: Api.AgentApiOutcomeOfOperatorEnvironmentProviderListResponse;
+  "deployment/environment-providers/list": {
+    params: Api.DeploymentEnvironmentProviderListParams;
+    result: Api.AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse;
   };
   /**
    * Read an environment provider
    *
-   * Returns one operator-registered deployment provider and its controller connection.
+   * Returns one deployment-registered deployment provider and its controller connection.
    */
-  "operator/environment-providers/read": {
-    params: Api.OperatorEnvironmentProviderReadParams;
-    result: Api.AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse;
+  "deployment/environment-providers/read": {
+    params: Api.DeploymentEnvironmentProviderReadParams;
+    result: Api.AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse;
   };
   /**
    * Delete an environment provider
    *
    * Deletes a deployment provider only when no universe binding references it.
    */
-  "operator/environment-providers/delete": {
-    params: Api.OperatorEnvironmentProviderDeleteParams;
-    result: Api.AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse;
+  "deployment/environment-providers/delete": {
+    params: Api.DeploymentEnvironmentProviderDeleteParams;
+    result: Api.AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse;
   };
   /**
    * Put an environment provider binding
    *
    * Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.
    */
-  "operator/environment-providers/bindings/put": {
-    params: Api.OperatorProviderBindingPutParams;
-    result: Api.AgentApiOutcomeOfOperatorProviderBindingPutResponse;
+  "deployment/environment-providers/bindings/put": {
+    params: Api.DeploymentProviderBindingPutParams;
+    result: Api.AgentApiOutcomeOfDeploymentProviderBindingPutResponse;
   };
   /**
    * Delete an environment provider binding
    *
    * Deletes a universe provider binding only after every referencing environment has reached Closed.
    */
-  "operator/environment-providers/bindings/delete": {
-    params: Api.OperatorProviderBindingDeleteParams;
-    result: Api.AgentApiOutcomeOfOperatorProviderBindingDeleteResponse;
+  "deployment/environment-providers/bindings/delete": {
+    params: Api.DeploymentProviderBindingDeleteParams;
+    result: Api.AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse;
   };
   /**
    * Adopt a provider environment
    *
    * Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.
    */
-  "operator/environments/adopt": {
-    params: Api.OperatorEnvironmentAdoptParams;
-    result: Api.AgentApiOutcomeOfOperatorEnvironmentAdoptResponse;
+  "deployment/environments/adopt": {
+    params: Api.DeploymentEnvironmentAdoptParams;
+    result: Api.AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse;
   };
   /**
    * List channel accounts across universes
    *
    * The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.
    */
-  "operator/channels/accounts/list": {
-    params: Api.OperatorChannelAccountListParams;
-    result: Api.AgentApiOutcomeOfOperatorChannelAccountListResponse;
+  "deployment/channels/accounts/list": {
+    params: Api.DeploymentChannelAccountListParams;
+    result: Api.AgentApiOutcomeOfDeploymentChannelAccountListResponse;
   };
 }
 
@@ -2839,119 +2839,119 @@ export const rpc = {
    *
    * Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
    */
-  operatorUniversesCreate(client: RpcCaller, params: Api.OperatorUniverseCreateParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseCreateResponse> {
-    return client.call("operator/universes/create", params);
+  deploymentUniversesCreate(client: RpcCaller, params: Api.DeploymentUniverseCreateParams): Promise<Api.AgentApiOutcomeOfDeploymentUniverseCreateResponse> {
+    return client.call("deployment/universes/create", params);
   },
   /**
    * List universes
    *
    * Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.
    */
-  operatorUniversesList(client: RpcCaller, params: Api.OperatorUniverseListParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseListResponse> {
-    return client.call("operator/universes/list", params);
+  deploymentUniversesList(client: RpcCaller, params: Api.DeploymentUniverseListParams): Promise<Api.AgentApiOutcomeOfDeploymentUniverseListResponse> {
+    return client.call("deployment/universes/list", params);
   },
   /**
    * Read a universe
    *
    * Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
    */
-  operatorUniversesRead(client: RpcCaller, params: Api.OperatorUniverseReadParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseReadResponse> {
-    return client.call("operator/universes/read", params);
+  deploymentUniversesRead(client: RpcCaller, params: Api.DeploymentUniverseReadParams): Promise<Api.AgentApiOutcomeOfDeploymentUniverseReadResponse> {
+    return client.call("deployment/universes/read", params);
   },
   /**
    * Purge a universe
    *
    * Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.
    */
-  operatorUniversesDelete(client: RpcCaller, params: Api.OperatorUniverseDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse> {
-    return client.call("operator/universes/delete", params);
+  deploymentUniversesDelete(client: RpcCaller, params: Api.DeploymentUniverseDeleteParams): Promise<Api.AgentApiOutcomeOfDeploymentUniverseDeleteResponse> {
+    return client.call("deployment/universes/delete", params);
   },
   /**
    * Create a universe API key
    *
    * Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
    */
-  operatorApiKeysCreate(client: RpcCaller, params: Api.OperatorApiKeyCreateParams): Promise<Api.AgentApiOutcomeOfOperatorApiKeyCreateResponse> {
-    return client.call("operator/api-keys/create", params);
+  deploymentApiKeysCreate(client: RpcCaller, params: Api.DeploymentApiKeyCreateParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse> {
+    return client.call("deployment/api-keys/create", params);
   },
   /**
    * List universe API keys
    *
    * Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
    */
-  operatorApiKeysList(client: RpcCaller, params: Api.OperatorApiKeyListParams): Promise<Api.AgentApiOutcomeOfOperatorApiKeyListResponse> {
-    return client.call("operator/api-keys/list", params);
+  deploymentApiKeysList(client: RpcCaller, params: Api.DeploymentApiKeyListParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyListResponse> {
+    return client.call("deployment/api-keys/list", params);
   },
   /**
    * Revoke a universe API key
    *
    * Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.
    */
-  operatorApiKeysRevoke(client: RpcCaller, params: Api.OperatorApiKeyRevokeParams): Promise<Api.AgentApiOutcomeOfOperatorApiKeyRevokeResponse> {
-    return client.call("operator/api-keys/revoke", params);
+  deploymentApiKeysRevoke(client: RpcCaller, params: Api.DeploymentApiKeyRevokeParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyRevokeResponse> {
+    return client.call("deployment/api-keys/revoke", params);
   },
   /**
    * Put an environment provider
    *
    * Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.
    */
-  operatorEnvironmentProvidersPut(client: RpcCaller, params: Api.OperatorEnvironmentProviderPutParams): Promise<Api.AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse> {
-    return client.call("operator/environment-providers/put", params);
+  deploymentEnvironmentProvidersPut(client: RpcCaller, params: Api.DeploymentEnvironmentProviderPutParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse> {
+    return client.call("deployment/environment-providers/put", params);
   },
   /**
    * List environment providers
    *
-   * Returns every operator-registered deployment provider and its controller connection.
+   * Returns every deployment-registered deployment provider and its controller connection.
    */
-  operatorEnvironmentProvidersList(client: RpcCaller, params: Api.OperatorEnvironmentProviderListParams): Promise<Api.AgentApiOutcomeOfOperatorEnvironmentProviderListResponse> {
-    return client.call("operator/environment-providers/list", params);
+  deploymentEnvironmentProvidersList(client: RpcCaller, params: Api.DeploymentEnvironmentProviderListParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse> {
+    return client.call("deployment/environment-providers/list", params);
   },
   /**
    * Read an environment provider
    *
-   * Returns one operator-registered deployment provider and its controller connection.
+   * Returns one deployment-registered deployment provider and its controller connection.
    */
-  operatorEnvironmentProvidersRead(client: RpcCaller, params: Api.OperatorEnvironmentProviderReadParams): Promise<Api.AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse> {
-    return client.call("operator/environment-providers/read", params);
+  deploymentEnvironmentProvidersRead(client: RpcCaller, params: Api.DeploymentEnvironmentProviderReadParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse> {
+    return client.call("deployment/environment-providers/read", params);
   },
   /**
    * Delete an environment provider
    *
    * Deletes a deployment provider only when no universe binding references it.
    */
-  operatorEnvironmentProvidersDelete(client: RpcCaller, params: Api.OperatorEnvironmentProviderDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse> {
-    return client.call("operator/environment-providers/delete", params);
+  deploymentEnvironmentProvidersDelete(client: RpcCaller, params: Api.DeploymentEnvironmentProviderDeleteParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse> {
+    return client.call("deployment/environment-providers/delete", params);
   },
   /**
    * Put an environment provider binding
    *
    * Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.
    */
-  operatorEnvironmentProvidersBindingsPut(client: RpcCaller, params: Api.OperatorProviderBindingPutParams): Promise<Api.AgentApiOutcomeOfOperatorProviderBindingPutResponse> {
-    return client.call("operator/environment-providers/bindings/put", params);
+  deploymentEnvironmentProvidersBindingsPut(client: RpcCaller, params: Api.DeploymentProviderBindingPutParams): Promise<Api.AgentApiOutcomeOfDeploymentProviderBindingPutResponse> {
+    return client.call("deployment/environment-providers/bindings/put", params);
   },
   /**
    * Delete an environment provider binding
    *
    * Deletes a universe provider binding only after every referencing environment has reached Closed.
    */
-  operatorEnvironmentProvidersBindingsDelete(client: RpcCaller, params: Api.OperatorProviderBindingDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorProviderBindingDeleteResponse> {
-    return client.call("operator/environment-providers/bindings/delete", params);
+  deploymentEnvironmentProvidersBindingsDelete(client: RpcCaller, params: Api.DeploymentProviderBindingDeleteParams): Promise<Api.AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse> {
+    return client.call("deployment/environment-providers/bindings/delete", params);
   },
   /**
    * Adopt a provider environment
    *
    * Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.
    */
-  operatorEnvironmentsAdopt(client: RpcCaller, params: Api.OperatorEnvironmentAdoptParams): Promise<Api.AgentApiOutcomeOfOperatorEnvironmentAdoptResponse> {
-    return client.call("operator/environments/adopt", params);
+  deploymentEnvironmentsAdopt(client: RpcCaller, params: Api.DeploymentEnvironmentAdoptParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse> {
+    return client.call("deployment/environments/adopt", params);
   },
   /**
    * List channel accounts across universes
    *
    * The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.
    */
-  operatorChannelsAccountsList(client: RpcCaller, params: Api.OperatorChannelAccountListParams): Promise<Api.AgentApiOutcomeOfOperatorChannelAccountListResponse> {
-    return client.call("operator/channels/accounts/list", params);
+  deploymentChannelsAccountsList(client: RpcCaller, params: Api.DeploymentChannelAccountListParams): Promise<Api.AgentApiOutcomeOfDeploymentChannelAccountListResponse> {
+    return client.call("deployment/channels/accounts/list", params);
   },
 } as const;

@@ -267,7 +267,7 @@ The Platform administration CLI additionally accepts
 core moved into the Rust runtime: a single process that serves many channel
 accounts across many universes. It reads no database; its only dependencies
 are the core JSON-RPC endpoint and Temporal. Accounts are discovered through
-`operator/channels/accounts/list`, provider tokens are leased through
+`deployment/channels/accounts/list`, provider tokens are leased through
 `auth/grants/lease` (never configured in the environment), and every
 universe-scoped call carries `x-lightspeed-universe` plus
 `x-lightspeed-principal: service_account:lightspeed-connectors`, so the core

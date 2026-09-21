@@ -1,7 +1,7 @@
-//! Operator-scoped (deployment-level) service: universe lifecycle over the
+//! Deployment-scoped (deployment-level) service: universe lifecycle over the
 //! shared deployment resources, above the universe-bound store boundary.
 //!
-//! Purge ordering (`operator/universes/delete`): terminate live session
+//! Purge ordering (`deployment/universes/delete`): terminate live session
 //! workflows, sweep externally stored blob objects, delete the `universes`
 //! row (every universe-scoped table cascades from it), then evict the cached
 //! runtime state. Each step is idempotent and the row is deleted last, so a
@@ -13,21 +13,21 @@
 use std::sync::Arc;
 
 use api::{
-    AgentApiError, AgentApiOutcome, OperatorApiKeyCreateParams, OperatorApiKeyCreateResponse,
-    OperatorApiKeyListParams, OperatorApiKeyListResponse, OperatorApiKeyRevokeParams,
-    OperatorApiKeyRevokeResponse, OperatorApiKeyView, OperatorApiService,
-    OperatorEnvironmentAdoptParams, OperatorEnvironmentAdoptResponse,
-    OperatorEnvironmentProviderConnection, OperatorEnvironmentProviderDeleteParams,
-    OperatorEnvironmentProviderDeleteResponse, OperatorEnvironmentProviderListParams,
-    OperatorEnvironmentProviderListResponse, OperatorEnvironmentProviderPutParams,
-    OperatorEnvironmentProviderPutResponse, OperatorEnvironmentProviderReadParams,
-    OperatorEnvironmentProviderReadResponse, OperatorEnvironmentProviderTransport,
-    OperatorEnvironmentProviderView, OperatorProviderBindingDeleteParams,
-    OperatorProviderBindingDeleteResponse, OperatorProviderBindingPutParams,
-    OperatorProviderBindingPutResponse, OperatorUniverseCreateParams,
-    OperatorUniverseCreateResponse, OperatorUniverseDeleteParams, OperatorUniverseDeleteResponse,
-    OperatorUniverseListParams, OperatorUniverseListResponse, OperatorUniverseReadParams,
-    OperatorUniverseReadResponse, OperatorUniverseView,
+    AgentApiError, AgentApiOutcome, DeploymentApiKeyCreateParams, DeploymentApiKeyCreateResponse,
+    DeploymentApiKeyListParams, DeploymentApiKeyListResponse, DeploymentApiKeyRevokeParams,
+    DeploymentApiKeyRevokeResponse, DeploymentApiKeyView, DeploymentApiService,
+    DeploymentEnvironmentAdoptParams, DeploymentEnvironmentAdoptResponse,
+    DeploymentEnvironmentProviderConnection, DeploymentEnvironmentProviderDeleteParams,
+    DeploymentEnvironmentProviderDeleteResponse, DeploymentEnvironmentProviderListParams,
+    DeploymentEnvironmentProviderListResponse, DeploymentEnvironmentProviderPutParams,
+    DeploymentEnvironmentProviderPutResponse, DeploymentEnvironmentProviderReadParams,
+    DeploymentEnvironmentProviderReadResponse, DeploymentEnvironmentProviderTransport,
+    DeploymentEnvironmentProviderView, DeploymentProviderBindingDeleteParams,
+    DeploymentProviderBindingDeleteResponse, DeploymentProviderBindingPutParams,
+    DeploymentProviderBindingPutResponse, DeploymentUniverseCreateParams,
+    DeploymentUniverseCreateResponse, DeploymentUniverseDeleteParams,
+    DeploymentUniverseDeleteResponse, DeploymentUniverseListParams, DeploymentUniverseListResponse,
+    DeploymentUniverseReadParams, DeploymentUniverseReadResponse, DeploymentUniverseView,
 };
 use async_trait::async_trait;
 use auth::ApiKeyStore as _;
@@ -48,11 +48,11 @@ use uuid::Uuid;
 
 use crate::universe::UniverseRuntime;
 
-pub struct GatewayOperatorApi {
+pub struct GatewayDeploymentApi {
     runtime: Arc<UniverseRuntime>,
 }
 
-impl GatewayOperatorApi {
+impl GatewayDeploymentApi {
     pub fn new(runtime: Arc<UniverseRuntime>) -> Self {
         Self { runtime }
     }
@@ -68,7 +68,7 @@ impl GatewayOperatorApi {
     async fn read_universe_view(
         &self,
         universe_id: Uuid,
-    ) -> Result<Option<OperatorUniverseView>, AgentApiError> {
+    ) -> Result<Option<DeploymentUniverseView>, AgentApiError> {
         let stats = store_pg::read_universe_stats(self.pool(), universe_id)
             .await
             .map_err(map_store_error)?;
@@ -110,7 +110,7 @@ impl GatewayOperatorApi {
         match handle
             .terminate(
                 WorkflowTerminateOptions::builder()
-                    .reason("operator universe purge")
+                    .reason("deployment universe purge")
                     .build(),
             )
             .await
@@ -125,11 +125,11 @@ impl GatewayOperatorApi {
 }
 
 #[async_trait]
-impl OperatorApiService for GatewayOperatorApi {
+impl DeploymentApiService for GatewayDeploymentApi {
     async fn create_universe(
         &self,
-        params: OperatorUniverseCreateParams,
-    ) -> Result<AgentApiOutcome<OperatorUniverseCreateResponse>, AgentApiError> {
+        params: DeploymentUniverseCreateParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseCreateResponse>, AgentApiError> {
         let universe_id = parse_universe_id(&params.universe_id)?;
         let created = store_pg::create_universe(self.pool(), universe_id)
             .await
@@ -137,7 +137,7 @@ impl OperatorApiService for GatewayOperatorApi {
         let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
             AgentApiError::internal(format!("universe disappeared after create: {universe_id}"))
         })?;
-        Ok(AgentApiOutcome::new(OperatorUniverseCreateResponse {
+        Ok(AgentApiOutcome::new(DeploymentUniverseCreateResponse {
             universe,
             created,
         }))
@@ -145,8 +145,8 @@ impl OperatorApiService for GatewayOperatorApi {
 
     async fn put_environment_provider(
         &self,
-        params: OperatorEnvironmentProviderPutParams,
-    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderPutResponse>, AgentApiError> {
+        params: DeploymentEnvironmentProviderPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderPutResponse>, AgentApiError> {
         let store = self.runtime.stores().store_for(Uuid::nil());
         let provider = store
             .put_provider(PutEnvironmentProvider {
@@ -160,7 +160,7 @@ impl OperatorApiService for GatewayOperatorApi {
             .await
             .map_err(super::service::environment_providers::map_environments_error)?;
         Ok(AgentApiOutcome::new(
-            OperatorEnvironmentProviderPutResponse {
+            DeploymentEnvironmentProviderPutResponse {
                 provider: environment_provider_view(provider),
             },
         ))
@@ -168,15 +168,15 @@ impl OperatorApiService for GatewayOperatorApi {
 
     async fn list_environment_providers(
         &self,
-        _params: OperatorEnvironmentProviderListParams,
-    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderListResponse>, AgentApiError> {
+        _params: DeploymentEnvironmentProviderListParams,
+    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderListResponse>, AgentApiError> {
         let store = self.runtime.stores().store_for(Uuid::nil());
         let providers = store
             .list_providers(ListEnvironmentProviders::default())
             .await
             .map_err(super::service::environment_providers::map_environments_error)?;
         Ok(AgentApiOutcome::new(
-            OperatorEnvironmentProviderListResponse {
+            DeploymentEnvironmentProviderListResponse {
                 providers: providers
                     .into_iter()
                     .map(environment_provider_view)
@@ -187,8 +187,8 @@ impl OperatorApiService for GatewayOperatorApi {
 
     async fn read_environment_provider(
         &self,
-        params: OperatorEnvironmentProviderReadParams,
-    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderReadResponse>, AgentApiError> {
+        params: DeploymentEnvironmentProviderReadParams,
+    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderReadResponse>, AgentApiError> {
         let store = self.runtime.stores().store_for(Uuid::nil());
         let provider_id = parse_environment_provider_id(params.provider_id)?;
         let provider = store
@@ -196,7 +196,7 @@ impl OperatorApiService for GatewayOperatorApi {
             .await
             .map_err(super::service::environment_providers::map_environments_error)?;
         Ok(AgentApiOutcome::new(
-            OperatorEnvironmentProviderReadResponse {
+            DeploymentEnvironmentProviderReadResponse {
                 provider: environment_provider_view(provider),
             },
         ))
@@ -204,8 +204,8 @@ impl OperatorApiService for GatewayOperatorApi {
 
     async fn delete_environment_provider(
         &self,
-        params: OperatorEnvironmentProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderDeleteResponse>, AgentApiError> {
+        params: DeploymentEnvironmentProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderDeleteResponse>, AgentApiError> {
         let store = self.runtime.stores().store_for(Uuid::nil());
         let provider_id = parse_environment_provider_id(params.provider_id)?;
         let provider = store
@@ -213,7 +213,7 @@ impl OperatorApiService for GatewayOperatorApi {
             .await
             .map_err(super::service::environment_providers::map_environments_error)?;
         Ok(AgentApiOutcome::new(
-            OperatorEnvironmentProviderDeleteResponse {
+            DeploymentEnvironmentProviderDeleteResponse {
                 provider: environment_provider_view(provider),
             },
         ))
@@ -221,8 +221,8 @@ impl OperatorApiService for GatewayOperatorApi {
 
     async fn put_environment_provider_binding(
         &self,
-        params: OperatorProviderBindingPutParams,
-    ) -> Result<AgentApiOutcome<OperatorProviderBindingPutResponse>, AgentApiError> {
+        params: DeploymentProviderBindingPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentProviderBindingPutResponse>, AgentApiError> {
         let universe_id = parse_universe_id(&params.universe_id)?;
         self.require_universe(universe_id).await?;
         let store = self.runtime.stores().store_for(universe_id);
@@ -250,7 +250,7 @@ impl OperatorApiService for GatewayOperatorApi {
             })
             .await
             .map_err(super::service::environment_providers::map_environments_error)?;
-        Ok(AgentApiOutcome::new(OperatorProviderBindingPutResponse {
+        Ok(AgentApiOutcome::new(DeploymentProviderBindingPutResponse {
             binding: super::service::environment_providers::environment_provider_binding_view(
                 &binding,
             ),
@@ -259,8 +259,8 @@ impl OperatorApiService for GatewayOperatorApi {
 
     async fn delete_environment_provider_binding(
         &self,
-        params: OperatorProviderBindingDeleteParams,
-    ) -> Result<AgentApiOutcome<OperatorProviderBindingDeleteResponse>, AgentApiError> {
+        params: DeploymentProviderBindingDeleteParams,
+    ) -> Result<AgentApiOutcome<DeploymentProviderBindingDeleteResponse>, AgentApiError> {
         let universe_id = parse_universe_id(&params.universe_id)?;
         self.require_universe(universe_id).await?;
         let binding_id =
@@ -273,7 +273,7 @@ impl OperatorApiService for GatewayOperatorApi {
             .await
             .map_err(super::service::environment_providers::map_environments_error)?;
         Ok(AgentApiOutcome::new(
-            OperatorProviderBindingDeleteResponse {
+            DeploymentProviderBindingDeleteResponse {
                 binding: super::service::environment_providers::environment_provider_binding_view(
                     &binding,
                 ),
@@ -283,8 +283,8 @@ impl OperatorApiService for GatewayOperatorApi {
 
     async fn adopt_environment(
         &self,
-        params: OperatorEnvironmentAdoptParams,
-    ) -> Result<AgentApiOutcome<OperatorEnvironmentAdoptResponse>, AgentApiError> {
+        params: DeploymentEnvironmentAdoptParams,
+    ) -> Result<AgentApiOutcome<DeploymentEnvironmentAdoptResponse>, AgentApiError> {
         if !params.take_ownership {
             return Err(AgentApiError::invalid_request(
                 "takeOwnership must be true because adoption transfers lifecycle ownership to Lightspeed",
@@ -324,19 +324,19 @@ impl OperatorApiService for GatewayOperatorApi {
         )
         .await
         .map_err(super::service::environment_providers::map_environments_error)?;
-        Ok(AgentApiOutcome::new(OperatorEnvironmentAdoptResponse {
+        Ok(AgentApiOutcome::new(DeploymentEnvironmentAdoptResponse {
             environment: super::service::environment_providers::environment_view(&environment),
         }))
     }
 
     async fn list_universes(
         &self,
-        _params: OperatorUniverseListParams,
-    ) -> Result<AgentApiOutcome<OperatorUniverseListResponse>, AgentApiError> {
+        _params: DeploymentUniverseListParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseListResponse>, AgentApiError> {
         let universes = store_pg::list_universe_stats(self.pool())
             .await
             .map_err(map_store_error)?;
-        Ok(AgentApiOutcome::new(OperatorUniverseListResponse {
+        Ok(AgentApiOutcome::new(DeploymentUniverseListResponse {
             universes: universes.into_iter().map(universe_view).collect(),
         }))
     }
@@ -345,8 +345,8 @@ impl OperatorApiService for GatewayOperatorApi {
     /// of the deployment with its universe id.
     async fn list_deployment_channel_accounts(
         &self,
-        params: api::OperatorChannelAccountListParams,
-    ) -> Result<AgentApiOutcome<api::OperatorChannelAccountListResponse>, AgentApiError> {
+        params: api::DeploymentChannelAccountListParams,
+    ) -> Result<AgentApiOutcome<api::DeploymentChannelAccountListResponse>, AgentApiError> {
         let accounts = store_pg::list_channel_accounts_all(
             self.pool(),
             params.provider,
@@ -355,10 +355,10 @@ impl OperatorApiService for GatewayOperatorApi {
         .await
         .map_err(map_store_error)?;
         Ok(AgentApiOutcome::new(
-            api::OperatorChannelAccountListResponse {
+            api::DeploymentChannelAccountListResponse {
                 accounts: accounts
                     .into_iter()
-                    .map(|(universe_id, record)| api::OperatorChannelAccountView {
+                    .map(|(universe_id, record)| api::DeploymentChannelAccountView {
                         universe_id: universe_id.to_string(),
                         account: record.view(),
                     })
@@ -369,22 +369,22 @@ impl OperatorApiService for GatewayOperatorApi {
 
     async fn read_universe(
         &self,
-        params: OperatorUniverseReadParams,
-    ) -> Result<AgentApiOutcome<OperatorUniverseReadResponse>, AgentApiError> {
+        params: DeploymentUniverseReadParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
         let universe_id = parse_universe_id(&params.universe_id)?;
         let universe = self
             .read_universe_view(universe_id)
             .await?
             .ok_or_else(|| AgentApiError::not_found(format!("unknown universe: {universe_id}")))?;
-        Ok(AgentApiOutcome::new(OperatorUniverseReadResponse {
+        Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
             universe,
         }))
     }
 
     async fn delete_universe(
         &self,
-        params: OperatorUniverseDeleteParams,
-    ) -> Result<AgentApiOutcome<OperatorUniverseDeleteResponse>, AgentApiError> {
+        params: DeploymentUniverseDeleteParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError> {
         let universe_id = parse_universe_id(&params.universe_id)?;
         if !store_pg::universe_exists(self.pool(), universe_id)
             .await
@@ -464,7 +464,7 @@ impl OperatorApiService for GatewayOperatorApi {
             blob_objects_deleted,
             "universe purged"
         );
-        Ok(AgentApiOutcome::new(OperatorUniverseDeleteResponse {
+        Ok(AgentApiOutcome::new(DeploymentUniverseDeleteResponse {
             universe_id: universe_id.to_string(),
             workflows_terminated,
             blob_objects_deleted,
@@ -473,8 +473,8 @@ impl OperatorApiService for GatewayOperatorApi {
 
     async fn create_api_key(
         &self,
-        params: OperatorApiKeyCreateParams,
-    ) -> Result<AgentApiOutcome<OperatorApiKeyCreateResponse>, AgentApiError> {
+        params: DeploymentApiKeyCreateParams,
+    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
         let universe_id = parse_universe_id(&params.universe_id)?;
         self.require_universe(universe_id).await?;
         let display_name = params.display_name.trim();
@@ -510,7 +510,7 @@ impl OperatorApiService for GatewayOperatorApi {
                 .await
             {
                 Ok(()) => {
-                    return Ok(AgentApiOutcome::new(OperatorApiKeyCreateResponse {
+                    return Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
                         api_key: api_key_view(minted.record),
                         secret: minted.secret.expose().to_owned(),
                     }));
@@ -528,8 +528,8 @@ impl OperatorApiService for GatewayOperatorApi {
 
     async fn list_api_keys(
         &self,
-        params: OperatorApiKeyListParams,
-    ) -> Result<AgentApiOutcome<OperatorApiKeyListResponse>, AgentApiError> {
+        params: DeploymentApiKeyListParams,
+    ) -> Result<AgentApiOutcome<DeploymentApiKeyListResponse>, AgentApiError> {
         let universe_id = parse_universe_id(&params.universe_id)?;
         self.require_universe(universe_id).await?;
         let api_keys = store_pg::PgApiKeyStore::new(self.pool().clone())
@@ -539,15 +539,15 @@ impl OperatorApiService for GatewayOperatorApi {
             .into_iter()
             .map(api_key_view)
             .collect();
-        Ok(AgentApiOutcome::new(OperatorApiKeyListResponse {
+        Ok(AgentApiOutcome::new(DeploymentApiKeyListResponse {
             api_keys,
         }))
     }
 
     async fn revoke_api_key(
         &self,
-        params: OperatorApiKeyRevokeParams,
-    ) -> Result<AgentApiOutcome<OperatorApiKeyRevokeResponse>, AgentApiError> {
+        params: DeploymentApiKeyRevokeParams,
+    ) -> Result<AgentApiOutcome<DeploymentApiKeyRevokeResponse>, AgentApiError> {
         let universe_id = parse_universe_id(&params.universe_id)?;
         self.require_universe(universe_id).await?;
         let key_prefix = params.key_prefix.trim();
@@ -561,7 +561,7 @@ impl OperatorApiService for GatewayOperatorApi {
             .await
             .map_err(map_api_key_error)?
             .ok_or_else(|| AgentApiError::not_found("unknown api key prefix"))?;
-        Ok(AgentApiOutcome::new(OperatorApiKeyRevokeResponse {
+        Ok(AgentApiOutcome::new(DeploymentApiKeyRevokeResponse {
             api_key: api_key_view(record),
         }))
     }
@@ -587,35 +587,39 @@ fn parse_environment_provider_id(value: String) -> Result<EnvironmentProviderId,
 }
 
 fn provider_connection_from_api(
-    connection: OperatorEnvironmentProviderConnection,
+    connection: DeploymentEnvironmentProviderConnection,
 ) -> EnvironmentConnectionSpec {
     EnvironmentConnectionSpec {
         endpoint: connection.endpoint,
         transport: match connection.transport {
-            OperatorEnvironmentProviderTransport::WebSocket => EnvironmentTransport::WebSocket,
-            OperatorEnvironmentProviderTransport::Http => EnvironmentTransport::Http,
-            OperatorEnvironmentProviderTransport::Stdio => EnvironmentTransport::Stdio,
-            OperatorEnvironmentProviderTransport::Ssh => EnvironmentTransport::Ssh,
-            OperatorEnvironmentProviderTransport::Provider { provider_type } => {
+            DeploymentEnvironmentProviderTransport::WebSocket => EnvironmentTransport::WebSocket,
+            DeploymentEnvironmentProviderTransport::Http => EnvironmentTransport::Http,
+            DeploymentEnvironmentProviderTransport::Stdio => EnvironmentTransport::Stdio,
+            DeploymentEnvironmentProviderTransport::Ssh => EnvironmentTransport::Ssh,
+            DeploymentEnvironmentProviderTransport::Provider { provider_type } => {
                 EnvironmentTransport::Provider { provider_type }
             }
         },
     }
 }
 
-fn environment_provider_view(record: EnvironmentProviderRecord) -> OperatorEnvironmentProviderView {
-    OperatorEnvironmentProviderView {
+fn environment_provider_view(
+    record: EnvironmentProviderRecord,
+) -> DeploymentEnvironmentProviderView {
+    DeploymentEnvironmentProviderView {
         provider_id: record.provider_id.to_string(),
         display_name: record.display_name,
-        controller_connection: OperatorEnvironmentProviderConnection {
+        controller_connection: DeploymentEnvironmentProviderConnection {
             endpoint: record.controller_connection.endpoint,
             transport: match record.controller_connection.transport {
-                EnvironmentTransport::WebSocket => OperatorEnvironmentProviderTransport::WebSocket,
-                EnvironmentTransport::Http => OperatorEnvironmentProviderTransport::Http,
-                EnvironmentTransport::Stdio => OperatorEnvironmentProviderTransport::Stdio,
-                EnvironmentTransport::Ssh => OperatorEnvironmentProviderTransport::Ssh,
+                EnvironmentTransport::WebSocket => {
+                    DeploymentEnvironmentProviderTransport::WebSocket
+                }
+                EnvironmentTransport::Http => DeploymentEnvironmentProviderTransport::Http,
+                EnvironmentTransport::Stdio => DeploymentEnvironmentProviderTransport::Stdio,
+                EnvironmentTransport::Ssh => DeploymentEnvironmentProviderTransport::Ssh,
                 EnvironmentTransport::Provider { provider_type } => {
-                    OperatorEnvironmentProviderTransport::Provider { provider_type }
+                    DeploymentEnvironmentProviderTransport::Provider { provider_type }
                 }
             },
         },
@@ -625,8 +629,8 @@ fn environment_provider_view(record: EnvironmentProviderRecord) -> OperatorEnvir
     }
 }
 
-fn universe_view(stats: store_pg::UniverseStats) -> OperatorUniverseView {
-    OperatorUniverseView {
+fn universe_view(stats: store_pg::UniverseStats) -> DeploymentUniverseView {
+    DeploymentUniverseView {
         universe_id: stats.universe_id.to_string(),
         slug: stats.slug,
         created_at_ms: u64::try_from(stats.created_at_ms).unwrap_or(0),
@@ -640,8 +644,8 @@ fn universe_view(stats: store_pg::UniverseStats) -> OperatorUniverseView {
     }
 }
 
-fn api_key_view(record: auth::ApiKeyRecord) -> OperatorApiKeyView {
-    OperatorApiKeyView {
+fn api_key_view(record: auth::ApiKeyRecord) -> DeploymentApiKeyView {
+    DeploymentApiKeyView {
         key_prefix: record.key_prefix,
         display_name: record.display_name,
         created_at_ms: record.created_at_ms,

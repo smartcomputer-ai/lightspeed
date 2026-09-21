@@ -36,13 +36,13 @@ An optional `x-lightspeed-principal` header accepts `user:<id>` or
 service-method checks. They do not introduce per-user access rules for ordinary
 resources inside a universe.
 
-### Keep operator and service access distinct
+### Keep deployment and service access distinct
 
-Operator methods manage deployment resources, including universes and API
+Deployment methods manage deployment resources, including universes and API
 keys. The runtime accepts them through `single` and `trusted-header` gateways
-without an additional operator login. They reject a universe header, and an
-`api-key` gateway rejects operator methods entirely. Network access to a
-private operator-capable listener therefore carries substantial authority.
+without an additional deployment login. They reject a universe header, and an
+`api-key` gateway rejects deployment methods entirely. Network access to a
+private deployment-capable listener therefore carries substantial authority.
 The Platform checks its own administrator permissions before making these
 calls.
 
@@ -121,7 +121,7 @@ The client must use an `api-key` gateway endpoint. Creating a key does not
 change the authentication mode of the Platform's private gateway. If the
 deployment needs both paths, run a separate `gateway` process in `api-key`
 mode against the same deployment stores, queues, and environment gateway.
-Give it its own listener and HTTPS route. Keep the operator-capable endpoint
+Give it its own listener and HTTPS route. Keep the deployment-capable endpoint
 private. [Configuration](configuration.md) and [operations](operations.md)
 explain the settings shared by these processes.
 
@@ -181,7 +181,7 @@ gateway and forwards the request identity. It does not exchange a Platform
 login session for a runtime key. An API-key Configurator therefore needs an
 API-key runtime endpoint, even when the Platform uses another private gateway.
 
-Configurator exposes ordinary management tools; operator and service methods
+Configurator exposes ordinary management tools; deployment and service methods
 are excluded. Its HTTP host/origin allowlists are additional request checks,
 not a substitute for gateway authentication. See the
 [Configurator service guide](../../../platform/configurator-mcp/README.md)

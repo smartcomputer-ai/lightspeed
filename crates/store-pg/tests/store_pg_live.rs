@@ -628,7 +628,7 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
-async fn pg_live_operator_universe_lifecycle_stats_and_purge() {
+async fn pg_live_deployment_universe_lifecycle_stats_and_purge() {
     // inline_threshold 8: the second blob lands in the object store, so the
     // purge has real external bytes to sweep.
     let store = live_store("operator-universe", 8).await;

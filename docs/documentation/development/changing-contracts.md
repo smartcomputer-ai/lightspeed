@@ -38,7 +38,7 @@ method metadata together; operator methods have their corresponding
 [operator manifest](../../../crates/api/src/operator.rs). Implement the
 service behavior in the runtime and test the actual admission and result.
 
-Choose the operation's scope deliberately. Universe, service, and operator
+Choose the operation's scope deliberately. Universe, service, and deployment
 methods cross different authority boundaries. The Configurator generator
 selects universe-scoped methods and applies
 [`tool-filter.json`](../../../platform/configurator-mcp/tool-filter.json).

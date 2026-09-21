@@ -231,7 +231,7 @@ impl From<AgentApiError> for JsonRpcError {
 pub enum MethodScope {
     Universe,
     Service,
-    Operator,
+    Deployment,
 }
 
 pub fn is_service_method(method: &str) -> bool {
@@ -243,7 +243,7 @@ impl MethodScope {
         match self {
             Self::Universe => "universe",
             Self::Service => "service",
-            Self::Operator => "operator",
+            Self::Deployment => "deployment",
         }
     }
 }

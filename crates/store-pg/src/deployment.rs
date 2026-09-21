@@ -1,7 +1,7 @@
 //! Deployment-level universe administration.
 //!
 //! Everything here runs against the shared pool, above the universe-bound
-//! [`PgStore`](crate::PgStore) boundary — the operator API addresses the set
+//! [`PgStore`](crate::PgStore) boundary — the deployment API addresses the set
 //! of universes, so no per-universe store applies. Stats are cheap aggregates
 //! computed at read time, approximate under concurrent writes by design.
 

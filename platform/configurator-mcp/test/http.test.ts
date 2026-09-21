@@ -27,11 +27,11 @@ describe("Streamable HTTP configurator", () => {
     expect(client.getProtocolEra()).toBe("modern");
     const listed = await client.listTools();
     expect(listed.tools).toHaveLength(GENERATED_TOOLS.length);
-    expect(listed.tools.some((tool) => tool.name.startsWith("lightspeed_operator_"))).toBe(false);
+    expect(listed.tools.some((tool) => tool.name.startsWith("lightspeed_deployment_"))).toBe(false);
     expect(listed.tools.find((tool) => tool.name === "lightspeed_session_config_put")?.description)
       .toContain("omitted features are revoked");
     await expect(
-      client.callTool({ name: "lightspeed_operator_universes_list", arguments: {} }),
+      client.callTool({ name: "lightspeed_deployment_universes_list", arguments: {} }),
     ).rejects.toThrow(/unknown tool/);
 
     const result = await client.callTool({

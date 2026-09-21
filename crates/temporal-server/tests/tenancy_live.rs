@@ -330,7 +330,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
         let response = call(
             Some(secret_a.clone()),
             rpc(
-                "operator/api-keys/create",
+                "deployment/api-keys/create",
                 serde_json::json!({
                     "universeId": universe_a,
                     "displayName": "must not mint",
@@ -343,7 +343,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
             response["error"]["message"]
                 .as_str()
                 .expect("operator rejection message"),
-            "operator methods are not available to api-key callers"
+            "deployment methods are not available to api-key callers"
         );
 
         // Tenant headers are rejected in api-key mode.

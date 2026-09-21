@@ -6,7 +6,7 @@ mod support;
 
 use std::{path::Path, sync::Arc, time::Duration};
 
-use api::{AgentApiService, OperatorApiService};
+use api::{AgentApiService, DeploymentApiService};
 use async_trait::async_trait;
 use engine::{
     BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError,
@@ -33,7 +33,7 @@ use support::live::{
 use temporal_server::{
     DeploymentStores, GatewayAuthMode, UniverseRuntime,
     gateway::{
-        DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayAgentApi, GatewayOperatorApi, GatewayRoutes,
+        DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayAgentApi, GatewayDeploymentApi, GatewayRoutes,
         GatewayState, gateway_router,
     },
     worker::{ActivityState, SessionTools, WorkerActivities},
@@ -80,8 +80,8 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
         Some(base_url.clone()),
         stores,
     )?);
-    GatewayOperatorApi::new(runtime.clone())
-        .create_universe(api::OperatorUniverseCreateParams {
+    GatewayDeploymentApi::new(runtime.clone())
+        .create_universe(api::DeploymentUniverseCreateParams {
             universe_id: universe_id.to_string(),
         })
         .await?;

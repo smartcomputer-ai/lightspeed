@@ -1,8 +1,8 @@
 //! JSON-RPC method and notification names.
 //!
 //! The first segment of a method name is its addressing scope: `session/`
-//! methods act inside one session (params carry `sessionId`), `operator/`
-//! methods (see [`crate::operator`]) address the deployment, and every other
+//! methods act inside one session (params carry `sessionId`), `deployment/`
+//! methods (see [`crate::deployment`]) address the deployment, and every other
 //! prefix is a universe-scoped catalog or stream. Collection segments are
 //! plural; uncountable facets (`context`, `mcp`) are singular; the
 //! verb is always the last segment.

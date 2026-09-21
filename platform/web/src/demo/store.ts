@@ -32,7 +32,7 @@ import type {
   ChannelAccountView,
   ChannelPairingView,
   ContextEntryView,
-  OperatorEnvironmentProviderView,
+  DeploymentEnvironmentProviderView,
   RunView,
   SessionEventView,
   SessionSummaryView,
@@ -175,7 +175,7 @@ export class DemoStore {
   readonly universes = new Map<string, UniverseState>();
   /// Engine universes no platform row links to (admin reconcile view).
   readonly orphanEngineUniverses: EngineUniverse[] = [];
-  readonly environmentProviders = new Map<string, OperatorEnvironmentProviderView>();
+  readonly environmentProviders = new Map<string, DeploymentEnvironmentProviderView>();
   channelsStatus: ChannelsStatus = { connectors: [] };
   readonly blobs = new Map<string, BlobContent>();
   readonly defaultInstructionsRef: string;

@@ -1,8 +1,8 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use api::{
-    AgentApiError, JsonRpcRequest, JsonRpcResponse, dispatch_json_rpc, dispatch_operator_json_rpc,
-    is_operator_method, is_service_method,
+    AgentApiError, JsonRpcRequest, JsonRpcResponse, dispatch_deployment_json_rpc,
+    dispatch_json_rpc, is_deployment_method, is_service_method,
 };
 use auth::{ApiKeyStore, PrincipalKind, PrincipalRef, api_key_hash};
 use axum::{
@@ -33,7 +33,7 @@ use crate::{
 };
 
 use super::{
-    GatewayAgentApi, GatewayOperatorApi, OAuthCallbackOutcome, connect_temporal, principal,
+    GatewayAgentApi, GatewayDeploymentApi, OAuthCallbackOutcome, connect_temporal, principal,
     registration::{self, RegisteredConnections},
 };
 
@@ -81,7 +81,7 @@ enum UniverseResolution {
         runtime: Arc<UniverseRuntime>,
         public_base_url: String,
         api_keys: PgApiKeyStore,
-        operator: Arc<GatewayOperatorApi>,
+        deployment: Arc<GatewayDeploymentApi>,
     },
 }
 
@@ -200,34 +200,36 @@ impl GatewayState {
         public_base_url: String,
     ) -> Self {
         let api_keys = PgApiKeyStore::new(runtime.stores().pool().clone());
-        let operator = Arc::new(GatewayOperatorApi::new(runtime.clone()));
+        let deployment = Arc::new(GatewayDeploymentApi::new(runtime.clone()));
         Self {
             resolution: UniverseResolution::Multi {
                 mode,
                 runtime,
                 public_base_url: public_base_url.clone(),
                 api_keys,
-                operator,
+                deployment,
             },
             registrations: Arc::new(RegisteredConnections::new()),
             public_base_url,
         }
     }
 
-    /// Resolve the operator service for a request. Operator methods are
+    /// Resolve the deployment service for a request. Deployment methods are
     /// deployment-addressed, so they exist only on deployment gateways —
     /// never fixed-instance ones.
-    fn operator_for_request(
+    fn deployment_for_request(
         &self,
         headers: &HeaderMap,
-    ) -> Result<&Arc<GatewayOperatorApi>, AgentApiError> {
+    ) -> Result<&Arc<GatewayDeploymentApi>, AgentApiError> {
         match &self.resolution {
             UniverseResolution::FixedApi { .. } => Err(AgentApiError::rejected(
-                "operator methods are not available on this gateway",
+                "deployment methods are not available on this gateway",
             )),
-            UniverseResolution::Multi { mode, operator, .. } => {
-                authorize_operator_call(mode, headers)?;
-                Ok(operator)
+            UniverseResolution::Multi {
+                mode, deployment, ..
+            } => {
+                authorize_deployment_call(mode, headers)?;
+                Ok(deployment)
             }
         }
     }
@@ -407,24 +409,24 @@ fn principal_from_header(headers: &HeaderMap) -> Result<PrincipalRef, AgentApiEr
     })
 }
 
-/// Authorization boundary of the operator scope: operator methods are
+/// Authorization boundary of the deployment scope: deployment methods are
 /// callable by `trusted-header` and `single` callers only — an api-key
 /// caller is a universe-bound tenant, not the platform. A universe header on
-/// an operator call is a tenant claim that will not be honored and is
+/// an deployment call is a tenant claim that will not be honored and is
 /// rejected (fail closed); the principal header stays allowed for
 /// audit-stamping proxies.
-fn authorize_operator_call(
+fn authorize_deployment_call(
     mode: &GatewayAuthMode,
     headers: &HeaderMap,
 ) -> Result<(), AgentApiError> {
     match mode {
         GatewayAuthMode::ApiKey => Err(AgentApiError::rejected(
-            "operator methods are not available to api-key callers",
+            "deployment methods are not available to api-key callers",
         )),
         GatewayAuthMode::Single { .. } | GatewayAuthMode::TrustedHeader => {
             if headers.contains_key(UNIVERSE_HEADER) {
                 return Err(AgentApiError::invalid_request(format!(
-                    "{UNIVERSE_HEADER} is not accepted on operator methods"
+                    "{UNIVERSE_HEADER} is not accepted on deployment methods"
                 )));
             }
             Ok(())
@@ -1093,16 +1095,16 @@ async fn rpc(
     headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> Response {
-    // Operator methods branch before universe resolution: they address the
+    // Deployment methods branch before universe resolution: they address the
     // deployment and never resolve a universe.
-    if is_operator_method(&request.method) {
-        let operator = match state.operator_for_request(&headers) {
-            Ok(operator) => operator,
+    if is_deployment_method(&request.method) {
+        let deployment = match state.deployment_for_request(&headers) {
+            Ok(deployment) => deployment,
             Err(error) => {
                 return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into()));
             }
         };
-        return no_store_json_rpc(dispatch_operator_json_rpc(operator.as_ref(), request).await);
+        return no_store_json_rpc(dispatch_deployment_json_rpc(deployment.as_ref(), request).await);
     }
     let (api, caller) = match state.api_for_request(&headers).await {
         Ok(resolved) => resolved,
@@ -1493,30 +1495,30 @@ mod tests {
     }
 
     #[test]
-    fn operator_calls_are_gated_by_auth_mode_and_reject_universe_claims() {
+    fn deployment_calls_are_gated_by_auth_mode_and_reject_universe_claims() {
         let single = GatewayAuthMode::Single {
             universe_id: Uuid::nil(),
         };
-        assert!(authorize_operator_call(&single, &HeaderMap::new()).is_ok());
+        assert!(authorize_deployment_call(&single, &HeaderMap::new()).is_ok());
         assert!(
-            authorize_operator_call(&GatewayAuthMode::TrustedHeader, &HeaderMap::new()).is_ok()
+            authorize_deployment_call(&GatewayAuthMode::TrustedHeader, &HeaderMap::new()).is_ok()
         );
 
-        let error = authorize_operator_call(&GatewayAuthMode::ApiKey, &HeaderMap::new())
+        let error = authorize_deployment_call(&GatewayAuthMode::ApiKey, &HeaderMap::new())
             .expect_err("api-key callers are universe-bound tenants, not the platform");
         assert_eq!(error.kind, AgentApiErrorKind::Rejected);
 
         // A universe claim on a deployment-addressed call fails closed.
         let headers = headers_with_universe("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f");
-        let error = authorize_operator_call(&GatewayAuthMode::TrustedHeader, &headers)
-            .expect_err("universe header must be rejected on operator calls");
+        let error = authorize_deployment_call(&GatewayAuthMode::TrustedHeader, &headers)
+            .expect_err("universe header must be rejected on deployment calls");
         assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
 
         // The principal header stays allowed for audit-stamping proxies.
         let mut principal_headers = HeaderMap::new();
         principal_headers.insert(PRINCIPAL_HEADER, "user:admin".parse().expect("header"));
         assert!(
-            authorize_operator_call(&GatewayAuthMode::TrustedHeader, &principal_headers).is_ok()
+            authorize_deployment_call(&GatewayAuthMode::TrustedHeader, &principal_headers).is_ok()
         );
     }
 }

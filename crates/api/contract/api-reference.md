@@ -1025,140 +1025,140 @@ Queries the conversation workflow's live state for one chat, for debugging; abse
 - Result: `AgentApiOutcome<ChannelConversationReadResponse>`
 
 
-## Operator methods
+## Deployment methods
 
-### `operator/universes/create`
+### `deployment/universes/create`
 
 **Create a universe**
 
 Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
 
-- Params: `OperatorUniverseCreateParams`
-- Result: `AgentApiOutcome<OperatorUniverseCreateResponse>`
+- Params: `DeploymentUniverseCreateParams`
+- Result: `AgentApiOutcome<DeploymentUniverseCreateResponse>`
 
-### `operator/universes/list`
+### `deployment/universes/list`
 
 **List universes**
 
 Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.
 
-- Params: `OperatorUniverseListParams`
-- Result: `AgentApiOutcome<OperatorUniverseListResponse>`
+- Params: `DeploymentUniverseListParams`
+- Result: `AgentApiOutcome<DeploymentUniverseListResponse>`
 
-### `operator/universes/read`
+### `deployment/universes/read`
 
 **Read a universe**
 
 Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
 
-- Params: `OperatorUniverseReadParams`
-- Result: `AgentApiOutcome<OperatorUniverseReadResponse>`
+- Params: `DeploymentUniverseReadParams`
+- Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
 
-### `operator/universes/delete`
+### `deployment/universes/delete`
 
 **Purge a universe**
 
 Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.
 
-- Params: `OperatorUniverseDeleteParams`
-- Result: `AgentApiOutcome<OperatorUniverseDeleteResponse>`
+- Params: `DeploymentUniverseDeleteParams`
+- Result: `AgentApiOutcome<DeploymentUniverseDeleteResponse>`
 
-### `operator/api-keys/create`
+### `deployment/api-keys/create`
 
 **Create a universe API key**
 
 Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
 
-- Params: `OperatorApiKeyCreateParams`
-- Result: `AgentApiOutcome<OperatorApiKeyCreateResponse>`
+- Params: `DeploymentApiKeyCreateParams`
+- Result: `AgentApiOutcome<DeploymentApiKeyCreateResponse>`
 
-### `operator/api-keys/list`
+### `deployment/api-keys/list`
 
 **List universe API keys**
 
 Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
 
-- Params: `OperatorApiKeyListParams`
-- Result: `AgentApiOutcome<OperatorApiKeyListResponse>`
+- Params: `DeploymentApiKeyListParams`
+- Result: `AgentApiOutcome<DeploymentApiKeyListResponse>`
 
-### `operator/api-keys/revoke`
+### `deployment/api-keys/revoke`
 
 **Revoke a universe API key**
 
 Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.
 
-- Params: `OperatorApiKeyRevokeParams`
-- Result: `AgentApiOutcome<OperatorApiKeyRevokeResponse>`
+- Params: `DeploymentApiKeyRevokeParams`
+- Result: `AgentApiOutcome<DeploymentApiKeyRevokeResponse>`
 
-### `operator/environment-providers/put`
+### `deployment/environment-providers/put`
 
 **Put an environment provider**
 
 Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.
 
-- Params: `OperatorEnvironmentProviderPutParams`
-- Result: `AgentApiOutcome<OperatorEnvironmentProviderPutResponse>`
+- Params: `DeploymentEnvironmentProviderPutParams`
+- Result: `AgentApiOutcome<DeploymentEnvironmentProviderPutResponse>`
 
-### `operator/environment-providers/list`
+### `deployment/environment-providers/list`
 
 **List environment providers**
 
-Returns every operator-registered deployment provider and its controller connection.
+Returns every deployment-registered deployment provider and its controller connection.
 
-- Params: `OperatorEnvironmentProviderListParams`
-- Result: `AgentApiOutcome<OperatorEnvironmentProviderListResponse>`
+- Params: `DeploymentEnvironmentProviderListParams`
+- Result: `AgentApiOutcome<DeploymentEnvironmentProviderListResponse>`
 
-### `operator/environment-providers/read`
+### `deployment/environment-providers/read`
 
 **Read an environment provider**
 
-Returns one operator-registered deployment provider and its controller connection.
+Returns one deployment-registered deployment provider and its controller connection.
 
-- Params: `OperatorEnvironmentProviderReadParams`
-- Result: `AgentApiOutcome<OperatorEnvironmentProviderReadResponse>`
+- Params: `DeploymentEnvironmentProviderReadParams`
+- Result: `AgentApiOutcome<DeploymentEnvironmentProviderReadResponse>`
 
-### `operator/environment-providers/delete`
+### `deployment/environment-providers/delete`
 
 **Delete an environment provider**
 
 Deletes a deployment provider only when no universe binding references it.
 
-- Params: `OperatorEnvironmentProviderDeleteParams`
-- Result: `AgentApiOutcome<OperatorEnvironmentProviderDeleteResponse>`
+- Params: `DeploymentEnvironmentProviderDeleteParams`
+- Result: `AgentApiOutcome<DeploymentEnvironmentProviderDeleteResponse>`
 
-### `operator/environment-providers/bindings/put`
+### `deployment/environment-providers/bindings/put`
 
 **Put an environment provider binding**
 
 Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.
 
-- Params: `OperatorProviderBindingPutParams`
-- Result: `AgentApiOutcome<OperatorProviderBindingPutResponse>`
+- Params: `DeploymentProviderBindingPutParams`
+- Result: `AgentApiOutcome<DeploymentProviderBindingPutResponse>`
 
-### `operator/environment-providers/bindings/delete`
+### `deployment/environment-providers/bindings/delete`
 
 **Delete an environment provider binding**
 
 Deletes a universe provider binding only after every referencing environment has reached Closed.
 
-- Params: `OperatorProviderBindingDeleteParams`
-- Result: `AgentApiOutcome<OperatorProviderBindingDeleteResponse>`
+- Params: `DeploymentProviderBindingDeleteParams`
+- Result: `AgentApiOutcome<DeploymentProviderBindingDeleteResponse>`
 
-### `operator/environments/adopt`
+### `deployment/environments/adopt`
 
 **Adopt a provider environment**
 
 Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.
 
-- Params: `OperatorEnvironmentAdoptParams`
-- Result: `AgentApiOutcome<OperatorEnvironmentAdoptResponse>`
+- Params: `DeploymentEnvironmentAdoptParams`
+- Result: `AgentApiOutcome<DeploymentEnvironmentAdoptResponse>`
 
-### `operator/channels/accounts/list`
+### `deployment/channels/accounts/list`
 
 **List channel accounts across universes**
 
 The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.
 
-- Params: `OperatorChannelAccountListParams`
-- Result: `AgentApiOutcome<OperatorChannelAccountListResponse>`
+- Params: `DeploymentChannelAccountListParams`
+- Result: `AgentApiOutcome<DeploymentChannelAccountListResponse>`
 

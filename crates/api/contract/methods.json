@@ -2018,272 +2018,272 @@
     },
     {
       "description": "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
-      "method": "operator/universes/create",
+      "method": "deployment/universes/create",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorUniverseCreateParams"
+          "$ref": "#/definitions/DeploymentUniverseCreateParams"
         },
-        "type": "OperatorUniverseCreateParams"
+        "type": "DeploymentUniverseCreateParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorUniverseCreateResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentUniverseCreateResponse"
         },
-        "type": "AgentApiOutcome<OperatorUniverseCreateResponse>"
+        "type": "AgentApiOutcome<DeploymentUniverseCreateResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "Create a universe"
     },
     {
       "description": "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.",
-      "method": "operator/universes/list",
+      "method": "deployment/universes/list",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorUniverseListParams"
+          "$ref": "#/definitions/DeploymentUniverseListParams"
         },
-        "type": "OperatorUniverseListParams"
+        "type": "DeploymentUniverseListParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorUniverseListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentUniverseListResponse"
         },
-        "type": "AgentApiOutcome<OperatorUniverseListResponse>"
+        "type": "AgentApiOutcome<DeploymentUniverseListResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "List universes"
     },
     {
       "description": "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
-      "method": "operator/universes/read",
+      "method": "deployment/universes/read",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorUniverseReadParams"
+          "$ref": "#/definitions/DeploymentUniverseReadParams"
         },
-        "type": "OperatorUniverseReadParams"
+        "type": "DeploymentUniverseReadParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorUniverseReadResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentUniverseReadResponse"
         },
-        "type": "AgentApiOutcome<OperatorUniverseReadResponse>"
+        "type": "AgentApiOutcome<DeploymentUniverseReadResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "Read a universe"
     },
     {
       "description": "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
-      "method": "operator/universes/delete",
+      "method": "deployment/universes/delete",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorUniverseDeleteParams"
+          "$ref": "#/definitions/DeploymentUniverseDeleteParams"
         },
-        "type": "OperatorUniverseDeleteParams"
+        "type": "DeploymentUniverseDeleteParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorUniverseDeleteResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentUniverseDeleteResponse"
         },
-        "type": "AgentApiOutcome<OperatorUniverseDeleteResponse>"
+        "type": "AgentApiOutcome<DeploymentUniverseDeleteResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "Purge a universe"
     },
     {
       "description": "Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
-      "method": "operator/api-keys/create",
+      "method": "deployment/api-keys/create",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorApiKeyCreateParams"
+          "$ref": "#/definitions/DeploymentApiKeyCreateParams"
         },
-        "type": "OperatorApiKeyCreateParams"
+        "type": "DeploymentApiKeyCreateParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorApiKeyCreateResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyCreateResponse"
         },
-        "type": "AgentApiOutcome<OperatorApiKeyCreateResponse>"
+        "type": "AgentApiOutcome<DeploymentApiKeyCreateResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "Create a universe API key"
     },
     {
       "description": "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
-      "method": "operator/api-keys/list",
+      "method": "deployment/api-keys/list",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorApiKeyListParams"
+          "$ref": "#/definitions/DeploymentApiKeyListParams"
         },
-        "type": "OperatorApiKeyListParams"
+        "type": "DeploymentApiKeyListParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorApiKeyListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyListResponse"
         },
-        "type": "AgentApiOutcome<OperatorApiKeyListResponse>"
+        "type": "AgentApiOutcome<DeploymentApiKeyListResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "List universe API keys"
     },
     {
       "description": "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.",
-      "method": "operator/api-keys/revoke",
+      "method": "deployment/api-keys/revoke",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorApiKeyRevokeParams"
+          "$ref": "#/definitions/DeploymentApiKeyRevokeParams"
         },
-        "type": "OperatorApiKeyRevokeParams"
+        "type": "DeploymentApiKeyRevokeParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorApiKeyRevokeResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyRevokeResponse"
         },
-        "type": "AgentApiOutcome<OperatorApiKeyRevokeResponse>"
+        "type": "AgentApiOutcome<DeploymentApiKeyRevokeResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "Revoke a universe API key"
     },
     {
       "description": "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
-      "method": "operator/environment-providers/put",
+      "method": "deployment/environment-providers/put",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderPutParams"
+          "$ref": "#/definitions/DeploymentEnvironmentProviderPutParams"
         },
-        "type": "OperatorEnvironmentProviderPutParams"
+        "type": "DeploymentEnvironmentProviderPutParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse"
         },
-        "type": "AgentApiOutcome<OperatorEnvironmentProviderPutResponse>"
+        "type": "AgentApiOutcome<DeploymentEnvironmentProviderPutResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "Put an environment provider"
     },
     {
-      "description": "Returns every operator-registered deployment provider and its controller connection.",
-      "method": "operator/environment-providers/list",
+      "description": "Returns every deployment-registered deployment provider and its controller connection.",
+      "method": "deployment/environment-providers/list",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderListParams"
+          "$ref": "#/definitions/DeploymentEnvironmentProviderListParams"
         },
-        "type": "OperatorEnvironmentProviderListParams"
+        "type": "DeploymentEnvironmentProviderListParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorEnvironmentProviderListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse"
         },
-        "type": "AgentApiOutcome<OperatorEnvironmentProviderListResponse>"
+        "type": "AgentApiOutcome<DeploymentEnvironmentProviderListResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "List environment providers"
     },
     {
-      "description": "Returns one operator-registered deployment provider and its controller connection.",
-      "method": "operator/environment-providers/read",
+      "description": "Returns one deployment-registered deployment provider and its controller connection.",
+      "method": "deployment/environment-providers/read",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderReadParams"
+          "$ref": "#/definitions/DeploymentEnvironmentProviderReadParams"
         },
-        "type": "OperatorEnvironmentProviderReadParams"
+        "type": "DeploymentEnvironmentProviderReadParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse"
         },
-        "type": "AgentApiOutcome<OperatorEnvironmentProviderReadResponse>"
+        "type": "AgentApiOutcome<DeploymentEnvironmentProviderReadResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "Read an environment provider"
     },
     {
       "description": "Deletes a deployment provider only when no universe binding references it.",
-      "method": "operator/environment-providers/delete",
+      "method": "deployment/environment-providers/delete",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorEnvironmentProviderDeleteParams"
+          "$ref": "#/definitions/DeploymentEnvironmentProviderDeleteParams"
         },
-        "type": "OperatorEnvironmentProviderDeleteParams"
+        "type": "DeploymentEnvironmentProviderDeleteParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse"
         },
-        "type": "AgentApiOutcome<OperatorEnvironmentProviderDeleteResponse>"
+        "type": "AgentApiOutcome<DeploymentEnvironmentProviderDeleteResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "Delete an environment provider"
     },
     {
       "description": "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.",
-      "method": "operator/environment-providers/bindings/put",
+      "method": "deployment/environment-providers/bindings/put",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorProviderBindingPutParams"
+          "$ref": "#/definitions/DeploymentProviderBindingPutParams"
         },
-        "type": "OperatorProviderBindingPutParams"
+        "type": "DeploymentProviderBindingPutParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorProviderBindingPutResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentProviderBindingPutResponse"
         },
-        "type": "AgentApiOutcome<OperatorProviderBindingPutResponse>"
+        "type": "AgentApiOutcome<DeploymentProviderBindingPutResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "Put an environment provider binding"
     },
     {
       "description": "Deletes a universe provider binding only after every referencing environment has reached Closed.",
-      "method": "operator/environment-providers/bindings/delete",
+      "method": "deployment/environment-providers/bindings/delete",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorProviderBindingDeleteParams"
+          "$ref": "#/definitions/DeploymentProviderBindingDeleteParams"
         },
-        "type": "OperatorProviderBindingDeleteParams"
+        "type": "DeploymentProviderBindingDeleteParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorProviderBindingDeleteResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse"
         },
-        "type": "AgentApiOutcome<OperatorProviderBindingDeleteResponse>"
+        "type": "AgentApiOutcome<DeploymentProviderBindingDeleteResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "Delete an environment provider binding"
     },
     {
       "description": "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.",
-      "method": "operator/environments/adopt",
+      "method": "deployment/environments/adopt",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorEnvironmentAdoptParams"
+          "$ref": "#/definitions/DeploymentEnvironmentAdoptParams"
         },
-        "type": "OperatorEnvironmentAdoptParams"
+        "type": "DeploymentEnvironmentAdoptParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorEnvironmentAdoptResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse"
         },
-        "type": "AgentApiOutcome<OperatorEnvironmentAdoptResponse>"
+        "type": "AgentApiOutcome<DeploymentEnvironmentAdoptResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "Adopt a provider environment"
     },
     {
       "description": "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.",
-      "method": "operator/channels/accounts/list",
+      "method": "deployment/channels/accounts/list",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OperatorChannelAccountListParams"
+          "$ref": "#/definitions/DeploymentChannelAccountListParams"
         },
-        "type": "OperatorChannelAccountListParams"
+        "type": "DeploymentChannelAccountListParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOperatorChannelAccountListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentChannelAccountListResponse"
         },
-        "type": "AgentApiOutcome<OperatorChannelAccountListResponse>"
+        "type": "AgentApiOutcome<DeploymentChannelAccountListResponse>"
       },
-      "scope": "operator",
+      "scope": "deployment",
       "summary": "List channel accounts across universes"
     }
   ],
