@@ -1,9 +1,12 @@
 # Enterprise authorization and identity
 
-**Status:** Platform/runtime ownership, universe role responsibilities, session
-access, and initial bot authority rules are decided. Detailed permissions and
-implementation remain exploratory.
-Lightspeed is greenfield: existing defaults need not constrain this design.
+**Status:** High-level ownership, authorization, sharing, privacy, and initial bot
+lifecycle decisions are agreed. Detailed permissions and implementation remain
+exploratory.
+
+Lightspeed is still greenfield, with room to reshape contracts, data models, and
+implementation boundaries. Existing defaults and implementation choices need not
+constrain the design; prefer a coherent model over preserving them for compatibility.
 
 ## Direction
 
@@ -22,6 +25,12 @@ coexist in one universe. SSO/provisioning connects identities to this model.
 | Execution binding | Stable session execution identity, distinct from its audience and individual requesters. |
 | Execution authority | Bounded, revocable authorization for a run and its delegated work. |
 | Approval | An additional condition on an authorized operation, with a separately entitled reviewer. |
+
+Every principal has a stable Lightspeed identity, either local or linked to an
+enterprise directory. Directory linkage does not supply downstream credentials:
+acting as an external user/service account requires an explicitly configured
+connection and supported authentication/delegation mechanism. A dedicated service
+account may be a directory user object; this does not make it personal authority.
 
 Deployment-wide identity does not imply global permissions, visibility, or
 administration. A service identity may be managed by one universe/team. An
@@ -63,10 +72,44 @@ Using a configured connection includes brokered use of its bound credential;
 raw secret access and configuration are separate permissions. Operators manage
 shared resources within assigned scope; configuration changes cannot bypass
 resource grants. The role does not grant access to restricted personal resources,
-authority to widen their audience, or permission to change membership/access
-policy or deployment bindings. Managing a shared template does not grant control
-of personal sessions created from it. Owners retain the sharing rights below;
-administrative privacy overrides remain an explicit policy question.
+authority to widen their audience, or permission to change universe membership,
+execution eligibility, deployment bindings, or its own grant-management limits.
+Managing a shared template does not grant control of personal sessions created
+from it. Owners retain the sharing rights below; administrative content access is
+separately authorized.
+
+## Decided: universe execution defaults
+
+Start with one default service binding per universe. Bind its principal, directly
+or through a group, to the universe's default resource-use permissions; individual
+resource grants are exceptions, not mandatory setup. Sharing group membership
+does not itself grant permission to act as another principal.
+
+Allow additional named service bindings with different resource scopes. Session
+configuration or a profile may request an allowed binding; resolve and persist
+the concrete binding when creating a session or bot. Changing the universe
+default does not rebind existing sessions/bots. Profiles confer no authority, and
+denied/unavailable bindings must not silently fall back to another identity.
+
+Contributors and operators may start sessions under universe service bindings by
+default. A binding can instead restrict use to specified users/groups; this
+replaces the role default. Personal execution requires explicit admin enablement
+for the universe and retains the owner-only control rules below.
+
+Keep three permissions distinct:
+
+- **Use a service binding:** create/control sessions within its approved scope.
+  This intentionally delegates the binding's approved capabilities. Resource
+  checks use that service authority; callers need not duplicate those grants on
+  their personal principal. Session control permissions still apply.
+- **Invoke a bot:** use its configured service capability without automatically
+  gaining permission to configure the bot or create arbitrary sessions as its
+  service identity. Invocation-only bindings are possible.
+- **Assign resources:** admins govern scope and eligible callers; operators may
+  assign resources within delegated grant-management scope. Granting a binding
+  another resource also delegates its use to that binding's permitted callers,
+  so the assignment must be authorized for that audience. Resource configuration
+  or personal use permission alone does not grant this authority.
 
 ## Decided: session access and personal authority
 
@@ -95,30 +138,49 @@ A session writer may share read access with existing universe users/groups or
 make the session universe-visible. Readers cannot change sharing. Sharing never
 grants control, credentials, or universe membership; granting writer rights is
 a separate management action. Removing universe access also blocks previously
-shared sessions. Administrative stop/suspend authority is distinct from
-continuing work under another user's identity; administrator read access remains
-an open policy decision.
+shared sessions.
 
-Universes choose defaults and allowed bindings. Connection credentials are
-separate: personal execution may use an approved service connection. Using and
-administering a connection are distinct permissions.
+Session permissions govern retained content and session-owned outputs, including
+results acquired through restricted connections or service bindings. An authorized
+writer sharing a session authorizes disclosure of those results; readers need no
+access to the original source or execution binding. References to other resources
+do not grant access to them. Revoking source access prevents future use but does
+not retract retained results. Source-imposed audience limits are deferred.
+
+Administrators can configure and govern the universe and stop/suspend work without
+permission to read private data/results or continue work under another user's
+identity. Reading private content outside normal sharing requires a separate,
+explicit, audited permission; the Admin role does not confer it. Sharing/role
+management, diagnostic surfaces, and configuration changes that could expose
+private inputs/results must respect this separation. Deployment operators with
+host/database control are a separate infrastructure trust boundary.
+
+Connection credentials are separate from execution identity: personal execution
+may use an approved service connection. Using and administering a connection are
+distinct permissions; downstream authorization must also permit the operation.
 
 Initially, keep execution identity stable for the session. Changing identity
 requires a new session and deliberate, authorized context transfer: old context
 may contain information acquired under different authority. Each run still
-checks current permissions. Sharing retained work is itself a disclosure decision.
+checks current permissions.
 
 ## Decided: initial bot authority
 
 Support personal bots through explicit standing authorization, initially for
 owner-configured schedules. Runs use the owner's delegation and default to
 private. Logout does not end authorization; disabling the owner or revoking the
-delegation blocks further work, subject to the execution limits below.
+delegation blocks further work, as does removing the owner's universe access,
+subject to the execution limits below.
 
 Shared bots and bots accepting other people's requests use service
-identities. A trigger's source never selects the execution identity. Instructions,
-profiles, trigger configuration, manual event submission, and replay are control
-surfaces subject to the same authority rules as session messages.
+identities and organizational authorization. Offboarding their creator/configuring
+operator removes that person's access but does not revoke the bot's authority.
+Revoking the service binding or its required grants blocks further affected work;
+creator attribution is distinct from the ongoing source of authority.
+
+A trigger's source never selects the execution identity. Instructions, profiles,
+trigger configuration, manual event submission, and replay are control surfaces
+subject to the same authority rules as session messages.
 
 Personal event-driven automation is deferred. Supporting it later requires a
 constrained trigger contract that distinguishes task inputs from another person's
@@ -131,6 +193,9 @@ Illustrative operations, not proposed public API signatures:
 
 ```text
 RequestContext = universe + authenticated actor + authentication reference
+UniverseExecutionPolicy = default_service_binding + allowed_bindings
+                        + personal_execution_enabled
+ServiceBinding = principal + universe + permitted_callers + resource_scope
 Session = universe + access policy + execution binding + capability limits
 
 authorize(context, action, resource) -> decision + reason + policy reference
@@ -146,7 +211,9 @@ authorize_effect(authority, action, resource) -> decision
 
 Derive run identity from the session binding and actor identity from trusted
 authentication. Persist admitted scope/provenance; live policy can narrow or
-revoke authority. Adapters check policy and record facts needed for replay.
+revoke authority. The authorizing actor is distinct from the personal/service
+authorization whose continued validity the run depends on. Adapters check policy
+and record facts needed for replay.
 
 Important boundaries:
 
@@ -162,8 +229,9 @@ Important boundaries:
   expires; stopping active processes or revoking issued credentials depends on
   the adapter. Completed effects cannot be undone by revocation.
 - **Evidence:** attribute requests, permission changes, approvals, and outcomes
-  to actors and execution identities. Administrative/access audit records need
-  a lifecycle independent of session deletion, without retaining secret values.
+  to actors and execution identities, preserving attribution after offboarding.
+  Administrative/access audit records need a lifecycle independent of session
+  deletion, without retaining secret values.
 
 ## Suggested first slice
 
@@ -180,16 +248,16 @@ Product surfaces should make this understandable: an **Access** panel,
 
 ## Questions to resolve
 
-- Which service identities may contributors invoke and operators configure?
-  What narrower exceptions are needed within the default role bundles?
+- Which external credential/delegation mechanisms are needed first, and what
+  narrower grant-management scope should operators receive?
 - For later personal event automation, how do we distinguish task inputs from
   another person's control requests?
 - Are resource grants and groups sufficient initially, or is a project-level
-  collaboration scope needed? How does sharing retained content work?
+  collaboration scope needed?
 - How do directory changes reach runtime enforcement, and when is offboarding
   considered complete?
-- What access should administrators have to private content, and what requires
-  explicit, audited emergency access?
+- How is the separate private-content access permission assigned and exercised,
+  including audited emergency access?
 - What revocation latency and reauthorization behavior can we promise across
   tools, streams, jobs, and already running processes?
 
