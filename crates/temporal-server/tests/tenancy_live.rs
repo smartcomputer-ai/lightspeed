@@ -185,9 +185,9 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
     client_result
 }
 
-/// `api-key` auth mode end to end over HTTP. Keys resolve to
+/// Authenticated mode end to end over HTTP. Keys resolve to
 /// their universe, foreign-universe reads miss, requests without/with bad
-/// credentials fail closed, tenant headers are rejected in api-key mode, and
+/// credentials fail closed, cross-universe headers are rejected, and
 /// revocation takes effect immediately.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra, Postgres, and Temporal"]
@@ -223,24 +223,36 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis() as u64;
+    let identities = store_pg::PgAccessStore::new(stores.pool().clone());
+    let actor = identities
+        .initialize_local_development(universe_a, now_ms)
+        .await?
+        .id;
+    identities
+        .initialize_local_development(universe_b, now_ms)
+        .await?;
     let minted_a = auth::mint_api_key(
-        universe_a,
-        auth::PrincipalRef {
-            kind: auth::PrincipalKind::ServiceAccount,
-            id: Some("live-test".to_owned()),
+        access::AccessScope::Universe {
+            universe_id: universe_a,
         },
-        Some("api-key live A".to_owned()),
+        actor,
+        actor,
+        Some("key A".into()),
         now_ms,
     );
     let minted_b = auth::mint_api_key(
-        universe_b,
-        auth::PrincipalRef::universe_default(),
-        Some("api-key live B".to_owned()),
+        access::AccessScope::Universe {
+            universe_id: universe_b,
+        },
+        actor,
+        actor,
+        Some("key B".into()),
         now_ms,
     );
     for minted in [&minted_a, &minted_b] {
         api_keys
             .create_api_key(auth::CreateApiKey {
+                authority_scope: access::AccessScope::Deployment,
                 key_hash: minted.key_hash.clone(),
                 record: minted.record.clone(),
             })
@@ -257,7 +269,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let gateway_url = format!("http://{}/rpc", listener.local_addr()?);
     let gateway_state = Arc::new(temporal_server::gateway::GatewayState::multi(
-        temporal_server::GatewayAuthMode::ApiKey,
+        temporal_server::GatewayAuthMode::Authenticated,
         universes.clone(),
         format!("http://{}", listener.local_addr()?),
     ));
@@ -305,7 +317,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
             response["error"]["message"]
                 .as_str()
                 .expect("error message")
-                .contains("Authorization")
+                .contains("not authorized")
         );
 
         // Fail closed: unknown key.
@@ -321,32 +333,17 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
             response["error"]["message"]
                 .as_str()
                 .expect("error message"),
-            "invalid api key"
+            "request is not authorized"
         );
 
-        // API-key-authenticated tenants can never mint more keys. Operator
-        // dispatch is rejected by auth mode before the bearer can select a
-        // universe.
-        let response = call(
-            Some(secret_a.clone()),
-            rpc(
-                "deployment/api-keys/create",
-                serde_json::json!({
-                    "universeId": universe_a,
-                    "displayName": "must not mint",
-                    "principal": { "kind": "serviceAccount", "id": "blocked" }
-                }),
-            ),
-        )
-        .await?;
-        assert_eq!(
-            response["error"]["message"]
-                .as_str()
-                .expect("operator rejection message"),
-            "deployment methods are not available to api-key callers"
-        );
+        // A universe key cannot mint a deployment credential, even when its
+        // principal is a deployment administrator.
+        let response = call(Some(secret_a.clone()), rpc("deployment/api-keys/create", serde_json::json!({
+            "scope": { "kind":"deployment" }, "principalId":actor, "displayName":"must not mint"
+        }))).await?;
+        assert!(response["error"].is_object());
 
-        // Tenant headers are rejected in api-key mode.
+        // A universe key cannot switch universes.
         let response: serde_json::Value = http
             .post(&gateway_url)
             .header("authorization", format!("Bearer {secret_a}"))
@@ -363,7 +360,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
             response["error"]["message"]
                 .as_str()
                 .expect("error message")
-                .contains("x-lightspeed-universe")
+                .contains("not authorized")
         );
 
         // Key A starts a session in universe A.
@@ -429,7 +426,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
         .await
         .map_err(|error| anyhow::anyhow!("{error}"))?;
         let grant = grants.iter().find(|grant| {
-            grant.principal.id.as_deref() == Some("live-test")
+            grant.principal.id.as_deref() == Some(actor.to_string().as_str())
                 && grant.principal.kind == auth::PrincipalKind::ServiceAccount
         });
         assert!(
@@ -459,7 +456,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
             response["error"]["message"]
                 .as_str()
                 .expect("error message"),
-            "invalid api key"
+            "request is not authorized"
         );
 
         // Cleanup.

@@ -35,7 +35,7 @@ For a new operation, follow the neighboring DTO, method constant, service
 interface, and manifest/dispatcher entries in `crates/api`. The
 [RPC manifest](../../../crates/api/src/rpc.rs) ties ordinary dispatch and
 method metadata together; operator methods have their corresponding
-[operator manifest](../../../crates/api/src/operator.rs). Implement the
+[deployment manifest](../../../crates/api/src/deployment.rs). Implement the
 service behavior in the runtime and test the actual admission and result.
 
 Every method declaration requires an explicit `access:` classification. Its scope

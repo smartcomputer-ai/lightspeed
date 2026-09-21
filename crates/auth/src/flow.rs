@@ -549,7 +549,10 @@ mod tests {
             scopes: None,
             audience: None,
             grant_exposure: AuthGrantExposure::Brokered,
-            principal: PrincipalRef::universe_default(),
+            principal: PrincipalRef {
+                kind: crate::PrincipalKind::ServiceAccount,
+                id: Some("test-service".into()),
+            },
         }
     }
 

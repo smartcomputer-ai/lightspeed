@@ -1,6 +1,8 @@
 //! `api` gateway for the Temporal-backed agent workflow.
 
 mod api_config;
+pub(crate) mod authorization;
+use access::ResourceRef;
 pub(crate) mod auth_api;
 mod blobs;
 mod bots_api;
@@ -889,6 +891,11 @@ impl GatewayAgentApi {
         params: RunStartParams,
         internal_notify_on_terminal: Vec<engine::RunTerminalNotifyIntent>,
     ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_START,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let RunStartParams {
             session_id,
             source,
@@ -1534,6 +1541,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotCreateParams,
     ) -> Result<AgentApiOutcome<BotCreateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_CREATE,
+            Some(ResourceRef::Bot(params.bot.bot_id.as_str().to_owned())),
+        )
+        .await?;
         self.create_bot_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1543,6 +1555,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotPutParams,
     ) -> Result<AgentApiOutcome<BotPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_PUT,
+            Some(ResourceRef::Bot(params.bot.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let bot = self
             .put_bot_record(params.bot, params.expected_revision)
             .await?;
@@ -1553,6 +1570,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotReadParams,
     ) -> Result<AgentApiOutcome<BotReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_READ,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let bot = ::bots::BotStore::read_bot(self.store.as_ref(), &params.bot_id)
             .await
             .map_err(crate::bots::map_bot_error)?;
@@ -1563,6 +1585,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         _params: BotListParams,
     ) -> Result<AgentApiOutcome<BotListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_BOTS_LIST, None).await?;
         self.list_bot_roster().await.map(AgentApiOutcome::new)
     }
 
@@ -1570,6 +1593,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotCloseParams,
     ) -> Result<AgentApiOutcome<BotCloseResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_CLOSE,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let bot = self.close_bot_record(&params.bot_id).await?;
         Ok(AgentApiOutcome::new(BotCloseResponse { bot: bot.view() }))
     }
@@ -1578,6 +1606,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotDeleteParams,
     ) -> Result<AgentApiOutcome<BotDeleteResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_DELETE,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let (bot, deleted_sessions) = self.delete_bot_record(&params.bot_id).await?;
         Ok(AgentApiOutcome::new(BotDeleteResponse {
             bot: bot.view(),
@@ -1589,6 +1622,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotStateReadParams,
     ) -> Result<AgentApiOutcome<BotStateReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_STATE_READ,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let state = self.bot_state_view(&params.bot_id).await?;
         Ok(AgentApiOutcome::new(BotStateReadResponse { state }))
     }
@@ -1597,6 +1635,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotSessionRotateParams,
     ) -> Result<AgentApiOutcome<BotSessionRotateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_SESSIONS_ROTATE,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let accepted = self
             .rotate_bot_session_record(&params.bot_id, &params.session_id)
             .await?;
@@ -1607,6 +1650,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotTriggerPutParams,
     ) -> Result<AgentApiOutcome<BotTriggerPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_PUT,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let record = self
             .put_bot_trigger_record(&params.bot_id, params.trigger, params.expected_revision)
             .await?;
@@ -1619,6 +1667,12 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotTriggerReadParams,
     ) -> Result<AgentApiOutcome<BotTriggerReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_READ,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let can_manage = self.may_manage_bot(&params.bot_id).await?;
         let record = ::bots::BotTriggerStore::read_bot_trigger(
             self.store.as_ref(),
             &params.bot_id,
@@ -1627,7 +1681,11 @@ impl AgentApiService for GatewayAgentApi {
         .await
         .map_err(crate::bots::map_bot_error)?;
         Ok(AgentApiOutcome::new(BotTriggerReadResponse {
-            trigger: self.trigger_view(&record),
+            trigger: if can_manage {
+                self.trigger_view(&record)
+            } else {
+                record.view(true, None)
+            },
         }))
     }
 
@@ -1635,6 +1693,12 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotTriggerListParams,
     ) -> Result<AgentApiOutcome<BotTriggerListResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_LIST,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let can_manage = self.may_manage_bot(&params.bot_id).await?;
         ::bots::BotStore::read_bot(self.store.as_ref(), &params.bot_id)
             .await
             .map_err(crate::bots::map_bot_error)?;
@@ -1645,7 +1709,13 @@ impl AgentApiService for GatewayAgentApi {
         Ok(AgentApiOutcome::new(BotTriggerListResponse {
             triggers: records
                 .iter()
-                .map(|record| self.trigger_view(record))
+                .map(|record| {
+                    if can_manage {
+                        self.trigger_view(record)
+                    } else {
+                        record.view(true, None)
+                    }
+                })
                 .collect(),
         }))
     }
@@ -1654,6 +1724,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotTriggerDeleteParams,
     ) -> Result<AgentApiOutcome<BotTriggerDeleteResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_DELETE,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let record = self
             .delete_bot_trigger_record(&params.bot_id, &params.trigger_id)
             .await?;
@@ -1666,6 +1741,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotEventAdmitParams,
     ) -> Result<AgentApiOutcome<BotEventAdmitResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_EVENTS_ADMIT,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let (record, duplicate) = self
             .admit_bot_event_record(&params.bot_id, params.event)
             .await?;
@@ -1679,6 +1759,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotEventReplayParams,
     ) -> Result<AgentApiOutcome<BotEventReplayResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_EVENTS_REPLAY,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let record = self
             .replay_bot_event_record(&params.bot_id, params.seq)
             .await?;
@@ -1691,6 +1776,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotEventListParams,
     ) -> Result<AgentApiOutcome<BotEventListResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_EVENTS_LIST,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let (records, next_cursor) = self
             .list_bot_events_page(&params.bot_id, params.limit, params.cursor)
             .await?;
@@ -1704,6 +1794,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotEventReadParams,
     ) -> Result<AgentApiOutcome<BotEventReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_EVENTS_READ,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         self.read_bot_event_with_document(&params.bot_id, params.seq)
             .await
             .map(AgentApiOutcome::new)
@@ -1713,6 +1808,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BotFilterTestParams,
     ) -> Result<AgentApiOutcome<BotFilterTestResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_FILTERS_TEST,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
         self.test_bot_filter_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1724,6 +1824,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ChannelAccountCreateParams,
     ) -> Result<AgentApiOutcome<ChannelAccountCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_CREATE, None)
+            .await?;
         self.create_channel_account_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1733,6 +1835,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ChannelAccountPutParams,
     ) -> Result<AgentApiOutcome<ChannelAccountPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_PUT, None)
+            .await?;
         self.put_channel_account_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1742,6 +1846,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ChannelAccountReadParams,
     ) -> Result<AgentApiOutcome<ChannelAccountReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_READ, None)
+            .await?;
         self.read_channel_account_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1751,6 +1857,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ChannelAccountListParams,
     ) -> Result<AgentApiOutcome<ChannelAccountListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_LIST, None)
+            .await?;
         self.list_channel_account_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1760,6 +1868,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ChannelAccountDeleteParams,
     ) -> Result<AgentApiOutcome<ChannelAccountDeleteResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_DELETE, None)
+            .await?;
         self.delete_channel_account_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1769,6 +1879,10 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ChannelInboundAdmitParams,
     ) -> Result<AgentApiOutcome<ChannelInboundAdmitResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_INBOUND_ADMIT, None)
+            .await?;
+        self.require_service_capability(access::ServiceCapability::AdmitChannelInbound)
+            .await?;
         self.admit_channel_inbound_message(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1778,6 +1892,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ChannelPairingListParams,
     ) -> Result<AgentApiOutcome<ChannelPairingListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_PAIRINGS_LIST, None)
+            .await?;
         self.list_channel_pairing_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1787,6 +1903,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ChannelPairingDeleteParams,
     ) -> Result<AgentApiOutcome<ChannelPairingDeleteResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_PAIRINGS_DELETE, None)
+            .await?;
         self.delete_channel_pairing_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1796,6 +1914,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ChannelConversationReadParams,
     ) -> Result<AgentApiOutcome<ChannelConversationReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_CONVERSATIONS_READ, None)
+            .await?;
         self.read_channel_conversation_snapshot(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1805,6 +1925,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ModelListParams,
     ) -> Result<AgentApiOutcome<ModelListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_MODELS_LIST, None).await?;
         Ok(AgentApiOutcome::new(
             self.model_discovery.list(params.selectable_only).await,
         ))
@@ -1814,6 +1935,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: InitializeParams,
     ) -> Result<AgentApiOutcome<InitializeResponse>, AgentApiError> {
+        self.authorize_method(METHOD_INITIALIZE, None).await?;
         let _capabilities = params.capabilities.unwrap_or(ClientCapabilities {
             experimental_api: false,
         });
@@ -1848,6 +1970,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+        self.authorize_method(METHOD_SESSION_START, None).await?;
         self.start_session_internal(params, false, false, None)
             .await
     }
@@ -1856,6 +1979,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ManagedSessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+        self.authorize_method(METHOD_SESSION_MANAGED_START, None)
+            .await?;
         let ManagedSessionStartParams {
             session_id,
             display_name,
@@ -1886,6 +2011,13 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ProfileCreateParams,
     ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_PROFILES_CREATE,
+            Some(ResourceRef::Profile(
+                params.profile.profile_id.as_str().to_owned(),
+            )),
+        )
+        .await?;
         self.create_profile_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1895,6 +2027,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ProfileReadParams,
     ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_PROFILES_READ,
+            Some(ResourceRef::Profile(params.profile_id.as_str().to_owned())),
+        )
+        .await?;
         self.read_profile_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1904,6 +2041,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ProfileListParams,
     ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_PROFILES_LIST, None).await?;
         self.list_profile_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1922,6 +2060,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ProfileDeleteParams,
     ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_PROFILES_DELETE,
+            Some(ResourceRef::Profile(params.profile_id.as_str().to_owned())),
+        )
+        .await?;
         self.delete_profile_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1931,6 +2074,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ProfileApplyParams,
     ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_PROFILES_APPLY,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         self.apply_profile_to_session(params)
             .await
             .map(AgentApiOutcome::new)
@@ -1940,6 +2088,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionConfigPutParams,
     ) -> Result<AgentApiOutcome<SessionConfigPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CONFIG_PUT,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -1989,6 +2142,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionReadParams,
     ) -> Result<AgentApiOutcome<SessionReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_READ,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -2024,6 +2182,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionListParams,
     ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_SESSION_LIST, None).await?;
         let limit = match params.limit {
             Some(0) => {
                 return Err(AgentApiError::invalid_request("limit must be positive"));
@@ -2077,6 +2236,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionRenameParams,
     ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RENAME,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -2095,6 +2259,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionMetadataPutParams,
     ) -> Result<AgentApiOutcome<SessionMetadataPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_METADATA_PUT,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -2114,6 +2283,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionRetentionPutParams,
     ) -> Result<AgentApiOutcome<SessionRetentionPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RETENTION_PUT,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         validate_delete_after_close_ms(params.delete_after_close_ms)?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
@@ -2133,6 +2307,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionEventsReadParams,
     ) -> Result<AgentApiOutcome<SessionEventsReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_EVENTS_READ,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         if params.direction == SessionEventDirection::Backward {
             return event_history::read(self.store.as_ref(), self.store.as_ref(), params)
                 .await
@@ -2204,6 +2383,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionCloseParams,
     ) -> Result<AgentApiOutcome<SessionCloseResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CLOSE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -2258,6 +2442,15 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionDeleteParams,
     ) -> Result<AgentApiOutcome<SessionDeleteResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_DELETE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        if params.cascade {
+            self.authorize_session_subtree(&params.session_id, METHOD_SESSION_DELETE)
+                .await?;
+        }
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -2289,6 +2482,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ContextCompactParams,
     ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CONTEXT_COMPACT,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -2316,6 +2514,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ContextAppendParams,
     ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CONTEXT_APPEND,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         const MAX_CONTEXT_APPEND_ENTRIES: usize = 64;
 
         enum PreparedAppend {
@@ -2474,6 +2677,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: ContextRemoveParams,
     ) -> Result<AgentApiOutcome<ContextRemoveResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CONTEXT_REMOVE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         const MAX_CONTEXT_REMOVE_KEYS: usize = 64;
 
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
@@ -2574,6 +2782,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: RunStartParams,
     ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_START,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         self.start_run_internal(params, Vec::new()).await
     }
 
@@ -2581,6 +2794,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: RunListParams,
     ) -> Result<AgentApiOutcome<RunListResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_LIST,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -2613,6 +2831,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: RunReadParams,
     ) -> Result<AgentApiOutcome<RunReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_READ,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -2632,6 +2855,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: RunCancelParams,
     ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_CANCEL,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -2692,6 +2920,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: RunApprovalsDecideParams,
     ) -> Result<AgentApiOutcome<RunApprovalsDecideResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_APPROVALS_DECIDE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         const MAX_DECISIONS: usize = 64;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
@@ -2718,12 +2951,11 @@ impl AgentApiService for GatewayAgentApi {
             )));
         }
 
-        let principal = crate::gateway::principal::request_principal();
+        let principal = crate::gateway::principal::request_principal()?;
         let decided_by = engine::ApprovalPrincipal {
             kind: match principal.kind {
                 auth::PrincipalKind::User => "user",
                 auth::PrincipalKind::ServiceAccount => "service_account",
-                auth::PrincipalKind::UniverseDefault => "universe_default",
             }
             .to_owned(),
             id: principal.id,
@@ -2884,6 +3116,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: RunSteerParams,
     ) -> Result<AgentApiOutcome<RunSteerResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_STEER,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -2977,12 +3214,20 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SkillListParams,
     ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_SKILLS_LIST,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
-        let loaded = self
-            .load_session_state_with_current_skill_catalog(&session_id)
-            .await?;
+        let loaded = if self.may_control_session(&session_id).await? {
+            self.load_session_state_with_current_skill_catalog(&session_id)
+                .await?
+        } else {
+            self.load_session_state(&session_id).await?
+        };
         Ok(AgentApiOutcome::new(
             self.project_skill_list(&loaded).await?,
         ))
@@ -2992,6 +3237,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentCreateParams,
     ) -> Result<AgentApiOutcome<EnvironmentCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_CREATE, None)
+            .await?;
         self.create_environment_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3001,6 +3248,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentReadParams,
     ) -> Result<AgentApiOutcome<EnvironmentReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_READ, None)
+            .await?;
         self.read_environment_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3010,6 +3259,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentListParams,
     ) -> Result<AgentApiOutcome<EnvironmentListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_LIST, None)
+            .await?;
         self.list_environment_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3019,6 +3270,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentCloseParams,
     ) -> Result<AgentApiOutcome<EnvironmentCloseResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_CLOSE, None)
+            .await?;
         self.close_environment_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3028,6 +3281,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentExternalCreateParams,
     ) -> Result<AgentApiOutcome<EnvironmentExternalCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_EXTERNAL_CREATE, None)
+            .await?;
         self.create_external_environment_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3037,6 +3292,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentRegistrationKeyCreateParams,
     ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_CREATE, None)
+            .await?;
         self.create_environment_registration_key_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3046,6 +3303,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentRegistrationKeyReadParams,
     ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_READ, None)
+            .await?;
         self.read_environment_registration_key_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3055,6 +3314,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentRegistrationKeyListParams,
     ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_LIST, None)
+            .await?;
         self.list_environment_registration_key_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3064,6 +3325,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentRegistrationKeyRevokeParams,
     ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyRevokeResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_REVOKE, None)
+            .await?;
         self.revoke_environment_registration_key_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3073,6 +3336,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentIngressPutParams,
     ) -> Result<AgentApiOutcome<EnvironmentIngressPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_INGRESS_PUT, None)
+            .await?;
         self.put_environment_ingress_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3082,6 +3347,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentPowerPutParams,
     ) -> Result<AgentApiOutcome<EnvironmentPowerPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_POWER_PUT, None)
+            .await?;
         self.put_environment_power_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3091,6 +3358,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentIdlePolicyPutParams,
     ) -> Result<AgentApiOutcome<EnvironmentIdlePolicyPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_IDLE_POLICY_PUT, None)
+            .await?;
         self.put_environment_idle_policy_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3100,6 +3369,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionEnvironmentActivateParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentActivateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_ENVIRONMENTS_ACTIVATE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -3132,6 +3406,11 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionEnvironmentDeactivateParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_ENVIRONMENTS_DEACTIVATE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -3158,6 +3437,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentCredentialBindParams,
     ) -> Result<AgentApiOutcome<EnvironmentCredentialBindResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_CREDENTIALS_BIND, None)
+            .await?;
         self.bind_environment_credential_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3167,6 +3448,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentCredentialListParams,
     ) -> Result<AgentApiOutcome<EnvironmentCredentialListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_CREDENTIALS_LIST, None)
+            .await?;
         self.list_environment_credential_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3176,6 +3459,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentCredentialUnbindParams,
     ) -> Result<AgentApiOutcome<EnvironmentCredentialUnbindResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND, None)
+            .await?;
         self.unbind_environment_credential_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3185,6 +3470,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentJobCreateParams,
     ) -> Result<AgentApiOutcome<EnvironmentJobCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_JOBS_CREATE, None)
+            .await?;
         self.create_environment_job_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3194,6 +3481,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentJobReadParams,
     ) -> Result<AgentApiOutcome<EnvironmentJobReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_JOBS_READ, None)
+            .await?;
         self.read_environment_job_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3203,6 +3492,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentJobCancelParams,
     ) -> Result<AgentApiOutcome<EnvironmentJobCancelResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_JOBS_CANCEL, None)
+            .await?;
         self.cancel_environment_job_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3212,6 +3503,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentProviderBindingListParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderBindingListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST, None)
+            .await?;
         self.list_environment_provider_binding_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3221,6 +3514,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentProviderBindingReadParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderBindingReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ, None)
+            .await?;
         self.read_environment_provider_binding_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3230,6 +3525,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentTemplateListParams,
     ) -> Result<AgentApiOutcome<EnvironmentTemplateListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_TEMPLATES_LIST, None)
+            .await?;
         self.list_environment_template_records(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3239,6 +3536,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: EnvironmentTemplateReadParams,
     ) -> Result<AgentApiOutcome<EnvironmentTemplateReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_TEMPLATES_READ, None)
+            .await?;
         self.read_environment_template_record(params)
             .await
             .map(AgentApiOutcome::new)
@@ -3248,6 +3547,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BlobPutParams,
     ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_BLOBS_PUT, None).await?;
         put_blobs(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
@@ -3257,6 +3557,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BlobReadParams,
     ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_BLOBS_READ, None).await?;
         read_blob(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
@@ -3266,6 +3567,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: BlobHasParams,
     ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError> {
+        self.authorize_method(METHOD_BLOBS_HAS, None).await?;
         has_blobs(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
@@ -3275,6 +3577,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: VfsSnapshotCommitParams,
     ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_SNAPSHOTS_COMMIT, None)
+            .await?;
         let response =
             commit_vfs_snapshot(self.store.as_ref(), Some(self.store.as_ref()), params).await?;
         let snapshot_ref = parse_blob_ref(&response.snapshot_ref)?;
@@ -3291,6 +3595,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: VfsSnapshotReadParams,
     ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_SNAPSHOTS_READ, None)
+            .await?;
         read_vfs_snapshot(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
@@ -3300,6 +3606,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: VfsWorkspaceCreateParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_WORKSPACES_CREATE, None)
+            .await?;
         let workspace = self.create_vfs_workspace_record(params).await?;
         Ok(AgentApiOutcome::new(VfsWorkspaceCreateResponse {
             workspace: vfs_workspace_view(workspace),
@@ -3310,6 +3618,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: VfsWorkspaceReadParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_WORKSPACES_READ, None)
+            .await?;
         let workspace = self.read_vfs_workspace_record(params).await?;
         Ok(AgentApiOutcome::new(VfsWorkspaceReadResponse {
             workspace: vfs_workspace_view(workspace),
@@ -3320,6 +3630,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         _params: VfsWorkspaceListParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_WORKSPACES_LIST, None)
+            .await?;
         let workspaces = self.list_vfs_workspace_records().await?;
         Ok(AgentApiOutcome::new(VfsWorkspaceListResponse {
             workspaces: workspaces.into_iter().map(vfs_workspace_view).collect(),
@@ -3330,6 +3642,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: VfsWorkspaceUpdateParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_WORKSPACES_UPDATE, None)
+            .await?;
         let workspace = self.update_vfs_workspace_record(params).await?;
         Ok(AgentApiOutcome::new(VfsWorkspaceUpdateResponse {
             workspace: vfs_workspace_view(workspace),
@@ -3340,6 +3654,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: VfsWorkspaceDeleteParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_WORKSPACES_DELETE, None)
+            .await?;
         let workspace = self.delete_vfs_workspace_record(params).await?;
         Ok(AgentApiOutcome::new(VfsWorkspaceDeleteResponse {
             workspace: vfs_workspace_view(workspace),
@@ -3350,6 +3666,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: McpServerPutParams,
     ) -> Result<AgentApiOutcome<McpServerPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_MCP_SERVERS_PUT, None).await?;
         let record = put_mcp_server_record(params.server, now_ms()?)?;
         let grant = match record.auth_grant_id.as_ref() {
             Some(grant_id) => Some(
@@ -3375,6 +3692,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: McpServerAuthDiscoverParams,
     ) -> Result<AgentApiOutcome<McpServerAuthDiscoverResponse>, AgentApiError> {
+        self.authorize_method(METHOD_MCP_SERVERS_AUTH_DISCOVER, None)
+            .await?;
         mcp::validate_remote_mcp_server_url(&params.server_url).map_err(map_mcp_error)?;
         let target = auth::McpOAuthTarget {
             server_id: "discovery".to_owned(),
@@ -3408,6 +3727,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: McpServerToolsDiscoverParams,
     ) -> Result<AgentApiOutcome<McpServerToolsDiscoverResponse>, AgentApiError> {
+        self.authorize_method(METHOD_MCP_SERVERS_TOOLS_DISCOVER, None)
+            .await?;
         let server_id = parse_mcp_server_id(params.server_id)?;
         let record = self
             .store
@@ -3518,6 +3839,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: McpServerListParams,
     ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_MCP_SERVERS_LIST, None).await?;
         let servers = self
             .store
             .list_servers(mcp::ListMcpServers {
@@ -3535,6 +3857,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: McpServerReadParams,
     ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_MCP_SERVERS_READ, None).await?;
         let server_id = parse_mcp_server_id(params.server_id)?;
         let server = self
             .store
@@ -3550,6 +3873,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: McpServerDeleteParams,
     ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError> {
+        self.authorize_method(METHOD_MCP_SERVERS_DELETE, None)
+            .await?;
         let server_id = parse_mcp_server_id(params.server_id)?;
         let server = self
             .store
@@ -3565,6 +3890,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthGrantImportParams,
     ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GRANTS_IMPORT, None)
+            .await?;
         let draft = auth_grant_import_draft(params, now_ms()?)?;
         self.store
             .put_secret(draft.secret.clone())
@@ -3587,61 +3914,18 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthGrantLeaseParams,
     ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {
-        let grant_id = parse_auth_grant_id(params.grant_id)?;
-        let grant = self
-            .store
-            .read_grant(&grant_id)
-            .await
-            .map_err(map_auth_error)?;
-        require_retrievable_grant(&grant)?;
-
-        let audience = match grant.provider_kind {
-            auth::AuthProviderKind::McpOAuth => {
-                TokenAudience::McpResource(params.audience.ok_or_else(|| {
-                    AgentApiError::rejected("mcp_oauth grant leases require an audience")
-                })?)
-            }
-            auth::AuthProviderKind::GitHubApp => {
-                TokenAudience::GitHubApi(params.audience.ok_or_else(|| {
-                    AgentApiError::rejected("github_app grant leases require an audience")
-                })?)
-            }
-            _ => TokenAudience::ServiceLease(
-                params
-                    .audience
-                    .or_else(|| grant.audience.clone())
-                    .unwrap_or_else(|| "service:lease".to_owned()),
-            ),
-        };
-        let token = self
-            .auth_token_broker
-            .bearer_token(&grant_id, &audience)
-            .await
-            .map_err(map_auth_broker_error)?;
-        let leased = self
-            .store
-            .record_grant_lease(&grant_id, now_ms()?)
-            .await
-            .map_err(map_auth_error)?;
-        let principal = crate::gateway::principal::request_principal();
-        tracing::info!(
-            grant_id = %grant_id,
-            principal_kind = ?principal.kind,
-            principal_id = principal.id.as_deref().unwrap_or(""),
-            "auth grant leased"
-        );
-        Ok(AgentApiOutcome::new(AuthGrantLeaseResponse {
-            token: token.expose().to_owned(),
-            expires_at_ms: leased.expires_at_ms,
-            grant_id: grant_id.as_str().to_owned(),
-            provider_kind: api_auth_provider_kind(leased.provider_kind),
-        }))
+        self.authorize_method(METHOD_AUTH_GRANTS_LEASE, None)
+            .await?;
+        self.require_service_capability(access::ServiceCapability::LeaseCredentials)
+            .await?;
+        self.lease_grant_token(params).await
     }
 
     async fn list_auth_grants(
         &self,
         params: AuthGrantListParams,
     ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GRANTS_LIST, None).await?;
         let grants = self
             .store
             .list_grants(auth::ListAuthGrants {
@@ -3658,6 +3942,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthGrantReadParams,
     ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GRANTS_READ, None).await?;
         let grant_id = parse_auth_grant_id(params.grant_id)?;
         let record = self
             .store
@@ -3673,6 +3958,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthGrantRevokeParams,
     ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GRANTS_REVOKE, None)
+            .await?;
         let grant_id = parse_auth_grant_id(params.grant_id)?;
         let record = self
             .store
@@ -3688,6 +3975,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthClientCreateParams,
     ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_CLIENTS_CREATE, None)
+            .await?;
         let draft = auth_client_create_draft(params, now_ms()?)?;
         if let Some(secret) = &draft.secret {
             self.store
@@ -3714,6 +4003,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         _params: AuthClientListParams,
     ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_CLIENTS_LIST, None)
+            .await?;
         let clients = self
             .store
             .list_oauth_clients()
@@ -3728,6 +4019,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthClientReadParams,
     ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_CLIENTS_READ, None)
+            .await?;
         let client_id = parse_oauth_client_id(params.client_id)?;
         let record = self
             .store
@@ -3743,6 +4036,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthClientDeleteParams,
     ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_CLIENTS_DELETE, None)
+            .await?;
         let client_id = parse_oauth_client_id(params.client_id)?;
         let record = self
             .store
@@ -3762,6 +4057,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthFlowStartParams,
     ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_FLOWS_START, None).await?;
+        let principal = crate::gateway::principal::request_principal()?;
         // `mcp:<server_id>` lazily discovers and registers the OAuth client
         // for a catalogued MCP server before starting the flow.
         let client_id = match params.client_id.strip_prefix("mcp:") {
@@ -3776,7 +4073,7 @@ impl AgentApiService for GatewayAgentApi {
                 scopes: params.scopes,
                 audience: params.audience,
                 grant_exposure: registry_auth_grant_exposure(params.exposure),
-                principal: crate::gateway::principal::request_principal(),
+                principal,
             })
             .await
             .map_err(map_auth_error)?;
@@ -3791,6 +4088,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthFlowStatusParams,
     ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_FLOWS_READ, None).await?;
         let flow_id = parse_auth_flow_id(params.flow_id)?;
         let record = self
             .oauth_flows
@@ -3806,6 +4104,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthProviderCreateParams,
     ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_PROVIDERS_CREATE, None)
+            .await?;
         let draft = auth_provider_create_draft(params, now_ms()?)?;
         // A model_oauth binding must point at a real, active grant; validate
         // before committing the provider row.
@@ -3851,6 +4151,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         _params: AuthProviderListParams,
     ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_PROVIDERS_LIST, None)
+            .await?;
         let providers = self
             .store
             .list_auth_providers()
@@ -3865,6 +4167,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthProviderReadParams,
     ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_PROVIDERS_READ, None)
+            .await?;
         let provider_id = parse_auth_provider_id(params.provider_id)?;
         let record = self
             .store
@@ -3880,6 +4184,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthProviderDeleteParams,
     ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_PROVIDERS_DELETE, None)
+            .await?;
         let provider_id = parse_auth_provider_id(params.provider_id)?;
         // The provider row must go first: its foreign key prevents deleting
         // the credential secret while the provider references it.
@@ -3902,6 +4208,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthGitHubInstallationListParams,
     ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, None)
+            .await?;
         let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
         let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
             return Err(AgentApiError::rejected(format!(
@@ -3923,6 +4231,8 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthGitHubInstallationGrantParams,
     ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT, None)
+            .await?;
         let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
         let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
             return Err(AgentApiError::rejected(format!(
@@ -4293,5 +4603,79 @@ impl GatewayAgentApi {
         self.environment_service()
             .unbind_environment_credential_record(params)
             .await
+    }
+}
+
+impl GatewayAgentApi {
+    async fn require_service_capability(
+        &self,
+        capability: access::ServiceCapability,
+    ) -> Result<(), AgentApiError> {
+        use access::AccessStore as _;
+        let context = crate::gateway::principal::request_context()?;
+        let scope = access::AccessScope::Universe {
+            universe_id: self.universe_id(),
+        };
+        if context.target_scope != scope {
+            return Err(AgentApiError::rejected("request scope mismatch"));
+        }
+        let rights = store_pg::PgAccessStore::new(self.store.pool().clone())
+            .effective_access(context.acting_principal.id, scope)
+            .await
+            .map_err(|e| AgentApiError::rejected(e.to_string()))?;
+        if !rights.has_capability(capability) {
+            return Err(AgentApiError::rejected("service capability required"));
+        }
+        Ok(())
+    }
+}
+
+impl GatewayAgentApi {
+    async fn lease_grant_token(
+        &self,
+        params: AuthGrantLeaseParams,
+    ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {
+        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        let grant = self
+            .store
+            .read_grant(&grant_id)
+            .await
+            .map_err(map_auth_error)?;
+        require_retrievable_grant(&grant)?;
+
+        let audience = match grant.provider_kind {
+            auth::AuthProviderKind::McpOAuth => {
+                TokenAudience::McpResource(params.audience.ok_or_else(|| {
+                    AgentApiError::rejected("mcp_oauth grant leases require an audience")
+                })?)
+            }
+            auth::AuthProviderKind::GitHubApp => {
+                TokenAudience::GitHubApi(params.audience.ok_or_else(|| {
+                    AgentApiError::rejected("github_app grant leases require an audience")
+                })?)
+            }
+            _ => TokenAudience::ServiceLease(
+                params
+                    .audience
+                    .or_else(|| grant.audience.clone())
+                    .unwrap_or_else(|| "service:lease".to_owned()),
+            ),
+        };
+        let token = self
+            .auth_token_broker
+            .bearer_token(&grant_id, &audience)
+            .await
+            .map_err(map_auth_broker_error)?;
+        let leased = self
+            .store
+            .record_grant_lease(&grant_id, now_ms()?)
+            .await
+            .map_err(map_auth_error)?;
+        Ok(AgentApiOutcome::new(AuthGrantLeaseResponse {
+            token: token.expose().to_owned(),
+            expires_at_ms: leased.expires_at_ms,
+            grant_id: grant_id.as_str().to_owned(),
+            provider_kind: api_auth_provider_kind(leased.provider_kind),
+        }))
     }
 }

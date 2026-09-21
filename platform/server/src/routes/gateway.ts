@@ -342,20 +342,33 @@ const mcpOAuthFlowCompleteSchema = z.object({
 
 type UniverseRow = typeof schema.universes.$inferSelect;
 
+// A universe endpoint override must never receive a credential provisioned for
+// another runtime. Remote deployments need their own credential configuration.
+function credentialEndpoint(ctx: AppContext, override?: string | null): string {
+  const configured = ctx.env.lightspeedApiUrl;
+  if (!configured || !ctx.env.lightspeedApiKey) throw new GatewayUnconfigured();
+  const endpoint = new URL(override ?? configured);
+  if (endpoint.href !== new URL(configured).href || endpoint.username || endpoint.password) {
+    throw new GatewayUnconfigured();
+  }
+  return endpoint.href;
+}
+
+const fetchRuntime: typeof fetch = (input, init) => globalThis.fetch(input, { ...init, redirect: "error" });
+
 /// Client for universe-scoped calls: stamps `x-lightspeed-universe`
-/// (trusted-header mode).
+/// after authenticating the Platform service.
 export function engineClientFor(
   ctx: AppContext,
   universe: UniverseRow,
   principal?: string,
 ): LightspeedClient {
-  const endpoint = universe.gatewayUrl ?? ctx.env.lightspeedApiUrl;
-  if (!endpoint) {
-    throw new GatewayUnconfigured();
-  }
+  const endpoint = credentialEndpoint(ctx, universe.gatewayUrl);
   return new LightspeedClient({
     endpoint,
+    fetch: fetchRuntime,
     headers: {
+      authorization: `Bearer ${ctx.env.lightspeedApiKey}`,
       "x-lightspeed-universe": universe.lightspeedUniverseId,
       ...(principal ? { "x-lightspeed-principal": principal } : {}),
     },
@@ -366,11 +379,8 @@ export function engineClientFor(
 /// these address the deployment, and the gateway rejects a universe
 /// header on them.
 export function deploymentClientFor(ctx: AppContext, endpoint?: string | null): LightspeedClient {
-  const resolved = endpoint ?? ctx.env.lightspeedApiUrl;
-  if (!resolved) {
-    throw new GatewayUnconfigured();
-  }
-  return new LightspeedClient({ endpoint: resolved });
+  const resolved = credentialEndpoint(ctx, endpoint);
+  return new LightspeedClient({ endpoint: resolved, fetch: fetchRuntime, headers: { authorization: `Bearer ${ctx.env.lightspeedApiKey}` } });
 }
 
 /// Universe-scoped passthrough to the Lightspeed gateway: the platform

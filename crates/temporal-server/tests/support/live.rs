@@ -29,6 +29,20 @@ use temporalio_client::{Client, WorkflowQueryOptions, WorkflowTerminateOptions};
 
 pub static LIVE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Explicit test identity for direct in-process clients; never inherited by workers.
+pub async fn local_request_context() -> anyhow::Result<access::RequestContext> {
+    let store = pg_store_from_env().await?;
+    let universe_id = store.config().universe_id;
+    store.ensure_universe().await?;
+    let principal = store_pg::PgAccessStore::new(store.pool().clone())
+        .initialize_local_development(universe_id, 1)
+        .await?;
+    Ok(temporal_server::gateway::authentication::local_context(
+        principal,
+        access::AccessScope::Universe { universe_id },
+    ))
+}
+
 pub async fn run_with_live_worker<F, Fut>(
     activities: WorkerActivities,
     run_client: F,
@@ -66,7 +80,10 @@ where
     let worker_future = worker.run();
     tokio::pin!(worker_future);
 
-    let client_future = run_client(client, task_queue, session_id);
+    let client_future = temporal_server::gateway::principal::with_request_context(
+        local_request_context().await?,
+        run_client(client, task_queue, session_id),
+    );
     tokio::pin!(client_future);
 
     let client_result = tokio::select! {

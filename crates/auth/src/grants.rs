@@ -46,43 +46,26 @@ pub enum AuthGrantExposure {
     Retrievable,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrincipalKind {
     User,
     ServiceAccount,
-    #[default]
-    UniverseDefault,
 }
 
-/// Who a grant was issued to. Lightspeed has no user identity yet, so the default
-/// principal is `UniverseDefault` with no id; the shape exists so adding
-/// identity later is a data migration, not a redesign.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Explicit grant attribution. This reference does not confer runtime access.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrincipalRef {
     pub kind: PrincipalKind,
     pub id: Option<String>,
 }
-
 impl PrincipalRef {
-    pub fn universe_default() -> Self {
-        Self::default()
-    }
-
     pub fn validate(&self) -> Result<(), AuthRegistryError> {
-        match (self.kind, self.id.as_deref()) {
-            (PrincipalKind::UniverseDefault, None) => Ok(()),
-            (PrincipalKind::UniverseDefault, Some(_)) => Err(AuthRegistryError::InvalidInput {
-                message: "universe_default principal must not carry an id".to_owned(),
+        match self.id.as_deref() {
+            Some(id) => validate_token_component("principal id", id),
+            None => Err(AuthRegistryError::InvalidInput {
+                message: "principal id is required".into(),
             }),
-            (PrincipalKind::User | PrincipalKind::ServiceAccount, Some(id)) => {
-                validate_token_component("principal id", id)
-            }
-            (PrincipalKind::User | PrincipalKind::ServiceAccount, None) => {
-                Err(AuthRegistryError::InvalidInput {
-                    message: "user and service_account principals require an id".to_owned(),
-                })
-            }
         }
     }
 }
@@ -292,7 +275,10 @@ mod tests {
             provider_id: "static".to_owned(),
             provider_kind: AuthProviderKind::StaticBearer,
             exposure: AuthGrantExposure::Brokered,
-            principal: PrincipalRef::universe_default(),
+            principal: PrincipalRef {
+                kind: crate::PrincipalKind::ServiceAccount,
+                id: Some("test-service".into()),
+            },
             display_name: Some("CRM token".to_owned()),
             subject_hint: None,
             scopes: vec!["contacts.read".to_owned()],
@@ -354,9 +340,12 @@ mod tests {
 
     #[test]
     fn principal_refs_validate_kind_id_pairing() {
-        PrincipalRef::universe_default()
-            .validate()
-            .expect("universe default principal");
+        PrincipalRef {
+            kind: crate::PrincipalKind::ServiceAccount,
+            id: Some("test-service".into()),
+        }
+        .validate()
+        .expect("explicit principal");
 
         let user_without_id = PrincipalRef {
             kind: PrincipalKind::User,
@@ -368,8 +357,8 @@ mod tests {
         ));
 
         let default_with_id = PrincipalRef {
-            kind: PrincipalKind::UniverseDefault,
-            id: Some("u1".to_owned()),
+            kind: PrincipalKind::ServiceAccount,
+            id: Some("".to_owned()),
         };
         assert!(matches!(
             default_with_id.validate(),

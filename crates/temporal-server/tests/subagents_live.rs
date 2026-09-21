@@ -522,13 +522,16 @@ where
 
     let blobs_for_client: Arc<dyn BlobStore> = store.clone();
     let sessions_for_client: Arc<dyn SessionStore> = store;
-    let client_future = run_client(
-        client.clone(),
-        session_id,
-        api,
-        blobs_for_client,
-        sessions_for_client,
-        model,
+    let client_future = temporal_server::gateway::principal::with_request_context(
+        support::live::local_request_context().await?,
+        run_client(
+            client.clone(),
+            session_id,
+            api,
+            blobs_for_client,
+            sessions_for_client,
+            model,
+        ),
     );
     tokio::pin!(client_future);
 

@@ -1,10 +1,10 @@
 # P176 — Identity foundation and universe authorization
 
-**Status:** Implementation-order steps 1–2 implemented; steps 3–4 pending. First slice of
+**Status:** Steps 1–3 complete; step 4 pending. First slice of
 [enterprise authorization and identity](later/pNNN-enterprise-authorization.md).
-Core contracts and the initial method/action mapping are implemented. Runtime
-enforcement and Platform integration remain pending; acceptance criteria remain
-deferred.
+Core contracts, method classification, authenticated request contexts and scoped
+service keys, ownership and action enforcement are implemented. Platform
+identity integration remains pending. Acceptance criteria remain deferred.
 
 Lightspeed is still greenfield. Reshape contracts and replace implicit defaults
 where needed; compatibility with the current authorization model is not a goal.
@@ -16,10 +16,10 @@ direct API access, with trustworthy attribution of actions. Local users and
 groups are enough to deliver this foundation; enterprise directories connect to
 the same identity lifecycle later.
 
-Today, Platform checks most permissions, forwarding the caller principal is
-optional, and runtime principals mainly provide attribution. Runtime API keys
-can remain usable after Platform membership is removed. This slice makes runtime
-authorization authoritative for universe access.
+The starting point was Platform-owned permission checks and runtime principals
+used mainly for attribution. This slice makes runtime authorization authoritative
+for universe access. Platform membership changes remain separate until step 4
+connects its user identities to core.
 
 ## Ownership
 
@@ -121,8 +121,8 @@ The acting principal is the authenticated caller or a user asserted through an
 authorized service. Identity/access administration is itself privileged. Internal
 attribution is distinct from authenticated request context and future execution
 authority. Credential references identify a key or explicit local-development
-authentication, never secret values. Explicit parameters versus fallible task-local
-context remains open.
+authentication, never secret values. The gateway installs a fallible task-local context around dispatch; spawned
+tasks do not inherit it implicitly.
 
 ## Revocation boundary
 
@@ -147,8 +147,9 @@ revoke an independent service identity.
 2. [x] Define core identity/access contracts, persistence, bootstrap, and the initial
    method/action mapping. Reserve credential grant terminology for `auth/grants/*`;
    use access policy/resource permission for authorization.
-3. [ ] Introduce service authentication, key scopes, explicit contexts, and ownership
-   facts; enforce checks across gateway and shared-service entry points.
+3. [x] Introduce service authentication, key scopes, explicit contexts, and ownership
+   facts; enforce checks across gateway and shared-service entry points. Authentication,
+   scoped keys, contexts, caller migration, ownership and action enforcement are complete.
 4. [ ] Connect Platform and CLI administration to core records, removing competing
    Platform-owned authorization state. Complete revocation, streams, and audit.
 
@@ -170,12 +171,44 @@ revoke an independent service identity.
 - Every API declaration requires `access:` metadata; scope derives from it.
   Manifest, OpenRPC, API reference, and generated TypeScript carry the mapping.
 
-The new records do **not** yet change HTTP admission or Platform permissions.
-Existing RPC universe creation, implicit principals, API keys, and trusted-header
-behavior are replaced when steps 3–4 connect authenticated context and enforcement.
+The gateway now authenticates canonical principals through scoped keys, checks
+current membership and service/deployment capabilities, and carries an explicit
+request context. `single` uses a named local development identity; no implicit
+principal remains. Bare trusted headers are retired. Assertions require scoped
+`assert_user`, retain both identities, and never union their permissions.
+
+Schema revision 12 replaces the old key table outright and requires canonical
+credentials. There is no legacy-key archive or compatibility path. Issuance
+checks the named creator's current authority, credential ceiling and principal
+management scope transactionally; key creation/revocation is audited.
+Platform and connectors now send service credentials. Configurator setup provisions
+a universe-managed service and key. Platform still applies its existing login and
+membership model; its canonical user mapping is not implemented by this change.
+A small authenticated identity-mutation endpoint supports service provisioning.
+
+Schema revision 13 adds immutable resource ownership reservations and separate
+mutation-admission attribution. Creation records the trusted principal or internal
+controller cause; retries cannot transfer ownership. Deleted content retains its
+reservation. No legacy ownership inference or backfill is provided.
+
+Every universe service method checks its declared action against current rights.
+Viewer mutations fail; Contributor control resolves ownership; Operator/Admin may
+stop personal sessions but cannot steer/delete them. Bot control follows management
+rights, and delegated children follow separately admitted controller edges, never
+metadata, history forks or origin alone. Profile upserts check creation or management
+as appropriate. Cascade deletion checks every affected session. Trigger reads redact
+webhook/pairing secrets for non-managers; read-only skill queries do not refresh state.
+Bot activities carry authority tied to their Temporal controller; sub-agent admission
+reserves the control edge before creation. Channel reply reads require the admitted
+conversation binding and receive read-only authority for that session. Internal
+actors do not inherit user roles.
+
+Step 4 still owns the Platform directory cutover, response-time/stream revocation,
+and remaining audit surfaces. Platform requests still represent its configured
+service until canonical user mapping is connected. Content remains universe-visible;
+private access and standing execution authority are follow-ups.
 The host CLI's `--actor-principal` is trusted database administration, not a remote
-identity assertion. Full Platform/CLI administration UX remains in step 4.
-See [core identity administration](../documentation/deployment/identity-and-access.md).
+identity assertion. See [core identity administration](../documentation/deployment/identity-and-access.md).
 
 Validation for steps 1–2 (2026-09-21):
 
@@ -192,6 +225,40 @@ Validation for steps 1–2 (2026-09-21):
   bootstrap retries, creator ownership, groups, denied mutations, last-admin
   rollback, disablement, orphan recovery, and scoped capabilities. Existing databases
   and the local `.env` were not used; the disposable container was removed afterward.
+
+Validation for request contexts and scoped authentication (2026-09-21):
+
+- Workspace/all-target compilation passed. Affected Rust unit/CLI suites:
+  567 passed, one existing ignored. Strict Clippy passed for access/auth/API/store.
+- Four serialized live suites passed on disposable PostgreSQL 17.10, covering
+  migrations, identity, scoped key management and authentication. Cases include
+  assertions without privilege union, scope ceilings, disablement, membership/key
+  revocation, provisioning retries, and disabled-bootstrap rejection.
+- Eleven actual server CLI checks passed against a fresh disposable database.
+- `npm install`, regeneration and full `npm run check` passed, including 529
+  consumer tests and builds. Generated-file checks used a temporary Git index
+  containing the regenerated artifacts; the user's index was unchanged.
+- Documentation checks/build, release metadata, formatting and whitespace passed.
+  Disposable databases were removed; existing services and provider credentials
+  were not used for live validation. Temporal workflow live suites were not run.
+
+Validation for ownership and action enforcement (2026-09-21):
+
+- Affected Rust unit suites: 442 passed, one existing ignored. Workspace/all-target
+  compilation and strict Clippy for access/store/server passed.
+- Twenty live tests passed on disposable PostgreSQL and Temporal: four storage
+  suites, authentication, authenticated HTTP/direct-service authorization, five
+  bot scenarios, six sub-agent scenarios, and three channel scenarios. Models and
+  connectors were fake/scripted; no external provider credentials were used.
+- The HTTP matrix checks every mutating/service route against Viewer, cross-user
+  control and retry denials, elevated stop-only rights, profile ownership/upserts,
+  bot-secret redaction, direct-service enforcement and membership revocation.
+  Storage tests cover concurrent ownership reservation and explicit controller chains.
+- API/TypeScript regeneration, `npm install`, full `npm run check` (529 consumer
+  tests and builds), documentation checks/build, release metadata and formatting
+  passed. Generated checks used a temporary Git index; the real index was unchanged.
+- Private-session/standing-execution semantics and response-time revocation were
+  not claimed or tested by this slice.
 
 ## Boundary and follow-up
 

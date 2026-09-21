@@ -845,7 +845,10 @@ where
     let plugin_worker_future = plugin_worker.run();
     tokio::pin!(plugin_worker_future);
 
-    let client_future = run_client(client.clone(), api, blobs, session_id, plugin_queue);
+    let client_future = temporal_server::gateway::principal::with_request_context(
+        support::live::local_request_context().await?,
+        run_client(client.clone(), api, blobs, session_id, plugin_queue),
+    );
     tokio::pin!(client_future);
 
     let client_result = tokio::select! {

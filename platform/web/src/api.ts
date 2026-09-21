@@ -220,7 +220,7 @@ export interface AuthGrantOption {
 
 export interface SecretGrant extends AuthGrantOption {
   principal: {
-    kind?: "user" | "serviceAccount" | "universeDefault" | string;
+    kind?: "user" | "serviceAccount" | string;
     id?: string | null;
   };
   scopes?: string[];

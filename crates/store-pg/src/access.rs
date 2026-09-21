@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct PgAccessStore {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
 }
 
 impl PgAccessStore {
@@ -88,7 +88,7 @@ async fn revision(connection: &mut PgConnection) -> Result<u64, AccessError> {
             .map_err(db_error)?,
     )
 }
-async fn effective(
+pub(crate) async fn effective(
     connection: &mut PgConnection,
     id: Uuid,
     scope: AccessScope,
@@ -149,7 +149,7 @@ fn guard_administrators(before: &[AccessScope], after: &[AccessScope]) -> Result
     }
     Ok(())
 }
-async fn audit(
+pub(crate) async fn audit(
     connection: &mut PgConnection,
     actor: Option<Uuid>,
     event: Value,
@@ -240,9 +240,17 @@ async fn apply_change(
                     .bind(universe_id).fetch_one(&mut *connection).await.map_err(db_error)?;
                 if !exists { return Err(AccessError::NotFound); }
             }
-            sqlx::query("INSERT INTO access_principals (principal_id, kind, status, display_name, management_universe_id, created_at_ms) VALUES ($1, $2, 'active', $3, $4, $5)")
+            let inserted = sqlx::query("INSERT INTO access_principals (principal_id, kind, status, display_name, management_universe_id, created_at_ms) VALUES ($1, $2, 'active', $3, $4, $5) ON CONFLICT DO NOTHING")
                 .bind(id).bind(enum_name(kind)?).bind(display_name).bind(scope_id(*management_scope)).bind(now_ms)
-                .execute(connection).await.map_err(db_error)?.rows_affected()
+                .execute(&mut *connection).await.map_err(db_error)?.rows_affected();
+            if inserted == 0 {
+                let existing = read_principal(connection, *id).await?;
+                if existing.kind != *kind || existing.management_scope != *management_scope || existing.display_name != *display_name {
+                    return Err(AccessError::Conflict);
+                }
+                // A retry never reactivates a disabled principal.
+            }
+            inserted
         }
         SetPrincipalStatus { id, status } => {
             let prior = read_principal(connection, *id).await?;
@@ -432,6 +440,9 @@ impl AccessStore for PgAccessStore {
             });
         }
         apply_change(&mut transaction, principal_id, &change, now_ms).await?;
+        if read_principal(&mut transaction, principal_id).await?.status != PrincipalStatus::Active {
+            return Err(AccessError::Denied);
+        }
         put_role(
             &mut transaction,
             RoleAssignment {
@@ -458,6 +469,90 @@ impl AccessStore for PgAccessStore {
             changed: true,
             policy_revision,
         })
+    }
+}
+
+/// Stable, explicit identity used only by the opt-in local development gateway.
+pub const LOCAL_DEVELOPMENT_PRINCIPAL: Uuid =
+    Uuid::from_u128(0x6c696768_7473_4065_8064_000000000001);
+
+impl PgAccessStore {
+    /// Host-side initialization for `single` mode. Calling this is an explicit
+    /// development bootstrap, never an authenticated request fallback.
+    pub async fn initialize_local_development(
+        &self,
+        universe_id: Uuid,
+        now_ms: u64,
+    ) -> Result<Principal, AccessError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        sqlx::query("SELECT revision FROM access_policy WHERE singleton FOR UPDATE")
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?;
+        let id = LOCAL_DEVELOPMENT_PRINCIPAL;
+        let mut changed = apply_change(
+            &mut tx,
+            id,
+            &AccessChange::CreatePrincipal {
+                id,
+                kind: PrincipalKind::Service,
+                display_name: "Local development".into(),
+                management_scope: AccessScope::Deployment,
+            },
+            timestamp(now_ms)?,
+        )
+        .await?;
+        let principal = read_principal(&mut tx, id).await?;
+        if principal.status != PrincipalStatus::Active {
+            return Err(AccessError::Denied);
+        }
+        for (scope, role) in [
+            (AccessScope::Deployment, Role::DeploymentAdmin),
+            (AccessScope::Universe { universe_id }, Role::Admin),
+        ] {
+            changed |= put_role(
+                &mut tx,
+                RoleAssignment {
+                    scope,
+                    subject: Subject::Principal(id),
+                    role,
+                },
+            )
+            .await?;
+        }
+        for (scope, capability) in [
+            (
+                AccessScope::Deployment,
+                ServiceCapability::DiscoverChannelAccounts,
+            ),
+            (
+                AccessScope::Universe { universe_id },
+                ServiceCapability::LeaseCredentials,
+            ),
+            (
+                AccessScope::Universe { universe_id },
+                ServiceCapability::AdmitChannelInbound,
+            ),
+        ] {
+            changed |= apply_change(
+                &mut tx,
+                id,
+                &AccessChange::AssignCapability {
+                    assignment: CapabilityAssignment {
+                        scope,
+                        principal_id: id,
+                        capability,
+                    },
+                },
+                timestamp(now_ms)?,
+            )
+            .await?;
+        }
+        if changed {
+            audit(&mut tx, None, json!({"operation":"local_development_initialized", "principalId":id, "universeId":universe_id}), timestamp(now_ms)?).await?;
+        }
+        tx.commit().await.map_err(db_error)?;
+        Ok(principal)
     }
 }
 

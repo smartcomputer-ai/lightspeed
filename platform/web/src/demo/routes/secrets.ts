@@ -118,7 +118,7 @@ function mintGrant(store: DemoStore, universe: UniverseState, init: GrantInit): 
     subjectHint: init.subjectHint ?? null,
     status: "active",
     exposure: init.exposure ?? "brokered",
-    principal: init.principal ?? { kind: "universeDefault" },
+    principal: init.principal ?? { kind: "serviceAccount", id: "demo-service" },
     scopes: init.scopes ?? [],
     audience: init.audience ?? null,
     hasAccessToken: true,

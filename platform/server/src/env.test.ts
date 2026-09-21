@@ -58,12 +58,12 @@ describe("platform environment", () => {
     );
   });
 
-  test("loads the development-only Configurator trusted-header path", () => {
+  test("rejects the retired Configurator trusted-header path", () => {
     vi.stubEnv("LIGHTSPEED_PLATFORM_DATABASE_URL", "postgres://platform");
     vi.stubEnv("LIGHTSPEED_PLATFORM_AUTH_SECRET", "platform-secret");
     vi.stubEnv("LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER", "true");
 
-    expect(loadEnv().configuratorMcpInternalTrustedHeader).toBe(true);
+    expect(() => loadEnv()).toThrow(/retired/);
   });
 
   test("requires the Lightspeed platform names", () => {

@@ -121,6 +121,7 @@ export const METHODS = [
   "deployment/universes/list",
   "deployment/universes/read",
   "deployment/universes/delete",
+  "deployment/identity/apply",
   "deployment/api-keys/create",
   "deployment/api-keys/list",
   "deployment/api-keys/revoke",
@@ -831,23 +832,29 @@ export const METHOD_INFO = {
     summary: "Purge a universe",
     description: "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
   },
+  "deployment/identity/apply": {
+    scope: "deployment",
+    access: {"kind":"deployment_admin_or_capability","requirement":"manage_identity"},
+    summary: "Apply identity and access changes",
+    description: "Applies a canonical identity change with current actor permissions and durable access auditing.",
+  },
   "deployment/api-keys/create": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
-    summary: "Create a universe API key",
-    description: "Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
+    access: {"kind":"credential_management"},
+    summary: "Create a scoped API key",
+    description: "Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
   },
   "deployment/api-keys/list": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
-    summary: "List universe API keys",
-    description: "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
+    access: {"kind":"credential_management"},
+    summary: "List scoped API keys",
+    description: "Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
   },
   "deployment/api-keys/revoke": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
-    summary: "Revoke a universe API key",
-    description: "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.",
+    access: {"kind":"credential_management"},
+    summary: "Revoke a scoped API key",
+    description: "Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found.",
   },
   "deployment/environment-providers/put": {
     scope: "deployment",
@@ -1957,27 +1964,36 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfDeploymentUniverseDeleteResponse;
   };
   /**
-   * Create a universe API key
+   * Apply identity and access changes
    *
-   * Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
+   * Applies a canonical identity change with current actor permissions and durable access auditing.
+   */
+  "deployment/identity/apply": {
+    params: Api.AccessChange;
+    result: Api.AgentApiOutcomeOfAccessChangeResult;
+  };
+  /**
+   * Create a scoped API key
+   *
+   * Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
    */
   "deployment/api-keys/create": {
     params: Api.DeploymentApiKeyCreateParams;
     result: Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse;
   };
   /**
-   * List universe API keys
+   * List scoped API keys
    *
-   * Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
+   * Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
    */
   "deployment/api-keys/list": {
     params: Api.DeploymentApiKeyListParams;
     result: Api.AgentApiOutcomeOfDeploymentApiKeyListResponse;
   };
   /**
-   * Revoke a universe API key
+   * Revoke a scoped API key
    *
-   * Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.
+   * Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found.
    */
   "deployment/api-keys/revoke": {
     params: Api.DeploymentApiKeyRevokeParams;
@@ -2994,25 +3010,33 @@ export const rpc = {
     return client.call("deployment/universes/delete", params);
   },
   /**
-   * Create a universe API key
+   * Apply identity and access changes
    *
-   * Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
+   * Applies a canonical identity change with current actor permissions and durable access auditing.
+   */
+  deploymentIdentityApply(client: RpcCaller, params: Api.AccessChange): Promise<Api.AgentApiOutcomeOfAccessChangeResult> {
+    return client.call("deployment/identity/apply", params);
+  },
+  /**
+   * Create a scoped API key
+   *
+   * Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
    */
   deploymentApiKeysCreate(client: RpcCaller, params: Api.DeploymentApiKeyCreateParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse> {
     return client.call("deployment/api-keys/create", params);
   },
   /**
-   * List universe API keys
+   * List scoped API keys
    *
-   * Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
+   * Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
    */
   deploymentApiKeysList(client: RpcCaller, params: Api.DeploymentApiKeyListParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyListResponse> {
     return client.call("deployment/api-keys/list", params);
   },
   /**
-   * Revoke a universe API key
+   * Revoke a scoped API key
    *
-   * Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.
+   * Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found.
    */
   deploymentApiKeysRevoke(client: RpcCaller, params: Api.DeploymentApiKeyRevokeParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyRevokeResponse> {
     return client.call("deployment/api-keys/revoke", params);

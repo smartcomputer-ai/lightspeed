@@ -55,11 +55,11 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Configurato
 }
 
 function parseAuthMode(value: string): ConfiguratorAuthMode {
-  if (value === "single" || value === "trusted-header" || value === "api-key") {
+  if (value === "single" || value === "authenticated") {
     return value;
   }
   throw new Error(
-    `invalid LIGHTSPEED_AUTH_MODE=${JSON.stringify(value)}; expected single, trusted-header, or api-key`,
+    `invalid LIGHTSPEED_AUTH_MODE=${JSON.stringify(value)}; expected single or authenticated`,
   );
 }
 

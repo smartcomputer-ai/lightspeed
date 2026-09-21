@@ -1,6 +1,8 @@
 use super::api_config::engine_session_config_from_api;
 use super::*;
-use ::profiles::{ProfileError, ProfileSourceExt, ProfileStore};
+use ::profiles::{
+    AgentProfileExt, AgentProfileInputExt, ProfileError, ProfileSourceExt, ProfileStore,
+};
 
 pub(super) fn merge_profile_start_metadata(
     profile_metadata: Option<&BTreeMap<String, String>>,
@@ -23,6 +25,16 @@ impl GatewayAgentApi {
         &self,
         params: ProfileCreateParams,
     ) -> Result<ProfileCreateResponse, AgentApiError> {
+        params
+            .profile
+            .clone()
+            .into_record(now_ms()?)
+            .validate()
+            .map_err(map_profile_error)?;
+        self.reserve_resource(ResourceRef::Profile(
+            params.profile.profile_id.as_str().to_owned(),
+        ))
+        .await?;
         let created_at_ms = now_ms()?;
         let profile = self
             .store
@@ -60,6 +72,27 @@ impl GatewayAgentApi {
         &self,
         params: ProfilePutParams,
     ) -> Result<ProfilePutResponse, AgentApiError> {
+        params
+            .profile
+            .clone()
+            .into_record(now_ms()?)
+            .validate()
+            .map_err(map_profile_error)?;
+        let resource = ResourceRef::Profile(params.profile.profile_id.as_str().to_owned());
+        if self
+            .access_store()
+            .ownership(self.universe_id(), &resource)
+            .await
+            .map_err(|e| AgentApiError::internal(e.to_string()))?
+            .is_some()
+        {
+            self.authorize_method(METHOD_PROFILES_PUT, Some(resource))
+                .await?;
+        } else {
+            self.authorize_method(METHOD_PROFILES_CREATE, Some(resource.clone()))
+                .await?;
+            self.reserve_resource(resource).await?;
+        }
         let profile = self
             .store
             .put_agent_profile(params.profile, params.expected_revision, now_ms()?)

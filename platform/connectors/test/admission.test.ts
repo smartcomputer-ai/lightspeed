@@ -38,7 +38,7 @@ describe("inbound admission", () => {
       expect(method).toBe("channels/inbound/admit");
       return { decision: decisions.shift() };
     });
-    const core = new CoreClient({ endpoint: "http://core.test/rpc", fetch: rpc.fetch });
+    const core = new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch });
     const metrics = new ConnectorMetrics();
     const gate = createInboundGate({
       client: core.forUniverse(UNIVERSE_A),
@@ -60,7 +60,7 @@ describe("inbound admission", () => {
     expect(rpc.calls).toHaveLength(5);
     expect(rpc.calls[0]?.params).toEqual({ accountId: "tg-main", inbound });
     expect(rpc.calls[0]?.headers.get(UNIVERSE_HEADER)).toBe(UNIVERSE_A);
-    expect(rpc.calls[0]?.headers.get(PRINCIPAL_HEADER)).toBe("service_account:lightspeed-connectors");
+    expect(rpc.calls[0]?.headers.get("authorization")).toBe("Bearer lsk_test_connector");
     expect(metrics.inboundTotal("bound")).toBe(1);
     expect(metrics.inboundTotal("paired")).toBe(1);
     expect(metrics.inboundTotal("unbound")).toBe(1);
@@ -68,7 +68,7 @@ describe("inbound admission", () => {
 
   it("rate limits per chat and sender before contacting the core", async () => {
     const rpc = fakeRpc(() => ({ decision: "bound" }));
-    const core = new CoreClient({ endpoint: "http://core.test/rpc", fetch: rpc.fetch });
+    const core = new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch });
     const metrics = new ConnectorMetrics();
     const gate = createInboundGate({
       client: core.forUniverse(UNIVERSE_A),
@@ -86,7 +86,7 @@ describe("inbound admission", () => {
 
   it("counts a core failure and stays silent instead of throwing into the provider loop", async () => {
     const rpc = fakeRpc(() => new Error("universe not found"));
-    const core = new CoreClient({ endpoint: "http://core.test/rpc", fetch: rpc.fetch });
+    const core = new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch });
     const metrics = new ConnectorMetrics();
     const error = vi.fn();
     const gate = createInboundGate({
@@ -107,11 +107,11 @@ describe("core client", () => {
     const rpc = fakeRpc((method) =>
       method === "deployment/channels/accounts/list" ? { accounts: [] } : { decision: "bound" },
     );
-    const core = new CoreClient({ endpoint: "http://core.test/rpc", fetch: rpc.fetch });
+    const core = new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch });
     await core.deployment().call("deployment/channels/accounts/list", { includeDisabled: false });
     await core.forUniverse(UNIVERSE_A).call("channels/inbound/admit", { accountId: "a", inbound });
     expect(rpc.calls[0]?.headers.has(UNIVERSE_HEADER)).toBe(false);
-    expect(rpc.calls[0]?.headers.get(PRINCIPAL_HEADER)).toBe("service_account:lightspeed-connectors");
+    expect(rpc.calls[0]?.headers.get("authorization")).toBe("Bearer lsk_test_connector");
     expect(rpc.calls[1]?.headers.get(UNIVERSE_HEADER)).toBe(UNIVERSE_A);
     expect(core.forUniverse(UNIVERSE_A)).toBe(core.forUniverse(UNIVERSE_A));
   });

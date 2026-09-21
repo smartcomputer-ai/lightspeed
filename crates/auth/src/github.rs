@@ -715,7 +715,10 @@ mod tests {
                 provider_id: "lightspeed-github".to_owned(),
                 provider_kind: AuthProviderKind::GitHubApp,
                 exposure: crate::AuthGrantExposure::Brokered,
-                principal: PrincipalRef::universe_default(),
+                principal: PrincipalRef {
+                    kind: crate::PrincipalKind::ServiceAccount,
+                    id: Some("test-service".into()),
+                },
                 display_name: None,
                 subject_hint: Some("acme".to_owned()),
                 scopes: Vec::new(),

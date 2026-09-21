@@ -1,4 +1,4 @@
-use auth::{ApiKeyStore, CreateApiKey, PrincipalRef, mint_api_key};
+use auth::{ApiKeyStore, CreateApiKey, mint_api_key};
 use sqlx::postgres::PgPoolOptions;
 use store_pg::{PgApiKeyStore, PgStore};
 use uuid::Uuid;
@@ -25,22 +25,34 @@ async fn api_key_management_is_scoped_by_universe() {
         .await
         .expect("create right universe");
 
+    let actor = store_pg::PgAccessStore::new(pool.clone())
+        .initialize_local_development(left_universe, 1)
+        .await
+        .unwrap()
+        .id;
     let api_keys = PgApiKeyStore::new(pool.clone());
     let left_key = mint_api_key(
-        left_universe,
-        PrincipalRef::universe_default(),
+        access::AccessScope::Universe {
+            universe_id: left_universe,
+        },
+        actor,
+        actor,
         Some("left key".to_owned()),
         10,
     );
     let right_key = mint_api_key(
-        right_universe,
-        PrincipalRef::universe_default(),
+        access::AccessScope::Universe {
+            universe_id: right_universe,
+        },
+        actor,
+        actor,
         Some("right key".to_owned()),
         11,
     );
     for minted in [&left_key, &right_key] {
         api_keys
             .create_api_key(CreateApiKey {
+                authority_scope: access::AccessScope::Deployment,
                 key_hash: minted.key_hash.clone(),
                 record: minted.record.clone(),
             })

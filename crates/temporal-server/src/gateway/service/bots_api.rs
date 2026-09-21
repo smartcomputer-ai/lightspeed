@@ -201,6 +201,11 @@ impl GatewayAgentApi {
         input: BotTriggerInput,
         expected_revision: Option<u64>,
     ) -> Result<BotTriggerRecord, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_PUT,
+            Some(ResourceRef::Bot(bot_id.as_str().to_owned())),
+        )
+        .await?;
         let bot = self.read_bot_record(bot_id).await?;
         if bot.is_closed() {
             return Err(AgentApiError::rejected(format!(
@@ -323,6 +328,11 @@ impl GatewayAgentApi {
         bot_id: &BotId,
         trigger_id: &BotTriggerId,
     ) -> Result<BotTriggerRecord, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_DELETE,
+            Some(ResourceRef::Bot(bot_id.as_str().to_owned())),
+        )
+        .await?;
         self.delete_bot_trigger_schedule(bot_id, trigger_id)
             .await
             .map_err(|error| {
@@ -341,6 +351,11 @@ impl GatewayAgentApi {
         input: BotInput,
         expected_revision: Option<u64>,
     ) -> Result<BotRecord, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_PUT,
+            Some(ResourceRef::Bot(input.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let store = self.store();
         let previous = self.read_bot_record(&input.bot_id).await?;
         self.require_profile(&input.document.profile_id).await?;
@@ -411,6 +426,11 @@ impl GatewayAgentApi {
         &self,
         bot_id: &BotId,
     ) -> Result<BotRecord, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_CLOSE,
+            Some(ResourceRef::Bot(bot_id.as_str().to_owned())),
+        )
+        .await?;
         let store = self.store();
         let bot = store
             .close_bot(bot_id, bot_now_ms())
@@ -470,6 +490,11 @@ impl GatewayAgentApi {
         &self,
         bot_id: &BotId,
     ) -> Result<(BotRecord, Vec<String>), AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_DELETE,
+            Some(ResourceRef::Bot(bot_id.as_str().to_owned())),
+        )
+        .await?;
         let bot = self.read_bot_record(bot_id).await?;
         if !bot.is_closed() {
             self.close_bot_record(bot_id).await?;
@@ -773,6 +798,8 @@ impl GatewayAgentApi {
         let store = self.store();
         let BotInput { bot_id, document } = params.bot;
         self.require_profile(&document.profile_id).await?;
+        self.reserve_resource(ResourceRef::Bot(bot_id.as_str().to_owned()))
+            .await?;
         let bot = store
             .create_bot(bot_id.clone(), document, bot_now_ms())
             .await

@@ -585,7 +585,7 @@ async fn lease_poll_credential(
     api: &GatewayAgentApi,
     auth: &PollHttpAuth,
 ) -> Result<String, PollFetchError> {
-    api.lease_auth_grant(AuthGrantLeaseParams {
+    api.lease_bot_poll_grant(AuthGrantLeaseParams {
         grant_id: auth.grant_id.clone(),
         audience: auth.audience.clone(),
     })

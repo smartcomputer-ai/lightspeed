@@ -19,21 +19,13 @@ match that gateway:
 
 | Mode | MCP client or trusted upstream supplies | Runtime connection |
 | --- | --- | --- |
-| `api-key` | `Authorization: Bearer lsk_…` on requests | The same key is forwarded to an API-key gateway. |
-| `trusted-header` | A trusted authenticating upstream injects the universe UUID and optional principal headers | Headers are forwarded to a private trusted-header gateway. |
-| `single` | No authorization, universe, or principal headers | A private single-universe gateway supplies the universe. |
+| `authenticated` | A bearer key, optionally a universe selector and authorized canonical-user assertion | Runtime validates the key, scope and acting principal. |
+| `single` | No identity headers | Private development gateway uses its explicit local principal. |
 
-Use API-key mode for a client with a Lightspeed key. A Platform browser login
-is not a Configurator credential, and Configurator does not exchange a
-Platform cookie for a runtime key. The Platform's own private gateway can
-remain in trusted-header mode while a separate gateway serves API-key clients.
-See [Authentication and access](../deployment/authentication-and-tenancy.md).
-
-Keep a trusted-header Configurator reachable only through its trusted upstream.
-The universe header is an assertion by that upstream, not authentication of
-an arbitrary caller. Single mode similarly relies on the surrounding access
-boundary. Configurator rejects headers belonging to the other modes rather
-than combining several identity sources.
+A Platform browser login is not a Configurator credential. Configurator forwards
+credentials to the runtime; it does not exchange cookies for keys. Bare headers
+and the former loopback shortcut no longer authenticate callers. See
+[Authentication and access](../deployment/authentication-and-tenancy.md).
 
 ## Run the service
 
@@ -50,7 +42,7 @@ For a local Configurator connected to your existing API-key gateway, set
 `LIGHTSPEED_API_URL` to that gateway's `/rpc` endpoint, then run:
 
 ```bash
-LIGHTSPEED_AUTH_MODE=api-key \
+LIGHTSPEED_AUTH_MODE=authenticated \
 LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL="$LIGHTSPEED_API_URL" \
 node platform/configurator-mcp/dist/bin.js
 ```
@@ -70,7 +62,7 @@ For a deployed listener, configure an explicit bind address and host allowlist,
 for example:
 
 ```dotenv
-LIGHTSPEED_AUTH_MODE=api-key
+LIGHTSPEED_AUTH_MODE=authenticated
 LIGHTSPEED_CONFIGURATOR_MCP_BIND_HOST=0.0.0.0
 LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT=18081
 LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL=http://lightspeed-api-gateway:18080/rpc
@@ -215,11 +207,9 @@ service; it does not launch Configurator. The setup registers the MCP
 connection in the universe. The consuming profile still needs the applicable
 MCP capability and server selection.
 
-For a deployed installation, use a matching authenticated endpoint. The
-credentialless trusted-header shortcut in `dev.sh full` applies only to the
-exact configured loopback Configurator URL. It is disabled by default outside
-that development setup and cannot be used as a general remote authentication
-scheme.
+The setup provisions a universe-managed service identity, assigns its role and
+stores a scoped key in an outbound grant. Both Configurator and runtime use
+authenticated mode, including in full development.
 
 Granting Configurator to an agent grants management operations in its universe,
 which can include modifying resources used by other sessions. Choose the

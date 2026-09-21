@@ -5,8 +5,8 @@
 //! with its own service trait and dispatcher. They share the JSON-RPC
 //! envelope, error model, and `/rpc` endpoint with the universe-scoped API;
 //! the `deployment/` method-name prefix is what routes a request here, and the
-//! gateway enforces the authorization boundary before dispatch (trusted-header
-//! and single modes only — never api-key callers).
+//! gateway enforces each method's declared authentication requirement before dispatch.
+//! Key management additionally checks scope and ownership in its handler.
 
 use super::*;
 
@@ -18,6 +18,8 @@ pub const METHOD_DEPLOYMENT_UNIVERSES_CREATE: &str = "deployment/universes/creat
 pub const METHOD_DEPLOYMENT_UNIVERSES_LIST: &str = "deployment/universes/list";
 pub const METHOD_DEPLOYMENT_UNIVERSES_READ: &str = "deployment/universes/read";
 pub const METHOD_DEPLOYMENT_UNIVERSES_DELETE: &str = "deployment/universes/delete";
+pub const METHOD_DEPLOYMENT_IDENTITY_APPLY: &str = "deployment/identity/apply";
+
 pub const METHOD_DEPLOYMENT_API_KEYS_CREATE: &str = "deployment/api-keys/create";
 pub const METHOD_DEPLOYMENT_API_KEYS_LIST: &str = "deployment/api-keys/list";
 pub const METHOD_DEPLOYMENT_API_KEYS_REVOKE: &str = "deployment/api-keys/revoke";
@@ -115,13 +117,14 @@ pub struct DeploymentUniverseDeleteResponse {
     pub blob_objects_deleted: u64,
 }
 
-/// Non-secret API-key metadata. The owning universe is supplied by every
-/// request and intentionally omitted from entries so list responses cannot
-/// become a deployment-wide tenant catalog by accident.
+/// Non-secret scoped key metadata, including authenticated identity and issuer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentApiKeyView {
     pub key_prefix: String,
+    pub scope: AccessScope,
+    pub principal_id: uuid::Uuid,
+    pub created_by: uuid::Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     pub created_at_ms: u64,
@@ -134,12 +137,11 @@ pub struct DeploymentApiKeyView {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentApiKeyCreateParams {
-    pub universe_id: String,
+    pub scope: AccessScope,
     /// Human-readable purpose shown in key-management interfaces.
     pub display_name: String,
-    /// Audit principal applied to grants and flows created through this key.
-    /// This does not grant platform/deployment authority.
-    pub principal: PrincipalRefView,
+    /// Canonical identity authenticated by this credential.
+    pub principal_id: uuid::Uuid,
 }
 
 /// A newly minted key. `secret` is returned only by create and cannot be
@@ -166,7 +168,7 @@ impl fmt::Debug for DeploymentApiKeyCreateResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentApiKeyListParams {
-    pub universe_id: String,
+    pub scope: AccessScope,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -179,7 +181,7 @@ pub struct DeploymentApiKeyListResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentApiKeyRevokeParams {
-    pub universe_id: String,
+    pub scope: AccessScope,
     pub key_prefix: String,
 }
 
@@ -359,6 +361,15 @@ pub struct DeploymentChannelAccountListResponse {
 
 #[async_trait]
 pub trait DeploymentApiService: Send + Sync {
+    async fn apply_identity(
+        &self,
+        _params: AccessChange,
+    ) -> Result<AgentApiOutcome<AccessChangeResult>, AgentApiError> {
+        Err(AgentApiError::rejected(
+            "identity administration unavailable",
+        ))
+    }
+
     async fn create_universe(
         &self,
         params: DeploymentUniverseCreateParams,
@@ -525,12 +536,14 @@ deployment_api_methods! {
         ["Read a universe", "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage."], access: MethodAccess::DeploymentAdmin,
     METHOD_DEPLOYMENT_UNIVERSES_DELETE => delete_universe(DeploymentUniverseDeleteParams) -> DeploymentUniverseDeleteResponse =>
         ["Purge a universe", "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure."], access: MethodAccess::DeploymentAdmin,
+    METHOD_DEPLOYMENT_IDENTITY_APPLY => apply_identity(AccessChange) -> AccessChangeResult =>
+        ["Apply identity and access changes", "Applies a canonical identity change with current actor permissions and durable access auditing."], access: MethodAccess::DeploymentAdminOrCapability(ServiceCapability::ManageIdentity),
     METHOD_DEPLOYMENT_API_KEYS_CREATE => create_api_key(DeploymentApiKeyCreateParams) -> DeploymentApiKeyCreateResponse =>
-        ["Create a universe API key", "Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification."], access: MethodAccess::DeploymentAdmin,
+        ["Create a scoped API key", "Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification."], access: MethodAccess::CredentialManagement,
     METHOD_DEPLOYMENT_API_KEYS_LIST => list_api_keys(DeploymentApiKeyListParams) -> DeploymentApiKeyListResponse =>
-        ["List universe API keys", "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned."], access: MethodAccess::DeploymentAdmin,
+        ["List scoped API keys", "Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned."], access: MethodAccess::CredentialManagement,
     METHOD_DEPLOYMENT_API_KEYS_REVOKE => revoke_api_key(DeploymentApiKeyRevokeParams) -> DeploymentApiKeyRevokeResponse =>
-        ["Revoke a universe API key", "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found."], access: MethodAccess::DeploymentAdmin,
+        ["Revoke a scoped API key", "Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found."], access: MethodAccess::CredentialManagement,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider(DeploymentEnvironmentProviderPutParams) -> DeploymentEnvironmentProviderPutResponse =>
         ["Put an environment provider", "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed."], access: MethodAccess::DeploymentAdmin,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers(DeploymentEnvironmentProviderListParams) -> DeploymentEnvironmentProviderListResponse =>

@@ -18,6 +18,7 @@ mod mcp;
 mod migrations;
 mod oauth;
 mod object;
+mod ownership;
 mod profile;
 mod providers;
 mod session;
@@ -34,7 +35,7 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub use access::PgAccessStore;
+pub use access::{LOCAL_DEVELOPMENT_PRINCIPAL, PgAccessStore};
 
 pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");
 pub const VFS_SCHEMA_SQL: &str = include_str!("../migrations/002_vfs.sql");

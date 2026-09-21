@@ -10,6 +10,7 @@
 //! platform archives first); a write racing the purge can lazily re-insert an
 //! empty universe row via `ensure_universe`, which a re-run removes.
 
+use access::{AccessScope, AccessStore};
 use std::sync::Arc;
 
 use api::{
@@ -126,14 +127,39 @@ impl GatewayDeploymentApi {
 
 #[async_trait]
 impl DeploymentApiService for GatewayDeploymentApi {
+    async fn apply_identity(
+        &self,
+        change: access::AccessChange,
+    ) -> Result<AgentApiOutcome<access::AccessChangeResult>, AgentApiError> {
+        let context = super::principal::request_context()?;
+        if context.credential_scope != AccessScope::Deployment {
+            return Err(AgentApiError::rejected("deployment credential required"));
+        }
+        store_pg::PgAccessStore::new(self.pool().clone())
+            .apply(context.acting_principal.id, change, current_time_ms()?)
+            .await
+            .map(AgentApiOutcome::new)
+            .map_err(|e| AgentApiError::rejected(e.to_string()))
+    }
+
     async fn create_universe(
         &self,
         params: DeploymentUniverseCreateParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseCreateResponse>, AgentApiError> {
         let universe_id = parse_universe_id(&params.universe_id)?;
-        let created = store_pg::create_universe(self.pool(), universe_id)
+        let actor = super::principal::request_context()?.acting_principal.id;
+        let created = store_pg::PgAccessStore::new(self.pool().clone())
+            .apply(
+                actor,
+                access::AccessChange::CreateUniverse {
+                    universe_id,
+                    slug: None,
+                },
+                current_time_ms()?,
+            )
             .await
-            .map_err(map_store_error)?;
+            .map_err(|e| AgentApiError::rejected(e.to_string()))?
+            .changed;
         let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
             AgentApiError::internal(format!("universe disappeared after create: {universe_id}"))
         })?;
@@ -475,35 +501,25 @@ impl DeploymentApiService for GatewayDeploymentApi {
         &self,
         params: DeploymentApiKeyCreateParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
-        let universe_id = parse_universe_id(&params.universe_id)?;
-        self.require_universe(universe_id).await?;
+        let context = key_context(params.scope)?;
         let display_name = params.display_name.trim();
         if display_name.is_empty() {
             return Err(AgentApiError::invalid_request(
                 "api key displayName must not be empty",
             ));
         }
-        let principal = auth::PrincipalRef {
-            kind: match params.principal.kind {
-                api::PrincipalKind::User => auth::PrincipalKind::User,
-                api::PrincipalKind::ServiceAccount => auth::PrincipalKind::ServiceAccount,
-                api::PrincipalKind::UniverseDefault => auth::PrincipalKind::UniverseDefault,
-            },
-            id: params.principal.id,
-        };
-        principal
-            .validate()
-            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
         let store = store_pg::PgApiKeyStore::new(self.pool().clone());
         for _ in 0..3 {
             let minted = auth::mint_api_key(
-                universe_id,
-                principal.clone(),
+                params.scope,
+                params.principal_id,
+                context.acting_principal.id,
                 Some(display_name.to_owned()),
                 current_time_ms()?,
             );
             match store
                 .create_api_key(auth::CreateApiKey {
+                    authority_scope: context.credential_scope,
                     key_hash: minted.key_hash,
                     record: minted.record.clone(),
                 })
@@ -530,10 +546,13 @@ impl DeploymentApiService for GatewayDeploymentApi {
         &self,
         params: DeploymentApiKeyListParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyListResponse>, AgentApiError> {
-        let universe_id = parse_universe_id(&params.universe_id)?;
-        self.require_universe(universe_id).await?;
+        let context = key_context(params.scope)?;
         let api_keys = store_pg::PgApiKeyStore::new(self.pool().clone())
-            .list_api_keys_for_universe(universe_id)
+            .list_managed_keys(
+                context.acting_principal.id,
+                context.credential_scope,
+                params.scope,
+            )
             .await
             .map_err(map_api_key_error)?
             .into_iter()
@@ -548,8 +567,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
         &self,
         params: DeploymentApiKeyRevokeParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyRevokeResponse>, AgentApiError> {
-        let universe_id = parse_universe_id(&params.universe_id)?;
-        self.require_universe(universe_id).await?;
+        let context = key_context(params.scope)?;
         let key_prefix = params.key_prefix.trim();
         if key_prefix.is_empty() {
             return Err(AgentApiError::invalid_request(
@@ -557,7 +575,13 @@ impl DeploymentApiService for GatewayDeploymentApi {
             ));
         }
         let record = store_pg::PgApiKeyStore::new(self.pool().clone())
-            .revoke_api_key_for_universe(universe_id, key_prefix, current_time_ms()?)
+            .revoke_managed_key(
+                context.acting_principal.id,
+                context.credential_scope,
+                params.scope,
+                key_prefix,
+                current_time_ms()?,
+            )
             .await
             .map_err(map_api_key_error)?
             .ok_or_else(|| AgentApiError::not_found("unknown api key prefix"))?;
@@ -647,6 +671,9 @@ fn universe_view(stats: store_pg::UniverseStats) -> DeploymentUniverseView {
 fn api_key_view(record: auth::ApiKeyRecord) -> DeploymentApiKeyView {
     DeploymentApiKeyView {
         key_prefix: record.key_prefix,
+        scope: record.scope,
+        principal_id: record.principal_id,
+        created_by: record.created_by,
         display_name: record.display_name,
         created_at_ms: record.created_at_ms,
         revoked_at_ms: record.revoked_at_ms,
@@ -668,10 +695,29 @@ fn map_api_key_error(error: auth::ApiKeyError) -> AgentApiError {
         auth::ApiKeyError::AlreadyExists { .. } => {
             AgentApiError::internal("generated api key prefix collision")
         }
+        auth::ApiKeyError::Denied => AgentApiError::rejected("api key operation denied"),
         auth::ApiKeyError::Store { message } => AgentApiError::internal(message),
     }
 }
 
 fn map_store_error(error: store_pg::PgStoreError) -> AgentApiError {
     AgentApiError::internal(error.to_string())
+}
+
+fn key_context(scope: AccessScope) -> Result<access::RequestContext, AgentApiError> {
+    let context = super::principal::request_context()?;
+    if context.credential_scope != AccessScope::Deployment && context.credential_scope != scope {
+        return Err(AgentApiError::rejected(
+            "key scope exceeds credential scope",
+        ));
+    }
+    // Assertions must be authorized for the scope whose keys are managed.
+    if context.target_scope != scope
+        && context.acting_principal.id != context.authenticated_principal.id
+    {
+        return Err(AgentApiError::rejected(
+            "assertion scope does not match key scope",
+        ));
+    }
+    Ok(context)
 }

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+access = { path = "../access" }
 async-trait = "0.1"
 base64 = "0.22"
 engine = { path = "../engine" }

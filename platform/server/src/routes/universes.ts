@@ -122,6 +122,7 @@ const adoptSchema = z.object({
 });
 
 const apiKeyCreateSchema = z.object({
+  principalId: z.string().uuid(),
   displayName: z.string().trim().min(1).max(120),
 });
 
@@ -288,7 +289,7 @@ export function universeRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
         "deployment/api-keys/list",
-        { universeId: access.universe.lightspeedUniverseId },
+        { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, },
       );
       return c.json(response.result.apiKeys ?? []);
     });
@@ -308,9 +309,9 @@ export function universeRoutes(ctx: AppContext) {
       const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
         "deployment/api-keys/create",
         {
-          universeId: access.universe.lightspeedUniverseId,
+          scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
           displayName: body.data.displayName,
-          principal: { kind: "user", id: session.user.id },
+          principalId: body.data.principalId,
         },
       );
       return c.json(response.result, 201);
@@ -326,7 +327,7 @@ export function universeRoutes(ctx: AppContext) {
       const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
         "deployment/api-keys/revoke",
         {
-          universeId: access.universe.lightspeedUniverseId,
+          scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
           keyPrefix: c.req.param("keyPrefix"),
         },
       );

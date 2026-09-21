@@ -30,8 +30,8 @@ describe("LightspeedClient", () => {
     });
     expect(METHOD_INFO["deployment/api-keys/create"]).toMatchObject({
       scope: "deployment",
-      access: { kind: "deployment_admin" },
-      summary: "Create a universe API key",
+      access: { kind: "credential_management" },
+      summary: "Create a scoped API key",
       description: expect.stringContaining("returned exactly once"),
     });
   });

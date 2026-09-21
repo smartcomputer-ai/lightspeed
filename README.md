@@ -85,7 +85,8 @@ the [local development guide](docs/documentation/development/local-development.m
 
 Core identity/bootstrap commands and scoped access records are available through
 [host administration](docs/documentation/deployment/identity-and-access.md).
-Gateway and Platform role enforcement are still being integrated.
+Gateway and shared-service action/ownership checks are enforced; Platform canonical
+user mapping remains the next integration step.
 
 ## Features
 
@@ -277,3 +278,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md)
 ## License
 
 [Apache 2.0](LICENSE)
+
+Runtime authentication uses canonical principals and scoped service/user keys;
+see [authentication and access](docs/documentation/deployment/authentication-and-tenancy.md).
+The gateway and shared services enforce universe actions and immutable session,
+bot, and profile ownership. Platform canonical user mapping, private-session
+policies, and execution authority remain separate follow-ups.

@@ -7,7 +7,7 @@ import { installTemporalMetrics } from "./temporal-metrics.js";
 
 const config = parseHostConfig(process.env);
 installTemporalMetrics("lightspeed-connectors", config.metrics);
-const core = new CoreClient({ endpoint: config.apiUrl });
+const core = new CoreClient({ endpoint: config.apiUrl, apiKey: config.apiKey });
 const connection = await NativeConnection.connect({ address: config.temporal.address });
 const host = new ConnectorHost(
   {

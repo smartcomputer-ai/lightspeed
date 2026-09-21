@@ -958,7 +958,10 @@ mod tests {
             provider_id: "github".to_owned(),
             provider_kind: AuthProviderKind::CustomOAuth,
             grant_exposure: AuthGrantExposure::Brokered,
-            principal: PrincipalRef::universe_default(),
+            principal: PrincipalRef {
+                kind: crate::PrincipalKind::ServiceAccount,
+                id: Some("test-service".into()),
+            },
             state_hash: state_hash("state-123"),
             pkce_verifier_secret: SecretId::new("authsec_pkce"),
             redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),

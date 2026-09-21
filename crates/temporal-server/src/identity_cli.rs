@@ -9,6 +9,11 @@ use uuid::Uuid;
 
 #[derive(Debug, Subcommand)]
 pub enum IdentityCommand {
+    /// Explicit local development bootstrap; prints a new deployment key once.
+    Development {
+        #[arg(long)]
+        universe_id: Uuid,
+    },
     /// Create the first deployment administrator; same-id retries are safe.
     Bootstrap {
         #[arg(long)]
@@ -49,8 +54,47 @@ pub async fn run(command: IdentityCommand) -> anyhow::Result<()> {
     // No Temporal, model providers, secret master key, or Platform required.
     let pool = temporal_server::config::postgres_pool_from_env().await?;
     store_pg::verify_schema(&pool).await?;
-    let store = store_pg::PgAccessStore::new(pool);
+    let store = store_pg::PgAccessStore::new(pool.clone());
     let result = match command {
+        IdentityCommand::Development { universe_id } => {
+            use auth::ApiKeyStore as _;
+            store_pg::create_universe(&pool, universe_id).await?;
+            let principal = store
+                .initialize_local_development(universe_id, now_ms()?)
+                .await?;
+            let keys = store_pg::PgApiKeyStore::new(pool);
+            // The supervisor guarantees one local stack; retire credentials
+            // from previous launcher runs without persisting their secrets.
+            for previous in keys.list_api_keys().await? {
+                if previous.principal_id == principal.id
+                    && previous.display_name.as_deref() == Some("Local development launcher")
+                    && previous.revoked_at_ms.is_none()
+                {
+                    keys.revoke_managed_key(
+                        principal.id,
+                        AccessScope::Deployment,
+                        previous.scope,
+                        &previous.key_prefix,
+                        now_ms()?,
+                    )
+                    .await?;
+                }
+            }
+            let key = auth::mint_api_key(
+                AccessScope::Deployment,
+                principal.id,
+                principal.id,
+                Some("Local development launcher".into()),
+                now_ms()?,
+            );
+            keys.create_api_key(auth::CreateApiKey {
+                authority_scope: access::AccessScope::Deployment,
+                key_hash: key.key_hash,
+                record: key.record,
+            })
+            .await?;
+            serde_json::json!({"principalId":principal.id, "secret":key.secret.expose()})
+        }
         IdentityCommand::Bootstrap {
             principal_id,
             display_name,
@@ -89,6 +133,31 @@ mod tests {
     use super::*;
     use crate::{Cli, Command, UniverseCommand};
     use clap::Parser;
+
+    #[test]
+    fn keys_require_explicit_issuer_principal_and_exactly_one_scope() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        assert!(Cli::try_parse_from(["server", "api-key", "create", "--universe-id", id]).is_err());
+        let base = [
+            "server",
+            "api-key",
+            "create",
+            "--principal",
+            id,
+            "--actor-principal",
+            id,
+        ];
+        assert!(Cli::try_parse_from(base).is_err());
+        assert!(Cli::try_parse_from(base.into_iter().chain(["--deployment"])).is_ok());
+        assert!(
+            Cli::try_parse_from(
+                base.into_iter()
+                    .chain(["--deployment", "--universe-id", id])
+            )
+            .is_err()
+        );
+        assert!(Cli::try_parse_from(["server", "api-key", "revoke", "lsk_example"]).is_err());
+    }
 
     #[test]
     fn identity_and_universe_commands_require_explicit_principals() {

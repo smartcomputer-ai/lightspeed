@@ -842,7 +842,7 @@ export type RunAcceptedSourceView = {
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "PrincipalKind".
  */
-export type PrincipalKind = "user" | "serviceAccount" | "universeDefault";
+export type PrincipalKind = "user" | "serviceAccount";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ApprovalDecisionKind".
@@ -1781,6 +1781,9 @@ export type MethodAccess =
       kind: "deployment_admin";
     }
   | {
+      kind: "credential_management";
+    }
+  | {
       kind: "deployment_admin_or_capability";
       requirement: ServiceCapability;
     };
@@ -1886,11 +1889,11 @@ export interface AgentApiError {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthClientCreateResponse".
+ * via the `definition` "AgentApiOutcomeOfAccessChangeResult".
  */
-export interface AgentApiOutcomeOfAuthClientCreateResponse {
+export interface AgentApiOutcomeOfAccessChangeResult {
   notifications?: AgentNotification[];
-  result: AuthClientCreateResponse;
+  result: AccessChangeResult;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2676,7 +2679,7 @@ export interface ContextEntryInputView {
  */
 export interface PrincipalRefView {
   id?: string | null;
-  kind?: PrincipalKind & string;
+  kind: PrincipalKind;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2807,6 +2810,14 @@ export interface ToolCallMediaView {
   kind: MediaKind;
   mime: string;
   name?: string | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfAuthClientCreateResponse".
+ */
+export interface AgentApiOutcomeOfAuthClientCreateResponse {
+  notifications?: AgentNotification[];
+  result: AuthClientCreateResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -4346,19 +4357,20 @@ export interface DeploymentApiKeyCreateResponse {
   secret: string;
 }
 /**
- * Non-secret API-key metadata. The owning universe is supplied by every
- * request and intentionally omitted from entries so list responses cannot
- * become a deployment-wide tenant catalog by accident.
+ * Non-secret scoped key metadata, including authenticated identity and issuer.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "DeploymentApiKeyView".
  */
 export interface DeploymentApiKeyView {
   createdAtMs: number;
+  createdBy: string;
   displayName?: string | null;
   keyPrefix: string;
   lastUsedAtMs?: number | null;
+  principalId: string;
   revokedAtMs?: number | null;
+  scope: AccessScope;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6889,18 +6901,17 @@ export interface DeploymentApiKeyCreateParams {
    */
   displayName: string;
   /**
-   * Audit principal applied to grants and flows created through this key.
-   * This does not grant platform/deployment authority.
+   * Canonical identity authenticated by this credential.
    */
-  principal: PrincipalRefView;
-  universeId: string;
+  principalId: string;
+  scope: AccessScope;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "DeploymentApiKeyListParams".
  */
 export interface DeploymentApiKeyListParams {
-  universeId: string;
+  scope: AccessScope;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6908,7 +6919,7 @@ export interface DeploymentApiKeyListParams {
  */
 export interface DeploymentApiKeyRevokeParams {
   keyPrefix: string;
-  universeId: string;
+  scope: AccessScope;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

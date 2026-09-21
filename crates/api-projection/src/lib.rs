@@ -837,7 +837,7 @@ impl<'a> CoreAgentProjector<'a> {
                         engine::ApprovalDecision::Rejected => ApprovalDecisionKind::Reject,
                     },
                     note: note.clone(),
-                    decided_by: decided_by.as_ref().map(approval_principal_to_api),
+                    decided_by: decided_by.as_ref().and_then(approval_principal_to_api),
                 }),
                 engine::ApprovalEvent::Cancelled {
                     approval_id,
@@ -1864,15 +1864,15 @@ fn promise_source_name(source: &engine::PromiseSource) -> &'static str {
     }
 }
 
-fn approval_principal_to_api(principal: &engine::ApprovalPrincipal) -> PrincipalRefView {
-    PrincipalRefView {
+fn approval_principal_to_api(principal: &engine::ApprovalPrincipal) -> Option<PrincipalRefView> {
+    Some(PrincipalRefView {
         kind: match principal.kind.as_str() {
             "user" => PrincipalKind::User,
             "service_account" => PrincipalKind::ServiceAccount,
-            _ => PrincipalKind::UniverseDefault,
+            _ => return None,
         },
         id: principal.id.clone(),
-    }
+    })
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {

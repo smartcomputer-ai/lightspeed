@@ -1,24 +1,21 @@
 //! Inbound API keys: callers authenticating against the Lightspeed gateway.
 //!
-//! Everything else in this crate is outbound — the agent authenticating
-//! against other systems (grants, flows, the token broker). API keys point
-//! the other way and live above the universe boundary: a key resolves *to* a
-//! universe and principal, so records are deployment-scoped, not
-//! universe-scoped, and their store hangs off the shared deployment pool
-//! rather than a universe-bound store instance.
+//! Unlike outbound grants, these credentials authenticate a canonical principal
+//! within a universe or deployment ceiling. Principal status and current access
+//! are checked at admission; owning a key grants no additional authority.
+//! Persistence belongs to the deployment store, before universe resolution.
 //!
 //! Keys are server-generated high-entropy secrets (`lsk_<random>`). Only a
 //! SHA-256 hash is persisted — no KDF (the secret is random, not a human
 //! password) and no AEAD/master-key involvement (the secret never needs to be
 //! recovered, only recognized). The plaintext is shown once at mint time.
 
+use access::AccessScope;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::{
-    PrincipalRef, SecretValue, generate_prefixed_secret, secret_display_prefix, secret_sha256_hex,
-};
+use crate::{SecretValue, generate_prefixed_secret, secret_display_prefix, secret_sha256_hex};
 
 /// Prefix of every Lightspeed API key secret.
 pub const API_KEY_SECRET_PREFIX: &str = "lsk_";
@@ -33,11 +30,11 @@ pub struct ApiKeyRecord {
     /// Unique display/identification prefix of the secret (`lsk_ab12cd34`).
     /// This is the caller-facing handle for listing and revocation.
     pub key_prefix: String,
-    /// Universe the key resolves to.
-    pub universe_id: Uuid,
-    /// Principal stamped onto grants/flows created through this key.
-    /// Recorded for audit; not an authorization mechanism.
-    pub principal: PrincipalRef,
+    /// Credential ceiling; this never grants a role or capability.
+    pub scope: AccessScope,
+    pub principal_id: Uuid,
+    /// Issuing actor, independent of the principal authenticated by this key.
+    pub created_by: Uuid,
     pub display_name: Option<String>,
     pub created_at_ms: u64,
     pub revoked_at_ms: Option<u64>,
@@ -54,6 +51,8 @@ pub struct MintedApiKey {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CreateApiKey {
+    /// Scope of the issuing credential (deployment for trusted host administration).
+    pub authority_scope: AccessScope,
     pub key_hash: String,
     pub record: ApiKeyRecord,
 }
@@ -63,15 +62,19 @@ pub enum ApiKeyError {
     #[error("api key already exists: {key_prefix}")]
     AlreadyExists { key_prefix: String },
 
+    #[error("api key operation denied")]
+    Denied,
+
     #[error("api key store failure: {message}")]
     Store { message: String },
 }
 
-/// Mint a new API key secret for a universe. The secret is returned exactly
+/// Mint a new scoped API key secret. The secret is returned exactly
 /// once; only its hash and display prefix are meant to be persisted.
 pub fn mint_api_key(
-    universe_id: Uuid,
-    principal: PrincipalRef,
+    scope: AccessScope,
+    principal_id: Uuid,
+    created_by: Uuid,
     display_name: Option<String>,
     created_at_ms: u64,
 ) -> MintedApiKey {
@@ -79,8 +82,9 @@ pub fn mint_api_key(
     let key_hash = api_key_hash(&secret);
     let record = ApiKeyRecord {
         key_prefix: api_key_display_prefix(&secret),
-        universe_id,
-        principal,
+        scope,
+        principal_id,
+        created_by,
         display_name,
         created_at_ms,
         revoked_at_ms: None,
@@ -154,26 +158,43 @@ pub trait ApiKeyStore: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PrincipalKind;
 
     #[test]
     fn minted_keys_have_prefix_hash_and_display_prefix() {
         let universe_id = Uuid::parse_str("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f").expect("uuid");
-        let minted = mint_api_key(universe_id, PrincipalRef::universe_default(), None, 1);
+        let minted = mint_api_key(
+            AccessScope::Universe { universe_id },
+            Uuid::nil(),
+            Uuid::nil(),
+            None,
+            1,
+        );
         let secret = minted.secret.expose().to_owned();
         assert!(secret.starts_with(API_KEY_SECRET_PREFIX));
         assert!(secret.len() > API_KEY_DISPLAY_PREFIX_LEN);
         assert_eq!(minted.key_hash, api_key_hash(&secret));
         assert_eq!(minted.record.key_prefix, api_key_display_prefix(&secret));
-        assert_eq!(minted.record.universe_id, universe_id);
-        assert_eq!(minted.record.principal.kind, PrincipalKind::UniverseDefault);
+        assert_eq!(minted.record.scope, AccessScope::Universe { universe_id });
+        assert_eq!(minted.record.principal_id, Uuid::nil());
     }
 
     #[test]
     fn minted_secrets_are_unique_and_high_entropy() {
         let universe_id = Uuid::nil();
-        let first = mint_api_key(universe_id, PrincipalRef::universe_default(), None, 1);
-        let second = mint_api_key(universe_id, PrincipalRef::universe_default(), None, 1);
+        let first = mint_api_key(
+            AccessScope::Universe { universe_id },
+            Uuid::nil(),
+            Uuid::nil(),
+            None,
+            1,
+        );
+        let second = mint_api_key(
+            AccessScope::Universe { universe_id },
+            Uuid::nil(),
+            Uuid::nil(),
+            None,
+            1,
+        );
         assert_ne!(first.secret.expose(), second.secret.expose());
         assert_ne!(first.key_hash, second.key_hash);
         // 32 random bytes base64url-encoded: 43 chars after the prefix.

@@ -703,7 +703,6 @@ pub(crate) fn principal_kind_to_str(value: PrincipalKind) -> &'static str {
     match value {
         PrincipalKind::User => "user",
         PrincipalKind::ServiceAccount => "service_account",
-        PrincipalKind::UniverseDefault => "universe_default",
     }
 }
 
@@ -711,7 +710,6 @@ pub(crate) fn principal_kind_from_str(value: &str) -> Result<PrincipalKind, Auth
     match value {
         "user" => Ok(PrincipalKind::User),
         "service_account" => Ok(PrincipalKind::ServiceAccount),
-        "universe_default" => Ok(PrincipalKind::UniverseDefault),
         other => Err(AuthRegistryError::Store {
             message: format!("unsupported auth principal kind '{other}'"),
         }),

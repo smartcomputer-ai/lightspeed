@@ -13,9 +13,9 @@ types are not the public API.
 
 ## Prepare an endpoint and a profile
 
-For this example, provide an API-key gateway URL ending in `/rpc` and a key
+For this example, provide an authenticated gateway URL ending in `/rpc` and a key
 for the intended universe. The Platform's authenticated browser routes and
-its private `trusted-header` gateway are different endpoints. Follow
+the runtime gateway are different authentication boundaries. Follow
 [Authentication and access](../deployment/authentication-and-tenancy.md#issue-a-key-for-an-api-client)
 to configure the client path.
 

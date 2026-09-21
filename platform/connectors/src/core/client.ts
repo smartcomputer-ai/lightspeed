@@ -1,14 +1,12 @@
 import { LightspeedClient } from "@lightspeed-ai/agent-client";
 
-/** The service principal the host stamps on every core call (trusted-header mode). */
-export const CONNECTOR_PRINCIPAL = "service_account:lightspeed-connectors";
 export const UNIVERSE_HEADER = "x-lightspeed-universe";
 export const PRINCIPAL_HEADER = "x-lightspeed-principal";
 
 export interface CoreClientOptions {
   /** Core JSON-RPC endpoint (`LIGHTSPEED_API_URL`). */
   endpoint: string;
-  principal?: string;
+  apiKey: string;
   fetch?: typeof fetch;
 }
 
@@ -20,7 +18,7 @@ export interface CoreClientOptions {
  */
 export class CoreClient {
   private readonly endpoint: string;
-  private readonly principal: string;
+  private readonly apiKey: string;
   private readonly fetchImpl: typeof fetch | undefined;
   private readonly universes = new Map<string, LightspeedClient>();
   private deploymentClient: LightspeedClient | undefined;
@@ -30,13 +28,14 @@ export class CoreClient {
       throw new TypeError("core endpoint must not be empty");
     }
     this.endpoint = options.endpoint;
-    this.principal = options.principal ?? CONNECTOR_PRINCIPAL;
+    if (!/^lsk_[A-Za-z0-9_-]+$/.test(options.apiKey)) throw new TypeError("a Lightspeed service API key is required");
+    this.apiKey = options.apiKey;
     this.fetchImpl = options.fetch;
   }
 
   /** Deployment-scoped `deployment/*` calls: the gateway rejects a universe header on them. */
   deployment(): LightspeedClient {
-    this.deploymentClient ??= this.create({ [PRINCIPAL_HEADER]: this.principal });
+    this.deploymentClient ??= this.create({});
     return this.deploymentClient;
   }
 
@@ -49,7 +48,7 @@ export class CoreClient {
     if (client === undefined) {
       client = this.create({
         [UNIVERSE_HEADER]: universeId,
-        [PRINCIPAL_HEADER]: this.principal,
+
       });
       this.universes.set(universeId, client);
     }
@@ -59,7 +58,7 @@ export class CoreClient {
   private create(headers: Record<string, string>): LightspeedClient {
     return new LightspeedClient({
       endpoint: this.endpoint,
-      headers,
+      headers: { ...headers, authorization: `Bearer ${this.apiKey}` },
       ...(this.fetchImpl === undefined ? {} : { fetch: this.fetchImpl }),
     });
   }

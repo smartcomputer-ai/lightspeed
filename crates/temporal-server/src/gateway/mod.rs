@@ -1,5 +1,6 @@
 //! HTTP/JSON-RPC gateway over the Temporal-backed agent workflow.
 
+pub mod authentication;
 pub mod deployment;
 pub mod http;
 pub mod principal;

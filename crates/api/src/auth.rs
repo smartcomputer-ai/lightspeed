@@ -30,19 +30,16 @@ pub enum AuthGrantExposure {
     Retrievable,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum PrincipalKind {
     User,
     ServiceAccount,
-    #[default]
-    UniverseDefault,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PrincipalRefView {
-    #[serde(default)]
     pub kind: PrincipalKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,

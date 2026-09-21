@@ -209,6 +209,7 @@ function CreateApiKeyDialog({
   onCreated: () => void;
 }) {
   const [displayName, setDisplayName] = useState("");
+  const [principalId, setPrincipalId] = useState("");
   const [created, setCreated] = useState<UniverseApiKeyCreated | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -216,6 +217,7 @@ function CreateApiKeyDialog({
     mutationFn: () =>
       api<UniverseApiKeyCreated>("POST", `/api/v1/universes/${universeId}/api-keys`, {
         displayName,
+        principalId,
       }),
     onSuccess: (result) => {
       setCreated(result);
@@ -226,6 +228,7 @@ function CreateApiKeyDialog({
   const close = () => {
     onOpenChange(false);
     setDisplayName("");
+    setPrincipalId("");
     setCreated(null);
     setCopied(false);
     create.reset();
@@ -233,7 +236,7 @@ function CreateApiKeyDialog({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (displayName.trim()) {
+    if (displayName.trim() && principalId.trim()) {
       create.mutate();
     }
   };
@@ -298,6 +301,8 @@ function CreateApiKeyDialog({
             </DialogHeader>
             <form onSubmit={submit} className="grid gap-4">
               <Field>
+                <FieldLabel htmlFor="api-key-principal">Principal ID</FieldLabel>
+                <Input id="api-key-principal" value={principalId} onChange={(event) => setPrincipalId(event.currentTarget.value)} required placeholder="Canonical principal UUID" />
                 <FieldLabel htmlFor="api-key-name">Name</FieldLabel>
                 <Input
                   id="api-key-name"

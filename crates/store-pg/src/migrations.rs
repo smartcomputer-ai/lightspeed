@@ -17,12 +17,14 @@ const MIGRATION_ADVISORY_LOCK_ID: i64 = 0x4c53_5047_4d49_4752;
 /// migration ledger is evidence of a pre-ledger Lightspeed database, not an
 /// empty schema that can safely receive the initial migration.
 const LIGHTSPEED_TABLES: &[&str] = &[
+    "access_action_audit",
     "access_audit",
     "access_capabilities",
     "access_groups",
     "access_memberships",
     "access_policy",
     "access_principals",
+    "access_resource_ownership",
     "access_role_assignments",
     "agent_profiles",
     "api_keys",
@@ -118,9 +120,19 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "identity_access",
         sql: include_str!("../migrations/011_identity_access.sql"),
     },
+    EmbeddedMigration {
+        version: 12,
+        name: "authenticated_keys",
+        sql: include_str!("../migrations/012_authenticated_keys.sql"),
+    },
+    EmbeddedMigration {
+        version: 13,
+        name: "resource_ownership",
+        sql: include_str!("../migrations/013_resource_ownership.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 11;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 13;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {
@@ -389,21 +401,26 @@ mod tests {
                 .all(|migration| checksum(migration.sql).len() == 64)
         );
         assert!(LIGHTSPEED_TABLES.windows(2).all(|pair| pair[0] < pair[1]));
-        // Relations the ledger owns: created by some migration and not
-        // dropped by a later one.
-        let dropped_tables: BTreeSet<_> = MIGRATIONS
+        // Apply table creation/deletion in migration order, including a
+        // deliberate replacement under the same relation name.
+        let mut migrated_tables = BTreeSet::new();
+        for line in MIGRATIONS
             .iter()
             .flat_map(|migration| migration.sql.lines())
-            .filter_map(|line| line.trim().strip_prefix("DROP TABLE IF EXISTS "))
-            .map(|remainder| remainder.trim_end_matches(';').to_owned())
-            .collect();
-        let migrated_tables: BTreeSet<_> = MIGRATIONS
-            .iter()
-            .flat_map(|migration| migration.sql.lines())
-            .filter_map(|line| line.trim().strip_prefix("CREATE TABLE IF NOT EXISTS "))
-            .map(|remainder| remainder.trim_end_matches(" (").to_owned())
-            .filter(|table| !dropped_tables.contains(table))
-            .collect();
+            .map(str::trim)
+        {
+            if let Some(name) = line
+                .strip_prefix("DROP TABLE IF EXISTS ")
+                .or_else(|| line.strip_prefix("DROP TABLE "))
+            {
+                migrated_tables.remove(name.trim_end_matches(';'));
+            } else if let Some(name) = line
+                .strip_prefix("CREATE TABLE IF NOT EXISTS ")
+                .or_else(|| line.strip_prefix("CREATE TABLE "))
+            {
+                migrated_tables.insert(name.trim_end_matches(" (").to_owned());
+            }
+        }
         assert_eq!(
             migrated_tables,
             LIGHTSPEED_TABLES

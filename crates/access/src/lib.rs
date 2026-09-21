@@ -187,6 +187,44 @@ pub enum RoleDecision {
     Denied,
 }
 
+/// Durable control facts, distinct from an agent's execution credentials.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum ResourceRef {
+    Session(String),
+    Bot(String),
+    Profile(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ActionActor {
+    Principal { id: Uuid },
+    Internal { component: String, cause: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum ResourceController {
+    Principal(Uuid),
+    Bot(String),
+    /// A separately admitted delegation, never inferred from provenance.
+    Session(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceOwnership {
+    pub resource: ResourceRef,
+    pub created_by: ActionActor,
+    pub controller: ResourceController,
+    pub created_at_ms: u64,
+}
+
 impl EffectiveAccess {
     pub fn active(&self) -> bool {
         self.principal.status == PrincipalStatus::Active
@@ -435,6 +473,54 @@ pub trait AccessStore: Send + Sync {
         display_name: String,
         now_ms: u64,
     ) -> Result<AccessChangeResult, AccessError>;
+}
+
+/// Whether an actor may mint a credential for a principal. Scope is a ceiling,
+/// never a source of authority. Management ownership matters for service keys.
+pub fn may_issue_key(
+    credential_scope: AccessScope,
+    actor: &EffectiveAccess,
+    deployment: &EffectiveAccess,
+    target: &Principal,
+) -> bool {
+    if !actor.active()
+        || target.status != PrincipalStatus::Active
+        || (credential_scope != AccessScope::Deployment && credential_scope != actor.scope)
+    {
+        return false;
+    }
+    let deployment_admin = credential_scope == AccessScope::Deployment
+        && deployment.principal.id == actor.principal.id
+        && deployment.has_role(Role::DeploymentAdmin);
+    match actor.scope {
+        AccessScope::Deployment => deployment_admin,
+        AccessScope::Universe { .. } => {
+            deployment_admin
+                || (actor.principal.id == target.id && !actor.roles.is_empty())
+                || (actor.has_role(Role::Admin)
+                    && target.kind == PrincipalKind::Service
+                    && target.management_scope == actor.scope)
+        }
+    }
+}
+
+/// Non-secret reference to the authentication that admitted a request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AuthenticationReference {
+    ApiKey { key_prefix: String },
+    LocalDevelopment,
+}
+
+/// Trusted transport context. Assertions change the acting principal only;
+/// they never add the authenticated service's authority to the user's rights.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestContext {
+    pub acting_principal: Principal,
+    pub authenticated_principal: Principal,
+    pub authentication: AuthenticationReference,
+    pub credential_scope: AccessScope,
+    pub target_scope: AccessScope,
 }
 
 #[cfg(test)]

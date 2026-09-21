@@ -25,24 +25,12 @@ pub fn universe_id_from_env() -> anyhow::Result<Uuid> {
         .map_err(|error| anyhow::anyhow!("invalid LIGHTSPEED_PG_UNIVERSE_ID: {error}"))
 }
 
-/// How the gateway resolves the universe (tenant) and principal of each
-/// request.
-///
-/// Lightspeed requires a resolved universe per request but is unopinionated
-/// about how it is produced. `Single` pins the whole deployment to one
-/// configured universe (the legacy single-universe behavior). `TrustedHeader` reads
-/// `x-lightspeed-universe` (and optionally `x-lightspeed-principal`) injected
-/// by an upstream gateway that owns authentication; requests without the
-/// header are rejected (fail closed), and unknown universes are never
-/// auto-created — universes exist only through explicit creation
-/// (`deployment/universes/create` or `server universe create`). `ApiKey`
-/// resolves `Authorization: Bearer lsk_…` against the deployment-level
-/// api_keys table.
+/// Local development or canonical principal authentication. Headers alone
+/// never authenticate a caller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GatewayAuthMode {
     Single { universe_id: Uuid },
-    TrustedHeader,
-    ApiKey,
+    Authenticated,
 }
 
 /// Optional base URL outbound daemons are told to dial for data connections
@@ -75,10 +63,9 @@ pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
         "single" | "" => Ok(GatewayAuthMode::Single {
             universe_id: universe_id_from_env()?,
         }),
-        "trusted-header" => Ok(GatewayAuthMode::TrustedHeader),
-        "api-key" => Ok(GatewayAuthMode::ApiKey),
+        "authenticated" => Ok(GatewayAuthMode::Authenticated),
         other => anyhow::bail!(
-            "invalid LIGHTSPEED_AUTH_MODE={other:?}; expected one of: single, trusted-header, api-key"
+            "invalid LIGHTSPEED_AUTH_MODE={other:?}; expected single or authenticated; trusted-header and api-key are retired"
         ),
     }
 }

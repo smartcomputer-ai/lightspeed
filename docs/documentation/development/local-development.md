@@ -75,12 +75,10 @@ daemon's working directory. It does not start the services. The complete
 override table is in the
 [environment-variable reference](../reference/environment-variables.md#local-development).
 
-The full profile uses `trusted-header` runtime authentication by default:
-Platform authenticates the user and supplies the universe on its internal
-requests. The focused runtime profile defaults to `single`, which is useful
-for direct CLI development. An explicit `LIGHTSPEED_AUTH_MODE` overrides those
-defaults. Account for that difference when moving a test or client between
-the two profiles; see [Authentication and access](../deployment/authentication-and-tenancy.md).
+The full profile uses authenticated runtime access and explicitly bootstraps a
+local service key when no Platform key is configured. The runtime-only profile
+uses `single` with a named local development principal. See
+[Authentication and access](../deployment/authentication-and-tenancy.md).
 
 Telegram and WhatsApp connector processes are opt-in. For example,
 `LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh` enables Telegram account

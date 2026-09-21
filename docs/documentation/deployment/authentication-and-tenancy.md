@@ -1,212 +1,119 @@
 # Authentication and access
 
-Lightspeed has two authentication boundaries. The Platform signs people in
-and checks their access to a universe. The runtime gateway resolves the
-universe and principal for an API request. In a full installation, the
-Platform connects these boundaries by calling a private runtime gateway on
-behalf of the signed-in user.
+The runtime authenticates canonical principals from the [core identity
+registry](identity-and-access.md). The Platform signs people in with Better Auth
+and currently calls the runtime as its configured service principal. Mapping
+Platform users and memberships to core identities is a separate, pending cutover.
 
-Configure that path first, then add accounts and client credentials. The
-[multitenancy guide](multi-tenancy.md) explains what universes isolate and
-which infrastructure they share. The [self-hosting guide](self-hosting.md)
-provides the initial service configuration and public proxy routes.
+## Gateway modes
 
-The [core identity registry](identity-and-access.md) also provides headless
-bootstrap and scoped role records. It is not yet connected to these gateway and
-Platform authorization paths.
-
-## Choose the gateway authentication mode
-
-Each gateway process selects one `LIGHTSPEED_AUTH_MODE`:
-
-| Mode | How a universe-scoped request is resolved | Suitable boundary |
-| --- | --- | --- |
-| `single` | Uses `LIGHTSPEED_PG_UNIVERSE_ID` and the default principal. Startup ensures that universe exists. | A private installation with one universe and trusted callers. |
-| `trusted-header` | Requires `x-lightspeed-universe: <uuid>`. An upstream service authenticates the caller and chooses the UUID. | The private gateway behind the Platform or another trusted application. |
-| `api-key` | Resolves `Authorization: Bearer lsk_…` to a stored universe and principal. | A gateway for clients using runtime API keys. |
-
-The Platform sends trusted universe headers, so its upstream gateway must use
-`trusted-header`. Keep that listener private. The headers contain an identity
-assertion; they do not prove that an internet caller is entitled to it.
-
-For universe-scoped requests, both `single` and `api-key` reject caller-supplied
-universe and principal headers. In `trusted-header`, a missing or unknown
-universe fails rather than creating a tenant. Create universes through the Platform or administration
-commands before admitting requests.
-
-An optional `x-lightspeed-principal` header accepts `user:<id>` or
-`service_account:<id>`. A bare value is a user ID; omission uses
-`universe_default`. The runtime uses principals for attribution and some
-service-method checks. They do not introduce per-user access rules for ordinary
-resources inside a universe.
-
-### Keep deployment and service access distinct
-
-Deployment methods manage deployment resources, including universes and API
-keys. The runtime accepts them through `single` and `trusted-header` gateways
-without an additional deployment login. They reject a universe header, and an
-`api-key` gateway rejects deployment methods entirely. Network access to a
-private deployment-capable listener therefore carries substantial authority.
-The Platform checks its own administrator permissions before making these
-calls.
-
-Service methods, such as `auth/grants/lease` and `channels/inbound/admit`,
-require a `service_account` principal in the two multitenant modes. `single`
-mode bypasses that check. Service identity is intended for trusted adapters
-such as the connector host; it is separate from a person's Platform role.
-
-## Set up the first administrator
-
-Before the first Platform startup, provide
-`LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`,
-along with its database URL, stable authentication secret, and public base
-URL. The bootstrap creates an administrator only while the entire users table
-is empty. Changing the variables later does not change an existing password.
-
-Sign in at `/app/` and verify that **Admin** is available. After bootstrap,
-remove the initial password from the deployment configuration used for future
-starts. Keep `LIGHTSPEED_PLATFORM_AUTH_SECRET` stable; it is part of the
-Platform's authentication state.
-
-Email/password authentication is enabled, and public password signup is
-disabled. Administrators can create accounts directly. Optional GitHub login
-uses both `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` and
-`LIGHTSPEED_PLATFORM_GITHUB_CLIENT_SECRET`. Enabling a login provider does not
-itself assign a user to a universe.
-
-## Create a universe and add people
-
-Use a platform administrator account for this procedure:
-
-1. Choose **New universe** and create the team's universe. The Platform
-   creates its runtime universe and records the mapping to the Platform
-   organization.
-2. Open **Admin → Users → Create user**. Enter the person's name, email, and
-   initial password, and choose the platform `user` role unless they should
-   administer the entire installation.
-3. Select the universe and open **Settings → Members → Add member**.
-4. Select the existing **Account**, choose its universe role, and add it.
-
-Adding a member selects an existing account. This flow does not create the
-account or send an email invitation.
-
-Platform and universe roles serve different purposes:
-
-| Role | Current access |
+| Mode | Request identity |
 | --- | --- |
-| Platform administrator | Manages users and all universes, including creation, adoption, and permanent deletion. Does not need membership in each universe. |
-| Universe owner or admin | Manages that universe's configuration, memberships, API keys, sessions, profiles, workspaces, and integrations. Can update or archive the universe. |
-| Universe member | Can view the bot roster/activity, channel/account listings, and membership. This role does not provide general access to session and setup pages. |
+| `single` | Explicit local development service principal with deployment and configured-universe administration rights. Startup creates the configured universe and initializes this identity. Rejects bearer, universe and principal headers. Keep this development listener private. |
+| `authenticated` | Requires `Authorization: Bearer lsk_…`. Reads the key, active canonical principal and current scoped rights on every request. |
 
-The ordinary **member** role is narrower than a general read-only runtime
-account. Use owner/admin for someone following the setup and session
-walkthroughs in this manual.
+`trusted-header` and `api-key` modes are retired. Schema revision 12 replaces the
+API-key table outright; issue canonical credentials after migration. There is no
+legacy-key archive or compatibility path. Anonymous principal records are no
+longer supported.
 
-To find the runtime UUID, open **Settings → General → Identifiers →
-Lightspeed universe**. It differs from the browser URL's slug and the
-Platform's own record ID. Trusted-header clients and server administration
-commands use this runtime UUID.
+A universe key selects exactly its universe. An optional matching
+`x-lightspeed-universe` is accepted; a different UUID is rejected. A deployment
+key must select a universe with that header for universe/service calls. Neither
+scope grants permissions. Deployment administration requires DeploymentAdmin;
+service methods require their declared capability, never just service kind.
+Key-management methods additionally check issuance authority or key ownership.
+
+`x-lightspeed-principal: user:<canonical-uuid>` (or a bare canonical UUID) is an
+assertion, not authentication. Only an authenticated service with `assert_user`
+in the target scope may assert an active user. A deployment-scoped credential
+may use deployment-wide `assert_user`. The request uses the user's permissions
+alone, retaining both authenticated and acting identities in request context.
+Missing context and duplicate identity headers fail closed.
+
+**Current boundary:** the gateway and shared services enforce the universe role/action
+matrix. Viewer is read-only. Contributors control their own sessions and manage
+their own profiles/bots. Operator/Admin can manage bots and profiles, configure
+resources, and stop other people's sessions, but cannot steer or delete their
+personal sessions. Bot-controlled sessions follow bot-management rights; delegated
+children follow explicitly admitted controller lineage. Metadata and provenance
+do not grant control. Bot trigger secrets are visible only to managers.
+
+Ownership reservations preserve the creator/controller across retries and deletion.
+They are independent of execution credentials. There is no legacy ownership
+backfill: content without trusted ownership cannot be claimed by retrying creation.
+Mutating service admissions retain actor and credential-reference facts separately
+from session content; an admission record does not claim that an operation succeeded.
+
+Session content remains universe-visible. Private-session policies, response-time
+reauthorization, and the Platform user-directory cutover remain pending. Committed
+status, membership, capability and key changes affect subsequent admission; they
+do not stop admitted runs or withdraw an already admitted long-poll response.
 
 ## Issue a key for an API client
 
-In the universe, open **Settings → API keys → Create key**. Enter a name that
-identifies the client, then choose **Create key**. Copy the value from
-**Copy your API key**, store it with the client, and choose **I saved the key**.
-The complete secret is shown once. The runtime retains its hash and a display
-prefix, which lets it recognize or revoke the key without recovering the
-secret.
-
-The Platform creates the key with the current user's principal. A key grants
-ordinary runtime API access within its universe; it has no configurable
-expiration or fine-grained resource scopes. Only owners, admins, and platform
-administrators can list or manage keys through the Platform.
-
-The client must use an `api-key` gateway endpoint. Creating a key does not
-change the authentication mode of the Platform's private gateway. If the
-deployment needs both paths, run a separate `gateway` process in `api-key`
-mode against the same deployment stores, queues, and environment gateway.
-Give it its own listener and HTTPS route. Keep the deployment-capable endpoint
-private. [Configuration](configuration.md) and [operations](operations.md)
-explain the settings shared by these processes.
-
-For the Lightspeed CLI, set `LIGHTSPEED_API_URL` to that gateway's `/rpc` URL
-and supply `LIGHTSPEED_API_KEY` through the client's secret configuration.
-Leave `LIGHTSPEED_UNIVERSE` unset for API-key access. The key determines the
-universe; callers cannot select another one in a request body or header.
-
-Revoke a key from **Settings → API keys** when its client is retired or the
-secret is exposed. Revocation rejects subsequent authenticated requests. It
-does not cancel a run or automation already admitted by the runtime.
-
-### Administration without the Platform
-
-The server binary has commands that use deployment storage directly. Run
-them with the intended runtime database configuration, from a protected
-administrative environment:
+Run the server CLI from a trusted administrative environment with the runtime
+database configured. It does not require Temporal or Platform:
 
 ```bash
+lightspeed-server migrate
 lightspeed-server identity bootstrap \
-  --principal-id "<admin-principal-uuid>" --display-name "Administrator"
-lightspeed-server universe create --slug acme \
-  --creator-principal "<admin-principal-uuid>"
-lightspeed-server universe list
-```
-
-Use the returned UUID to create a client key:
-
-```bash
-lightspeed-server api-key create \
-  --universe-id "<universe-uuid>" --name acme-production
+  --principal-id "<admin-uuid>" --display-name "Administrator"
+lightspeed-server universe create --slug acme --creator-principal "<admin-uuid>"
+lightspeed-server api-key create --universe-id "<universe-uuid>" \
+  --principal "<principal-uuid>" --actor-principal "<issuer-uuid>" --name acme-client
+lightspeed-server api-key create --deployment \
+  --principal "<service-uuid>" --actor-principal "<admin-uuid>" --name platform
 lightspeed-server api-key list
-lightspeed-server api-key revoke "<key-prefix>"
+lightspeed-server api-key revoke "<key-prefix>" --actor-principal "<issuer-uuid>"
 ```
 
-These commands do not require an HTTP gateway to be running. In a source
-checkout, the equivalent prefix is `cargo run -p temporal-server --`. Store
-the create command's one-time key output as a secret.
+Create users/services and assign roles or capabilities through `identity apply`
+or authenticated `deployment/identity/apply`. Both use the same audited core
+mutation rules. Universe creation assigns the acting creator as universe Admin.
 
-## Remove access deliberately
+Members may issue their own universe keys. Universe Admin may issue keys for
+services managed in that universe, but cannot impersonate other users or mint
+keys for deployment/integration services. DeploymentAdmin may issue deployment
+keys and manage principals across the deployment. Key metadata records the bound
+principal and issuer separately; plaintext appears only at creation.
 
-Removing a Platform membership and revoking a runtime key are separate
-operations. Runtime key resolution does not consult the Platform membership
-table, so a removed member's previously issued key continues to work until
-revoked. Include both operations when someone leaves a team.
+## Platform and connectors
 
-The administrator's password-reset flow also revokes the user's Platform
-authentication sessions. It does not revoke their runtime keys. Review those
-keys separately, together with any work or automation that should stop.
+Set `LIGHTSPEED_PLATFORM_API_KEY` to an explicitly provisioned Platform service
+key and `LIGHTSPEED_API_URL` to the authenticated runtime `/rpc` endpoint. The
+Platform sends this key only to the configured runtime URL; per-universe endpoint
+overrides cannot receive a credential for another endpoint. The service needs the roles for the operations it performs; existing Platform login
+and membership checks remain in place. Better Auth IDs are not core principal
+IDs. The key-creation UI therefore asks for an explicit canonical principal ID.
 
-Archiving a universe changes its Platform status and ordinary navigation. It
-does not revoke keys, block existing API paths, or stop runtime activity. Use
-the [universe lifecycle procedure](multi-tenancy.md#archive-and-delete-a-universe)
-when retiring a tenant.
+Bootstrap Platform login with `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
+`LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` while its users table is empty. These
+variables do not reset existing passwords. Platform membership removal and core
+membership removal remain separate until the directory cutover: removing only
+the Platform membership does not revoke a canonical user's direct runtime key.
 
-## Connect Configurator MCP
+Connectors use their own `LIGHTSPEED_CONNECTOR_API_KEY`. Assign deployment
+`discover_channel_accounts`, and per-universe `lease_credentials` and
+`admit_channel_inbound` capabilities as needed. Do not substitute a forged
+service principal header. Connectors receive neither `assert_user` nor general
+administration by default.
 
-Configurator uses the same authentication mode as its upstream runtime
-gateway and forwards the request identity. It does not exchange a Platform
-login session for a runtime key. An API-key Configurator therefore needs an
-API-key runtime endpoint, even when the Platform uses another private gateway.
+## Configurator and development
 
-Configurator exposes ordinary management tools; deployment and service methods
-are excluded. Its HTTP host/origin allowlists are additional request checks,
-not a substitute for gateway authentication. See the
-[Configurator service guide](../../../platform/configurator-mcp/README.md)
-and its [configuration variables](../reference/environment-variables.md#configurator-mcp).
+Configurator uses `authenticated` mode and forwards its bearer credential and
+optional universe/user assertion to the runtime for validation. Its host/origin
+checks complement authentication. The Platform setup creates a universe-managed
+Configurator service with an Operator assignment and a universe-scoped key,
+then stores that key in an outbound auth grant. The old loopback trusted-header
+path is retired.
 
-## Verify access
+`./dev.sh full` defaults to authenticated mode. When no Platform service key is
+configured, it explicitly initializes the local development principal and mints
+a launcher key, passing the secret to child processes in memory. `runtime`
+defaults to single mode. `identity development --universe-id <uuid>` is a
+host-only development bootstrap, never an authenticated gateway fallback.
 
-Sign in as a newly configured owner/admin, select the intended universe, and
-open a session or profile. Then sign in as a member to check the narrower
-navigation. For an API client, make a small request through its API-key
-endpoint and verify that a revoked test key is rejected on the next request.
-Use disposable test credentials for the revocation check.
-
-| Symptom | What to check |
-| --- | --- |
-| Sign-in succeeds but setup is denied | The account needs universe owner/admin or platform administrator access. |
-| Bootstrap variables do not change a password | They only initialize an empty user table. Reset the existing account through Admin Users. |
-| A Platform universe page fails at the runtime | Its upstream must be reachable and use `trusted-header`; verify the runtime UUID mapping. |
-| A valid key is rejected | Check the endpoint's mode, revocation status, and absence of tenant/principal headers. |
-| A removed member can still use the API | Revoke their runtime keys explicitly. |
-| A service method rejects an ordinary key | It requires a service-account principal in a multitenant mode. |
+See [multitenancy](multi-tenancy.md), [self-hosting](self-hosting.md), and the
+[environment reference](../reference/environment-variables.md) for deployment
+and service configuration.

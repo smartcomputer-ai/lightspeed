@@ -729,7 +729,7 @@ mod tests {
         let secrets: Arc<dyn SecretResolver> = Arc::new(AbsentSecretResolver);
         let private_networks =
             McpPrivateNetworkPolicy::parse(None).expect("private network policy");
-        let trusted_header = ConfiguratorTrustedHeaderPolicy::default();
+        let trusted_header = ConfiguratorTrustedHeaderPolicy;
         let universe_id = uuid::Uuid::from_u128(7);
         let inventory = Arc::new(NativeMcpInventoryResolver::new(
             secrets.clone(),

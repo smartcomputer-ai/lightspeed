@@ -68,7 +68,19 @@ impl ChannelWorkerActivities {
         request: ChatReconcileDeliveryRequest,
     ) -> Result<ChatReconcileDeliveryResult, ActivityError> {
         let api = self.universes.api_for(request.universe_id).await?;
-        crate::channels::activities::reconcile_delivery(&api, request).await
+        let workflow_id = &_ctx
+            .info()
+            .workflow_execution
+            .as_ref()
+            .ok_or_else(|| {
+                ActivityError::application(
+                    temporalio_common::error::ApplicationFailure::non_retryable(anyhow::anyhow!(
+                        "missing conversation workflow identity"
+                    )),
+                )
+            })?
+            .workflow_id;
+        crate::channels::activities::reconcile_delivery(&api, workflow_id, request).await
     }
 
     #[activity(name = ACTIVITY_CHAT_EMIT_EVENT)]

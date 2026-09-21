@@ -150,7 +150,7 @@ no `export` prefix and no shell quotes around values.
 
 ```dotenv
 LIGHTSPEED_POSTGRES_URL=<runtime-postgres-connection-url>
-LIGHTSPEED_AUTH_MODE=trusted-header
+LIGHTSPEED_AUTH_MODE=authenticated
 LIGHTSPEED_GATEWAY_BIND=0.0.0.0:18080
 LIGHTSPEED_PUBLIC_BASE_URL=https://lightspeed.example.com
 LIGHTSPEED_ENVIRONMENT_GATEWAY_URL=http://lightspeed-runtime:18080
@@ -180,13 +180,17 @@ configuration and require a bucket. Follow
 [Choose the blob backend](configuration.md#choose-the-blob-backend) to add the
 complete S3-compatible configuration.
 
-Edit `platform.env`:
+Provision the canonical Platform service and its key after runtime migration,
+following [authentication and access](authentication-and-tenancy.md). The service
+needs explicit deployment and universe authority for the operations it performs.
+Then edit `platform.env`:
 
 ```dotenv
 LIGHTSPEED_PLATFORM_DATABASE_URL=<platform-postgres-connection-url>
 LIGHTSPEED_PLATFORM_AUTH_SECRET=<platform-auth-secret>
 LIGHTSPEED_PLATFORM_BASE_URL=https://lightspeed.example.com
 LIGHTSPEED_API_URL=http://lightspeed-runtime:18080/rpc
+LIGHTSPEED_PLATFORM_API_KEY=<canonical-platform-service-key>
 LIGHTSPEED_PLATFORM_ADMIN_EMAIL=<administrator-email>
 LIGHTSPEED_PLATFORM_ADMIN_PASSWORD=<strong-initial-password>
 PORT=3000
@@ -298,7 +302,7 @@ headers. Match those two routes exactly; forwarding the entire
 
 The Platform performs authentication and supplies trusted universe headers
 on its calls to the runtime. An internet client must not be able to call the
-runtime's `trusted-header` RPC listener directly. Keep port `18080` private
+runtime's authenticated RPC listener directly. Keep port `18080` private
 even if your reverse proxy has its own authentication rules.
 
 If the proxy runs in another container, put it on the application network and
@@ -342,7 +346,7 @@ docker logs --tail 100 lightspeed-platform
 | Runtime exits before serving health | Database connectivity, migration ledger, required settings, or Temporal address/namespace |
 | Platform health never succeeds | Platform database permissions/migrations and required authentication settings |
 | Sign-in redirects or origin checks fail | Public base URL, HTTPS, and proxy host/scheme forwarding |
-| A universe cannot be created | Platform-to-runtime connectivity and `trusted-header` runtime configuration |
+| A universe cannot be created | Platform-to-runtime connectivity and authenticated runtime configuration and Platform service permissions |
 | A run is accepted but makes no progress | Temporal namespace, session workers, and matching task queues |
 | Model calls fail | The universe's provider credential and the session's selected model |
 | A daemon connects but process calls cannot route | The two public WebSocket paths, internal environment gateway URL/token, and the single environment-gateway process |

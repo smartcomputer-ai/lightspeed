@@ -1,10 +1,11 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
+use super::authentication;
+use access::{AccessScope, AccessStore, PrincipalStatus, RequestContext};
 use api::{
     AgentApiError, JsonRpcRequest, JsonRpcResponse, dispatch_deployment_json_rpc,
-    dispatch_json_rpc, is_deployment_method, is_service_method,
+    dispatch_json_rpc, is_deployment_method,
 };
-use auth::{ApiKeyStore, PrincipalKind, PrincipalRef, api_key_hash};
 use axum::{
     Json, Router,
     extract::{
@@ -21,7 +22,7 @@ use environment_protocol::{
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
-use store_pg::{PgApiKeyStore, PgStore};
+use store_pg::{PgAccessStore, PgApiKeyStore, PgStore};
 use temporalio_client::Client;
 use tokio_tungstenite::{connect_async, tungstenite::Message as ProviderMessage};
 use uuid::Uuid;
@@ -40,18 +41,7 @@ use super::{
 pub const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:18080";
 pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 
-/// Trusted-header tenant selector. Only honored in `trusted-header` auth mode,
-/// where an upstream gateway owns authentication and injects it; other modes
-/// reject requests carrying it so tenant claims cannot be smuggled past a
-/// different resolution mode.
-pub const UNIVERSE_HEADER: &str = "x-lightspeed-universe";
-
-/// Optional trusted-header caller identity, injected by the upstream gateway
-/// alongside [`UNIVERSE_HEADER`]. Value is `<kind>:<id>` with kind `user` or
-/// `service_account`, or a bare id (treated as a user id). Recorded on grants
-/// and flows for audit. Service-scoped methods additionally require the
-/// `service_account` kind.
-pub const PRINCIPAL_HEADER: &str = "x-lightspeed-principal";
+pub use super::authentication::{PRINCIPAL_HEADER, UNIVERSE_HEADER};
 
 #[derive(Clone, Debug)]
 pub struct GatewayServerConfig {
@@ -87,6 +77,7 @@ enum UniverseResolution {
 
 pub struct GatewayState {
     resolution: UniverseResolution,
+    local_initialized: tokio::sync::OnceCell<()>,
     /// Live registered-daemon connections on this replica.
     registrations: Arc<RegisteredConnections>,
     /// Public base URL daemons are told to dial for data connections.
@@ -118,6 +109,7 @@ impl GatewayState {
         let public_base_url = api.public_base_url().to_owned();
         Self {
             resolution: UniverseResolution::FixedApi { api },
+            local_initialized: tokio::sync::OnceCell::new(),
             registrations: Arc::new(RegisteredConnections::new()),
             public_base_url,
         }
@@ -209,77 +201,107 @@ impl GatewayState {
                 api_keys,
                 deployment,
             },
+            local_initialized: tokio::sync::OnceCell::new(),
             registrations: Arc::new(RegisteredConnections::new()),
             public_base_url,
         }
     }
 
-    /// Resolve the deployment service for a request. Deployment methods are
-    /// deployment-addressed, so they exist only on deployment gateways —
-    /// never fixed-instance ones.
-    fn deployment_for_request(
+    async fn request_context(
         &self,
         headers: &HeaderMap,
-    ) -> Result<&Arc<GatewayDeploymentApi>, AgentApiError> {
+        method: &str,
+    ) -> Result<RequestContext, AgentApiError> {
+        let requirement =
+            api::method_access(method).ok_or_else(|| AgentApiError::rejected("unknown method"))?;
+        let deployment = is_deployment_method(method);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| AgentApiError::internal(e.to_string()))?
+            .as_millis() as u64;
+        match &self.resolution {
+            UniverseResolution::Multi {
+                mode: GatewayAuthMode::Authenticated,
+                runtime,
+                api_keys,
+                ..
+            } => {
+                authentication::authenticate(
+                    api_keys,
+                    &PgAccessStore::new(runtime.stores().pool().clone()),
+                    headers,
+                    requirement,
+                    now,
+                )
+                .await
+            }
+            _ => {
+                authentication::reject_identity_headers(headers)?;
+                let (pool, universe_id) = match &self.resolution {
+                    UniverseResolution::FixedApi { api } => {
+                        (api.store().pool().clone(), api.universe_id())
+                    }
+                    UniverseResolution::Multi {
+                        mode: GatewayAuthMode::Single { universe_id },
+                        runtime,
+                        ..
+                    } => (runtime.stores().pool().clone(), *universe_id),
+                    _ => unreachable!(),
+                };
+                let access = PgAccessStore::new(pool);
+                self.local_initialized
+                    .get_or_try_init(|| async {
+                        access
+                            .initialize_local_development(universe_id, now)
+                            .await
+                            .map(|_| ())
+                    })
+                    .await
+                    .map_err(|e| AgentApiError::rejected(e.to_string()))?;
+                let target = if deployment {
+                    AccessScope::Deployment
+                } else {
+                    AccessScope::Universe { universe_id }
+                };
+                let rights = access
+                    .effective_access(store_pg::LOCAL_DEVELOPMENT_PRINCIPAL, target)
+                    .await
+                    .map_err(|e| AgentApiError::rejected(e.to_string()))?;
+                if !authentication::method_permitted(&rights, requirement)
+                    || rights.principal.status != PrincipalStatus::Active
+                {
+                    return Err(AgentApiError::rejected(
+                        "local development identity is not authorized",
+                    ));
+                }
+                Ok(authentication::local_context(rights.principal, target))
+            }
+        }
+    }
+
+    fn deployment_for_request(&self) -> Result<&Arc<GatewayDeploymentApi>, AgentApiError> {
         match &self.resolution {
             UniverseResolution::FixedApi { .. } => Err(AgentApiError::rejected(
                 "deployment methods are not available on this gateway",
             )),
-            UniverseResolution::Multi {
-                mode, deployment, ..
-            } => {
-                authorize_deployment_call(mode, headers)?;
-                Ok(deployment)
-            }
+            UniverseResolution::Multi { deployment, .. } => Ok(deployment),
         }
     }
 
     async fn api_for_request(
         &self,
-        headers: &HeaderMap,
-    ) -> Result<(Arc<GatewayAgentApi>, PrincipalRef), AgentApiError> {
+        context: &RequestContext,
+    ) -> Result<Arc<GatewayAgentApi>, AgentApiError> {
+        let AccessScope::Universe { universe_id } = context.target_scope else {
+            return Err(AgentApiError::rejected("universe context required"));
+        };
         match &self.resolution {
-            UniverseResolution::FixedApi { api } => {
-                reject_tenant_headers(headers)?;
-                Ok((api.clone(), PrincipalRef::universe_default()))
-            }
-            UniverseResolution::Multi {
-                mode,
-                runtime,
-                api_keys,
-                ..
-            } => {
-                let (universe_id, create_missing, principal) = match mode {
-                    GatewayAuthMode::Single { universe_id } => {
-                        reject_tenant_headers(headers)?;
-                        (*universe_id, true, PrincipalRef::universe_default())
-                    }
-                    // Never auto-creates: a typo'd universe header fails
-                    // closed instead of silently materializing a tenant.
-                    GatewayAuthMode::TrustedHeader => (
-                        universe_from_header(headers)?,
-                        false,
-                        principal_from_header(headers)?,
-                    ),
-                    GatewayAuthMode::ApiKey => {
-                        reject_tenant_headers(headers)?;
-                        let record = resolve_api_key(api_keys, headers).await?;
-                        (record.universe_id, false, record.principal)
-                    }
-                };
-                let state = runtime
-                    .state_for(universe_id, create_missing)
-                    .await
-                    .map_err(map_universe_error)?;
-                Ok((state.api.clone(), principal))
-            }
-        }
-    }
-
-    fn authorize_service_call(&self, caller: &PrincipalRef) -> Result<(), AgentApiError> {
-        match &self.resolution {
-            UniverseResolution::FixedApi { .. } => Ok(()),
-            UniverseResolution::Multi { mode, .. } => authorize_service_principal(mode, caller),
+            UniverseResolution::FixedApi { api } => Ok(api.clone()),
+            UniverseResolution::Multi { runtime, .. } => runtime
+                .state_for(universe_id, false)
+                .await
+                .map(|state| state.api.clone())
+                .map_err(map_universe_error),
         }
     }
 
@@ -325,142 +347,6 @@ impl GatewayState {
     }
 }
 
-fn authorize_service_principal(
-    mode: &GatewayAuthMode,
-    caller: &PrincipalRef,
-) -> Result<(), AgentApiError> {
-    if matches!(mode, GatewayAuthMode::Single { .. })
-        || caller.kind == PrincipalKind::ServiceAccount
-    {
-        Ok(())
-    } else {
-        Err(AgentApiError::rejected(
-            "service methods require a service_account principal",
-        ))
-    }
-}
-
-/// Resolve `Authorization: Bearer lsk_…` against the deployment api_keys
-/// table. Unknown and revoked keys are indistinguishable to the caller.
-async fn resolve_api_key(
-    api_keys: &PgApiKeyStore,
-    headers: &HeaderMap,
-) -> Result<auth::ApiKeyRecord, AgentApiError> {
-    let secret = bearer_token(headers)?;
-    let observed_at_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0);
-    api_keys
-        .resolve_api_key(&api_key_hash(secret), observed_at_ms)
-        .await
-        .map_err(|error| AgentApiError::internal(format!("api key resolution failed: {error}")))?
-        .ok_or_else(|| AgentApiError::rejected("invalid api key"))
-}
-
-fn bearer_token(headers: &HeaderMap) -> Result<&str, AgentApiError> {
-    let value = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .ok_or_else(|| AgentApiError::invalid_request("missing Authorization header"))?;
-    let value = value
-        .to_str()
-        .map_err(|_| AgentApiError::invalid_request("invalid Authorization header encoding"))?;
-    value
-        .strip_prefix("Bearer ")
-        .map(str::trim)
-        .filter(|token| !token.is_empty())
-        .ok_or_else(|| {
-            AgentApiError::invalid_request("Authorization header must be a Bearer token")
-        })
-}
-
-/// Parse the optional trusted-header principal: `<kind>:<id>` with kind
-/// `user` or `service_account`, or a bare id treated as a user id. Absent
-/// header falls back to `universe_default`.
-fn principal_from_header(headers: &HeaderMap) -> Result<PrincipalRef, AgentApiError> {
-    let Some(value) = headers.get(PRINCIPAL_HEADER) else {
-        return Ok(PrincipalRef::universe_default());
-    };
-    let value = value.to_str().map_err(|_| {
-        AgentApiError::invalid_request(format!("invalid {PRINCIPAL_HEADER} header encoding"))
-    })?;
-    let value = value.trim();
-    if value.is_empty() {
-        return Ok(PrincipalRef::universe_default());
-    }
-    let (kind, id) = match value.split_once(':') {
-        Some(("user", id)) => (PrincipalKind::User, id),
-        Some(("service_account", id)) => (PrincipalKind::ServiceAccount, id),
-        Some((other, _)) => {
-            return Err(AgentApiError::invalid_request(format!(
-                "invalid {PRINCIPAL_HEADER} kind {other:?}; expected user or service_account"
-            )));
-        }
-        None => (PrincipalKind::User, value),
-    };
-    if id.is_empty() {
-        return Err(AgentApiError::invalid_request(format!(
-            "{PRINCIPAL_HEADER} id must not be empty"
-        )));
-    }
-    Ok(PrincipalRef {
-        kind,
-        id: Some(id.to_owned()),
-    })
-}
-
-/// Authorization boundary of the deployment scope: deployment methods are
-/// callable by `trusted-header` and `single` callers only — an api-key
-/// caller is a universe-bound tenant, not the platform. A universe header on
-/// an deployment call is a tenant claim that will not be honored and is
-/// rejected (fail closed); the principal header stays allowed for
-/// audit-stamping proxies.
-fn authorize_deployment_call(
-    mode: &GatewayAuthMode,
-    headers: &HeaderMap,
-) -> Result<(), AgentApiError> {
-    match mode {
-        GatewayAuthMode::ApiKey => Err(AgentApiError::rejected(
-            "deployment methods are not available to api-key callers",
-        )),
-        GatewayAuthMode::Single { .. } | GatewayAuthMode::TrustedHeader => {
-            if headers.contains_key(UNIVERSE_HEADER) {
-                return Err(AgentApiError::invalid_request(format!(
-                    "{UNIVERSE_HEADER} is not accepted on deployment methods"
-                )));
-            }
-            Ok(())
-        }
-    }
-}
-
-/// Modes that do not honor the trusted tenant headers must not silently
-/// ignore them: a tenant claim that is not going to be honored is rejected.
-fn reject_tenant_headers(headers: &HeaderMap) -> Result<(), AgentApiError> {
-    for header in [UNIVERSE_HEADER, PRINCIPAL_HEADER] {
-        if headers.contains_key(header) {
-            return Err(AgentApiError::invalid_request(format!(
-                "{header} is not accepted in this auth mode"
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Fail closed: in `trusted-header` mode a request without the header is
-/// rejected; there is never a fallback universe.
-fn universe_from_header(headers: &HeaderMap) -> Result<Uuid, AgentApiError> {
-    let value = headers.get(UNIVERSE_HEADER).ok_or_else(|| {
-        AgentApiError::invalid_request(format!("missing required {UNIVERSE_HEADER} header"))
-    })?;
-    let value = value.to_str().map_err(|_| {
-        AgentApiError::invalid_request(format!("invalid {UNIVERSE_HEADER} header encoding"))
-    })?;
-    Uuid::parse_str(value.trim()).map_err(|error| {
-        AgentApiError::invalid_request(format!("invalid {UNIVERSE_HEADER} header: {error}"))
-    })
-}
-
 fn map_universe_error(error: UniverseError) -> AgentApiError {
     match error {
         UniverseError::Unknown { universe_id } => {
@@ -503,6 +389,12 @@ pub async fn prewarm_single_universe(
 ) -> anyhow::Result<()> {
     if let GatewayAuthMode::Single { universe_id } = mode {
         runtime.state_for(*universe_id, true).await?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis() as u64;
+        PgAccessStore::new(runtime.stores().pool().clone())
+            .initialize_local_development(*universe_id, now)
+            .await?;
     }
     Ok(())
 }
@@ -1095,31 +987,32 @@ async fn rpc(
     headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> Response {
-    // Deployment methods branch before universe resolution: they address the
-    // deployment and never resolve a universe.
+    let context = match state.request_context(&headers, &request.method).await {
+        Ok(context) => context,
+        Err(error) => return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into())),
+    };
     if is_deployment_method(&request.method) {
-        let deployment = match state.deployment_for_request(&headers) {
+        let deployment = match state.deployment_for_request() {
             Ok(deployment) => deployment,
             Err(error) => {
                 return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into()));
             }
         };
-        return no_store_json_rpc(dispatch_deployment_json_rpc(deployment.as_ref(), request).await);
+        return no_store_json_rpc(
+            principal::with_request_context(
+                context,
+                dispatch_deployment_json_rpc(deployment.as_ref(), request),
+            )
+            .await,
+        );
     }
-    let (api, caller) = match state.api_for_request(&headers).await {
-        Ok(resolved) => resolved,
-        Err(error) => {
-            return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into()));
-        }
+    let api = match state.api_for_request(&context).await {
+        Ok(api) => api,
+        Err(error) => return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into())),
     };
-    if is_service_method(&request.method)
-        && let Err(error) = state.authorize_service_call(&caller)
-    {
-        return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into()));
-    }
     let method = request.method.clone();
     let response =
-        principal::with_request_principal(caller, dispatch_json_rpc(api.as_ref(), request)).await;
+        principal::with_request_context(context, dispatch_json_rpc(api.as_ref(), request)).await;
     if response_budget_exempt(&method) {
         no_store_json_rpc(response)
     } else {
@@ -1298,12 +1191,6 @@ mod tests {
     use super::*;
     use api::AgentApiErrorKind;
 
-    fn headers_with_universe(value: &str) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert(UNIVERSE_HEADER, value.parse().expect("header value"));
-        headers
-    }
-
     #[test]
     fn json_rpc_responses_disable_caching() {
         let response = no_store_json_rpc(JsonRpcResponse::success(
@@ -1378,112 +1265,13 @@ mod tests {
     }
 
     #[test]
-    fn universe_header_resolves_a_valid_uuid() {
-        let universe_id = Uuid::parse_str("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f").expect("uuid");
-        let headers = headers_with_universe(&universe_id.to_string());
-        assert_eq!(
-            universe_from_header(&headers).expect("resolve"),
-            universe_id
-        );
-    }
-
-    #[test]
-    fn service_scope_gating_matrix_fails_closed() {
-        let single = GatewayAuthMode::Single {
-            universe_id: Uuid::nil(),
-        };
-        let trusted = GatewayAuthMode::TrustedHeader;
-        let api_key = GatewayAuthMode::ApiKey;
-        let service = PrincipalRef {
-            kind: PrincipalKind::ServiceAccount,
-            id: Some("lightspeed-bots".to_owned()),
-        };
-        let user = PrincipalRef {
-            kind: PrincipalKind::User,
-            id: Some("user-1".to_owned()),
-        };
-        let default = PrincipalRef::universe_default();
-
-        assert!(authorize_service_principal(&single, &default).is_ok());
-        for mode in [&trusted, &api_key] {
-            assert!(authorize_service_principal(mode, &service).is_ok());
-            assert!(authorize_service_principal(mode, &user).is_err());
-            assert!(authorize_service_principal(mode, &default).is_err());
-        }
-    }
-
-    #[test]
-    fn trusted_header_mode_fails_closed_without_the_header() {
-        // No header never falls back to a default universe.
-        let error = universe_from_header(&HeaderMap::new()).expect_err("must fail closed");
-        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
-    }
-
-    #[test]
-    fn universe_header_rejects_non_uuid_values() {
-        let error =
-            universe_from_header(&headers_with_universe("not-a-uuid")).expect_err("must reject");
-        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
-    }
-
-    #[test]
-    fn non_header_modes_reject_tenant_header_smuggling() {
-        // `single` and `api-key` modes (and any fixed-instance gateway) must
-        // not silently ignore a tenant claim they do not honor.
-        let headers = headers_with_universe("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f");
-        let error = reject_tenant_headers(&headers).expect_err("must reject");
-        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
-        let mut principal_headers = HeaderMap::new();
-        principal_headers.insert(PRINCIPAL_HEADER, "user:alice".parse().expect("header"));
-        let error = reject_tenant_headers(&principal_headers).expect_err("must reject");
-        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
-        assert!(reject_tenant_headers(&HeaderMap::new()).is_ok());
-    }
-
-    #[test]
-    fn principal_header_parses_kinds_and_defaults() {
-        use auth::PrincipalKind;
-        let parse = |value: &str| {
+    fn local_mode_rejects_every_remote_identity_claim() {
+        for name in [UNIVERSE_HEADER, PRINCIPAL_HEADER, "authorization"] {
             let mut headers = HeaderMap::new();
-            headers.insert(PRINCIPAL_HEADER, value.parse().expect("header"));
-            principal_from_header(&headers)
-        };
-        assert_eq!(
-            principal_from_header(&HeaderMap::new()).expect("absent header"),
-            PrincipalRef::universe_default()
-        );
-        let user = parse("user:alice").expect("user principal");
-        assert_eq!(user.kind, PrincipalKind::User);
-        assert_eq!(user.id.as_deref(), Some("alice"));
-        let service = parse("service_account:bridge-1").expect("service principal");
-        assert_eq!(service.kind, PrincipalKind::ServiceAccount);
-        assert_eq!(service.id.as_deref(), Some("bridge-1"));
-        let bare = parse("alice").expect("bare principal");
-        assert_eq!(bare.kind, PrincipalKind::User);
-        assert_eq!(bare.id.as_deref(), Some("alice"));
-        let error = parse("robot:r2d2").expect_err("unknown kind");
-        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
-        let error = parse("user:").expect_err("empty id");
-        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
-    }
-
-    #[test]
-    fn bearer_token_requires_a_nonempty_bearer_value() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            "Bearer lsk_secret".parse().expect("header"),
-        );
-        assert_eq!(bearer_token(&headers).expect("token"), "lsk_secret");
-        let error = bearer_token(&HeaderMap::new()).expect_err("missing header");
-        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
-        let mut basic = HeaderMap::new();
-        basic.insert(
-            axum::http::header::AUTHORIZATION,
-            "Basic dXNlcg==".parse().expect("header"),
-        );
-        let error = bearer_token(&basic).expect_err("non-bearer");
-        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+            headers.insert(name, "untrusted".parse().unwrap());
+            assert!(authentication::reject_identity_headers(&headers).is_err());
+        }
+        assert!(authentication::reject_identity_headers(&HeaderMap::new()).is_ok());
     }
 
     #[test]
@@ -1492,33 +1280,5 @@ mod tests {
             universe_id: Uuid::nil(),
         });
         assert_eq!(error.kind, AgentApiErrorKind::NotFound);
-    }
-
-    #[test]
-    fn deployment_calls_are_gated_by_auth_mode_and_reject_universe_claims() {
-        let single = GatewayAuthMode::Single {
-            universe_id: Uuid::nil(),
-        };
-        assert!(authorize_deployment_call(&single, &HeaderMap::new()).is_ok());
-        assert!(
-            authorize_deployment_call(&GatewayAuthMode::TrustedHeader, &HeaderMap::new()).is_ok()
-        );
-
-        let error = authorize_deployment_call(&GatewayAuthMode::ApiKey, &HeaderMap::new())
-            .expect_err("api-key callers are universe-bound tenants, not the platform");
-        assert_eq!(error.kind, AgentApiErrorKind::Rejected);
-
-        // A universe claim on a deployment-addressed call fails closed.
-        let headers = headers_with_universe("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f");
-        let error = authorize_deployment_call(&GatewayAuthMode::TrustedHeader, &headers)
-            .expect_err("universe header must be rejected on deployment calls");
-        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
-
-        // The principal header stays allowed for audit-stamping proxies.
-        let mut principal_headers = HeaderMap::new();
-        principal_headers.insert(PRINCIPAL_HEADER, "user:admin".parse().expect("header"));
-        assert!(
-            authorize_deployment_call(&GatewayAuthMode::TrustedHeader, &principal_headers).is_ok()
-        );
     }
 }

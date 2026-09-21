@@ -1159,7 +1159,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "sk-ant-…9mA1",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "universeDefault" },
+      principal: { kind: "serviceAccount", id: "demo-service" },
       hasAccessToken: true,
       hasRefreshToken: false,
       expiresAtMs: null,

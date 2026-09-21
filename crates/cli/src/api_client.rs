@@ -59,9 +59,9 @@ use api::{
 use serde::{Serialize, de::DeserializeOwned};
 
 /// Gateway auth headers from the environment, applied to every request:
-/// `LIGHTSPEED_API_KEY` becomes `Authorization: Bearer …` (api-key
+/// `LIGHTSPEED_API_KEY` becomes `Authorization: Bearer …` (authenticated
 /// deployments) and `LIGHTSPEED_UNIVERSE` becomes `x-lightspeed-universe`
-/// (trusted-header deployments behind a proxy that forwards it). Both are
+/// (universe selection with a deployment-scoped key). Both are
 /// optional; a plain `single`-mode gateway needs neither.
 fn auth_headers_from_env() -> reqwest::header::HeaderMap {
     let mut headers = reqwest::header::HeaderMap::new();

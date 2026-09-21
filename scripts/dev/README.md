@@ -89,11 +89,10 @@ trusts both `http://127.0.0.1:5173` and `http://localhost:5173` for Better Auth;
 additional browser origins must be listed explicitly in
 `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`.
 
-The `full` profile defaults the runtime to `trusted-header` authentication
-because Platform authenticates users and routes every engine request to an
-explicit universe. The focused `runtime` profile defaults to `single` for
-direct CLI development. An explicit `LIGHTSPEED_AUTH_MODE` overrides either
-profile default.
+The `full` profile defaults to authenticated runtime access. Without a configured
+`LIGHTSPEED_PLATFORM_API_KEY`, the launcher explicitly initializes a local
+service principal and mints a key, passing the secret to child processes in memory.
+The `runtime` profile defaults to `single` for direct CLI development.
 
 The full profile also runs Configurator MCP; Bots and Channels core run inside
 the Rust runtime. The connector host is opt-in: naming providers starts one
@@ -106,11 +105,9 @@ LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh
 LIGHTSPEED_CHANNELS_CONNECTORS=telegram,whatsapp ./dev.sh
 ```
 
-The supervisor's local Configurator uses a default-off internal authentication
-path: the Runtime sends `x-lightspeed-universe` only to the exact loopback MCP
-URL it started, and the setup does not create a bearer credential. Supplying an
-external Configurator URL disables that path unless both development variables
-are explicitly enabled; the Runtime rejects non-loopback trusted-header URLs.
+Configurator setup provisions a universe-managed service identity and scoped
+bearer key. The old loopback trusted-header path is retired. Enabled connectors
+require their own `LIGHTSPEED_CONNECTOR_API_KEY` and scoped capabilities.
 
 Use `./dev.sh --plan full` to inspect a profile without starting services.
 Planning an enabled local daemon can create its working directory.

@@ -61,7 +61,7 @@ describe("connector host", () => {
         health: null,
       },
       {
-        core: new CoreClient({ endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
+        core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
         createRunner: (candidate) => {
           const runner = new FakeRunner(candidate);
           const list = runners.get(runner.key) ?? [];
@@ -113,7 +113,7 @@ describe("connector host", () => {
     const host = new ConnectorHost(
       { providers: ["telegram", "whatsapp"], accounts: null, discoveryIntervalMs: 60_000, health: null },
       {
-        core: new CoreClient({ endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
+        core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
         createRunner: (candidate) => new FakeRunner(candidate),
         log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
       },
@@ -134,7 +134,7 @@ describe("connector host", () => {
     const host = new ConnectorHost(
       { providers: ["telegram"], accounts: null, discoveryIntervalMs: 60_000, health: { host: "127.0.0.1", port: 0 } },
       {
-        core: new CoreClient({ endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
+        core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
         createRunner: (candidate) => new FakeRunner(candidate),
         log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
       },

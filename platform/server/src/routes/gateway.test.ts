@@ -165,3 +165,23 @@ describe("session creation setup", () => {
     },
   );
 });
+
+describe("runtime service authentication", () => {
+  it("requires a configured service credential", async () => {
+    const { engineClientFor, deploymentClientFor } = await import("./gateway.js");
+    const context = { env: { lightspeedApiUrl: "http://core.test/rpc", lightspeedApiKey: null } } as Parameters<typeof engineClientFor>[0];
+    const universe = { lightspeedUniverseId: "00000000-0000-4000-8000-000000000001", gatewayUrl: null } as Parameters<typeof engineClientFor>[1];
+    expect(() => engineClientFor(context, universe)).toThrow();
+    expect(() => deploymentClientFor(context)).toThrow();
+  });
+  it("never sends a deployment credential to a universe endpoint override", async () => {
+    const { engineClientFor, deploymentClientFor } = await import("./gateway.js");
+    const context = { env: { lightspeedApiUrl: "https://core.example/rpc", lightspeedApiKey: "lsk_test" } } as Parameters<typeof engineClientFor>[0];
+    for (const gatewayUrl of ["https://other.example/rpc", "https://core.example/another-path"]) {
+      const universe = { lightspeedUniverseId: "00000000-0000-4000-8000-000000000001", gatewayUrl } as Parameters<typeof engineClientFor>[1];
+      expect(() => engineClientFor(context, universe)).toThrow();
+      expect(() => deploymentClientFor(context, gatewayUrl)).toThrow();
+    }
+  });
+
+});

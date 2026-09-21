@@ -30,6 +30,7 @@ export const universes = pgTable("universes", {
 });
 
 export type UniverseSetupState = {
+  principalId?: string;
   keyPrefix?: string;
   grantId?: string;
   serverId?: string;

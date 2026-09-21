@@ -10,16 +10,16 @@ export interface ServerEnv {
   adminEmail: string | null;
   adminPassword: string | null;
   github: { clientId: string; clientSecret: string } | null;
-  /// Lightspeed gateway RPC endpoint (trusted-header mode). Unused since the
-  /// provisioner was dropped; serves the universe editing passthrough (U3).
+  /// Authenticated Lightspeed gateway RPC endpoint.
   lightspeedApiUrl: string | null;
+  /// Authenticated Platform service credential; canonical user mapping follows separately.
+  lightspeedApiKey?: string | null;
   /// Public Streamable HTTP endpoint installed by the Configurator setup.
   configuratorMcpUrl: string | null;
   /// Permit the installed Configurator MCP record to reach a private network.
   /// This is intended for explicit local/internal deployments only.
   configuratorMcpAllowPrivateNetwork: boolean;
-  /// Use the Runtime's loopback-only trusted-header MCP path. Development and
-  /// tests may enable this; deployed configuration leaves it disabled.
+  /// Retired configuration field, always false; true is rejected at startup.
   configuratorMcpInternalTrustedHeader: boolean;
   /// Internal connector health endpoints aggregated for platform admins.
   channelsHealthUrls: string[];
@@ -38,6 +38,13 @@ function required(name: string): string {
 }
 
 export function loadEnv(): ServerEnv {
+  if (booleanEnv("LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER", false)) {
+    throw new Error("Configurator trusted-header authentication is retired; use a scoped service key");
+  }
+  const lightspeedApiKey = process.env.LIGHTSPEED_PLATFORM_API_KEY ?? null;
+  if (lightspeedApiKey !== null && !/^lsk_[A-Za-z0-9_-]+$/.test(lightspeedApiKey)) {
+    throw new Error("LIGHTSPEED_PLATFORM_API_KEY must be a Lightspeed bearer key");
+  }
   const github =
     process.env.LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID &&
     process.env.LIGHTSPEED_PLATFORM_GITHUB_CLIENT_SECRET
@@ -56,6 +63,7 @@ export function loadEnv(): ServerEnv {
     adminPassword: process.env.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD ?? null,
     github,
     lightspeedApiUrl: process.env.LIGHTSPEED_API_URL ?? null,
+    lightspeedApiKey,
     configuratorMcpUrl: process.env.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL ?? null,
     configuratorMcpAllowPrivateNetwork: booleanEnv(
       "LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK",

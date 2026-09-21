@@ -20,7 +20,7 @@ afterEach(async () => {
 describe("Streamable HTTP configurator", () => {
   it("initializes, lists all tools, and forwards a universe call in api-key mode", async () => {
     const upstream: UpstreamRequest[] = [];
-    const server = await start("api-key", fakeUpstream(upstream));
+    const server = await start("authenticated", fakeUpstream(upstream));
     const { client, transport } = mcpClient(server, { authorization: "Bearer lsk_alpha" });
 
     await client.connect(transport as Parameters<typeof client.connect>[0]);
@@ -55,16 +55,18 @@ describe("Streamable HTTP configurator", () => {
     await client.close();
   });
 
-  it("keeps concurrent trusted-header universes isolated", async () => {
+  it("keeps concurrent authenticated universes isolated", async () => {
     const upstream: UpstreamRequest[] = [];
-    const server = await start("trusted-header", fakeUpstream(upstream, 5));
+    const server = await start("authenticated", fakeUpstream(upstream, 5));
     const a = mcpClient(server, {
       "x-lightspeed-universe": universeA,
-      "x-lightspeed-principal": "user:alice",
+      authorization: "Bearer lsk_service",
+      "x-lightspeed-principal": "user:00000000-0000-4000-8000-000000000003",
     });
     const b = mcpClient(server, {
       "x-lightspeed-universe": universeB,
-      "x-lightspeed-principal": "service_account:bridge",
+      authorization: "Bearer lsk_service",
+      "x-lightspeed-principal": "user:00000000-0000-4000-8000-000000000004",
     });
 
     await Promise.all([
@@ -87,13 +89,13 @@ describe("Streamable HTTP configurator", () => {
     const callB = calls.find(
       (call) => call.headers.get("x-lightspeed-universe") === universeB,
     );
-    expect(callA?.headers.get("x-lightspeed-principal")).toBe("user:alice");
-    expect(callB?.headers.get("x-lightspeed-principal")).toBe("service_account:bridge");
+    expect(callA?.headers.get("x-lightspeed-principal")).toBe("user:00000000-0000-4000-8000-000000000003");
+    expect(callB?.headers.get("x-lightspeed-principal")).toBe("user:00000000-0000-4000-8000-000000000004");
     await Promise.all([a.client.close(), b.client.close()]);
   });
 
   it("authenticates protocol-only requests upstream and rejects invalid credentials", async () => {
-    const server = await start("api-key", async (_input, init) => {
+    const server = await start("authenticated", async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as { id: number | string };
       return jsonResponse({
         id: body.id,

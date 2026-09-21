@@ -34,7 +34,7 @@ pub(super) fn auth_grant_import_draft(
         provider_id: params.provider_id.unwrap_or_else(|| "static".to_owned()),
         provider_kind: auth::AuthProviderKind::StaticBearer,
         exposure: registry_auth_grant_exposure(params.exposure),
-        principal: crate::gateway::principal::request_principal(),
+        principal: crate::gateway::principal::request_principal()?,
         display_name: params.display_name,
         subject_hint: params.subject_hint,
         scopes: params.scopes,
@@ -255,7 +255,6 @@ fn api_principal_kind(value: auth::PrincipalKind) -> api::PrincipalKind {
     match value {
         auth::PrincipalKind::User => api::PrincipalKind::User,
         auth::PrincipalKind::ServiceAccount => api::PrincipalKind::ServiceAccount,
-        auth::PrincipalKind::UniverseDefault => api::PrincipalKind::UniverseDefault,
     }
 }
 

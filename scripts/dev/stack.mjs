@@ -76,6 +76,21 @@ for (const preparation of plan.preparations) {
   runChecked(preparation.name, preparation.command, preparation.args, preparation.env);
 }
 
+if (plan.profile === "full") {
+  const runtime = plan.processes.find((p) => p.name === "runtime");
+  if (runtime.env.LIGHTSPEED_AUTH_MODE === "authenticated" && !runtime.env.LIGHTSPEED_PLATFORM_API_KEY) {
+    console.log("[prepare] explicit local development identity and service key");
+    const result = spawnSync("cargo", ["run", "-p", "temporal-server", "--", "identity", "development", "--universe-id", runtime.env.LIGHTSPEED_PG_UNIVERSE_ID], {
+      cwd: repoRoot, env: { ...runtime.env, RUST_LOG: "off" }, encoding: "utf8",
+    });
+    if (result.status !== 0) throw new Error(`development identity initialization failed: ${result.stderr}`);
+    const credential = JSON.parse(result.stdout);
+    for (const processPlan of plan.processes) {
+      processPlan.env.LIGHTSPEED_PLATFORM_API_KEY = credential.secret;
+    }
+  }
+}
+
 try {
   for (const processPlan of plan.processes) {
     if (processPlan.startAfter) {
@@ -171,11 +186,7 @@ function createPlan(profile, sourceEnv) {
   const defaultConfiguratorMcpUrl = `http://127.0.0.1:${configuratorPort}/mcp`;
   const configuratorMcpUrl =
     sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL ?? defaultConfiguratorMcpUrl;
-  const configuratorInternalTrustedHeader =
-    sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER ??
-    (profile === "full" && !sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL
-      ? "true"
-      : "false");
+  const configuratorInternalTrustedHeader = "false";
   const runtimePort = addressPort(sourceEnv.LIGHTSPEED_GATEWAY_BIND, 18_080);
   const temporalAddress =
     sourceEnv.TEMPORAL_ADDRESS ?? `127.0.0.1:${sourceEnv.TEMPORAL_PORT ?? "7233"}`;
@@ -183,7 +194,7 @@ function createPlan(profile, sourceEnv) {
   // names; the frontend-only loop is `npm run demo` (in-browser backend).
   const platformApiUrl = runtimeRpc;
   const runtimeAuthMode =
-    sourceEnv.LIGHTSPEED_AUTH_MODE ?? (profile === "full" ? "trusted-header" : "single");
+    sourceEnv.LIGHTSPEED_AUTH_MODE ?? (profile === "full" ? "authenticated" : "single");
   // Local environment daemon: a directly attached `lightspeed-envd` on the
   // developer machine (no provider; registered as an external environment).
   const envdEnabled =
@@ -419,9 +430,12 @@ function parseConnectors(value) {
 }
 
 // Provider tokens are leased from the core (`auth/grants/lease`), so a
-// Telegram connector needs no local credential. WhatsApp keeps its Baileys
+// Telegram connector leases provider credentials from core. WhatsApp keeps its Baileys
 // session on disk and seals media locators with a deployment key.
 function validateConnectorEnvironment(connectors, env) {
+  if (connectors.length > 0 && !env.LIGHTSPEED_CONNECTOR_API_KEY?.trim()) {
+    throw new TypeError("development connectors require LIGHTSPEED_CONNECTOR_API_KEY with scoped capabilities");
+  }
   if (!connectors.includes("whatsapp")) return;
   const missing = ["LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY"].filter(
     (name) => !env[name]?.trim(),

@@ -11,8 +11,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiService as _, BotEventDocument, BotEventMedia,
-    BotEventOutcome, BotTriggerKind, BotTriggerSpec, ChannelAccountId, ChannelProvider, ChatScope,
+    AgentApiError, AgentApiErrorKind, BotEventDocument, BotEventMedia, BotEventOutcome,
+    BotTriggerKind, BotTriggerSpec, ChannelAccountId, ChannelProvider, ChatScope,
     ContextEntryKindView, ContextMessageRoleView, RunView, ToolItemStatus, WorkflowEndpointInput,
 };
 use bots::{
@@ -305,6 +305,7 @@ fn reconcile_runs(runs: &[RunView], run_id: &str) -> ChatReconcileDeliveryResult
 
 pub async fn reconcile_delivery(
     api: &GatewayAgentApi,
+    workflow_id: &str,
     request: ChatReconcileDeliveryRequest,
 ) -> Result<ChatReconcileDeliveryResult, ActivityError> {
     if request.outcome == Some(BotEventOutcome::RunFailed) {
@@ -318,10 +319,13 @@ pub async fn reconcile_delivery(
         });
     };
     let run = match api
-        .read_run(api::RunReadParams {
-            session_id: request.session_id,
-            run_id: run_id.clone(),
-        })
+        .read_run_for_channel(
+            workflow_id,
+            api::RunReadParams {
+                session_id: request.session_id,
+                run_id: run_id.clone(),
+            },
+        )
         .await
     {
         Ok(response) => Some(response.result.run),

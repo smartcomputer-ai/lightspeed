@@ -608,7 +608,10 @@ mod tests {
             provider_id: "static".to_owned(),
             provider_kind: AuthProviderKind::StaticBearer,
             exposure: crate::AuthGrantExposure::Brokered,
-            principal: PrincipalRef::universe_default(),
+            principal: PrincipalRef {
+                kind: crate::PrincipalKind::ServiceAccount,
+                id: Some("test-service".into()),
+            },
             display_name: None,
             subject_hint: None,
             scopes: Vec::new(),
@@ -861,7 +864,10 @@ mod tests {
                 provider_id: "crm".to_owned(),
                 provider_kind: AuthProviderKind::McpOAuth,
                 exposure: crate::AuthGrantExposure::Brokered,
-                principal: PrincipalRef::universe_default(),
+                principal: PrincipalRef {
+                    kind: crate::PrincipalKind::ServiceAccount,
+                    id: Some("test-service".into()),
+                },
                 display_name: None,
                 subject_hint: None,
                 scopes: Vec::new(),

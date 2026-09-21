@@ -3073,7 +3073,10 @@ fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
         provider_id: "static".to_owned(),
         provider_kind: AuthProviderKind::StaticBearer,
         exposure: AuthGrantExposure::Brokered,
-        principal: PrincipalRefView::default(),
+        principal: PrincipalRefView {
+            kind: PrincipalKind::ServiceAccount,
+            id: Some("test-service".into()),
+        },
         display_name: None,
         subject_hint: None,
         scopes: Vec::new(),
@@ -3345,6 +3348,11 @@ fn test_deployment_universe(universe_id: &str) -> DeploymentUniverseView {
 
 fn test_deployment_api_key(key_prefix: &str) -> DeploymentApiKeyView {
     DeploymentApiKeyView {
+        scope: AccessScope::Universe {
+            universe_id: uuid::Uuid::nil(),
+        },
+        principal_id: uuid::Uuid::nil(),
+        created_by: uuid::Uuid::nil(),
         key_prefix: key_prefix.to_owned(),
         display_name: Some("coding agent".to_owned()),
         created_at_ms: 10,
@@ -3624,9 +3632,9 @@ async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
             id: RequestId::Number(1),
             method: METHOD_DEPLOYMENT_API_KEYS_CREATE.to_owned(),
             params: Some(json!({
-                "universeId": universe_id,
+                "scope": { "kind": "universe", "universeId": universe_id },
                 "displayName": "coding agent",
-                "principal": { "kind": "serviceAccount", "id": "agent-1" }
+                "principalId": "00000000-0000-4000-8000-000000000001"
             })),
         },
     )
@@ -3640,7 +3648,7 @@ async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
         JsonRpcRequest {
             id: RequestId::Number(2),
             method: METHOD_DEPLOYMENT_API_KEYS_LIST.to_owned(),
-            params: Some(json!({ "universeId": universe_id })),
+            params: Some(json!({ "scope": { "kind": "universe", "universeId": universe_id } })),
         },
     )
     .await;
@@ -3654,7 +3662,7 @@ async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
             id: RequestId::Number(3),
             method: METHOD_DEPLOYMENT_API_KEYS_REVOKE.to_owned(),
             params: Some(json!({
-                "universeId": universe_id,
+                "scope": { "kind": "universe", "universeId": universe_id },
                 "keyPrefix": "lsk_ab12cd34"
             })),
         },

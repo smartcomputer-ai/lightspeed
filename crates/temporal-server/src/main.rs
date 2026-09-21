@@ -89,21 +89,31 @@ enum UniverseCommand {
 enum ApiKeyCommand {
     #[command(about = "Mint an API key for a universe; the secret prints exactly once")]
     Create {
+        #[arg(
+            long,
+            required_unless_present = "deployment",
+            conflicts_with = "deployment"
+        )]
+        universe_id: Option<uuid::Uuid>,
         #[arg(long)]
-        universe_id: uuid::Uuid,
-        /// Display name shown in listings.
+        deployment: bool,
         #[arg(long)]
         name: Option<String>,
-        /// Principal stamped onto grants created through this key:
-        /// `user:<id>` or `service_account:<id>`. Defaults to the universe
-        /// default principal.
+        /// Canonical principal authenticated by this key.
         #[arg(long)]
-        principal: Option<String>,
+        principal: uuid::Uuid,
+        /// Active issuing actor (trusted host administration).
+        #[arg(long)]
+        actor_principal: uuid::Uuid,
     },
     #[command(about = "List API keys (prefixes only; secrets are never stored)")]
     List,
     #[command(about = "Revoke an API key by its display prefix")]
-    Revoke { key_prefix: String },
+    Revoke {
+        key_prefix: String,
+        #[arg(long)]
+        actor_principal: uuid::Uuid,
+    },
 }
 
 #[derive(Clone, Debug, Args)]
@@ -302,22 +312,22 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             universe_id,
             name,
             principal,
+            actor_principal,
+            deployment: _,
         } => {
-            if !store_pg::universe_exists(stores.pool(), universe_id).await? {
-                anyhow::bail!(
-                    "unknown universe: {universe_id} (create it first: server universe create)"
-                );
-            }
-            let principal = parse_principal_arg(principal.as_deref())?;
-            let minted = auth::mint_api_key(universe_id, principal, name, now_ms);
+            let scope = universe_id.map_or(access::AccessScope::Deployment, |universe_id| {
+                access::AccessScope::Universe { universe_id }
+            });
+            let minted = auth::mint_api_key(scope, principal, actor_principal, name, now_ms);
             api_keys
                 .create_api_key(auth::CreateApiKey {
+                    authority_scope: access::AccessScope::Deployment,
                     key_hash: minted.key_hash,
                     record: minted.record.clone(),
                 })
                 .await?;
             println!("key_prefix: {}", minted.record.key_prefix);
-            println!("universe_id: {universe_id}");
+            println!("scope: {}", serde_json::to_string(&scope)?);
             // The one and only time the secret leaves the process.
             println!("secret: {}", minted.secret.expose());
             Ok(())
@@ -332,15 +342,34 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                 println!(
                     "{}  {}  {}  {}",
                     record.key_prefix,
-                    record.universe_id,
+                    serde_json::to_string(&record.scope)?,
                     status,
                     record.display_name.as_deref().unwrap_or("-"),
                 );
             }
             Ok(())
         }
-        ApiKeyCommand::Revoke { key_prefix } => {
-            if api_keys.revoke_api_key(&key_prefix, now_ms).await? {
+        ApiKeyCommand::Revoke {
+            key_prefix,
+            actor_principal,
+        } => {
+            let record = api_keys
+                .list_api_keys()
+                .await?
+                .into_iter()
+                .find(|key| key.key_prefix == key_prefix)
+                .ok_or_else(|| anyhow::anyhow!("unknown api key prefix"))?;
+            if api_keys
+                .revoke_managed_key(
+                    actor_principal,
+                    access::AccessScope::Deployment,
+                    record.scope,
+                    &key_prefix,
+                    now_ms,
+                )
+                .await?
+                .is_some()
+            {
                 println!("revoked: {key_prefix}");
                 Ok(())
             } else {
@@ -348,31 +377,6 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             }
         }
     }
-}
-
-/// Parse `--principal user:<id>` / `service_account:<id>`; `None` is the
-/// universe-default principal.
-fn parse_principal_arg(value: Option<&str>) -> anyhow::Result<auth::PrincipalRef> {
-    let Some(value) = value else {
-        return Ok(auth::PrincipalRef::universe_default());
-    };
-    let (kind, id) = value
-        .split_once(':')
-        .ok_or_else(|| anyhow::anyhow!("--principal must be user:<id> or service_account:<id>"))?;
-    let kind = match kind {
-        "user" => auth::PrincipalKind::User,
-        "service_account" => auth::PrincipalKind::ServiceAccount,
-        other => {
-            anyhow::bail!("invalid principal kind {other:?}; expected user or service_account")
-        }
-    };
-    if id.is_empty() {
-        anyhow::bail!("--principal id must not be empty");
-    }
-    Ok(auth::PrincipalRef {
-        kind,
-        id: Some(id.to_owned()),
-    })
 }
 
 /// Compose the selected roles in one process over one universe registry,

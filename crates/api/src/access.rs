@@ -13,11 +13,13 @@ pub use ::access::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "requirement", rename_all = "snake_case")]
 pub enum MethodAccess {
-    /// An active, authenticated caller with universe membership.
+    /// A current universe role permitting the action, with authoritative ownership where required.
     Universe(UniverseAction),
     /// An explicitly scoped service capability; service kind is insufficient.
     Service(ServiceCapability),
     DeploymentAdmin,
+    /// Authenticated identity; key ownership and issuance rules apply in the handler.
+    CredentialManagement,
     /// Deployment discovery serves both administration and scoped connectors.
     DeploymentAdminOrCapability(ServiceCapability),
 }
@@ -27,7 +29,9 @@ impl MethodAccess {
         match self {
             Self::Universe(_) => MethodScope::Universe,
             Self::Service(_) => MethodScope::Service,
-            Self::DeploymentAdmin | Self::DeploymentAdminOrCapability(_) => MethodScope::Deployment,
+            Self::CredentialManagement
+            | Self::DeploymentAdmin
+            | Self::DeploymentAdminOrCapability(_) => MethodScope::Deployment,
         }
     }
 }

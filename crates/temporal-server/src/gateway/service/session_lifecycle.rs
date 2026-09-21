@@ -250,6 +250,7 @@ impl GatewayAgentApi {
         auto_reject_approvals: bool,
         trusted_workflow_tools: Option<ManagedSessionWorkflowTools>,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+        self.authorize_method(METHOD_SESSION_START, None).await?;
         let SessionStartParams {
             session_id,
             display_name,
@@ -279,6 +280,19 @@ impl GatewayAgentApi {
             }
             None => self.allocate_session_id(),
         };
+        let resource = ResourceRef::Session(session_id.as_str().to_owned());
+        if self
+            .access_store()
+            .ownership(self.universe_id(), &resource)
+            .await
+            .map_err(|e| AgentApiError::internal(e.to_string()))?
+            .is_some()
+        {
+            self.authorize_method(METHOD_SESSION_CONFIG_PUT, Some(resource))
+                .await?;
+        } else {
+            self.reserve_resource(resource).await?;
+        }
         let admitted = workflow_tools
             .as_ref()
             .map(|declaration| {

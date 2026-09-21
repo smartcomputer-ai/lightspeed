@@ -418,7 +418,10 @@ mod tests {
             provider_id: "static".to_owned(),
             provider_kind: AuthProviderKind::StaticBearer,
             exposure: auth::AuthGrantExposure::Brokered,
-            principal: auth::PrincipalRef::universe_default(),
+            principal: auth::PrincipalRef {
+                kind: auth::PrincipalKind::ServiceAccount,
+                id: Some("test-service".into()),
+            },
             display_name: None,
             subject_hint: None,
             scopes: Vec::new(),

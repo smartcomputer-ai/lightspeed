@@ -273,7 +273,10 @@ fn start_request(client_id: &auth::OAuthClientId, redirect_uri: &str) -> StartAu
         scopes: None,
         audience: None,
         grant_exposure: AuthGrantExposure::Brokered,
-        principal: PrincipalRef::universe_default(),
+        principal: PrincipalRef {
+            kind: auth::PrincipalKind::ServiceAccount,
+            id: Some("test-service".into()),
+        },
     }
 }
 

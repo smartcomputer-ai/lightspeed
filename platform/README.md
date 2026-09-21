@@ -254,3 +254,8 @@ and manifest keys stay stable). The connector host serves the providers named
 by `LIGHTSPEED_CONNECTOR_PROVIDERS` for every account the core reports; see
 `connectors/README.md`. The release manifest records one digest for each
 image.
+
+Runtime calls use `LIGHTSPEED_PLATFORM_API_KEY`; connector hosts use their own
+`LIGHTSPEED_CONNECTOR_API_KEY`. The runtime must use `authenticated` mode.
+Platform's existing login and membership checks remain in place pending the
+canonical user mapping cutover. See [authentication and access](../docs/documentation/deployment/authentication-and-tenancy.md).

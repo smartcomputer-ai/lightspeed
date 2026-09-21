@@ -555,7 +555,10 @@ fn test_auth_grant_record(
         provider_id: "static".to_owned(),
         provider_kind,
         exposure: auth::AuthGrantExposure::Brokered,
-        principal: auth::PrincipalRef::universe_default(),
+        principal: auth::PrincipalRef {
+            kind: auth::PrincipalKind::ServiceAccount,
+            id: Some("test-service".into()),
+        },
         display_name: None,
         subject_hint: None,
         scopes: Vec::new(),
@@ -2345,7 +2348,10 @@ fn auth_flow_views_carry_derived_status() {
         provider_id: "crm".to_owned(),
         provider_kind: auth::AuthProviderKind::McpOAuth,
         grant_exposure: auth::AuthGrantExposure::Brokered,
-        principal: auth::PrincipalRef::universe_default(),
+        principal: auth::PrincipalRef {
+            kind: auth::PrincipalKind::ServiceAccount,
+            id: Some("test-service".into()),
+        },
         state_hash: auth::state_hash("state-1"),
         pkce_verifier_secret: auth::SecretId::new("authsec_pkce"),
         redirect_uri: "http://127.0.0.1:18080/auth/callback".to_owned(),

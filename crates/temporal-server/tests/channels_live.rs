@@ -182,19 +182,23 @@ where
     // The account is created before the connector worker so the queue name
     // is known; every test uses one fresh account.
     let account_id = ChannelAccountId::new(unique("tg"));
-    api.create_channel_account(ChannelAccountCreateParams {
-        account: ChannelAccountInput {
-            account_id: account_id.clone(),
-            document: ChannelAccountDocument {
-                provider: ChannelProvider::new("telegram"),
-                provider_account_id: unique("bot"),
-                display_name: "Live Telegram".to_owned(),
-                credential_grant_id: None,
-                settings: ChannelAccountSettings::default(),
-                enabled: true,
+    let context = support::live::local_request_context().await?;
+    temporal_server::gateway::principal::with_request_context(
+        context.clone(),
+        api.create_channel_account(ChannelAccountCreateParams {
+            account: ChannelAccountInput {
+                account_id: account_id.clone(),
+                document: ChannelAccountDocument {
+                    provider: ChannelProvider::new("telegram"),
+                    provider_account_id: unique("bot"),
+                    display_name: "Live Telegram".to_owned(),
+                    credential_grant_id: None,
+                    settings: ChannelAccountSettings::default(),
+                    enabled: true,
+                },
             },
-        },
-    })
+        }),
+    )
     .await?;
     let connector = FakeConnector::default();
     let connector_queue =
@@ -230,12 +234,15 @@ where
         .map(|_| ())
     };
     tokio::pin!(workers);
-    let body = body(Live {
-        api: api.clone(),
-        client: client.clone(),
-        connector: connector.clone(),
-        account_id: account_id.clone(),
-    });
+    let body = temporal_server::gateway::principal::with_request_context(
+        context,
+        body(Live {
+            api: api.clone(),
+            client: client.clone(),
+            connector: connector.clone(),
+            account_id: account_id.clone(),
+        }),
+    );
     tokio::pin!(body);
     let result = tokio::select! {
         workers_result = workers.as_mut() => Err(anyhow::anyhow!("workers stopped early: {workers_result:?}")),

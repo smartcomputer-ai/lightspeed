@@ -5,12 +5,10 @@ memberships, scoped role assignments, and explicit service capabilities.
 `store-pg::PgAccessStore` persists them. Platform login credentials and external
 identity mappings remain separate from these effective authorization facts.
 
-This foundation is available through host administration commands. **The runtime
-HTTP gateway and Platform still use the authentication/access behavior described
-in [Authentication and access](authentication-and-tenancy.md).** Creating these
-records does not yet enable runtime role enforcement, personal session privacy,
-or API-key offboarding. Method access metadata describes the requirements for
-that integration; clients must not treat the metadata as evidence of enforcement.
+The runtime gateway uses these records for scoped key authentication, current
+roles/actions, ownership, service capabilities and user assertions. Platform
+canonical user mapping remains pending. See
+[Authentication and access](authentication-and-tenancy.md) for the current boundary.
 
 ## Bootstrap and administer without the Platform
 
@@ -35,8 +33,7 @@ before disabling the initial one; bootstrap is not an emergency recovery command
 
 Universe creation requires an active DeploymentAdmin and atomically assigns that
 creator the universe Admin role. Retrying an existing universe does not assign
-ownership or change its slug. Existing Platform/RPC creation paths are unchanged
-until they acquire trusted core principal context.
+ownership or change its slug. Authenticated runtime universe creation uses the same creator assignment.
 
 `identity apply` accepts one typed `AccessChange` JSON file. For example:
 
@@ -78,7 +75,7 @@ separate `auth/grants/*` resource.
 ## Authority and transaction boundaries
 
 Viewer, Contributor, Operator, and Admin are universe roles. DeploymentAdmin is a
-separate deployment role and supplies no implicit universe membership. The initial
+separate deployment role and supplies no implicit universe membership. The enforced
 role matrix distinguishes creating work, controlling owned work, operating shared
 resources, and managing access. In particular, controlling a session requires
 ownership even for Admin; Operator/Admin may stop another session. Ownership
@@ -109,3 +106,10 @@ identity records retain their management provenance.
 These guarantees cover the core store and its host administration entry points.
 They do not yet cover gateway request admission, streams, running sessions, bot
 standing authority, or external effects.
+
+## Authenticated request boundary
+
+The gateway now uses these records for key authentication, membership admission,
+service capabilities, and authenticated user assertions. See
+[authentication and access](authentication-and-tenancy.md) for key issuance,
+cutover from legacy keys, and remaining action/ownership enforcement work.

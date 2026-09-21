@@ -111,7 +111,10 @@ where
     let shutdown_bots = bots.shutdown_handle();
     let workers = async { tokio::try_join!(sessions_worker.run(), bots.run()).map(|_| ()) };
     tokio::pin!(workers);
-    let body = body(api.clone(), client.clone());
+    let body = temporal_server::gateway::principal::with_request_context(
+        support::live::local_request_context().await?,
+        body(api.clone(), client.clone()),
+    );
     tokio::pin!(body);
     let result = tokio::select! {
         workers_result = workers.as_mut() => Err(anyhow::anyhow!("workers stopped early: {workers_result:?}")),

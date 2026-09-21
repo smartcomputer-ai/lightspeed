@@ -1179,33 +1179,43 @@ Permanently terminates live session workflows, deletes external blob objects, an
 - Params: `DeploymentUniverseDeleteParams`
 - Result: `AgentApiOutcome<DeploymentUniverseDeleteResponse>`
 
+### `deployment/identity/apply`
+
+**Apply identity and access changes**
+
+Applies a canonical identity change with current actor permissions and durable access auditing.
+
+- Access: `{"kind":"deployment_admin_or_capability","requirement":"manage_identity"}`
+- Params: `AccessChange`
+- Result: `AgentApiOutcome<AccessChangeResult>`
+
 ### `deployment/api-keys/create`
 
-**Create a universe API key**
+**Create a scoped API key**
 
-Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
+Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"credential_management"}`
 - Params: `DeploymentApiKeyCreateParams`
 - Result: `AgentApiOutcome<DeploymentApiKeyCreateResponse>`
 
 ### `deployment/api-keys/list`
 
-**List universe API keys**
+**List scoped API keys**
 
-Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
+Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"credential_management"}`
 - Params: `DeploymentApiKeyListParams`
 - Result: `AgentApiOutcome<DeploymentApiKeyListResponse>`
 
 ### `deployment/api-keys/revoke`
 
-**Revoke a universe API key**
+**Revoke a scoped API key**
 
-Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.
+Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"credential_management"}`
 - Params: `DeploymentApiKeyRevokeParams`
 - Result: `AgentApiOutcome<DeploymentApiKeyRevokeResponse>`
 

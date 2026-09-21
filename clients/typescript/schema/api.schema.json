@@ -374,6 +374,23 @@
         }
       ]
     },
+    "AgentApiOutcomeOfAccessChangeResult": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/AccessChangeResult"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfAuthClientCreateResponse": {
       "properties": {
         "notifications": {
@@ -8066,22 +8083,19 @@
           "description": "Human-readable purpose shown in key-management interfaces.",
           "type": "string"
         },
-        "principal": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/PrincipalRefView"
-            }
-          ],
-          "description": "Audit principal applied to grants and flows created through this key.\nThis does not grant platform/deployment authority."
-        },
-        "universeId": {
+        "principalId": {
+          "description": "Canonical identity authenticated by this credential.",
+          "format": "uuid",
           "type": "string"
+        },
+        "scope": {
+          "$ref": "#/definitions/AccessScope"
         }
       },
       "required": [
-        "universeId",
+        "scope",
         "displayName",
-        "principal"
+        "principalId"
       ],
       "type": "object"
     },
@@ -8103,12 +8117,12 @@
     },
     "DeploymentApiKeyListParams": {
       "properties": {
-        "universeId": {
-          "type": "string"
+        "scope": {
+          "$ref": "#/definitions/AccessScope"
         }
       },
       "required": [
-        "universeId"
+        "scope"
       ],
       "type": "object"
     },
@@ -8129,12 +8143,12 @@
         "keyPrefix": {
           "type": "string"
         },
-        "universeId": {
-          "type": "string"
+        "scope": {
+          "$ref": "#/definitions/AccessScope"
         }
       },
       "required": [
-        "universeId",
+        "scope",
         "keyPrefix"
       ],
       "type": "object"
@@ -8151,12 +8165,16 @@
       "type": "object"
     },
     "DeploymentApiKeyView": {
-      "description": "Non-secret API-key metadata. The owning universe is supplied by every\nrequest and intentionally omitted from entries so list responses cannot\nbecome a deployment-wide tenant catalog by accident.",
+      "description": "Non-secret scoped key metadata, including authenticated identity and issuer.",
       "properties": {
         "createdAtMs": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "createdBy": {
+          "format": "uuid",
+          "type": "string"
         },
         "displayName": {
           "type": [
@@ -8175,6 +8193,10 @@
             "null"
           ]
         },
+        "principalId": {
+          "format": "uuid",
+          "type": "string"
+        },
         "revokedAtMs": {
           "format": "uint64",
           "minimum": 0,
@@ -8182,10 +8204,16 @@
             "integer",
             "null"
           ]
+        },
+        "scope": {
+          "$ref": "#/definitions/AccessScope"
         }
       },
       "required": [
         "keyPrefix",
+        "scope",
+        "principalId",
+        "createdBy",
         "createdAtMs"
       ],
       "type": "object"
@@ -11780,7 +11808,7 @@
     "MethodAccess": {
       "oneOf": [
         {
-          "description": "An active, authenticated caller with universe membership.",
+          "description": "A current universe role permitting the action, with authoritative ownership where required.",
           "properties": {
             "kind": {
               "const": "universe",
@@ -11817,6 +11845,19 @@
           "properties": {
             "kind": {
               "const": "deployment_admin",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Authenticated identity; key ownership and issuance rules apply in the handler.",
+          "properties": {
+            "kind": {
+              "const": "credential_management",
               "type": "string"
             }
           },
@@ -12426,8 +12467,7 @@
     "PrincipalKind": {
       "enum": [
         "user",
-        "serviceAccount",
-        "universeDefault"
+        "serviceAccount"
       ],
       "type": "string"
     },
@@ -12440,14 +12480,12 @@
           ]
         },
         "kind": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/PrincipalKind"
-            }
-          ],
-          "default": "universeDefault"
+          "$ref": "#/definitions/PrincipalKind"
         }
       },
+      "required": [
+        "kind"
+      ],
       "type": "object"
     },
     "PrincipalStatus": {
