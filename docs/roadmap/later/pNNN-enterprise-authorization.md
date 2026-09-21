@@ -20,11 +20,15 @@ coexist in one universe. SSO/provisioning connects identities to this model.
 | --- | --- |
 | Principal | Deployment-wide user or service identity, granted authority through bindings. |
 | Group | Deployment-wide membership managed locally or through an enterprise directory. |
-| Universe | Tenant/resource boundary with membership bindings, policy, and defaults. |
-| Resource grant | Permission to read, use, control, share, or administer a resource. Roles bundle these actions. |
+| Universe | Tenant/resource boundary with role assignments, policy, and defaults. |
+| Access policy | Determines who may read, use, control, share, or administer a resource. Roles bundle these permissions. |
 | Execution binding | Stable session execution identity, distinct from its audience and individual requesters. |
 | Execution authority | Bounded, revocable authorization for a run and its delegated work. |
 | Approval | An additional condition on an authorized operation, with a separately entitled reviewer. |
+
+Use qualified binding names for attachments and execution identities, and role
+assignment for assigning roles. Credential grants refer to `auth/grants/*`;
+authorization uses access policies and resource permissions.
 
 Every principal has a stable Lightspeed identity, either local or linked to an
 enterprise directory. Directory linkage does not supply downstream credentials:
@@ -40,14 +44,22 @@ installation hosting unrelated organizations may need separate identity realms.
 
 | Layer | Owns |
 | --- | --- |
-| Platform | Authentication, SSO/provisioning, authoritative identity lifecycle and group membership, administration and sharing UI. |
-| Runtime authorization subsystem | Universe bindings, resource grants, execution authorizations, and their persistence/contracts. |
+| Platform | Authentication credentials/sessions, external identity mapping, SSO/provisioning integration, user profiles, administration and sharing UI. |
+| Core authorization subsystem | Canonical principal IDs and effective status, groups/memberships, role assignments, service capabilities, resource access policies, execution authorizations, and their persistence/contracts. |
 | Runtime gateway and adapters | Enforcement across reads, streams, commands, tools, credentials, and background work. |
 | Deterministic engine | Recorded identity/authorization facts needed for execution and replay; no directory or policy I/O. |
 
-Platform supplies a versioned runtime projection of IDs, active status,
-memberships, and revocation information. Offboarding needs acknowledged
-propagation or bounded freshness; synchronization details remain open.
+Platform, headless administration, and provisioning integrations use the same core
+identity/access contracts. Core owns the effective local directory; no separate
+Platform authorization projection is required. External directories may remain
+authoritative for imported membership, so reliable synchronization and offboarding
+propagation from those sources remain necessary.
+
+Services authenticate explicitly. Asserting a user requires a scoped capability;
+operations then use that user's permissions without adding the asserting service's
+privileges. Preserve both identities in attribution. API keys authenticate a bound
+principal within a scope and do not confer independent authority. Internal event
+provenance identifies a component and cause; it is not an authorization bypass.
 
 ## Decided: universe roles and resource defaults
 
@@ -62,18 +74,23 @@ Operators usually maintain shared bots; contributors usually interact with them.
 This does not prohibit contributors from creating their own bots using permitted
 resources. Profiles remain session templates and cannot confer resource access.
 
+DeploymentAdmin and trusted service capabilities are distinct from universe roles.
+Deployment administration uses `deployment/*`; Operator remains the universe role.
+Headless bootstrap and audited recovery of orphaned universes must be supported.
+Administrative role assignment does not automatically grant private-content access.
+
 Model connections, MCP servers, environments, workspaces, secrets/integrations,
 and bots are permissioned resources. They normally inherit universe role rights;
 restricted resource policies replace the corresponding inherited allowance.
 Model-provider configuration remains distinct from other integrations even when
-both use the same underlying secret/grant storage.
+both use the same underlying secret/credential-grant storage.
 
 Using a configured connection includes brokered use of its bound credential;
 raw secret access and configuration are separate permissions. Operators manage
 shared resources within assigned scope; configuration changes cannot bypass
-resource grants. The role does not grant access to restricted personal resources,
+resource access policies. The role does not grant access to restricted personal resources,
 authority to widen their audience, or permission to change universe membership,
-execution eligibility, deployment bindings, or its own grant-management limits.
+execution eligibility, deployment bindings, or its own access-management limits.
 Managing a shared template does not grant control of personal sessions created
 from it. Owners retain the sharing rights below; administrative content access is
 separately authorized.
@@ -82,7 +99,7 @@ separately authorized.
 
 Start with one default service binding per universe. Bind its principal, directly
 or through a group, to the universe's default resource-use permissions; individual
-resource grants are exceptions, not mandatory setup. Sharing group membership
+resource policies are exceptions, not mandatory setup. Sharing group membership
 does not itself grant permission to act as another principal.
 
 Allow additional named service bindings with different resource scopes. Session
@@ -100,13 +117,13 @@ Keep three permissions distinct:
 
 - **Use a service binding:** create/control sessions within its approved scope.
   This intentionally delegates the binding's approved capabilities. Resource
-  checks use that service authority; callers need not duplicate those grants on
-  their personal principal. Session control permissions still apply.
+  checks use that service authority; callers need not duplicate those permissions
+  on their personal principal. Session control permissions still apply.
 - **Invoke a bot:** use its configured service capability without automatically
   gaining permission to configure the bot or create arbitrary sessions as its
   service identity. Invocation-only bindings are possible.
 - **Assign resources:** admins govern scope and eligible callers; operators may
-  assign resources within delegated grant-management scope. Granting a binding
+  assign resources within delegated access-management scope. Granting a binding
   another resource also delegates its use to that binding's permitted callers,
   so the assignment must be authorized for that audience. Resource configuration
   or personal use permission alone does not grant this authority.
@@ -175,8 +192,9 @@ subject to the execution limits below.
 Shared bots and bots accepting other people's requests use service
 identities and organizational authorization. Offboarding their creator/configuring
 operator removes that person's access but does not revoke the bot's authority.
-Revoking the service binding or its required grants blocks further affected work;
-creator attribution is distinct from the ongoing source of authority.
+Revoking the service binding, required resource permissions, or credential grants
+blocks further affected work; creator attribution is distinct from the ongoing
+source of authority.
 
 A trigger's source never selects the execution identity. Instructions, profiles,
 trigger configuration, manual event submission, and replay are control surfaces
@@ -192,7 +210,8 @@ defaults; activity/event views must respect restricted session content.
 Illustrative operations, not proposed public API signatures:
 
 ```text
-RequestContext = universe + authenticated actor + authentication reference
+RequestContext = target_scope + acting_principal + authentication_reference
+AuthenticationReference = credential_reference + authenticated_principal
 UniverseExecutionPolicy = default_service_binding + allowed_bindings
                         + personal_execution_enabled
 ServiceBinding = principal + universe + permitted_callers + resource_scope
@@ -210,10 +229,10 @@ authorize_effect(authority, action, resource) -> decision
 ```
 
 Derive run identity from the session binding and actor identity from trusted
-authentication. Persist admitted scope/provenance; live policy can narrow or
-revoke authority. The authorizing actor is distinct from the personal/service
-authorization whose continued validity the run depends on. Adapters check policy
-and record facts needed for replay.
+authentication or an authorized service assertion. Persist admitted scope and
+provenance; live policy can narrow or revoke authority. The authorizing actor is
+distinct from the personal/service authorization whose continued validity the run
+depends on. Adapters check policy and record facts needed for replay.
 
 Important boundaries:
 
@@ -231,13 +250,15 @@ Important boundaries:
 - **Evidence:** attribute requests, permission changes, approvals, and outcomes
   to actors and execution identities, preserving attribution after offboarding.
   Administrative/access audit records need a lifecycle independent of session
-  deletion, without retaining secret values.
+  deletion, without retaining secret values. Sensitive reads and exceptional
+  private-content access require auditable access records beyond domain events.
 
 ## Implementation sequence
 
 1. [Identity foundation and universe authorization](../p176-identity-and-universe-authorization.md):
-   local identity propagation, runtime-owned universe roles, consistent request
-   authorization, access revocation, and attributable audit records.
+   core-owned local identity and roles, authenticated callers, consistent request
+   authorization, ownership checks, access revocation, and attributable audit
+   records.
 2. Implement private/shared sessions and their content together with one complete
    authorized execution path, including stable bindings and bounded run authority.
 3. Extend resource restrictions and execution/delegation enforcement across tools,
@@ -251,12 +272,12 @@ Product surfaces should make this understandable: an **Access** panel,
 ## Questions to resolve
 
 - Which external credential/delegation mechanisms are needed first, and what
-  narrower grant-management scope should operators receive?
+  narrower access-management scope should operators receive?
 - For later personal event automation, how do we distinguish task inputs from
   another person's control requests?
-- Are resource grants and groups sufficient initially, or is a project-level
+- Are access policies and groups sufficient initially, or is a project-level
   collaboration scope needed?
-- How do directory changes reach runtime enforcement, and when is offboarding
+- How do external directory changes reach core, and when is offboarding
   considered complete?
 - How is the separate private-content access permission assigned and exercised,
   including audited emergency access?

@@ -24,81 +24,114 @@ authorization authoritative for universe access.
 
 | Layer | Responsibility in this slice |
 | --- | --- |
-| Platform | Local login, deployment-wide users/service principals and groups, identity lifecycle, and administration UI. |
-| Runtime authorization | Minimal identity projection, universe role bindings, permission evaluation, and access audit records. |
+| Platform | Login credentials/sessions, external identity mapping, SSO/provisioning integration, user profiles, and administration UI. |
+| Core authorization subsystem | Canonical principal IDs and effective status, groups/memberships, role assignments, service capabilities, permission evaluation, and access audit records. |
 | Runtime gateway/shared services | Trusted request context and enforcement across every exposed access path. |
 | Persistence/API | Runtime records through `store-pg`; public contracts and method classifications through `api`. |
 
-Platform owns identity and group membership. Runtime owns universe role bindings;
-Platform administers those through runtime contracts rather than keeping a second
-authoritative role system. The deterministic engine performs no identity or
-policy I/O. Exact authorization module/crate placement remains an implementation
-decision.
+Platform, CLI, and future provisioning integrations use the same core identity
+and access contracts. There is no separate Platform-owned authorization directory
+to project into runtime. External directories may own imported membership; their
+connectors still need reliable synchronization into these effective local records.
+The deterministic engine performs no identity or policy I/O. Exact module/crate
+placement and tables remain implementation decisions.
 
 ## Scope
 
-1. **Local identity and projection.** Give users and services stable principal
-   IDs. Support local groups and active/disabled status. Supply a minimal,
-   versioned projection to runtime, including membership changes and revocation.
-   Directory synchronization can later use the same boundary.
+1. **Identity and administration.** Store stable user/service principals, local
+   groups, memberships, and effective active/disabled status in core. Provide
+   Platform administration and headless principal/group/role commands. CLI or
+   installer bootstrap creates the first deployment administrator. Development
+   `single` mode uses an explicit local principal with universe and deployment
+   administration rights; authenticated mode never falls back to it. Remove
+   `PrincipalKind::UniverseDefault`; missing actor context is an error.
 
-2. **Universe role bindings.** Bind principals/groups to Viewer, Contributor,
-   Operator, and Admin roles. Start with coarse action bundles following the
-   parent proposal: read, use agent work, configure resources, and govern access.
-   Ownership-dependent actions such as managing one's own work need an ownership
-   check or remain unavailable until it exists; a coarse role must not grant
-   control of everyone else's work. Individual resource grants are deferred.
+2. **Roles and recovery.** Assign Viewer, Contributor, Operator, and Admin within
+   universes; distinguish DeploymentAdmin and scoped service capabilities.
+   Universe creation atomically assigns its creator as Admin. Guard deliberate
+   removal of the last usable administrator, accounting for group membership,
+   without preventing identity disablement. Deployment administrators can repair
+   orphaned universe assignments through an audited operation. Authenticated
+   self-queries expose only the caller's accessible universes/effective rights.
 
-3. **Trusted caller context.** Platform requests, API keys, and internal services
-   carry explicit authenticated identities. Missing identity never silently
-   becomes `universe_default`. A configured agent execution identity is distinct
-   from the caller; this slice does not add user-selectable execution bindings.
-   Keys authenticate their bound principal and do not grant independent authority
-   after that principal loses access.
+3. **Authenticated services and keys.** Replace bare `trusted-header` trust with
+   authenticated service keys; retain development `single` and authenticated
+   modes. Platform may assert an active user only with a scoped `assert_user`
+   capability. Check the user's permissions without adding Platform's service
+   privileges, and attribute both identities. Connectors and Configurator receive
+   only the scope/capabilities they need. Credential leasing, inbound admission,
+   and identity administration require explicit capabilities, never service kind.
 
-4. **Consistent enforcement.** Explicitly classify every public API method and
-   reject unclassified operations. Runtime checks the applicable permission on
-   every entry path, including reads, lists, streams, mutations, and configuration.
-   Shared services enforce contextual checks where method classification is
-   insufficient. The universe Operator role, deployment administration, and
-   trusted integration capabilities are separate. Service principal kind alone
-   must not authorize credential leasing or privileged service methods.
+4. **Ownership and attribution.** Record trusted `created_by` for sessions, bots,
+   and profiles, and actor facts for creation, run admission, control, and config
+   changes. Contributors control their own sessions. Operator/Admin roles allow
+   stopping other users' sessions, while submission/steering requires ownership;
+   they retain normal rights over their own work. Bot-owned sessions follow bot
+   management; delegated children follow their authorized controller lineage.
+   Provenance or a fork relationship alone does not grant control. Shared writers
+   arrive with session access policies in the next slice. Actor facts do not
+   become mutable policy in the engine; their event/envelope placement stays open.
 
-5. **Administration and audit.** Provide a small Platform interface for local
-   groups and universe role assignments, using runtime permissions to present
-   available actions. Attribute requests and administrative/permission changes
-   to authenticated actors. Keep access audit records independent of session
-   deletion, preserve historical attribution after offboarding, and exclude
-   credentials and session contents from access logs.
+5. **Complete enforcement.** Make `access` mandatory in API method declarations,
+   covering scope plus authenticated/action/ownership/capability requirements.
+   Export it in the manifest; an omitted classification is a compile error.
+   Gateway checks and contextual shared-service checks cover direct/internal
+   calls, lists, reads, streams, and mutations. A method matrix establishes
+   classification coverage, not proof that ownership or each entry path is safe.
+   Daemon endpoints retain explicit daemon authentication and environment-state
+   checks rather than inheriting user/service API admission.
+
+6. **Audit and UI.** Add a small groups/roles UI driven by core permissions.
+   Persist audit records for identity, role, key, capability changes, denials,
+   and deployment operations; retain actor attribution on other domain actions
+   and traces. Audit survives session deletion and offboarding without storing
+   credentials or session contents. Later sensitive reads and exceptional
+   private-content access must support durable access auditing too.
+
+Keys authenticate a principal within a universe or deployment scope; scope limits
+the principal's current authority. Members may mint their own universe keys;
+minting for a service principal requires universe Admin and authority to manage
+that principal in scope. Universe Admin cannot mint keys for deployment/integration
+principals. Deployment-scoped keys require DeploymentAdmin and authority over the
+bound principal. Record key creator separately from bound principal. CLI key
+creation requires an explicit principal. Key scope supplies no permissions itself.
+
+Internal events carry `Internal { component, cause }` attribution and a reference
+to the admitted configuration. Internal actors hold no roles and are not an
+authorization bypass. For existing automation in this slice, checked configuration
+admission is the temporary authority boundary; internal service paths must be
+explicit. Standing execution authority and effect-time revocation follow later.
 
 ## Contract sketch
 
 Illustrative shapes, not final wire signatures:
 
 ```text
-IdentityProjection = revision + principals(id, kind, status)
-                   + groups + memberships
-UniverseRoleBinding = universe + subject(principal | group) + role
-RequestContext = authenticated_actor + authentication_reference
-               + target_scope(deployment | universe)
+Principal = id + kind(user | service) + effective_status
+RoleAssignment = scope(deployment | universe) + subject(principal | group) + role
+AuthenticationReference = credential_reference + authenticated_principal
+RequestContext = acting_principal + authentication_reference + target_scope
+Actor = Principal(id) | Internal(component, cause)
 
-apply_identity_projection(change) -> acknowledged_revision
 authorize(context, action, resource) -> decision + reason + policy_reference
 ```
 
-Derive caller context from trusted authentication, never ordinary request fields.
-Projection updates and role administration are privileged operations themselves.
-Keep authentication credentials, role bindings, and future execution authority
-as separate concepts.
+The acting principal is the authenticated caller or a user asserted through an
+authorized service. Identity/access administration is itself privileged. Internal
+attribution is distinct from authenticated request context and future execution
+authority. Credential references identify a key or explicit local-development
+authentication, never secret values. Explicit parameters versus fallible task-local
+context remains open.
 
 ## Revocation boundary
 
-Once an identity/group change or role removal is acknowledged, subsequent access
-decisions must observe it, including API-key requests. Acknowledgement must cover
-enforcement caches/replicas, not merely receipt of an update. Existing read
-streams and long polls must recheck access before further delivery or stop within
-an explicit bounded interval; they cannot retain authorization indefinitely.
-The propagation mechanism and bound remain implementation decisions.
+Start without authorization caches: key, status, membership, and permission
+checks read authoritative committed state. A committed local change is visible
+to subsequent access decisions. External directory changes still require delivery
+and reconciliation; moving local ownership into core does not remove that work.
+Existing streams/long polls must recheck before delivery or stop within a declared
+bound. Current transcript delivery uses bounded long polls; admission alone does
+not reauthorize an in-flight response. Exact queries and the bound stay open.
 
 This revokes access to the API and content. Stopping already admitted execution,
 revoking standing bot authority, and cancelling external processes belong to the
@@ -107,13 +140,16 @@ revoke an independent service identity.
 
 ## Implementation order
 
-1. Define identity projection, role binding, and authorization contracts and their
-   persistence; decide the initial method/action mapping.
-2. Make caller propagation explicit and apply runtime checks across gateway and
-   shared-service entry points, including deployment/service capabilities.
-3. Connect Platform administration to runtime bindings and remove competing
-   Platform-only authorization decisions.
-4. Complete acknowledged revocation, stream handling, and durable access audit.
+1. Rename deployment-facing `operator/*`, scope/types, and consumers to
+   `deployment/*` in a separate mechanical commit, regenerating contracts. Keep
+   Operator as the universe role; qualified binding names need no rename.
+2. Define core identity/access contracts, persistence, bootstrap, and the initial
+   method/action mapping. Reserve credential grant terminology for `auth/grants/*`;
+   use access policy/resource permission for authorization.
+3. Introduce service authentication, key scopes, explicit contexts, and ownership
+   facts; enforce checks across gateway and shared-service entry points.
+4. Connect Platform and CLI administration to core records, removing competing
+   Platform-owned authorization state. Complete revocation, streams, and audit.
 
 ## Boundary and follow-up
 
