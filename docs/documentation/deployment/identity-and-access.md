@@ -7,7 +7,7 @@ identity mappings remain separate from these effective authorization facts.
 
 The runtime gateway uses these records for scoped key authentication, current
 roles/actions, ownership, service capabilities and user assertions. Platform
-canonical user mapping remains pending. See
+accounts map to these principals and its requests assert the signed-in user. See
 [Authentication and access](authentication-and-tenancy.md) for the current boundary.
 
 ## Bootstrap and administer without the Platform
@@ -103,13 +103,35 @@ or session content, and survives universe deletion and identity disablement.
 Universe-scoped assignments cascade away on universe deletion; canonical service
 identity records retain their management provenance.
 
-These guarantees cover the core store and its host administration entry points.
-They do not yet cover gateway request admission, streams, running sessions, bot
-standing authority, or external effects.
+These guarantees cover core storage, gateway admission, shared runtime services
+and Platform administration. Response-time stream checks, running-session
+revocation, bot standing authority and external effects remain follow-ups.
 
 ## Authenticated request boundary
 
 The gateway now uses these records for key authentication, membership admission,
 service capabilities, and authenticated user assertions. See
 [authentication and access](authentication-and-tenancy.md) for key issuance,
-cutover from legacy keys, and remaining action/ownership enforcement work.
+canonical keys, core action/ownership enforcement, and current stream-revocation limitations.
+
+## Platform directory access
+
+`deployment/identity/self` accepts a scope and returns only the acting user's
+current rights and accessible universes, limited by the key scope. It accepts no
+other user selector. `deployment/identity/directory` requires administration of
+the requested scope (or explicit deployment directory provisioning authority).
+Universe administrators can select deployment-wide principals/groups, but see
+only that universe's assignments and memberships of its assigned groups.
+Deployment administration can read the full directory; this grants no content access.
+
+`deployment/identity/apply` authorizes each typed change in core. Universe Admins
+may assign/revoke roles in their universe and create universe-managed services.
+They cannot edit deployment groups, global identities or capability assignments.
+Group changes can affect many universes and remain deployment administration.
+All query and mutation handlers check the credential ceiling and revalidate
+captured authentication; missing context is never a service fallback.
+
+The Platform CLI exposes `identity list` and `identity apply '<AccessChange JSON>'`
+through these same records. Its member commands use Viewer, Contributor, Operator
+and Admin assignments; deleting one assignment leaves independent direct/group
+assignments intact.

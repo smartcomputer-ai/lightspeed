@@ -1,3 +1,4 @@
+import { requestIdentity } from "./runtime-client.js";
 import type { Db, DbHandle } from "@lightspeed/platform-db";
 import type { Auth, Session } from "./auth.js";
 import type { ServerEnv } from "./env.js";
@@ -14,7 +15,6 @@ export type ApiVariables = {
   session: Session;
 };
 
-export function isPlatformAdmin(session: Session): boolean {
-  const role = session.user.role;
-  return role !== null && role !== undefined && role.split(",").includes("admin");
+export function isPlatformAdmin(): boolean {
+  return requestIdentity.getStore()?.roles.includes("deployment_admin") ?? false;
 }

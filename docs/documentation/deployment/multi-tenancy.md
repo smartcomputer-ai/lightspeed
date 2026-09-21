@@ -126,29 +126,21 @@ boundaries. Files in a universe's VFS and files on a machine remain separate.
 
 ## Access inside a universe
 
-The Platform maintains people, organizations, memberships, and roles. It can
-give one user access to Acorn and Cedar while allowing another into only
-Acorn. Platform administrators can manage all universes. Its authenticated
-user directory exposes names, email addresses, and user IDs across the
-installation for account selection; each universe does not have an isolated
-identity directory.
+The core identity directory owns deployment-wide principals and groups, with
+explicit universe role assignments. Platform owns login and external mappings;
+every interactive runtime call asserts the mapped user through an authenticated
+service. DeploymentAdmin supplies no universe membership or session ownership.
+Universe administrators can assign Viewer, Contributor, Operator and Admin to
+people or groups. The directory is deployment-wide, not a separate identity realm
+inside each universe.
 
-The runtime does not reproduce the Platform membership checks. A request
-already admitted to ordinary universe methods is not further restricted by
-per-user resource ACLs. A principal attached to a credential or request does
-not make its sessions, files, or grants private from other callers authorized
-for those methods in the same universe.
-
-There are additional checks for service-scoped methods, which require a
-service-account principal in multitenant modes. This is a distinction between
-ordinary and trusted service access, rather than a general permissions system
-for individual resources.
-
-Do not assume every Platform request carries the signed-in user's principal
-through to the runtime. Some paths record user identity explicitly, including
-API-key creation and authored message origins; ordinary Platform proxy calls
-can use the default runtime principal. The current behavior does not provide
-a complete user-attributed audit trail for all runtime operations.
+Gateway and shared-service enforcement evaluates current roles, explicit service
+capabilities and immutable ownership. Contributor control requires ownership;
+Operator/Admin may stop another person's session but cannot steer it. Existing
+content is readable by universe members. Private-session policies and individual
+resource isolation remain follow-ups, so principal attribution alone is not a
+privacy boundary. Lists and subsequent requests see committed revocations;
+response-time reauthorization of in-flight reads remains separate work.
 
 ## Keep Platform and runtime records aligned
 

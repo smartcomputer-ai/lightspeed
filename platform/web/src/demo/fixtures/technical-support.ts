@@ -673,7 +673,7 @@ function seedChannels(universe: UniverseState): void {
 function seedMembers(store: DemoStore, universe: UniverseState): void {
   universe.members.push(
     member(store, universe, "user-jonas", "admin", ago(47 * DAY_MS)),
-    member(store, universe, "user-priya", "member", ago(32 * DAY_MS)),
+    member(store, universe, "user-priya", "contributor", ago(32 * DAY_MS)),
   );
   universe.apiKeys.push({
     keyPrefix: "lsk_ts_4c9e",
@@ -2329,7 +2329,7 @@ export function seedTechnicalSupport(store: DemoStore): void {
     slug: TECHNICAL_SUPPORT_SLUG,
     name: "Technical Support",
     lightspeedUniverseId: LIGHTSPEED_UNIVERSE_ID,
-    role: "owner",
+    role: "admin",
     createdAt: agoIso(49 * DAY_MS),
     responder,
   });

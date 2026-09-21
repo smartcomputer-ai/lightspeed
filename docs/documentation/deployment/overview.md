@@ -3,7 +3,7 @@
 A Lightspeed deployment combines the agent runtime with durable infrastructure
 and, optionally, the Platform web app. The runtime executes sessions, bots, and
 channel workflows. Temporal coordinates that work, PostgreSQL stores the
-product's records, and the Platform handles people, universe membership, and
+product's records and canonical access directory, and the Platform handles login and
 the browser interface.
 
 The first deployment can run all runtime roles in one process. Separate those
@@ -16,7 +16,7 @@ roles when you need to scale or operate them independently.
 | `lightspeed-server` | JSON-RPC gateway, environment gateway, and Temporal workers for sessions, bots, and channels | Every hosted Lightspeed installation |
 | Temporal | Durable workflow execution and coordination | The hosted runtime |
 | Runtime PostgreSQL database | Session events, blobs, workspaces, credentials, profiles, bots, channels, and environment records | The hosted runtime |
-| Platform server and web app | Sign-in, users, memberships, universe management, and browser access to the runtime | The full web product |
+| Platform server and web app | Sign-in, user profiles, core directory administration, universe management, and browser access | The full web product |
 | Platform PostgreSQL database | Authentication and Platform-owned records | The Platform |
 | S3-compatible object storage | Stores blobs larger than the 64 KiB inline limit | Required for larger payloads; small blobs remain in PostgreSQL |
 | Configurator MCP | Exposes Lightspeed management operations to an MCP client | Managing Lightspeed through MCP |
@@ -57,7 +57,7 @@ service capabilities and credential scope. Bare tenant headers never authenticat
 | `authenticated` | Canonical bearer principal; universe or deployment credential ceiling | Platform, connectors, and direct clients |
 | `single` | Explicit local development principal in one configured universe | Private local development |
 
-Platform canonical user mapping and private-session access policies remain pending.
+Platform calls assert canonical users; private-session access policies remain pending.
 See the [access guide](authentication-and-tenancy.md) for the exact boundary and
 [Multitenancy](multi-tenancy.md) for isolation and shared infrastructure.
 

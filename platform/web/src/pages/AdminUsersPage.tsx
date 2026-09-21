@@ -1,3 +1,4 @@
+import { api } from "@/api";
 import { ReadError } from "@/components/read-error";
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -39,6 +40,8 @@ interface UserRow {
   name: string;
   email: string;
   role?: string | null;
+  directRole?: string;
+  status?: "active" | "disabled";
   createdAt?: string | Date;
 }
 
@@ -46,13 +49,7 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
   const users = useQuery({
     queryKey: ["admin", "users"],
     queryFn: async () => {
-      const result = await authClient.admin.listUsers({
-        query: { limit: 200, sortBy: "createdAt" },
-      });
-      if (result.error) {
-        throw new Error(result.error.message ?? "failed to load users");
-      }
-      return result.data.users as UserRow[];
+      return (await api<{ users: UserRow[] }>("GET", "/api/v1/admin/users")).users;
     },
   });
 
@@ -145,6 +142,7 @@ function EditUserDialog({
   const [role, setRole] = useState("user");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [status, setStatus] = useState<"active" | "disabled">("active");
   const [error, setError] = useState<string | null>(null);
 
   const open = user !== null;
@@ -152,9 +150,10 @@ function EditUserDialog({
 
   useEffect(() => {
     if (!user) return;
+    setStatus(user.status ?? "active");
     setName(user.name);
     setEmail(user.email);
-    setRole(user.role?.split(",").includes("admin") ? "admin" : "user");
+    setRole(user.directRole ?? (user.role === "admin" ? "admin" : "user"));
     setPassword("");
     setConfirm("");
     setError(null);
@@ -181,7 +180,7 @@ function EditUserDialog({
       const data: Record<string, unknown> = {};
       const nextName = name.trim();
       const nextEmail = email.trim().toLowerCase();
-      const currentRole = user.role?.split(",").includes("admin") ? "admin" : "user";
+      const currentRole = user.directRole ?? (user.role === "admin" ? "admin" : "user");
       if (nextName !== user.name) data.name = nextName;
       if (nextEmail !== user.email.toLowerCase()) {
         data.email = nextEmail;
@@ -189,28 +188,14 @@ function EditUserDialog({
         data.emailVerified = true;
       }
       if (!isCurrentUser && role !== currentRole) data.role = role;
+      if (status !== (user.status ?? "active")) data.status = status;
 
       if (Object.keys(data).length > 0) {
-        const result = await authClient.admin.updateUser({ userId: user.id, data });
-        if (result.error) {
-          throw new Error(result.error.message ?? "failed to update user");
-        }
+        await api("PATCH", `/api/v1/admin/users/${user.id}`, data);
       }
 
       if (password) {
-        const result = await authClient.admin.setUserPassword({
-          userId: user.id,
-          newPassword: password,
-        });
-        if (result.error) {
-          throw new Error(result.error.message ?? "failed to set password");
-        }
-        const revoked = await authClient.admin.revokeUserSessions({ userId: user.id });
-        if (revoked.error) {
-          throw new Error(
-            `Password changed, but sessions could not be signed out: ${revoked.error.message ?? "unknown error"}`,
-          );
-        }
+        await api("POST", `/api/v1/admin/users/${user.id}/password`, { newPassword: password });
       }
     },
     onSuccess: () => {
@@ -227,14 +212,14 @@ function EditUserDialog({
     onError: (err) => setError(err.message),
   });
 
-  const currentRole = user?.role?.split(",").includes("admin") ? "admin" : "user";
+  const currentRole = user?.directRole ?? (user?.role === "admin" ? "admin" : "user");
   const hasProfileChanges = Boolean(
     user &&
       (name.trim() !== user.name ||
         email.trim().toLowerCase() !== user.email.toLowerCase() ||
         (!isCurrentUser && role !== currentRole)),
   );
-  const hasChanges = hasProfileChanges || Boolean(password);
+  const hasChanges = hasProfileChanges || Boolean(password) || status !== (user?.status ?? "active");
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -287,7 +272,7 @@ function EditUserDialog({
               </FieldDescription>
             </Field>
             <Field>
-              <FieldLabel htmlFor="edit-user-role">Platform role</FieldLabel>
+              <FieldLabel htmlFor="edit-user-role">Direct deployment role</FieldLabel>
               <Select
                 value={role}
                 onValueChange={(value) => setRole(value as string)}
@@ -303,8 +288,7 @@ function EditUserDialog({
               </Select>
               {isCurrentUser && (
                 <FieldDescription>
-                  Another platform admin must change your role, preventing accidental
-                  self-lockout.
+                  Direct roles are separate from roles inherited through groups.
                 </FieldDescription>
               )}
             </Field>
@@ -344,6 +328,7 @@ function EditUserDialog({
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
+          {user && <label className="flex gap-2 text-sm"><input type="checkbox" checked={status === "active"} onChange={(e) => setStatus(e.target.checked ? "active" : "disabled")} />Account active (core identity)</label>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={close}>
               Cancel
@@ -385,16 +370,7 @@ function CreateUserDialog({
 
   const create = useMutation({
     mutationFn: async () => {
-      const result = await authClient.admin.createUser({
-        name,
-        email,
-        password,
-        role: role as "user" | "admin",
-      });
-      if (result.error) {
-        throw new Error(result.error.message ?? "failed to create user");
-      }
-      return result.data;
+      return api("POST", "/api/v1/admin/users", { name, email, password, role });
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });

@@ -7,32 +7,13 @@ import type {
   BotFilterTestParams,
   BotPutParams,
   BotTriggerPutParams,
-  BotTriggerView,
 } from "@lightspeed-ai/agent-client";
 import { Hono } from "hono";
 import type { AppContext, ApiVariables } from "../context.js";
 import { engineClientFor, withGateway } from "./gateway.js";
 import { universeForSession } from "./universes.js";
 
-/// Universe-scoped passthroughs to the core `bots/*` API: the
-/// platform checks membership, the core owns the records, controllers,
-/// Temporal Schedules, and the event log. Reads use member access so every
-/// member can see the roster; writes require the owner/admin org role.
-///
-/// The one platform-side concern left is secret redaction: the core
-/// answers a universe-scoped call with the full trigger view (ingest
-/// paths with URL tokens, pairing codes), and only the platform knows the
-/// caller's org role, so trigger reads strip those fields for
-/// non-managing members.
-
-function canManage(role: string): boolean {
-  return role === "owner" || role === "admin" || role === "platform-admin";
-}
-
-export function redactTriggerView(trigger: BotTriggerView): BotTriggerView {
-  const { ingestPath: _ingestPath, pairingCode: _pairingCode, ...rest } = trigger;
-  return rest as BotTriggerView;
-}
+// The runtime enforces current user permissions and redacts trigger secrets.
 
 async function jsonBody(c: {
   req: { json: () => Promise<unknown> };
@@ -51,7 +32,7 @@ export function botRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   app.get("/:id/bots", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -63,7 +44,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/bots", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -79,7 +60,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/bots/:botId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -91,7 +72,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.put("/:id/bots/:botId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -111,7 +92,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/bots/:botId/close", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -123,7 +104,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/bots/:botId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -135,7 +116,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/bots/:botId/state", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -149,7 +130,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/bots/:botId/sessions/:sessionId/rotate", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -164,7 +145,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/bots/:botId/triggers", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -175,13 +156,13 @@ export function botRoutes(ctx: AppContext) {
       });
       const triggers = response.result.triggers ?? [];
       return c.json({
-        triggers: canManage(access.role) ? triggers : triggers.map(redactTriggerView),
+        triggers: triggers,
       });
     });
   });
 
   app.get("/:id/bots/:botId/triggers/:triggerId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -193,13 +174,13 @@ export function botRoutes(ctx: AppContext) {
       });
       const trigger = response.result.trigger;
       return c.json({
-        trigger: canManage(access.role) ? trigger : redactTriggerView(trigger),
+        trigger: trigger,
       });
     });
   });
 
   app.put("/:id/bots/:botId/triggers/:triggerId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -220,7 +201,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/bots/:botId/triggers/:triggerId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -235,7 +216,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/bots/:botId/events", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -255,7 +236,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/bots/:botId/events/replay", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -274,7 +255,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/bots/:botId/events", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -295,7 +276,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/bots/:botId/events/:seq", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -314,7 +295,7 @@ export function botRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/bots/:botId/filters/test", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }

@@ -8,7 +8,7 @@ import { schema } from "@lightspeed/platform-db";
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";
 import { parseBody } from "../http.js";
-import { engineClientFor, deploymentClientFor, withGateway } from "./gateway.js";
+import { deploymentClientFor, withGateway } from "./gateway.js";
 
 const metadataSchema = z.record(z.string(), z.string()).optional();
 const providerPutSchema = z.object({
@@ -36,7 +36,7 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   app.use("*", async (c, next) => {
-    if (!isPlatformAdmin(c.get("session"))) {
+    if (!isPlatformAdmin()) {
       return c.json({ error: "platform admin required" }, 403);
     }
     await next();
@@ -64,9 +64,9 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
         return { ...base, bindings: [], error: "universe lives on another deployment" };
       }
       try {
-        const response = await engineClientFor(ctx, row).call(
-          "environments/provider-bindings/list",
-          {},
+        const response = await deploymentClientFor(ctx).call(
+          "deployment/environment-provider-bindings/list",
+          { universeId: row.lightspeedUniverseId },
         );
         return { ...base, bindings: response.result.bindings ?? [], error: null };
       } catch (error) {

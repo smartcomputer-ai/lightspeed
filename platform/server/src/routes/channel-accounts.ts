@@ -60,7 +60,7 @@ export function channelAccountAdminRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   app.get("/", async (c) => {
-    if (!isPlatformAdmin(c.get("session"))) {
+    if (!isPlatformAdmin()) {
       return c.json({ error: "platform admin required" }, 403);
     }
     return withGateway(c, async () => {
@@ -81,7 +81,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   app.get("/:id/channel-status", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -98,7 +98,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/channel-accounts", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -112,7 +112,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/channel-accounts", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -131,7 +131,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/channel-accounts/connect", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -202,7 +202,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/channel-accounts/:accountId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -216,7 +216,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.put("/:id/channel-accounts/:accountId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -236,7 +236,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/channel-accounts/:accountId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -250,7 +250,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/channel-pairings", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -265,7 +265,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/channel-pairings/:accountId/:chatId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }

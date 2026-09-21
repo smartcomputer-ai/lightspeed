@@ -1,3 +1,5 @@
+import { requestIdentity } from "../runtime-client.js";
+import type { EffectiveAccess } from "@lightspeed-ai/agent-client";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
@@ -21,7 +23,7 @@ describe("composer input origin", () => {
     const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer lsk_platform_fixture");
-      expect(new Headers(init.headers).has("x-lightspeed-principal")).toBe(false);
+      expect(new Headers(init.headers).get("x-lightspeed-principal")).toBe("user:11111111-1111-4111-8111-111111111111");
       expect(init.redirect).toBe("error");
       const rpc = JSON.parse(String(init.body));
       requests.push(rpc);
@@ -36,7 +38,7 @@ describe("composer input origin", () => {
     const app = new Hono<{ Variables: ApiVariables }>();
     app.use("*", async (c, next) => {
       c.set("session", { user: { id: "operator" } } as ApiVariables["session"]);
-      await next();
+      await requestIdentity.run({ principal: { id: "11111111-1111-4111-8111-111111111111" } } as EffectiveAccess, next);
     });
     app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedApiKey: "lsk_platform_fixture" } } as AppContext));
     const response = await app.request(path, {

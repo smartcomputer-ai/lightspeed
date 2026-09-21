@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { LightspeedRpcError } from "@lightspeed-ai/agent-client";
 import { schema } from "@lightspeed/platform-db";
 import {
@@ -12,104 +12,36 @@ import {
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";
 import { parseBody } from "../http.js";
-import { deploymentClientFor, withGateway } from "./gateway.js";
+import { engineClientFor, deploymentClientFor, withGateway } from "./gateway.js";
 
-const { universes, organization, member, user } = schema;
-
+const { universes, user } = schema;
 type UniverseRow = typeof universes.$inferSelect;
 
-/// Universe access for the current session: platform admins see everything;
-/// otherwise membership in the universe's organization is required, and
-/// mutations additionally require the owner/admin org role. `slug` is the
-/// org slug — the universe's immutable URL segment.
-async function universeForSession(
-  ctx: AppContext,
-  c: { get: (key: "session") => ApiVariables["session"] },
-  universeId: string,
-  write: boolean,
-): Promise<{ universe: UniverseRow; slug: string; role: string } | null> {
-  const [row] = await ctx.db
-    .select({ universe: universes, slug: organization.slug })
-    .from(universes)
-    .innerJoin(organization, eq(organization.id, universes.organizationId))
-    .where(eq(universes.id, universeId))
-    .limit(1);
-  if (!row) {
-    return null;
-  }
-  const slug = row.slug ?? "";
-  const session = c.get("session");
-  if (isPlatformAdmin(session)) {
-    return { universe: row.universe, slug, role: "platform-admin" };
-  }
-  const [membership] = await ctx.db
-    .select()
-    .from(member)
-    .where(
-      and(
-        eq(member.organizationId, row.universe.organizationId),
-        eq(member.userId, session.user.id),
-      ),
-    )
-    .limit(1);
-  if (!membership) {
-    return null;
-  }
-  if (write && membership.role !== "owner" && membership.role !== "admin") {
-    return null;
-  }
-  return { universe: row.universe, slug, role: membership.role };
+export function highestRole(roles: string[]): string | null {
+  return ["admin", "operator", "contributor", "viewer"].find((r) => roles.includes(r)) ?? null;
 }
 
-/// Creates the platform half of a universe: a better-auth organization
-/// (slug probed to a free one), owner membership for the caller, and the
-/// universe row linked to the given engine universe id. Shared by create
-/// (fresh engine id) and adopt (existing engine id).
-async function createUniverseRows(
+async function universeForSession(
   ctx: AppContext,
-  userId: string,
-  name: string,
-  baseSlug: string,
-  lightspeedUniverseId: string,
-) {
-  return await ctx.db.transaction(async (tx) => {
-    // Probe for a free slug (unique index is the backstop).
-    let slug = baseSlug;
-    for (let i = 2; ; i++) {
-      const [existing] = await tx
-        .select({ id: organization.id })
-        .from(organization)
-        .where(eq(organization.slug, slug))
-        .limit(1);
-      if (!existing) {
-        break;
-      }
-      slug = `${baseSlug}-${i}`;
-    }
-    const orgId = crypto.randomUUID();
-    await tx.insert(organization).values({
-      id: orgId,
-      name,
-      slug,
-      createdAt: new Date(),
-    });
-    await tx.insert(member).values({
-      id: crypto.randomUUID(),
-      organizationId: orgId,
-      userId,
-      role: "owner",
-      createdAt: new Date(),
-    });
-    const [universe] = await tx
-      .insert(universes)
-      .values({
-        organizationId: orgId,
-        lightspeedUniverseId,
-        name,
-      })
-      .returning();
-    return { ...universe!, slug, role: "owner" };
+  _c: { get: (key: "session") => ApiVariables["session"] },
+  universeId: string,
+): Promise<{ universe: UniverseRow; slug: string; role: string } | null> {
+  const [universe] = await ctx.db.select().from(universes).where(eq(universes.id, universeId)).limit(1);
+  if (!universe) return null;
+  const response = await deploymentClientFor(ctx).call("deployment/identity/self", {
+    scope: { kind: "universe", universeId: universe.lightspeedUniverseId },
   });
+  const role = highestRole(response.result.access.roles);
+  return role ? { universe, slug: universe.slug, role } : null;
+}
+
+async function createUniverseRows(ctx: AppContext, name: string, baseSlug: string, lightspeedUniverseId: string) {
+  for (let suffix = 1; ; suffix++) {
+    const slug = suffix === 1 ? baseSlug : `${baseSlug}-${suffix}`;
+    const [universe] = await ctx.db.insert(universes).values({ name, slug, lightspeedUniverseId })
+      .onConflictDoNothing({ target: universes.slug }).returning();
+    if (universe) return universe;
+  }
 }
 
 const adoptSchema = z.object({
@@ -129,36 +61,16 @@ const apiKeyCreateSchema = z.object({
 export function universeRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
-  app.get("/", async (c) => {
-    const session = c.get("session");
-    if (isPlatformAdmin(session)) {
-      // All universes; role is filled in where the admin happens to be a
-      // member (the switcher shows memberships, the admin area shows all).
-      const rows = await ctx.db
-        .select({ universe: universes, slug: organization.slug, role: member.role })
-        .from(universes)
-        .innerJoin(organization, eq(organization.id, universes.organizationId))
-        .leftJoin(
-          member,
-          and(
-            eq(member.organizationId, universes.organizationId),
-            eq(member.userId, session.user.id),
-          ),
-        );
-      return c.json(rows.map((r) => ({ ...r.universe, slug: r.slug, role: r.role })));
-    }
-    const rows = await ctx.db
-      .select({ universe: universes, slug: organization.slug, role: member.role })
-      .from(universes)
-      .innerJoin(organization, eq(organization.id, universes.organizationId))
-      .innerJoin(member, eq(member.organizationId, universes.organizationId))
-      .where(eq(member.userId, session.user.id));
-    return c.json(rows.map((r) => ({ ...r.universe, slug: r.slug, role: r.role })));
-  });
+  app.get("/", (c) => withGateway(c, async () => {
+    const self = await deploymentClientFor(ctx).call("deployment/identity/self", { scope: { kind: "deployment" } });
+    const rights = new Map(self.result.universes.map((r) => [r.scope.kind === "universe" ? r.scope.universeId : "", highestRole(r.roles)]));
+    const rows = await ctx.db.select().from(universes);
+    return c.json(rows.filter((r) => rights.has(r.lightspeedUniverseId) || isPlatformAdmin()).map((r) => ({ ...r, role: rights.get(r.lightspeedUniverseId) ?? null })));
+  }));
 
   app.post("/", async (c) => {
     const session = c.get("session");
-    if (!isPlatformAdmin(session)) {
+    if (!isPlatformAdmin()) {
       return c.json({ error: "platform admin required" }, 403);
     }
     const body = await parseBody(c, universeCreateSchema);
@@ -179,12 +91,11 @@ export function universeRoutes(ctx: AppContext) {
       });
       const created = await createUniverseRows(
         ctx,
-        session.user.id,
         input.name,
         baseSlug,
         lightspeedUniverseId,
       );
-      return c.json(created, 201);
+      return c.json({ ...created, role: "admin" }, 201);
     });
   });
 
@@ -195,7 +106,7 @@ export function universeRoutes(ctx: AppContext) {
   /// another deployment and are not checked here.
   app.get("/reconcile", async (c) => {
     const session = c.get("session");
-    if (!isPlatformAdmin(session)) {
+    if (!isPlatformAdmin()) {
       return c.json({ error: "platform admin required" }, 403);
     }
     return withGateway(c, async () => {
@@ -221,10 +132,10 @@ export function universeRoutes(ctx: AppContext) {
 
   /// Adopts an engine universe the platform has no row for: verifies it
   /// exists engine-side (fail closed on typos), then creates the platform
-  /// half. The caller becomes owner; engine data is untouched.
+  /// display entry. Core access assignments are unchanged.
   app.post("/adopt", async (c) => {
     const session = c.get("session");
-    if (!isPlatformAdmin(session)) {
+    if (!isPlatformAdmin()) {
       return c.json({ error: "platform admin required" }, 403);
     }
     const body = await parseBody(c, adoptSchema);
@@ -246,12 +157,11 @@ export function universeRoutes(ctx: AppContext) {
       });
       const created = await createUniverseRows(
         ctx,
-        session.user.id,
         input.name,
         slugify(input.name),
         input.lightspeedUniverseId,
       );
-      return c.json(created, 201);
+      return c.json({ ...created, role: null }, 201);
     });
   });
 
@@ -261,10 +171,11 @@ export function universeRoutes(ctx: AppContext) {
   /// idempotent; whatever data made it a phantom was already gone.
   app.post("/:id/engine", async (c) => {
     const session = c.get("session");
-    if (!isPlatformAdmin(session)) {
+    if (!isPlatformAdmin()) {
       return c.json({ error: "platform admin required" }, 403);
     }
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const [universe] = await ctx.db.select().from(universes).where(eq(universes.id, c.req.param("id"))).limit(1);
+    const access = universe ? { universe } : null;
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -278,16 +189,15 @@ export function universeRoutes(ctx: AppContext) {
   });
 
   /// Universe API-key management stays deployment-scoped engine-side: the platform
-  /// authenticates the human, enforces owner/admin access, and supplies the
-  /// engine universe id. The plaintext secret exists only in the create
+  /// asserts the human in the selected universe; core evaluates issuance/ownership. The plaintext secret exists only in the create
   /// response and is never persisted by the platform.
   app.get("/:id/api-keys", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
+      const response = await engineClientFor(ctx, access.universe).call(
         "deployment/api-keys/list",
         { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, },
       );
@@ -296,7 +206,7 @@ export function universeRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/api-keys", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -306,7 +216,7 @@ export function universeRoutes(ctx: AppContext) {
     }
     const session = c.get("session");
     return withGateway(c, async () => {
-      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
+      const response = await engineClientFor(ctx, access.universe).call(
         "deployment/api-keys/create",
         {
           scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
@@ -319,12 +229,12 @@ export function universeRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/api-keys/:keyPrefix", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
+      const response = await engineClientFor(ctx, access.universe).call(
         "deployment/api-keys/revoke",
         {
           scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
@@ -340,7 +250,7 @@ export function universeRoutes(ctx: AppContext) {
   /// archive → purge instead so platform state comes along.
   app.delete("/engine/:lightspeedUniverseId", async (c) => {
     const session = c.get("session");
-    if (!isPlatformAdmin(session)) {
+    if (!isPlatformAdmin()) {
       return c.json({ error: "platform admin required" }, 403);
     }
     const lightspeedUniverseId = c.req.param("lightspeedUniverseId");
@@ -361,15 +271,16 @@ export function universeRoutes(ctx: AppContext) {
   });
 
   /// Permanent removal: engine purge (deployment scope) then the platform
-  /// rows (org cascade deletes membership, universe, bindings). Gated to
+  /// metadata rows and setup installations. Gated to
   /// platform admins and archived universes — archive first, purge second,
   /// so no traffic races the purge.
   app.delete("/:id", async (c) => {
     const session = c.get("session");
-    if (!isPlatformAdmin(session)) {
+    if (!isPlatformAdmin()) {
       return c.json({ error: "platform admin required" }, 403);
     }
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const [universe] = await ctx.db.select().from(universes).where(eq(universes.id, c.req.param("id"))).limit(1);
+    const access = universe ? { universe } : null;
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -392,14 +303,14 @@ export function universeRoutes(ctx: AppContext) {
         }
       }
       await ctx.db
-        .delete(organization)
-        .where(eq(organization.id, access.universe.organizationId));
+        .delete(universes)
+        .where(eq(universes.id, access.universe.id));
       return c.json({ ok: true, purge });
     });
   });
 
   app.get("/:id", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -407,7 +318,7 @@ export function universeRoutes(ctx: AppContext) {
   });
 
   app.patch("/:id", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -415,111 +326,63 @@ export function universeRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    // Display name lives on both rows (org is the better-auth face of the
-    // universe); the slug never changes — links stay stable.
-    const updated = await ctx.db.transaction(async (tx) => {
-      if (body.data.name) {
-        await tx
-          .update(organization)
-          .set({ name: body.data.name })
-          .where(eq(organization.id, access.universe.organizationId));
-      }
-      const [row] = await tx
-        .update(universes)
-        .set(body.data)
-        .where(eq(universes.id, access.universe.id))
-        .returning();
-      return row;
-    });
+    if (access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
+    const [updated] = await ctx.db.update(universes).set(body.data).where(eq(universes.id, access.universe.id)).returning();
     return c.json({ ...updated, slug: access.slug, role: access.role });
   });
 
-  app.get("/:id/members", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), false);
-    if (!access) {
-      return c.json({ error: "not found" }, 404);
-    }
-    const rows = await ctx.db
-      .select({
-        id: member.id,
-        userId: member.userId,
-        role: member.role,
-        email: user.email,
-        name: user.name,
-        createdAt: member.createdAt,
-      })
-      .from(member)
-      .innerJoin(user, eq(user.id, member.userId))
-      .where(eq(member.organizationId, access.universe.organizationId));
-    return c.json(rows);
-  });
+  app.get("/:id/groups", (c) => withGateway(c, async () => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access || access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
+    const directory = await deploymentClientFor(ctx).call("deployment/identity/directory", { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId } });
+    return c.json(directory.result.groups);
+  }));
 
-  app.post("/:id/members", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
-    if (!access) {
-      return c.json({ error: "not found" }, 404);
-    }
+  app.get("/:id/members", (c) => withGateway(c, async () => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access || access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
+    const directory = await deploymentClientFor(ctx).call("deployment/identity/directory", {
+      scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
+    });
+    const accounts = await ctx.db.select().from(user);
+    return c.json(directory.result.roles.map((r) => {
+      const account = r.subject.kind === "principal" ? accounts.find((u) => u.corePrincipalId === r.subject.id) : undefined;
+      const subject = r.subject.kind === "principal" ? directory.result.principals.find((p) => p.id === r.subject.id) : directory.result.groups.find((g) => g.id === r.subject.id);
+      return { id: `${r.subject.kind}:${r.subject.id}:${r.role}`, userId: account?.id ?? r.subject.id,
+        subject: r.subject, role: r.role, name: account?.name ?? subject?.displayName ?? r.subject.id,
+        email: account?.email ?? (r.subject.kind === "group" ? "Group" : "Core principal"), createdAt: account?.createdAt ?? null };
+    }));
+  }));
+
+  app.post("/:id/members", (c) => withGateway(c, async () => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access || access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
     const body = await parseBody(c, memberAddSchema);
-    if (!body.ok) {
-      return body.response;
+    if (!body.ok) return body.response;
+    let subject: { kind: "principal" | "group"; id: string };
+    if (body.data.groupId) subject = { kind: "group", id: body.data.groupId };
+    else {
+      const [target] = await ctx.db.select().from(user).where(body.data.userId ? eq(user.id, body.data.userId) : eq(user.email, body.data.email!)).limit(1);
+      if (!target) return c.json({ error: "user not found" }, 404);
+      subject = { kind: "principal", id: target.corePrincipalId };
     }
-    const [target] = await ctx.db
-      .select({ id: user.id })
-      .from(user)
-      .where(
-        body.data.userId !== undefined
-          ? eq(user.id, body.data.userId)
-          : eq(user.email, body.data.email!),
-      )
-      .limit(1);
-    if (!target) {
-      return c.json({ error: "user not found" }, 404);
-    }
-    const [existing] = await ctx.db
-      .select({ id: member.id })
-      .from(member)
-      .where(
-        and(
-          eq(member.organizationId, access.universe.organizationId),
-          eq(member.userId, target.id),
-        ),
-      )
-      .limit(1);
-    if (existing) {
-      return c.json({ error: "already a member" }, 409);
-    }
-    const [created] = await ctx.db
-      .insert(member)
-      .values({
-        id: crypto.randomUUID(),
-        organizationId: access.universe.organizationId,
-        userId: target.id,
-        role: body.data.role,
-        createdAt: new Date(),
-      })
-      .returning();
-    return c.json(created, 201);
-  });
+    const result = await deploymentClientFor(ctx).call("deployment/identity/apply", {
+      operation: "assign_role", assignment: { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, subject, role: body.data.role },
+    });
+    return c.json(result.result, 201);
+  }));
 
-  app.delete("/:id/members/:memberId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
-    if (!access) {
-      return c.json({ error: "not found" }, 404);
-    }
-    const deleted = await ctx.db
-      .delete(member)
-      .where(
-        and(
-          eq(member.id, c.req.param("memberId")),
-          eq(member.organizationId, access.universe.organizationId),
-        ),
-      )
-      .returning({ id: member.id });
-    if (deleted.length === 0) {
-      return c.json({ error: "not found" }, 404);
-    }
-    return c.json({ ok: true });
-  });
+  app.delete("/:id/members/:memberId", (c) => withGateway(c, async () => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access || access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
+    const [kind, id, role] = c.req.param("memberId").split(":");
+    const parsed = z.object({ kind: z.enum(["principal", "group"]), id: z.string().uuid(), role: z.enum(["viewer", "contributor", "operator", "admin"]) }).safeParse({ kind, id, role });
+    if (!parsed.success) return c.json({ error: "invalid assignment" }, 400);
+    const result = await deploymentClientFor(ctx).call("deployment/identity/apply", {
+      operation: "revoke_role", assignment: { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, subject: { kind: parsed.data.kind, id: parsed.data.id }, role: parsed.data.role },
+    });
+    return c.json(result.result);
+  }));
 
   return app;
 }

@@ -1,6 +1,6 @@
 //! Shared-service admission. No public method may rely on HTTP checks alone.
 use super::*;
-use access::{AccessStore as _, ActionActor, ResourceController, ResourceOwnership, ResourceRef};
+use access::{ActionActor, ResourceController, ResourceOwnership, ResourceRef};
 
 #[derive(Clone)]
 pub(crate) struct ControllerAuthority {
@@ -272,45 +272,7 @@ impl GatewayAgentApi {
         {
             return Err(denied());
         }
-        let store = self.access_store();
-        let authenticated = store
-            .principal(context.authenticated_principal.id)
-            .await
-            .map_err(access_error)?
-            .filter(|p| p.status == access::PrincipalStatus::Active)
-            .ok_or_else(denied)?;
-        if let access::AuthenticationReference::ApiKey { ref key_prefix } = context.authentication {
-            let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM api_keys WHERE key_prefix=$1 AND principal_id=$2 AND universe_id IS NOT DISTINCT FROM $3 AND revoked_at_ms IS NULL)")
-                .bind(key_prefix).bind(authenticated.id)
-                .bind(match context.credential_scope { access::AccessScope::Deployment => None, access::AccessScope::Universe { universe_id } => Some(universe_id) })
-                .fetch_one(self.store.pool()).await.map_err(|e| AgentApiError::internal(e.to_string()))?;
-            if !active {
-                return Err(denied());
-            }
-        }
-        if authenticated.id != context.acting_principal.id {
-            let scoped = store
-                .effective_access(authenticated.id, scope)
-                .await
-                .map_err(access_error)?;
-            let deployment = context.credential_scope == access::AccessScope::Deployment
-                && store
-                    .effective_access(authenticated.id, access::AccessScope::Deployment)
-                    .await
-                    .map_err(access_error)?
-                    .has_capability(access::ServiceCapability::AssertUser);
-            if !scoped.has_capability(access::ServiceCapability::AssertUser) && !deployment {
-                return Err(denied());
-            }
-            if context.acting_principal.kind != access::PrincipalKind::User {
-                return Err(denied());
-            }
-        }
-        let rights = store
-            .effective_access(context.acting_principal.id, scope)
-            .await
-            .map_err(access_error)?;
-        Ok((context, rights))
+        super::super::authentication::current_context(self.store.pool()).await
     }
 
     pub(crate) async fn authorize_method(

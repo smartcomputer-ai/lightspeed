@@ -17,15 +17,18 @@ export function memberships(universes: Universe[] | undefined): Universe[] {
   return (universes ?? []).filter((u) => u.role != null && u.status === "active");
 }
 
-/// Effective role in a universe: membership role, else platform-admin for
-/// admins browsing foreign universes (the API only returns those to admins).
-export function effectiveRole(universe: Universe, admin: boolean): string | null {
-  return universe.role ?? (admin ? "platform-admin" : null);
+/// Deployment administration never supplies universe membership.
+export function effectiveRole(universe: Universe, _admin: boolean): string | null {
+  return universe.role ?? null;
 }
-
-export function canManage(universe: Universe, admin: boolean): boolean {
-  const role = effectiveRole(universe, admin);
-  return role === "owner" || role === "admin" || role === "platform-admin";
+export function canManage(universe: Universe, _admin?: boolean): boolean {
+  return universe.role === "admin" || universe.role === "operator";
+}
+export function canAdminister(universe: Universe, _admin?: boolean): boolean {
+  return universe.role === "admin";
+}
+export function canContribute(universe: Universe, _admin?: boolean): boolean {
+  return ["admin", "operator", "contributor"].includes(universe.role ?? "");
 }
 
 /// Resolves the /u/:slug route param against the loaded list.

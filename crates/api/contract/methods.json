@@ -2468,6 +2468,69 @@
       "access": {
         "kind": "deployment_admin"
       },
+      "description": "Deployment configuration inventory; requires DeploymentAdmin without granting universe content access.",
+      "method": "deployment/environment-provider-bindings/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/DeploymentUniverseReadParams"
+        },
+        "type": "DeploymentUniverseReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderBindingListResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderBindingListResponse>"
+      },
+      "scope": "deployment",
+      "summary": "List a universe's deployment provider bindings"
+    },
+    {
+      "access": {
+        "kind": "identity"
+      },
+      "description": "Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected.",
+      "method": "deployment/identity/self",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/IdentityScopeParams"
+        },
+        "type": "IdentityScopeParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfIdentitySelfResponse"
+        },
+        "type": "AgentApiOutcome<IdentitySelfResponse>"
+      },
+      "scope": "deployment",
+      "summary": "Read own access"
+    },
+    {
+      "access": {
+        "kind": "identity"
+      },
+      "description": "Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory.",
+      "method": "deployment/identity/directory",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/IdentityScopeParams"
+        },
+        "type": "IdentityScopeParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAccessDirectory"
+        },
+        "type": "AgentApiOutcome<AccessDirectory>"
+      },
+      "scope": "deployment",
+      "summary": "Read the access directory"
+    },
+    {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
       "method": "deployment/universes/create",
       "params": {
@@ -2550,8 +2613,7 @@
     },
     {
       "access": {
-        "kind": "deployment_admin_or_capability",
-        "requirement": "manage_identity"
+        "kind": "identity"
       },
       "description": "Applies a canonical identity change with current actor permissions and durable access auditing.",
       "method": "deployment/identity/apply",

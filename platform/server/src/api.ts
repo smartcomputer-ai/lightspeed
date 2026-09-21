@@ -1,3 +1,6 @@
+import { userClient, requestIdentity } from "./runtime-client.js";
+import { identityRoutes } from "./routes/identity.js";
+import { withGateway } from "./routes/gateway.js";
 import { Hono } from "hono";
 import { schema } from "@lightspeed/platform-db";
 import type { AppContext, ApiVariables } from "./context.js";
@@ -13,11 +16,11 @@ import { readChannelsStatus } from "./channels-status.js";
 
 export function buildApp(ctx: AppContext) {
   const app = new Hono();
+  app.onError((error, c) => withGateway(c, async () => { throw error; }));
 
   app.get("/health", (c) => c.json({ ok: true }));
 
-  // better-auth owns everything under /api/auth (sign-in, admin user
-  // management, organization endpoints, bearer tokens).
+  // Better Auth owns sign-in, login sessions, profile/password self-service and bearer tokens.
   app.on(["GET", "POST"], "/api/auth/*", (c) => ctx.auth.handler(c.req.raw));
 
   const api = new Hono<{ Variables: ApiVariables }>();
@@ -28,37 +31,48 @@ export function buildApp(ctx: AppContext) {
     if (!session) {
       return c.json({ error: "unauthorized" }, 401);
     }
+    if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
+      const origin = c.req.header("origin");
+      if (origin && ![ctx.env.baseUrl, ...ctx.env.trustedOrigins].includes(origin)) return c.json({ error: "untrusted origin" }, 403);
+    }
+    const principalId = session.user.corePrincipalId;
+    if (!principalId) return c.json({ error: "account has no canonical identity" }, 403);
+    const self = await userClient(ctx.env, principalId).call("deployment/identity/self", { scope: { kind: "deployment" } });
     c.set("session", session);
-    await next();
+    await requestIdentity.run(self.result.access, next);
   });
 
   api.get("/me", async (c) => {
     const session = c.get("session");
-    return c.json({ user: session.user });
+    return c.json({ user: { ...session.user, role: isPlatformAdmin() ? "admin" : "user" }, access: requestIdentity.getStore() });
   });
 
   /// Platform user directory (id, name, email) for member pickers.
-  /// Authenticated-only, deliberately not admin-gated: this is a small
-  /// private deployment where members address each other by account, and
-  /// only owners/admins can act on what they see here.
+  /// Restricted to administrators who can assign access.
   api.get("/users", async (c) => {
+    if (!isPlatformAdmin()) {
+      const self = await userClient(ctx.env, c.get("session").user.corePrincipalId).call("deployment/identity/self", { scope: { kind: "deployment" } });
+      if (!self.result.universes.some((r) => r.roles.includes("admin"))) return c.json({ error: "universe admin required" }, 403);
+    }
     const rows = await ctx.db
       .select({
         id: schema.user.id,
         name: schema.user.name,
         email: schema.user.email,
+        principalId: schema.user.corePrincipalId,
       })
       .from(schema.user);
     return c.json(rows);
   });
 
   api.get("/status/channels", async (c) => {
-    if (!isPlatformAdmin(c.get("session"))) {
+    if (!isPlatformAdmin()) {
       return c.json({ error: "platform admin required" }, 403);
     }
     return c.json({ connectors: await readChannelsStatus(ctx.env.channelsHealthUrls) });
   });
 
+  api.route("/admin", identityRoutes(ctx));
   api.route("/universes", universeRoutes(ctx));
   api.route("/universes", setupRoutes(ctx));
   api.route("/universes", gatewayRoutes(ctx));

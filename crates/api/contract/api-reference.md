@@ -1139,6 +1139,36 @@ Queries the conversation workflow's live state for one chat, for debugging; abse
 
 ## Deployment methods
 
+### `deployment/environment-provider-bindings/list`
+
+**List a universe's deployment provider bindings**
+
+Deployment configuration inventory; requires DeploymentAdmin without granting universe content access.
+
+- Access: `{"kind":"deployment_admin"}`
+- Params: `DeploymentUniverseReadParams`
+- Result: `AgentApiOutcome<EnvironmentProviderBindingListResponse>`
+
+### `deployment/identity/self`
+
+**Read own access**
+
+Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected.
+
+- Access: `{"kind":"identity"}`
+- Params: `IdentityScopeParams`
+- Result: `AgentApiOutcome<IdentitySelfResponse>`
+
+### `deployment/identity/directory`
+
+**Read the access directory**
+
+Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory.
+
+- Access: `{"kind":"identity"}`
+- Params: `IdentityScopeParams`
+- Result: `AgentApiOutcome<AccessDirectory>`
+
 ### `deployment/universes/create`
 
 **Create a universe**
@@ -1185,7 +1215,7 @@ Permanently terminates live session workflows, deletes external blob objects, an
 
 Applies a canonical identity change with current actor permissions and durable access auditing.
 
-- Access: `{"kind":"deployment_admin_or_capability","requirement":"manage_identity"}`
+- Access: `{"kind":"identity"}`
 - Params: `AccessChange`
 - Result: `AgentApiOutcome<AccessChangeResult>`
 

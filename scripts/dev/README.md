@@ -301,3 +301,11 @@ network. From the host machine, use `localhost:15432` instead:
 ```text
 postgres://lightspeed:lightspeed@localhost:15432/lightspeed
 ```
+
+The full authenticated development profile provisions a canonical local user
+separately from the runtime service principal and passes its UUID through
+`LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID`. Platform bootstrap binds the first login
+to that user; its service key asserts users on interactive requests. A manually
+configured Platform endpoint/key also needs a pre-provisioned bootstrap user.
+The greenfield identity migration refuses a populated old Platform schema;
+reset disposable Platform state explicitly instead of importing old permissions.

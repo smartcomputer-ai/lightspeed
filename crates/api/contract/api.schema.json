@@ -269,6 +269,55 @@
       ],
       "type": "object"
     },
+    "AccessDirectory": {
+      "description": "Administrative directory view. Assignments are limited to the requested scope.",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/definitions/CapabilityAssignment"
+          },
+          "type": "array"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/definitions/IdentityGroup"
+          },
+          "type": "array"
+        },
+        "memberships": {
+          "items": {
+            "$ref": "#/definitions/Membership"
+          },
+          "type": "array"
+        },
+        "policyRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "principals": {
+          "items": {
+            "$ref": "#/definitions/IdentityPrincipal"
+          },
+          "type": "array"
+        },
+        "roles": {
+          "items": {
+            "$ref": "#/definitions/RoleAssignment"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "principals",
+        "groups",
+        "memberships",
+        "roles",
+        "capabilities",
+        "policyRevision"
+      ],
+      "type": "object"
+    },
     "AccessScope": {
       "oneOf": [
         {
@@ -384,6 +433,23 @@
         },
         "result": {
           "$ref": "#/definitions/AccessChangeResult"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfAccessDirectory": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/AccessDirectory"
         }
       },
       "required": [
@@ -1846,6 +1912,23 @@
         },
         "result": {
           "$ref": "#/definitions/EnvironmentTemplateReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfIdentitySelfResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/IdentitySelfResponse"
         }
       },
       "required": [
@@ -10654,6 +10737,36 @@
       ],
       "type": "string"
     },
+    "IdentityScopeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "$ref": "#/definitions/AccessScope"
+        }
+      },
+      "required": [
+        "scope"
+      ],
+      "type": "object"
+    },
+    "IdentitySelfResponse": {
+      "properties": {
+        "access": {
+          "$ref": "#/definitions/EffectiveAccess"
+        },
+        "universes": {
+          "items": {
+            "$ref": "#/definitions/EffectiveAccess"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "access",
+        "universes"
+      ],
+      "type": "object"
+    },
     "InitializeParams": {
       "properties": {
         "capabilities": {
@@ -11858,6 +11971,19 @@
           "properties": {
             "kind": {
               "const": "credential_management",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Authenticated caller; handler enforces requested identity scope and operation.",
+          "properties": {
+            "kind": {
+              "const": "identity",
               "type": "string"
             }
           },

@@ -223,11 +223,10 @@ export class DemoStore {
   addUniverse(init: UniverseInit): UniverseState {
     const id = init.id ?? crypto.randomUUID();
     const createdAt = init.createdAt ?? new Date().toISOString();
-    const role = init.role === undefined ? "owner" : init.role;
+    const role = init.role === undefined ? "admin" : init.role;
     const state: UniverseState = {
       universe: {
         id,
-        organizationId: `org-${init.slug}`,
         lightspeedUniverseId: init.lightspeedUniverseId ?? crypto.randomUUID(),
         name: init.name,
         slug: init.slug,

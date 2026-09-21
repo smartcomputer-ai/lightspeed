@@ -282,5 +282,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md)
 Runtime authentication uses canonical principals and scoped service/user keys;
 see [authentication and access](docs/documentation/deployment/authentication-and-tenancy.md).
 The gateway and shared services enforce universe actions and immutable session,
-bot, and profile ownership. Platform canonical user mapping, private-session
-policies, and execution authority remain separate follow-ups.
+bot, and profile ownership. Platform maps each login to a canonical user and
+asserts that user through its authenticated service; roles and groups have one
+core directory. Private-session policies and execution authority remain follow-ups.

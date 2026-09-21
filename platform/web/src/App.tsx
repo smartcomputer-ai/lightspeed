@@ -1,3 +1,7 @@
+import { AdminGroupsPage } from "@/pages/AdminGroupsPage";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/api";
+import type { SessionUser } from "./auth.js";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { authClient, isPlatformAdmin } from "./auth.js";
 import { AppShell } from "@/components/app-shell";
@@ -54,6 +58,9 @@ function SettingsIndexRedirect({ admin }: { admin: boolean }) {
 export function App() {
   const session = authClient.useSession();
   const location = useLocation();
+  const me = useQuery({ queryKey: ["me", session.data?.user.id], enabled: !!session.data,
+    queryFn: () => api<{ user: SessionUser }>("GET", "/api/v1/me"), retry: false,
+  });
 
   // While unauthenticated on /login, always render the form and never
   // unmount it: the session hook revalidates on window focus (isPending
@@ -75,7 +82,8 @@ export function App() {
     return <Navigate to="/login" replace />;
   }
 
-  const user = session.data.user;
+  if (!me.data) return <div className="p-8">{me.error ? me.error.message : "Loading permissions…"}</div>;
+  const user = me.data.user;
   const admin = isPlatformAdmin(user);
 
   return (
@@ -164,6 +172,7 @@ export function App() {
         {admin && (
           <>
             <Route path="admin" element={<Navigate to="/admin/users" replace />} />
+            <Route path="admin/groups" element={<AdminGroupsPage />} />
             <Route path="admin/users" element={<AdminUsersPage currentUser={user} />} />
             <Route path="admin/universes" element={<AdminUniversesPage />} />
             <Route path="admin/channels" element={<AdminChannelsPage />} />

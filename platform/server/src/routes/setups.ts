@@ -9,7 +9,7 @@ import {
 import { schema } from "@lightspeed/platform-db";
 import type { UniverseSetupState } from "@lightspeed/platform-db/schema";
 import type { AppContext, ApiVariables } from "../context.js";
-import { engineClientFor, deploymentClientFor } from "./gateway.js";
+import { engineClientFor } from "./gateway.js";
 import { universeForSession } from "./universes.js";
 
 const SETUP_ID = "configurator";
@@ -41,8 +41,8 @@ export function setupRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   app.get("/:id/setups", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
-    if (!access) {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access || access.role !== "admin") {
       return c.json({ error: "not found" }, 404);
     }
     const installation = await findInstallation(ctx, access.universe.id);
@@ -50,8 +50,8 @@ export function setupRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/setups/configurator/install", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
-    if (!access) {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access || access.role !== "admin") {
       return c.json({ error: "not found" }, 404);
     }
     const session = c.get("session");
@@ -183,7 +183,7 @@ async function installConfigurator(
   new URL(mcpUrl);
 
   const client = engineClientFor(ctx, universe);
-  const deployment = deploymentClientFor(ctx, universe.gatewayUrl);
+  const deployment = client;
   let state = { ...installation.state };
 
   state = await ensureCredential(ctx, installation.id, universe, client, deployment, state, mcpUrl);

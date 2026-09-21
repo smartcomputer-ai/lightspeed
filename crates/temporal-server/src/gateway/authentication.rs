@@ -66,13 +66,15 @@ pub async fn authenticate(
         .transpose()
         .map_err(|_| denied())?;
     let target_scope = match method {
-        MethodAccess::CredentialManagement => match (key.scope, selected) {
-            (AccessScope::Universe { universe_id }, Some(id)) if id != universe_id => {
-                return Err(denied());
+        MethodAccess::CredentialManagement | MethodAccess::Identity => {
+            match (key.scope, selected) {
+                (AccessScope::Universe { universe_id }, Some(id)) if id != universe_id => {
+                    return Err(denied());
+                }
+                (_, Some(universe_id)) => AccessScope::Universe { universe_id },
+                (scope, None) => scope,
             }
-            (_, Some(universe_id)) => AccessScope::Universe { universe_id },
-            (scope, None) => scope,
-        },
+        }
         MethodAccess::Universe(_) | MethodAccess::Service(_) => match (key.scope, selected) {
             (AccessScope::Universe { universe_id }, None) => AccessScope::Universe { universe_id },
             (AccessScope::Universe { universe_id }, Some(id)) if id == universe_id => key.scope,
@@ -149,7 +151,7 @@ pub fn local_context(principal: access::Principal, target_scope: AccessScope) ->
 pub(super) fn method_permitted(rights: &access::EffectiveAccess, method: MethodAccess) -> bool {
     match method {
         // Contextual decisions are completed by the shared service after resolving ownership.
-        MethodAccess::CredentialManagement => rights.active(),
+        MethodAccess::CredentialManagement | MethodAccess::Identity => rights.active(),
         MethodAccess::Universe(action) => {
             rights.universe_action(action) != access::RoleDecision::Denied
         }
@@ -159,4 +161,57 @@ pub(super) fn method_permitted(rights: &access::EffectiveAccess, method: MethodA
             rights.has_role(Role::DeploymentAdmin) || rights.has_capability(capability)
         }
     }
+}
+
+/// Revalidate a captured context at shared-service admission, including revoked keys/assertion rights.
+pub(crate) async fn current_context(
+    pool: &sqlx::PgPool,
+) -> Result<(RequestContext, access::EffectiveAccess), AgentApiError> {
+    let context = super::principal::request_context()?;
+    let scope = context.target_scope;
+    if context.credential_scope != AccessScope::Deployment && context.credential_scope != scope {
+        return Err(denied());
+    }
+    let store = PgAccessStore::new(pool.clone());
+    let authenticated = store
+        .principal(context.authenticated_principal.id)
+        .await
+        .map_err(store_error)?
+        .filter(|p| p.status == access::PrincipalStatus::Active)
+        .ok_or_else(denied)?;
+    if let access::AuthenticationReference::ApiKey { ref key_prefix } = context.authentication {
+        let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM api_keys WHERE key_prefix=$1 AND principal_id=$2 AND universe_id IS NOT DISTINCT FROM $3 AND revoked_at_ms IS NULL)")
+                .bind(key_prefix).bind(authenticated.id)
+                .bind(match context.credential_scope { access::AccessScope::Deployment => None, access::AccessScope::Universe { universe_id } => Some(universe_id) })
+                .fetch_one(pool).await.map_err(|e| AgentApiError::internal(e.to_string()))?;
+        if !active {
+            return Err(denied());
+        }
+    }
+    if authenticated.id != context.acting_principal.id {
+        let scoped = store
+            .effective_access(authenticated.id, scope)
+            .await
+            .map_err(store_error)?;
+        let deployment = context.credential_scope == access::AccessScope::Deployment
+            && store
+                .effective_access(authenticated.id, access::AccessScope::Deployment)
+                .await
+                .map_err(store_error)?
+                .has_capability(access::ServiceCapability::AssertUser);
+        if !scoped.has_capability(access::ServiceCapability::AssertUser) && !deployment {
+            return Err(denied());
+        }
+        if context.acting_principal.kind != access::PrincipalKind::User {
+            return Err(denied());
+        }
+    }
+    let rights = store
+        .effective_access(context.acting_principal.id, scope)
+        .await
+        .map_err(store_error)?;
+    if !rights.active() {
+        return Err(denied());
+    }
+    Ok((context, rights))
 }

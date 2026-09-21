@@ -29,7 +29,7 @@ import {
   PageHeader,
   UniverseNotFound,
 } from "@/components/page";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { canAdminister, useActiveUniverse } from "@/lib/universes";
 
 export function GeneralSettingsPage({ admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
@@ -37,7 +37,7 @@ export function GeneralSettingsPage({ admin }: { admin: boolean }) {
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !canManage(universe, admin)) {
+  if (!universe || !canAdminister(universe, admin)) {
     return <UniverseNotFound slug={slug} />;
   }
 

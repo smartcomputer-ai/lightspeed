@@ -4,8 +4,8 @@
 
 use super::*;
 pub use ::access::{
-    AccessChange, AccessChangeResult, AccessScope, CapabilityAssignment, EffectiveAccess,
-    Group as IdentityGroup, Membership, Principal as IdentityPrincipal,
+    AccessChange, AccessChangeResult, AccessDirectory, AccessScope, CapabilityAssignment,
+    EffectiveAccess, Group as IdentityGroup, Membership, Principal as IdentityPrincipal,
     PrincipalKind as IdentityPrincipalKind, PrincipalStatus, Role as AccessRole, RoleAssignment,
     RoleDecision, ServiceCapability, Subject, UniverseAction,
 };
@@ -20,6 +20,8 @@ pub enum MethodAccess {
     DeploymentAdmin,
     /// Authenticated identity; key ownership and issuance rules apply in the handler.
     CredentialManagement,
+    /// Authenticated caller; handler enforces requested identity scope and operation.
+    Identity,
     /// Deployment discovery serves both administration and scoped connectors.
     DeploymentAdminOrCapability(ServiceCapability),
 }
@@ -30,6 +32,7 @@ impl MethodAccess {
             Self::Universe(_) => MethodScope::Universe,
             Self::Service(_) => MethodScope::Service,
             Self::CredentialManagement
+            | Self::Identity
             | Self::DeploymentAdmin
             | Self::DeploymentAdminOrCapability(_) => MethodScope::Deployment,
         }
@@ -101,4 +104,17 @@ mod tests {
             ))
         );
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IdentityScopeParams {
+    pub scope: AccessScope,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IdentitySelfResponse {
+    pub access: EffectiveAccess,
+    pub universes: Vec<EffectiveAccess>,
 }

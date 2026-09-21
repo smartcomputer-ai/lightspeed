@@ -2,8 +2,9 @@
 
 The runtime authenticates canonical principals from the [core identity
 registry](identity-and-access.md). The Platform signs people in with Better Auth
-and currently calls the runtime as its configured service principal. Mapping
-Platform users and memberships to core identities is a separate, pending cutover.
+and binds each account to an immutable canonical user UUID. Interactive calls
+authenticate with the Platform service key and assert that user; the runtime
+evaluates the user’s current permissions without adding service privileges.
 
 ## Gateway modes
 
@@ -46,7 +47,7 @@ Mutating service admissions retain actor and credential-reference facts separate
 from session content; an admission record does not claim that an operation succeeded.
 
 Session content remains universe-visible. Private-session policies, response-time
-reauthorization, and the Platform user-directory cutover remain pending. Committed
+reauthorization, and standing execution authority remain pending. Committed
 status, membership, capability and key changes affect subsequent admission; they
 do not stop admitted runs or withdraw an already admitted long-poll response.
 
@@ -83,15 +84,37 @@ principal and issuer separately; plaintext appears only at creation.
 Set `LIGHTSPEED_PLATFORM_API_KEY` to an explicitly provisioned Platform service
 key and `LIGHTSPEED_API_URL` to the authenticated runtime `/rpc` endpoint. The
 Platform sends this key only to the configured runtime URL; per-universe endpoint
-overrides cannot receive a credential for another endpoint. The service needs the roles for the operations it performs; existing Platform login
-and membership checks remain in place. Better Auth IDs are not core principal
-IDs. The key-creation UI therefore asks for an explicit canonical principal ID.
+overrides cannot receive a credential for another endpoint. Provision a
+deployment-scoped service key with `assert_user` and `manage_identity`
+capabilities. The service needs no universe roles or DeploymentAdmin role.
+`manage_identity` is used only when provisioning an account through the login
+adapter; interactive identity administration asserts the administrator as usual.
 
-Bootstrap Platform login with `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
-`LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` while its users table is empty. These
-variables do not reset existing passwords. Platform membership removal and core
-membership removal remain separate until the directory cutover: removing only
-the Platform membership does not revoke a canonical user's direct runtime key.
+Bootstrap core first, then set `LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID` to the
+active core user holding DeploymentAdmin, alongside
+`LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`.
+Platform verifies that principal before creating the first login; these settings
+apply only while its users table is empty and never reset passwords or core roles.
+The full development launcher provisions a separate named user and service key.
+
+Platform stores login credentials, external account mappings, user profiles and
+universe display/routing metadata. It stores no roles, groups or memberships.
+Admin → Users manages local accounts, direct deployment roles and effective
+status; Admin → Groups manages deployment groups, membership and role assignments.
+Universe Admins grant the four universe roles to accounts or groups under Members.
+Inherited deployment roles remain visible and are changed through their group.
+Adopting a universe adds display metadata only; it never grants content access.
+Universe creation assigns its acting creator the core Admin role.
+
+Core membership/status changes affect both browser requests and direct runtime
+keys at the next admission. Password resets revoke Platform login sessions.
+Account email/name edits preserve the canonical principal ID. Browser-supplied
+principal headers and profile edits cannot change that mapping.
+
+The greenfield Platform identity migration requires an empty Platform database;
+it refuses to infer identities or copy legacy permissions. Re-provision accounts
+and universe links explicitly after resetting a disposable pre-release Platform
+database. Runtime records are not migrated or reset by this Platform migration.
 
 Connectors use their own `LIGHTSPEED_CONNECTOR_API_KEY`. Assign deployment
 `discover_channel_accounts`, and per-universe `lease_credentials` and

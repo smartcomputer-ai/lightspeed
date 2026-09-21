@@ -46,7 +46,7 @@ import {
   PageHeader,
   UniverseNotFound,
 } from "@/components/page";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { canAdminister, useActiveUniverse } from "@/lib/universes";
 
 export function MembersPage({ admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
@@ -58,7 +58,7 @@ export function MembersPage({ admin }: { admin: boolean }) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <MemberList universeId={universe.id} writable={canManage(universe, admin)} />;
+  return <MemberList universeId={universe.id} writable={canAdminister(universe, admin)} />;
 }
 
 function MemberList({ universeId, writable }: { universeId: string; writable: boolean }) {
@@ -165,7 +165,6 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
 
 function AddMemberDialog({
   universeId,
-  memberUserIds,
   open,
   onOpenChange,
   onDone,
@@ -177,20 +176,21 @@ function AddMemberDialog({
   onDone: () => void;
 }) {
   const [userId, setUserId] = useState("");
-  const [role, setRole] = useState("member");
+  const [role, setRole] = useState("contributor");
   const [error, setError] = useState<string | null>(null);
 
   const users = useQuery({
     queryKey: ["users"],
     queryFn: () => api<PlatformUser[]>("GET", "/api/v1/users"),
   });
-  const candidates = (users.data ?? []).filter(
-    (user) => !memberUserIds.includes(user.id),
-  );
+  const groups = useQuery({ queryKey: ["universe-groups", universeId],
+    queryFn: () => api<Array<{ id: string; displayName: string }>>("GET", `/api/v1/universes/${universeId}/groups`), enabled: open,
+  });
+  const candidates = [...(users.data ?? []), ...(groups.data ?? []).map((g) => ({ id: `group:${g.id}`, name: g.displayName, email: "Group" }))];
 
   const add = useMutation({
     mutationFn: () =>
-      api("POST", `/api/v1/universes/${universeId}/members`, { userId, role }),
+      api("POST", `/api/v1/universes/${universeId}/members`, { ...(userId.startsWith("group:") ? { groupId: userId.slice(6) } : { userId }), role }),
     onSuccess: () => {
       setUserId("");
       setError(null);
@@ -218,7 +218,7 @@ function AddMemberDialog({
         <DialogHeader>
           <DialogTitle>Add member</DialogTitle>
           <DialogDescription>
-            Give an existing account access to this universe.
+            Give an account or deployment group access to this universe.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-3">
@@ -233,7 +233,7 @@ function AddMemberDialog({
                         ? "No accounts left to add"
                         : "Pick a user…";
                     }
-                    const user = users.data?.find((u) => u.id === value);
+                    const user = candidates.find((u) => u.id === value);
                     return user ? userLabel(user) : value;
                   }}
                 </SelectValue>
@@ -251,9 +251,10 @@ function AddMemberDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="member">member</SelectItem>
+                <SelectItem value="viewer">viewer</SelectItem>
+                <SelectItem value="contributor">contributor</SelectItem>
+                <SelectItem value="operator">operator</SelectItem>
                 <SelectItem value="admin">admin</SelectItem>
-                <SelectItem value="owner">owner</SelectItem>
               </SelectContent>
             </Select>
           </div>

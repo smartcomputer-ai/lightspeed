@@ -193,6 +193,18 @@ async fn authorize_change(
             }
         }
         AccessChange::CreatePrincipal {
+            kind: PrincipalKind::Service,
+            management_scope: scope @ AccessScope::Universe { .. },
+            ..
+        } => {
+            if effective(connection, actor, *scope)
+                .await?
+                .has_role(Role::Admin)
+            {
+                return Ok(());
+            }
+        }
+        AccessChange::CreatePrincipal {
             kind: PrincipalKind::User,
             ..
         }
@@ -553,6 +565,80 @@ impl PgAccessStore {
         }
         tx.commit().await.map_err(db_error)?;
         Ok(principal)
+    }
+}
+
+impl PgAccessStore {
+    /// Administrative view from one committed snapshot. Directory identities are
+    /// deployment-wide, while permissions and relevant memberships are scoped.
+    pub async fn directory(
+        &self,
+        actor: Uuid,
+        scope: AccessScope,
+    ) -> Result<AccessDirectory, AccessError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?;
+        let deployment = effective(&mut tx, actor, AccessScope::Deployment).await?;
+        let global = deployment.has_role(Role::DeploymentAdmin)
+            || deployment.has_capability(ServiceCapability::ManageIdentity);
+        if !global
+            && !effective(&mut tx, actor, scope)
+                .await?
+                .has_role(Role::Admin)
+        {
+            return Err(AccessError::Denied);
+        }
+        let principals = sqlx::query("SELECT * FROM access_principals ORDER BY principal_id")
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_error)?
+            .into_iter()
+            .map(principal_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        let groups = sqlx::query("SELECT * FROM access_groups ORDER BY group_id")
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_error)?
+            .into_iter()
+            .map(|r| {
+                Ok(Group {
+                    id: r.try_get("group_id").map_err(db_error)?,
+                    display_name: r.try_get("display_name").map_err(db_error)?,
+                    created_at_ms: nonnegative(r.try_get("created_at_ms").map_err(db_error)?)?,
+                })
+            })
+            .collect::<Result<Vec<_>, AccessError>>()?;
+        let all = scope == AccessScope::Deployment;
+        let memberships = sqlx::query("SELECT m.* FROM access_memberships m WHERE $1 OR EXISTS (SELECT 1 FROM access_role_assignments r WHERE r.group_id=m.group_id AND r.universe_id=$2) ORDER BY group_id, principal_id")
+            .bind(all).bind(scope_id(scope)).fetch_all(&mut *tx).await.map_err(db_error)?.into_iter().map(|r| Ok(Membership {
+                group_id: r.try_get("group_id").map_err(db_error)?, principal_id: r.try_get("principal_id").map_err(db_error)?,
+            })).collect::<Result<Vec<_>, AccessError>>()?;
+        let roles = sqlx::query("SELECT * FROM access_role_assignments WHERE $1 OR universe_id=$2 ORDER BY universe_id, principal_id, group_id, role")
+            .bind(all).bind(scope_id(scope)).fetch_all(&mut *tx).await.map_err(db_error)?.into_iter().map(|r| {
+                let principal: Option<Uuid> = r.try_get("principal_id").map_err(db_error)?;
+                Ok(RoleAssignment { scope: scope_from_id(r.try_get("universe_id").map_err(db_error)?),
+                    subject: match principal { Some(id) => Subject::Principal(id), None => Subject::Group(r.try_get("group_id").map_err(db_error)?) },
+                    role: parse_enum(r.try_get("role").map_err(db_error)?)?,
+                })
+            }).collect::<Result<Vec<_>, AccessError>>()?;
+        let capabilities = sqlx::query("SELECT * FROM access_capabilities WHERE $1 OR universe_id=$2 ORDER BY universe_id, principal_id, capability")
+            .bind(all).bind(scope_id(scope)).fetch_all(&mut *tx).await.map_err(db_error)?.into_iter().map(|r| Ok(CapabilityAssignment {
+                scope: scope_from_id(r.try_get("universe_id").map_err(db_error)?),
+                principal_id: r.try_get("principal_id").map_err(db_error)?, capability: parse_enum(r.try_get("capability").map_err(db_error)?)?,
+            })).collect::<Result<Vec<_>, AccessError>>()?;
+        let policy_revision = revision(&mut tx).await?;
+        tx.commit().await.map_err(db_error)?;
+        Ok(AccessDirectory {
+            principals,
+            groups,
+            memberships,
+            roles,
+            capabilities,
+            policy_revision,
+        })
     }
 }
 

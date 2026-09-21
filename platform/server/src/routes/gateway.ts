@@ -1,3 +1,4 @@
+import { userClient, actingPrincipal, GatewayUnconfigured } from "../runtime-client.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -342,56 +343,19 @@ const mcpOAuthFlowCompleteSchema = z.object({
 
 type UniverseRow = typeof schema.universes.$inferSelect;
 
-// A universe endpoint override must never receive a credential provisioned for
-// another runtime. Remote deployments need their own credential configuration.
-function credentialEndpoint(ctx: AppContext, override?: string | null): string {
-  const configured = ctx.env.lightspeedApiUrl;
-  if (!configured || !ctx.env.lightspeedApiKey) throw new GatewayUnconfigured();
-  const endpoint = new URL(override ?? configured);
-  if (endpoint.href !== new URL(configured).href || endpoint.username || endpoint.password) {
-    throw new GatewayUnconfigured();
-  }
-  return endpoint.href;
+export function engineClientFor(ctx: AppContext, universe: UniverseRow): LightspeedClient {
+  return userClient(ctx.env, actingPrincipal(), universe.gatewayUrl, universe.lightspeedUniverseId);
 }
 
-const fetchRuntime: typeof fetch = (input, init) => globalThis.fetch(input, { ...init, redirect: "error" });
-
-/// Client for universe-scoped calls: stamps `x-lightspeed-universe`
-/// after authenticating the Platform service.
-export function engineClientFor(
-  ctx: AppContext,
-  universe: UniverseRow,
-  principal?: string,
-): LightspeedClient {
-  const endpoint = credentialEndpoint(ctx, universe.gatewayUrl);
-  return new LightspeedClient({
-    endpoint,
-    fetch: fetchRuntime,
-    headers: {
-      authorization: `Bearer ${ctx.env.lightspeedApiKey}`,
-      "x-lightspeed-universe": universe.lightspeedUniverseId,
-      ...(principal ? { "x-lightspeed-principal": principal } : {}),
-    },
-  });
-}
-
-/// Client for deployment-scoped calls (`deployment/*`): no universe header —
-/// these address the deployment, and the gateway rejects a universe
-/// header on them.
 export function deploymentClientFor(ctx: AppContext, endpoint?: string | null): LightspeedClient {
-  const resolved = credentialEndpoint(ctx, endpoint);
-  return new LightspeedClient({ endpoint: resolved, fetch: fetchRuntime, headers: { authorization: `Bearer ${ctx.env.lightspeedApiKey}` } });
+  return userClient(ctx.env, actingPrincipal(), endpoint);
 }
 
-/// Universe-scoped passthrough to the Lightspeed gateway: the platform
-/// checks membership, the engine owns the documents. Config surfaces are
-/// owner/admin-only — unlike bindings, profile documents can embed
-/// sensitive engine configuration.
 export function gatewayRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   app.get("/:id/profiles", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -403,7 +367,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/profiles/:profileId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -420,7 +384,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// GET) rides along as `expectedRevision` — a stale editor gets a 409
   /// instead of silently clobbering a concurrent edit.
   app.put("/:id/profiles/:profileId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -447,7 +411,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/profiles/:profileId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -462,7 +426,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// paging). Roots-only/tree filtering arrives with engine D1
   /// (parentSessionId) — today channel-managed and web-created sessions are roots.
   app.get("/:id/sessions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -492,7 +456,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/sessions/:sessionId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -508,7 +472,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Closing is a lifecycle transition that retains session history.
   /// `force=true` also cancels active/queued work.
   app.post("/:id/sessions/:sessionId/close", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -533,7 +497,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// after the selected sessions are closed. Non-cascade deletion requires a
   /// leaf; cascade includes history forks and delegated children.
   app.delete("/:id/sessions/:sessionId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -551,7 +515,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// from the previous page; `waitMs` long-polls at the engine (clamped
   /// to 30s) so the web tail follows live sessions without spinning.
   app.get("/:id/sessions/:sessionId/events", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -588,7 +552,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// New session from the web (no chat binding involved). The engine
   /// mints the session id; the response is the full session view.
   app.post("/:id/sessions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -619,7 +583,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Retention belongs to the root session. Null keeps the tree until an
   /// operator deletes it; a positive duration schedules deletion after close.
   app.put("/:id/sessions/:sessionId/retention", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -643,7 +607,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Metadata is a complete map: put replaces, an empty map clears. The
   /// engine validates the bounds and rejects reserved keys.
   app.put("/:id/sessions/:sessionId/metadata", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -666,7 +630,7 @@ export function gatewayRoutes(ctx: AppContext) {
 
   /// Session config is a sparse whole document with optimistic concurrency.
   app.put("/:id/sessions/:sessionId/config", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -693,7 +657,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// instruction-only inline profile apply; raw context edits would not
   /// preserve the default/profile/VFS fallback invariants.
   app.get("/:id/sessions/:sessionId/instructions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -724,7 +688,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.put("/:id/sessions/:sessionId/instructions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -749,7 +713,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/sessions/:sessionId/environments/:environmentId/activate", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -764,7 +728,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/sessions/:sessionId/environments/deactivate", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -783,7 +747,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// tail. No server-side await: runs can take minutes and an HTTP request
   /// must not.
   app.post("/:id/sessions/:sessionId/messages", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -815,7 +779,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// after the cancel was admitted (`cancelling` for an active run,
   /// `cancelled` for a queued one); the terminal event arrives on the tail.
   app.post("/:id/sessions/:sessionId/runs/:runId/cancel", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -834,7 +798,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// the model at its next turn boundary without interrupting the in-flight
   /// turn. Rejected for queued, cancelling, or finished runs.
   app.post("/:id/sessions/:sessionId/runs/:runId/steer", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -862,7 +826,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/sessions/:sessionId/runs/:runId/approvals", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -882,7 +846,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/workspaces", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -895,7 +859,7 @@ export function gatewayRoutes(ctx: AppContext) {
 
   /// MCP server catalog (the U5a page + the profile editor's picker).
   app.get("/:id/mcp-servers", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -909,7 +873,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Live inventory from the configured server. The runtime resolves the
   /// server's current credential and deliberately does not persist the result.
   app.post("/:id/mcp-servers/:serverId/tools/discover", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -927,7 +891,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// does not classify the server as public; it only means the standard
   /// protected-resource document was not found and the user must choose.
   app.post("/:id/mcp-servers/discover-auth", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -946,7 +910,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Provider-discovered model routes for the session-config model picker.
   /// Lightspeed owns credential injection and sanitizes per-provider errors.
   app.get("/:id/models", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -960,7 +924,7 @@ export function gatewayRoutes(ctx: AppContext) {
 
   /// Non-secret active grant metadata for universe MCP-server credential selection.
   app.get("/:id/auth-grants", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -975,7 +939,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Universe secret inventory. Values are intentionally absent: providers
   /// expose only `hasCredential`, while grants expose token-presence flags.
   app.get("/:id/secrets", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -999,7 +963,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/secrets/providers", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1021,7 +985,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/secrets/providers/:providerId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1038,7 +1002,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// `replace` swaps an existing key: the row is deleted and recreated because
   /// `auth/providers/create` has no update semantics.
   app.post("/:id/integrations/model-keys", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1077,7 +1041,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Coding-agent subscription credentials (Claude Code / Codex): grant
   /// metadata only, never token material.
   app.get("/:id/integrations/subscriptions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1091,7 +1055,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/integrations/subscriptions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1124,7 +1088,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/integrations/subscriptions/:grantId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1140,7 +1104,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// GitHub integration inventory: universe-owned GitHub Apps (BYO providers)
   /// and the installation grants minted through them. No secret material.
   app.get("/:id/integrations/github", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1162,7 +1126,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/integrations/github/apps", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1188,7 +1152,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/integrations/github/apps/:providerId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1204,7 +1168,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Live from GitHub through the App's own JWT: only installations of this
   /// universe-owned App are visible, so listing is safe to expose to members.
   app.get("/:id/integrations/github/apps/:providerId/installations", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1221,7 +1185,7 @@ export function gatewayRoutes(ctx: AppContext) {
   app.post(
     "/:id/integrations/github/apps/:providerId/installations/:installationId/grant",
     async (c) => {
-      const access = await universeForSession(ctx, c, c.req.param("id"), true);
+      const access = await universeForSession(ctx, c, c.req.param("id"));
       if (!access) {
         return c.json({ error: "not found" }, 404);
       }
@@ -1247,7 +1211,7 @@ export function gatewayRoutes(ctx: AppContext) {
   );
 
   app.post("/:id/secrets/grants", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1292,7 +1256,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// engine's static-grant path is the encrypted write-only primitive; the
   /// dedicated provider id keeps these distinct from actual bearer tokens.
   app.post("/:id/secrets/environment", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1336,7 +1300,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/secrets/grants/:grantId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1350,7 +1314,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/mcp-servers", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1371,7 +1335,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Create-or-replace, mirroring the engine's mcp/servers/put semantics.
   /// A `revision` field from GET is forwarded as the CAS guard.
   app.put("/:id/mcp-servers/:serverId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1394,7 +1358,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/mcp-servers/:serverId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1410,7 +1374,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// server metadata, then reuses CIMD/dynamic client registration as
   /// appropriate before creating the PKCE flow.
   app.post("/:id/mcp-servers/:serverId/oauth/start", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1437,7 +1401,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/mcp-servers/:serverId/oauth/flows/:flowId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1454,7 +1418,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// when login started. A concurrent catalog or credential edit returns a
   /// conflict instead of being overwritten after the user comes back.
   app.post("/:id/mcp-servers/:serverId/oauth/flows/:flowId/complete", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1502,7 +1466,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Universe-scoped admission bindings. Physical provider registration is
   /// deployment state and is never exposed through this member API.
   app.get("/:id/environment-provider-bindings", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1514,7 +1478,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/environment-templates", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1540,7 +1504,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/environments", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1572,7 +1536,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Registration keys admit outbound `lightspeed-envd` daemons as
   /// environments; each key is the group of the environments it admitted.
   app.get("/:id/environment-registration-keys", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1585,7 +1549,7 @@ export function gatewayRoutes(ctx: AppContext) {
 
   /// The plaintext secret is in the response exactly once.
   app.post("/:id/environment-registration-keys", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1604,7 +1568,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/environment-registration-keys/:keyId/revoke", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1623,7 +1587,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/environments", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1642,7 +1606,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.put("/:id/environments/:environmentId/ingress", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1661,7 +1625,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.put("/:id/environments/:environmentId/power", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1680,7 +1644,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.put("/:id/environments/:environmentId/idle-policy", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1702,7 +1666,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// (no provider). The request id is derived from the endpoint so repeating
   /// the registration converges on the same environment.
   app.post("/:id/environments/external", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1724,7 +1688,7 @@ export function gatewayRoutes(ctx: AppContext) {
 
   /// Environment-related hints for the UI (development daemon endpoint).
   app.get("/:id/environments/hints", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1732,7 +1696,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/environments/:environmentId/credentials", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1746,7 +1710,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/environments/:environmentId/credentials", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1781,7 +1745,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/environments/:environmentId/credentials/:envName", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1796,7 +1760,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/environments/:environmentId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1810,7 +1774,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/environments/:environmentId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1825,7 +1789,7 @@ export function gatewayRoutes(ctx: AppContext) {
 
   /// Workspace head + full manifest in one roundtrip (the explorer tree).
   app.get("/:id/workspaces/:workspaceId/tree", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1845,7 +1809,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/blobs/:blobRef", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1862,7 +1826,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// commit the new snapshot, advance the head at `expectedRevision`.
   /// The engine validates the manifest and enforces the revision (409).
   app.put("/:id/workspaces/:workspaceId/files/:path{.+}", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1927,7 +1891,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/workspaces/:workspaceId/files/:path{.+}", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1957,7 +1921,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/workspaces", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"), true);
+    const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -2078,16 +2042,10 @@ async function commitHead(
   return { workspace: updated.result.workspace };
 }
 
-class GatewayUnconfigured extends Error {
-  constructor() {
-    super("no gateway endpoint configured (LIGHTSPEED_API_URL)");
-  }
-}
-
 /// Maps gateway failures onto API responses: engine not_found/conflict pass
 /// through as 404/409, transport or internal errors surface as 502.
 export async function withGateway(
-  c: { json: (body: unknown, status?: 400 | 404 | 409 | 501 | 502) => Response },
+  c: { json: (body: unknown, status?: 400 | 403 | 404 | 409 | 501 | 502) => Response },
   fn: () => Promise<Response>,
 ): Promise<Response> {
   try {
@@ -2096,7 +2054,11 @@ export async function withGateway(
     if (error instanceof GatewayUnconfigured) {
       return c.json({ error: error.message }, 501);
     }
+    const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
+    if (code === "23505") return c.json({ error: "record already exists" }, 409);
     if (error instanceof LightspeedRpcError) {
+      if (error.kind === "invalid_request") return c.json({ error: error.message }, 400);
+      if (error.kind === "rejected") return c.json({ error: error.message }, 403);
       if (error.kind === "not_found") {
         return c.json({ error: "not found in engine" }, 404);
       }

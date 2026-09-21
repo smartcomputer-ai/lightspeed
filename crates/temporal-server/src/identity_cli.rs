@@ -62,6 +62,46 @@ pub async fn run(command: IdentityCommand) -> anyhow::Result<()> {
             let principal = store
                 .initialize_local_development(universe_id, now_ms()?)
                 .await?;
+            // A real user is separate from the service credential in local Platform requests.
+            let user_id = uuid::Uuid::from_u128(0x6c696768_7473_4065_8064_000000000002);
+            for change in [
+                access::AccessChange::CreatePrincipal {
+                    id: user_id,
+                    kind: access::PrincipalKind::User,
+                    display_name: "Local administrator".into(),
+                    management_scope: AccessScope::Deployment,
+                },
+                access::AccessChange::AssignRole {
+                    assignment: access::RoleAssignment {
+                        scope: AccessScope::Deployment,
+                        subject: access::Subject::Principal(user_id),
+                        role: access::Role::DeploymentAdmin,
+                    },
+                },
+                access::AccessChange::AssignRole {
+                    assignment: access::RoleAssignment {
+                        scope: AccessScope::Universe { universe_id },
+                        subject: access::Subject::Principal(user_id),
+                        role: access::Role::Admin,
+                    },
+                },
+                access::AccessChange::AssignCapability {
+                    assignment: access::CapabilityAssignment {
+                        scope: AccessScope::Deployment,
+                        principal_id: principal.id,
+                        capability: access::ServiceCapability::AssertUser,
+                    },
+                },
+                access::AccessChange::AssignCapability {
+                    assignment: access::CapabilityAssignment {
+                        scope: AccessScope::Deployment,
+                        principal_id: principal.id,
+                        capability: access::ServiceCapability::ManageIdentity,
+                    },
+                },
+            ] {
+                store.apply(principal.id, change, now_ms()?).await?;
+            }
             let keys = store_pg::PgApiKeyStore::new(pool);
             // The supervisor guarantees one local stack; retire credentials
             // from previous launcher runs without persisting their secrets.
@@ -93,7 +133,7 @@ pub async fn run(command: IdentityCommand) -> anyhow::Result<()> {
                 record: key.record,
             })
             .await?;
-            serde_json::json!({"principalId":principal.id, "secret":key.secret.expose()})
+            serde_json::json!({"principalId":principal.id, "userPrincipalId":user_id, "secret":key.secret.expose()})
         }
         IdentityCommand::Bootstrap {
             principal_id,

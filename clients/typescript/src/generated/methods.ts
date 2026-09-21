@@ -117,6 +117,9 @@ export const METHODS = [
   "channels/pairings/list",
   "channels/pairings/delete",
   "channels/conversations/read",
+  "deployment/environment-provider-bindings/list",
+  "deployment/identity/self",
+  "deployment/identity/directory",
   "deployment/universes/create",
   "deployment/universes/list",
   "deployment/universes/read",
@@ -808,6 +811,24 @@ export const METHOD_INFO = {
     summary: "Read a conversation snapshot",
     description: "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
   },
+  "deployment/environment-provider-bindings/list": {
+    scope: "deployment",
+    access: {"kind":"deployment_admin"},
+    summary: "List a universe's deployment provider bindings",
+    description: "Deployment configuration inventory; requires DeploymentAdmin without granting universe content access.",
+  },
+  "deployment/identity/self": {
+    scope: "deployment",
+    access: {"kind":"identity"},
+    summary: "Read own access",
+    description: "Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected.",
+  },
+  "deployment/identity/directory": {
+    scope: "deployment",
+    access: {"kind":"identity"},
+    summary: "Read the access directory",
+    description: "Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory.",
+  },
   "deployment/universes/create": {
     scope: "deployment",
     access: {"kind":"deployment_admin"},
@@ -834,7 +855,7 @@ export const METHOD_INFO = {
   },
   "deployment/identity/apply": {
     scope: "deployment",
-    access: {"kind":"deployment_admin_or_capability","requirement":"manage_identity"},
+    access: {"kind":"identity"},
     summary: "Apply identity and access changes",
     description: "Applies a canonical identity change with current actor permissions and durable access auditing.",
   },
@@ -1928,6 +1949,33 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfChannelConversationReadResponse;
   };
   /**
+   * List a universe's deployment provider bindings
+   *
+   * Deployment configuration inventory; requires DeploymentAdmin without granting universe content access.
+   */
+  "deployment/environment-provider-bindings/list": {
+    params: Api.DeploymentUniverseReadParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderBindingListResponse;
+  };
+  /**
+   * Read own access
+   *
+   * Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected.
+   */
+  "deployment/identity/self": {
+    params: Api.IdentityScopeParams;
+    result: Api.AgentApiOutcomeOfIdentitySelfResponse;
+  };
+  /**
+   * Read the access directory
+   *
+   * Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory.
+   */
+  "deployment/identity/directory": {
+    params: Api.IdentityScopeParams;
+    result: Api.AgentApiOutcomeOfAccessDirectory;
+  };
+  /**
    * Create a universe
    *
    * Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
@@ -2976,6 +3024,30 @@ export const rpc = {
    */
   channelsConversationsRead(client: RpcCaller, params: Api.ChannelConversationReadParams): Promise<Api.AgentApiOutcomeOfChannelConversationReadResponse> {
     return client.call("channels/conversations/read", params);
+  },
+  /**
+   * List a universe's deployment provider bindings
+   *
+   * Deployment configuration inventory; requires DeploymentAdmin without granting universe content access.
+   */
+  deploymentEnvironmentProviderBindingsList(client: RpcCaller, params: Api.DeploymentUniverseReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderBindingListResponse> {
+    return client.call("deployment/environment-provider-bindings/list", params);
+  },
+  /**
+   * Read own access
+   *
+   * Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected.
+   */
+  deploymentIdentitySelf(client: RpcCaller, params: Api.IdentityScopeParams): Promise<Api.AgentApiOutcomeOfIdentitySelfResponse> {
+    return client.call("deployment/identity/self", params);
+  },
+  /**
+   * Read the access directory
+   *
+   * Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory.
+   */
+  deploymentIdentityDirectory(client: RpcCaller, params: Api.IdentityScopeParams): Promise<Api.AgentApiOutcomeOfAccessDirectory> {
+    return client.call("deployment/identity/directory", params);
   },
   /**
    * Create a universe

@@ -587,7 +587,7 @@ function seedProfiles(universe: UniverseState): void {
 // ---------------------------------------------------------------------------
 
 function seedMembers(store: DemoStore, universe: UniverseState): void {
-  universe.members.push(member(store, universe, "user-marco", "admin", ago(68 * DAY_MS)), member(store, universe, "user-priya", "member", ago(61 * DAY_MS)));
+  universe.members.push(member(store, universe, "user-marco", "admin", ago(68 * DAY_MS)), member(store, universe, "user-priya", "contributor", ago(61 * DAY_MS)));
   universe.apiKeys.push(
     {
       keyPrefix: "lsk_acme_cfg_9b21",
@@ -4418,7 +4418,7 @@ export function seedSoftwareFactory(store: DemoStore): void {
     slug: SOFTWARE_FACTORY_SLUG,
     name: "Software Factory",
     lightspeedUniverseId: ENGINE_UNIVERSE_ID,
-    role: "owner",
+    role: "admin",
     createdAt: agoIso(70 * DAY_MS),
     responder,
   });

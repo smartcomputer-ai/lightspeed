@@ -444,6 +444,18 @@ pub enum AccessError {
     Store(String),
 }
 
+/// Administrative directory view. Assignments are limited to the requested scope.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessDirectory {
+    pub principals: Vec<Principal>,
+    pub groups: Vec<Group>,
+    pub memberships: Vec<Membership>,
+    pub roles: Vec<RoleAssignment>,
+    pub capabilities: Vec<CapabilityAssignment>,
+    pub policy_revision: u64,
+}
+
 /// Runtime persistence boundary. `actor` must come from authenticated context
 /// or an explicitly trusted host-administration entry point, never RPC params.
 /// Mutations authorize against committed facts in the same transaction as the

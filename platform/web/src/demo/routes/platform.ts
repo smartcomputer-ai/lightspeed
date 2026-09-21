@@ -1,3 +1,4 @@
+import { directoryFor } from "./identity";
 /// Platform-owned records: universes, memberships, the user directory, and
 /// universe API keys. The demo user is a platform admin, so every gate the
 /// real server applies passes.
@@ -25,7 +26,7 @@ export function platformRoutes(store: DemoStore): Hono {
     const base = body.slug?.trim() || slugify(name);
     let slug = base;
     for (let i = 2; store.universeBySlug(slug); i++) slug = `${base}-${i}`;
-    const state = store.addUniverse({ slug, name, role: "owner" });
+    const state = store.addUniverse({ slug, name, role: "admin" });
     return c.json(state.universe, 201);
   });
 
@@ -57,7 +58,7 @@ export function platformRoutes(store: DemoStore): Hono {
       slug: slugify(name),
       name,
       lightspeedUniverseId: engineId,
-      role: "owner",
+      role: null,
       createdAt: new Date(orphan.createdAtMs).toISOString(),
     });
     return c.json(state.universe, 201);
@@ -110,6 +111,8 @@ export function platformRoutes(store: DemoStore): Hono {
 
   // --- membership ---------------------------------------------------------
 
+  app.get("/universes/:id/groups", (c) => c.json(directoryFor(store).groups));
+
   app.get("/universes/:id/members", (c) => {
     const state = universeFor(store, c);
     return state ? c.json(state.members) : notFound(c);
@@ -118,8 +121,9 @@ export function platformRoutes(store: DemoStore): Hono {
   app.post("/universes/:id/members", async (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const body = await readBody<{ userId?: string; email?: string; role?: string }>(c);
-    const target = body.userId
+    const body = await readBody<{ userId?: string; email?: string; groupId?: string; role?: string }>(c);
+    const group = directoryFor(store).groups.find((g) => g.id === body.groupId);
+    const target = group ? { id: group.id, name: group.displayName, email: "Group" } : body.userId
       ? store.users.get(body.userId)
       : [...store.users.values()].find((u) => u.email === body.email?.trim());
     if (!target) return notFound(c, "user not found");
@@ -127,7 +131,7 @@ export function platformRoutes(store: DemoStore): Hono {
     const created: Member = {
       id: store.nextId("member"),
       userId: target.id,
-      role: body.role ?? "member",
+      role: body.role ?? "contributor",
       email: target.email,
       name: target.name,
       createdAt: nowIso(),

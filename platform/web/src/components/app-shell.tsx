@@ -40,7 +40,7 @@ import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
 import { isMobileDetailRoute } from "@/lib/shell-navigation";
 import type { SessionUser } from "@/auth";
-import { canManage, rememberUniverse, useUniverses } from "@/lib/universes";
+import { canAdminister, canManage, rememberUniverse, useUniverses } from "@/lib/universes";
 
 /// The sidebar has three modes. Universe mode is the app's top level:
 /// switcher + universe nav. Admin and account are modes *above* the
@@ -141,7 +141,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
             <>
               {/* No group label: the switcher above already names the
                   universe. Members see only the Settings group. */}
-              {canManage(active, admin) && (
+              {active.role && (
                 <SidebarGroup>
                   <SidebarGroupContent>
                     <SidebarMenu>
@@ -227,11 +227,11 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
                         />
                       </>
                     )}
-                    <NavItem
+                    {canAdminister(active) && <NavItem
                       to={`/u/${active.slug}/settings/members`}
                       icon={Users}
                       label="Members"
-                    />
+                    />}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
@@ -243,6 +243,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
               <SidebarGroupContent>
                 <SidebarMenu>
                   <NavItem to="/admin/users" icon={UserCog} label="Users" />
+                  <NavItem to="/admin/groups" icon={Users} label="Groups" />
                   <NavItem to="/admin/universes" icon={Globe} label="Universes" />
                   <NavItem to="/admin/channels" icon={RadioTower} label="Channels" />
                   <NavItem

@@ -156,7 +156,7 @@ Platform server, connector host, Configurator MCP, and development-only
 settings.
 
 Platform admins manage invite-only user accounts under **Admin → Users**. They
-can update a user's name, verified sign-in email, platform role, and password;
+can update a user's name, verified sign-in email, direct core deployment role, effective identity status, and password;
 password resets revoke that user's active sessions. Signed-in users can update
 their own display name and password under **Account**. Self-service email
 changes stay disabled until the deployment provides an email-verification
@@ -227,7 +227,7 @@ The server accepts the following primary configuration names:
 - `LIGHTSPEED_PLATFORM_BASE_URL`;
 - `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`;
 - `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
-  `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`;
+  `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` and `LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID`;
 - `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` and
   `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_SECRET`;
 - `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL` and the optional
@@ -257,5 +257,9 @@ image.
 
 Runtime calls use `LIGHTSPEED_PLATFORM_API_KEY`; connector hosts use their own
 `LIGHTSPEED_CONNECTOR_API_KEY`. The runtime must use `authenticated` mode.
-Platform's existing login and membership checks remain in place pending the
-canonical user mapping cutover. See [authentication and access](../docs/documentation/deployment/authentication-and-tenancy.md).
+Every interactive call asserts the logged-in canonical user. Core owns all roles,
+groups and memberships; Better Auth owns login only. Provision deployment
+`assert_user` and `manage_identity` capabilities on the Platform service. Initial
+login bootstrap requires `LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID` naming an
+existing active core user with DeploymentAdmin. The identity migration requires
+a fresh Platform database; it never imports old permissions. See [authentication and access](../docs/documentation/deployment/authentication-and-tenancy.md).

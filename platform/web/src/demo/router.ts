@@ -1,3 +1,4 @@
+import { identityRoutes } from "./routes/identity";
 /// The in-browser stand-in for the platform server: one Hono app the fetch
 /// shim hands every same-origin `/api/*` request to.
 import { Hono } from "hono";
@@ -24,6 +25,7 @@ export function createDemoRouter(store: DemoStore): Hono {
 
   const api = new Hono();
   api.route("/", platformRoutes(store));
+  api.route("/", identityRoutes(store));
   api.route("/", adminRoutes(store));
   for (const routes of [
     sessionRoutes,

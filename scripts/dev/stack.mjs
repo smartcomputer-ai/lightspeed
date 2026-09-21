@@ -87,6 +87,7 @@ if (plan.profile === "full") {
     const credential = JSON.parse(result.stdout);
     for (const processPlan of plan.processes) {
       processPlan.env.LIGHTSPEED_PLATFORM_API_KEY = credential.secret;
+      processPlan.env.LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID = credential.userPrincipalId;
     }
   }
 }

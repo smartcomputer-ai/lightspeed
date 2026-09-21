@@ -29,6 +29,7 @@ if (!upgradeFrom || !Number.isSafeInteger(schemaRevision) || schemaRevision < 1)
 }
 const suffix = `${process.pid}_${Date.now()}`;
 const emptyName = checkedIdentifier(`lightspeed_platform_empty_${suffix}`);
+const rejectedName = checkedIdentifier(`lightspeed_platform_rejected_${suffix}`);
 const upgradeName = checkedIdentifier(`lightspeed_platform_upgrade_${suffix}`);
 const admin = new pg.Client({ connectionString: baseUrl });
 const previousMigrations = await mkdtemp(path.join(tmpdir(), "lightspeed-platform-migrations-"));
@@ -55,11 +56,26 @@ try {
   } else {
     await preparePreviousMigrations(previousMigrations, journal);
     await checkUpgrade(databaseUrl(baseUrl, upgradeName), previousMigrations, journal);
+    if (journal.entries.some((e) => e.tag === "0001_core_identity")) {
+      await createDatabase(admin, rejectedName);
+      const handle = createDb(databaseUrl(baseUrl, rejectedName));
+      try {
+        await migrate(handle.db, { migrationsFolder: previousMigrations });
+        await handle.pool.query(`INSERT INTO "user" (id, name, email) VALUES ('unmapped', 'Old user', 'old@example.test')`);
+        let rejected = false;
+        try { await migrateDb(handle); } catch { rejected = true; }
+        if (!rejected) throw new Error("identity migration must reject unmapped users");
+        await requireTable(handle.pool, "member");
+        const result = await handle.pool.query(`SELECT id FROM "user" WHERE id='unmapped'`);
+        if (result.rowCount !== 1) throw new Error("rejected migration must preserve old data");
+      } finally { await handle.pool.end(); }
+    }
   }
 } finally {
   if (adminConnected) {
     await dropDatabase(admin, emptyName);
     await dropDatabase(admin, upgradeName);
+    await dropDatabase(admin, rejectedName);
   }
   await admin.end().catch(() => undefined);
   await rm(previousMigrations, { recursive: true, force: true });
@@ -83,8 +99,11 @@ async function requirePlatformShape(pool: pg.Pool): Promise<void> {
   await requireTable(pool, "universes");
   await requireTable(pool, "universe_setup_installations");
   await requireTable(pool, "user");
-  await requireTable(pool, "organization");
-  await requireTable(pool, "member");
+  await requireNoTable(pool, "organization");
+  await requireNoTable(pool, "member");
+  await requireNoTable(pool, "invitation");
+  await requireColumn(pool, "user", "core_principal_id");
+  await requireColumn(pool, "universes", "slug");
   await requireColumn(pool, "universes", "lightspeed_universe_id");
   for (const table of [
     "bots",

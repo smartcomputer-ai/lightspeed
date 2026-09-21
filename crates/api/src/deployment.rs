@@ -18,6 +18,10 @@ pub const METHOD_DEPLOYMENT_UNIVERSES_CREATE: &str = "deployment/universes/creat
 pub const METHOD_DEPLOYMENT_UNIVERSES_LIST: &str = "deployment/universes/list";
 pub const METHOD_DEPLOYMENT_UNIVERSES_READ: &str = "deployment/universes/read";
 pub const METHOD_DEPLOYMENT_UNIVERSES_DELETE: &str = "deployment/universes/delete";
+pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST: &str =
+    "deployment/environment-provider-bindings/list";
+pub const METHOD_DEPLOYMENT_IDENTITY_SELF: &str = "deployment/identity/self";
+pub const METHOD_DEPLOYMENT_IDENTITY_DIRECTORY: &str = "deployment/identity/directory";
 pub const METHOD_DEPLOYMENT_IDENTITY_APPLY: &str = "deployment/identity/apply";
 
 pub const METHOD_DEPLOYMENT_API_KEYS_CREATE: &str = "deployment/api-keys/create";
@@ -361,6 +365,27 @@ pub struct DeploymentChannelAccountListResponse {
 
 #[async_trait]
 pub trait DeploymentApiService: Send + Sync {
+    async fn list_deployment_provider_bindings(
+        &self,
+        _params: DeploymentUniverseReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingListResponse>, AgentApiError> {
+        Err(AgentApiError::rejected(
+            "deployment binding inventory unavailable",
+        ))
+    }
+    async fn identity_self(
+        &self,
+        _params: IdentityScopeParams,
+    ) -> Result<AgentApiOutcome<IdentitySelfResponse>, AgentApiError> {
+        Err(AgentApiError::rejected("identity queries unavailable"))
+    }
+    async fn identity_directory(
+        &self,
+        _params: IdentityScopeParams,
+    ) -> Result<AgentApiOutcome<AccessDirectory>, AgentApiError> {
+        Err(AgentApiError::rejected("identity queries unavailable"))
+    }
+
     async fn apply_identity(
         &self,
         _params: AccessChange,
@@ -528,6 +553,14 @@ macro_rules! deployment_api_methods {
 }
 
 deployment_api_methods! {
+    METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST => list_deployment_provider_bindings(DeploymentUniverseReadParams) -> EnvironmentProviderBindingListResponse =>
+        ["List a universe's deployment provider bindings", "Deployment configuration inventory; requires DeploymentAdmin without granting universe content access."], access: MethodAccess::DeploymentAdmin,
+
+    METHOD_DEPLOYMENT_IDENTITY_SELF => identity_self(IdentityScopeParams) -> IdentitySelfResponse =>
+        ["Read own access", "Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected."], access: MethodAccess::Identity,
+    METHOD_DEPLOYMENT_IDENTITY_DIRECTORY => identity_directory(IdentityScopeParams) -> AccessDirectory =>
+        ["Read the access directory", "Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory."], access: MethodAccess::Identity,
+
     METHOD_DEPLOYMENT_UNIVERSES_CREATE => create_universe(DeploymentUniverseCreateParams) -> DeploymentUniverseCreateResponse =>
         ["Create a universe", "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created."], access: MethodAccess::DeploymentAdmin,
     METHOD_DEPLOYMENT_UNIVERSES_LIST => list_universes(DeploymentUniverseListParams) -> DeploymentUniverseListResponse =>
@@ -537,7 +570,7 @@ deployment_api_methods! {
     METHOD_DEPLOYMENT_UNIVERSES_DELETE => delete_universe(DeploymentUniverseDeleteParams) -> DeploymentUniverseDeleteResponse =>
         ["Purge a universe", "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure."], access: MethodAccess::DeploymentAdmin,
     METHOD_DEPLOYMENT_IDENTITY_APPLY => apply_identity(AccessChange) -> AccessChangeResult =>
-        ["Apply identity and access changes", "Applies a canonical identity change with current actor permissions and durable access auditing."], access: MethodAccess::DeploymentAdminOrCapability(ServiceCapability::ManageIdentity),
+        ["Apply identity and access changes", "Applies a canonical identity change with current actor permissions and durable access auditing."], access: MethodAccess::Identity,
     METHOD_DEPLOYMENT_API_KEYS_CREATE => create_api_key(DeploymentApiKeyCreateParams) -> DeploymentApiKeyCreateResponse =>
         ["Create a scoped API key", "Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification."], access: MethodAccess::CredentialManagement,
     METHOD_DEPLOYMENT_API_KEYS_LIST => list_api_keys(DeploymentApiKeyListParams) -> DeploymentApiKeyListResponse =>

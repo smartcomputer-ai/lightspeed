@@ -24,10 +24,11 @@ export const memberAddSchema = z
   .object({
     userId: z.string().min(1).optional(),
     email: z.email().optional(),
-    role: z.enum(["owner", "admin", "member"]).default("member"),
+    groupId: z.string().uuid().optional(),
+    role: z.enum(["viewer", "contributor", "operator", "admin"]).default("contributor"),
   })
-  .refine((value) => !!value.userId || !!value.email, {
-    message: "userId or email is required",
+  .refine((value) => !!value.userId || !!value.email || !!value.groupId, {
+    message: "userId, email or groupId is required",
   });
 
 export type MemberAddInput = z.infer<typeof memberAddSchema>;

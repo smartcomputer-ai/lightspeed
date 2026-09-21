@@ -1,13 +1,13 @@
+import { provisioningClient } from "./runtime-client.js";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { admin } from "better-auth/plugins/admin";
 import { bearer } from "better-auth/plugins/bearer";
-import { organization } from "better-auth/plugins/organization";
 import { schema, type Db } from "@lightspeed/platform-db";
 import type { ServerEnv } from "./env.js";
 
 export function createAuth(db: Db, env: ServerEnv) {
   return betterAuth({
+    user: { additionalFields: { corePrincipalId: { type: "string", required: true, input: false } } },
     baseURL: env.baseUrl,
     secret: env.authSecret,
     basePath: "/api/auth",
@@ -15,8 +15,7 @@ export function createAuth(db: Db, env: ServerEnv) {
     database: drizzleAdapter(db, { provider: "pg", schema }),
     emailAndPassword: {
       enabled: true,
-      // Invite-only platform: accounts are created by an admin (or, later,
-      // through organization invitations); public signup stays closed.
+      // Local accounts are created by core deployment administrators.
       disableSignUp: true,
     },
     ...(env.github
@@ -29,7 +28,17 @@ export function createAuth(db: Db, env: ServerEnv) {
           },
         }
       : {}),
-    plugins: [organization(), admin(), bearer()],
+    databaseHooks: {
+      user: { create: { before: async (user) => {
+        const corePrincipalId = crypto.randomUUID();
+        await provisioningClient(env).call("deployment/identity/apply", {
+          operation: "create_principal", id: corePrincipalId, kind: "user",
+          displayName: user.name, managementScope: { kind: "deployment" },
+        });
+        return { data: { ...user, corePrincipalId } };
+      } } },
+    },
+    plugins: [bearer()],
   });
 }
 

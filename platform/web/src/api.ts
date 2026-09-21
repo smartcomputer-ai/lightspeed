@@ -68,10 +68,9 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
 
 export interface Universe {
   id: string;
-  organizationId: string;
   lightspeedUniverseId: string;
   name: string;
-  /// Immutable URL segment (the better-auth org slug).
+  /// Immutable URL segment (Platform display metadata).
   slug: string;
   gatewayUrl: string | null;
   status: "active" | "archived";

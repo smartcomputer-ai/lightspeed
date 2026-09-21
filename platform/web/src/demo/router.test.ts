@@ -196,7 +196,7 @@ describe("demo router", () => {
       "/api/v1/channel-accounts",
       "/api/v1/admin/environment-providers",
       "/api/v1/admin/environment-provider-bindings",
-      "/api/auth/admin/list-users",
+      "/api/v1/admin/users",
     ]) {
       expect((await call("GET", path)).status, path).toBe(200);
     }
@@ -206,14 +206,11 @@ describe("demo router", () => {
     const { store, call } = await boot();
     const target = [...store.users.values()].find((user) => user.id !== store.currentUser.id)!;
 
-    const updated = await call("POST", "/api/auth/admin/update-user", {
-      userId: target.id,
-      data: {
+    const updated = await call("PATCH", `/api/v1/admin/users/${target.id}`, {
         name: "Updated User",
         email: "UPDATED@EXAMPLE.COM",
         emailVerified: true,
         role: "admin",
-      },
     });
     expect(updated.status).toBe(200);
     expect(store.users.get(target.id)).toMatchObject({
@@ -224,14 +221,9 @@ describe("demo router", () => {
     });
 
     expect(
-      (await call("POST", "/api/auth/admin/set-user-password", {
+      (await call("POST", `/api/v1/admin/users/${target.id}/password`, {
         userId: target.id,
         newPassword: "replacement-password",
-      })).status,
-    ).toBe(200);
-    expect(
-      (await call("POST", "/api/auth/admin/revoke-user-sessions", {
-        userId: target.id,
       })).status,
     ).toBe(200);
   });

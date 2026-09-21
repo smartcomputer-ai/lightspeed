@@ -1,10 +1,11 @@
 # P176 — Identity foundation and universe authorization
 
-**Status:** Steps 1–3 complete; step 4 pending. First slice of
+**Status:** Steps 1–3 complete; Platform directory integration in step 4 implemented;
+response-time revocation and remaining audit pending. First slice of
 [enterprise authorization and identity](later/pNNN-enterprise-authorization.md).
 Core contracts, method classification, authenticated request contexts and scoped
 service keys, ownership and action enforcement are implemented. Platform
-identity integration remains pending. Acceptance criteria remain deferred.
+identity integration now uses core records. Acceptance criteria remain deferred.
 
 Lightspeed is still greenfield. Reshape contracts and replace implicit defaults
 where needed; compatibility with the current authorization model is not a goal.
@@ -18,8 +19,7 @@ the same identity lifecycle later.
 
 The starting point was Platform-owned permission checks and runtime principals
 used mainly for attribution. This slice makes runtime authorization authoritative
-for universe access. Platform membership changes remain separate until step 4
-connects its user identities to core.
+for universe access. Platform membership changes now use those same core records.
 
 ## Ownership
 
@@ -151,7 +151,10 @@ revoke an independent service identity.
    facts; enforce checks across gateway and shared-service entry points. Authentication,
    scoped keys, contexts, caller migration, ownership and action enforcement are complete.
 4. [ ] Connect Platform and CLI administration to core records, removing competing
-   Platform-owned authorization state. Complete revocation, streams, and audit.
+   Platform-owned authorization state. **Directory integration complete:** canonical
+   account mapping, authenticated user assertions, core membership/group/role APIs,
+   administration UI/CLI and bootstrap. **Remaining:** response-time revocation,
+   streams and the remaining audit surfaces.
 
 ## Implemented foundation
 
@@ -181,9 +184,9 @@ Schema revision 12 replaces the old key table outright and requires canonical
 credentials. There is no legacy-key archive or compatibility path. Issuance
 checks the named creator's current authority, credential ceiling and principal
 management scope transactionally; key creation/revocation is audited.
-Platform and connectors now send service credentials. Configurator setup provisions
-a universe-managed service and key. Platform still applies its existing login and
-membership model; its canonical user mapping is not implemented by this change.
+Platform and connectors send service credentials. Configurator setup provisions
+a universe-managed service and key. Platform now asserts its mapped user and
+uses core access records; the following cutover replaces its former directory.
 A small authenticated identity-mutation endpoint supports service provisioning.
 
 Schema revision 13 adds immutable resource ownership reservations and separate
@@ -203,12 +206,35 @@ reserves the control edge before creation. Channel reply reads require the admit
 conversation binding and receive read-only authority for that session. Internal
 actors do not inherit user roles.
 
-Step 4 still owns the Platform directory cutover, response-time/stream revocation,
-and remaining audit surfaces. Platform requests still represent its configured
-service until canonical user mapping is connected. Content remains universe-visible;
+Step 4 still owns response-time/stream revocation and remaining audit surfaces.
+Content remains universe-visible;
 private access and standing execution authority are follow-ups.
 The host CLI's `--actor-principal` is trusted database administration, not a remote
 identity assertion. See [core identity administration](../documentation/deployment/identity-and-access.md).
+
+### Platform integration
+
+- Each local or externally provisioned login stores one immutable canonical user
+  mapping; email/name edits cannot rebind it. Credentials, external accounts and
+  human profiles remain in Platform. Provisioning never matches identities by email
+  or silently reactivates a disabled principal.
+- Every interactive runtime call authenticates the service and asserts the user,
+  including deployment operations, keys and Configurator installation. Missing
+  request identity fails closed; concurrent users have isolated request contexts.
+- Core self-access and scoped administrative directory queries complement typed
+  access mutations. They enforce credential ceilings and current authentication.
+  Universe Admins manage universe role assignments and universe-owned services;
+  deployment groups and group memberships remain deployment administration.
+- Platform removes Better Auth organizations, memberships and admin-role state.
+  Users/Groups/Members administration and CLI commands write core records. The UI
+  receives effective core roles; DeploymentAdmin never supplies universe membership.
+  Adoption adds metadata only, while creation assigns the real acting user Admin.
+  Deployment provider-binding inventory has an administrative endpoint independent
+  of universe content membership.
+- Platform migration 2 deliberately requires a fresh Platform database; it neither
+  imports permissions nor invents canonical identities for legacy accounts.
+  Bootstrap binds a pre-provisioned core administrator. The full development
+  launcher provisions separate user and service identities.
 
 Validation for steps 1–2 (2026-09-21):
 
@@ -259,6 +285,28 @@ Validation for ownership and action enforcement (2026-09-21):
   passed. Generated checks used a temporary Git index; the real index was unchanged.
 - Private-session/standing-execution semantics and response-time revocation were
   not claimed or tested by this slice.
+
+Validation for Platform integration (2026-09-21):
+
+- 444 affected Rust library/CLI tests passed, one existing ignored. Strict
+  all-target Clippy passed for access/API/store/server.
+- Full `npm run check` passed: 532 consumer tests, TypeScript checks, generated
+  artifacts and live/demo builds. Separate request-context tests check parallel
+  user isolation, mandatory attribution and endpoint confinement.
+- The new cross-stack live test passed 62 HTTP checks using actual Better Auth
+  login, Platform routes, authenticated runtime, PostgreSQL and Temporal with
+  scripted worker adapters. It checks ownership attribution for two concurrent
+  users, spoof rejection, core role/group revocation, disabled identities,
+  password-session revocation, key ceilings, creator Admin, last-admin protection,
+  content/admin separation and Configurator installation/retry. External-login
+  adapter provisioning is also exercised; no external identity provider is contacted.
+- Three core storage live suites and the authentication live suite passed.
+  Platform migration checks passed fresh install, empty-ledger upgrade, and
+  rejection/preservation of populated legacy authorization state.
+- Documentation checks/build, release metadata, formatting and whitespace checks
+  passed. Tests used disposable services and no model/provider credentials.
+  Full per-action UI affordances, response-time reauthorization and the remaining
+  access-audit surfaces remain follow-up work.
 
 ## Boundary and follow-up
 

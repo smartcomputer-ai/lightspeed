@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { canAdminister, useActiveUniverse } from "@/lib/universes";
 
 export function SetupsPage({ admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
@@ -14,7 +14,7 @@ export function SetupsPage({ admin }: { admin: boolean }) {
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !canManage(universe, admin)) {
+  if (!universe || !canAdminister(universe, admin)) {
     return <UniverseNotFound slug={slug} />;
   }
 

@@ -2678,7 +2678,7 @@ export function seedPersonalAssistant(store: DemoStore): void {
     slug: PERSONAL_ASSISTANT_SLUG,
     name: "Personal Assistant",
     lightspeedUniverseId: LIGHTSPEED_UNIVERSE_ID,
-    role: "owner",
+    role: "admin",
     createdAt: agoIso(5 * 7 * DAY_MS),
     responder,
   });

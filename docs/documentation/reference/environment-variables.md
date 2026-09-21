@@ -236,12 +236,13 @@ the Rust runtime database and gateway authentication.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_PLATFORM_API_KEY` | Unset | Canonical Platform service bearer key for the authenticated runtime. Full development bootstraps one explicitly when omitted. |
+| `LIGHTSPEED_PLATFORM_API_KEY` | Unset | Deployment-scoped Platform service key with `assert_user` and `manage_identity`. Interactive calls assert the mapped user. Full development provisions one when omitted. |
 | `LIGHTSPEED_PLATFORM_DATABASE_URL` | **Required** | Platform PostgreSQL connection URL. |
 | `LIGHTSPEED_PLATFORM_AUTH_SECRET` | **Required** | Better Auth signing/encryption secret. Use a strong, stable deployment secret. |
 | `LIGHTSPEED_PLATFORM_BASE_URL` | `http://localhost:3000` | Public Platform origin used by authentication and trusted-origin checks. |
 | `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS` | Empty list | Comma-separated additional browser origins accepted by Better Auth. The development supervisor supplies both `http://127.0.0.1:5173` and `http://localhost:5173`. |
 | `PORT` | `3000` | Platform HTTP listen port. |
+| `LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID` | Unset | Existing active core user with DeploymentAdmin to bind to the first Platform login. Required with bootstrap email/password; the full development launcher provisions it. |
 | `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` | Unset | Bootstrap administrator email. Applied only with the password and only while the users table is empty. |
 | `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` | Unset | Bootstrap administrator password. Applied only with the email and only while the users table is empty. |
 | `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` | Unset | GitHub login client ID. GitHub login is enabled only when both GitHub variables are present. |

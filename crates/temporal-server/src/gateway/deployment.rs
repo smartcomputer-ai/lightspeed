@@ -127,19 +127,102 @@ impl GatewayDeploymentApi {
 
 #[async_trait]
 impl DeploymentApiService for GatewayDeploymentApi {
+    async fn list_deployment_provider_bindings(
+        &self,
+        params: api::DeploymentUniverseReadParams,
+    ) -> Result<AgentApiOutcome<api::EnvironmentProviderBindingListResponse>, AgentApiError> {
+        let (context, rights) = super::authentication::current_context(self.pool()).await?;
+        if context.credential_scope != AccessScope::Deployment
+            || !rights.has_role(access::Role::DeploymentAdmin)
+        {
+            return Err(AgentApiError::rejected("deployment administrator required"));
+        }
+        let universe_id = parse_universe_id(&params.universe_id)?;
+        self.require_universe(universe_id).await?;
+        let bindings = self
+            .runtime
+            .stores()
+            .store_for(universe_id)
+            .list_provider_bindings(universe_id)
+            .await
+            .map_err(super::service::environment_providers::map_environments_error)?;
+        Ok(AgentApiOutcome::new(
+            api::EnvironmentProviderBindingListResponse {
+                bindings: bindings
+                    .iter()
+                    .map(super::service::environment_providers::environment_provider_binding_view)
+                    .collect(),
+            },
+        ))
+    }
+
+    async fn identity_self(
+        &self,
+        params: api::IdentityScopeParams,
+    ) -> Result<AgentApiOutcome<api::IdentitySelfResponse>, AgentApiError> {
+        let (context, _) = super::authentication::current_context(self.pool()).await?;
+        require_identity_scope(&context, params.scope)?;
+        let store = store_pg::PgAccessStore::new(self.pool().clone());
+        let access = store
+            .effective_access(context.acting_principal.id, params.scope)
+            .await
+            .map_err(identity_error)?;
+        let mut universes = Vec::new();
+        for universe_id in store
+            .accessible_universes(context.acting_principal.id)
+            .await
+            .map_err(identity_error)?
+        {
+            let scope = AccessScope::Universe { universe_id };
+            if context.credential_scope == AccessScope::Deployment
+                || context.credential_scope == scope
+            {
+                universes.push(
+                    store
+                        .effective_access(context.acting_principal.id, scope)
+                        .await
+                        .map_err(identity_error)?,
+                );
+            }
+        }
+        Ok(AgentApiOutcome::new(api::IdentitySelfResponse {
+            access,
+            universes,
+        }))
+    }
+
+    async fn identity_directory(
+        &self,
+        params: api::IdentityScopeParams,
+    ) -> Result<AgentApiOutcome<api::AccessDirectory>, AgentApiError> {
+        let (context, _) = super::authentication::current_context(self.pool()).await?;
+        require_identity_scope(&context, params.scope)?;
+        store_pg::PgAccessStore::new(self.pool().clone())
+            .directory(context.acting_principal.id, params.scope)
+            .await
+            .map(AgentApiOutcome::new)
+            .map_err(identity_error)
+    }
+
     async fn apply_identity(
         &self,
         change: access::AccessChange,
     ) -> Result<AgentApiOutcome<access::AccessChangeResult>, AgentApiError> {
-        let context = super::principal::request_context()?;
-        if context.credential_scope != AccessScope::Deployment {
-            return Err(AgentApiError::rejected("deployment credential required"));
-        }
+        let (context, _) = super::authentication::current_context(self.pool()).await?;
+        let scope = match &change {
+            access::AccessChange::AssignRole { assignment }
+            | access::AccessChange::RevokeRole { assignment } => assignment.scope,
+            access::AccessChange::CreatePrincipal {
+                management_scope, ..
+            } => *management_scope,
+            _ => AccessScope::Deployment,
+        };
+        require_identity_scope(&context, scope)?;
         store_pg::PgAccessStore::new(self.pool().clone())
             .apply(context.acting_principal.id, change, current_time_ms()?)
             .await
             .map(AgentApiOutcome::new)
-            .map_err(|e| AgentApiError::rejected(e.to_string()))
+            .map_err(identity_error)
     }
 
     async fn create_universe(
@@ -720,4 +803,26 @@ fn key_context(scope: AccessScope) -> Result<access::RequestContext, AgentApiErr
         ));
     }
     Ok(context)
+}
+
+fn require_identity_scope(
+    context: &access::RequestContext,
+    scope: AccessScope,
+) -> Result<(), AgentApiError> {
+    if context.credential_scope != AccessScope::Deployment && context.credential_scope != scope {
+        return Err(AgentApiError::rejected(
+            "identity scope exceeds credential scope",
+        ));
+    }
+    Ok(())
+}
+fn identity_error(error: access::AccessError) -> AgentApiError {
+    match error {
+        access::AccessError::NotFound => AgentApiError::not_found(error.to_string()),
+        access::AccessError::Conflict | access::AccessError::LastAdministrator { .. } => {
+            AgentApiError::conflict(error.to_string())
+        }
+        access::AccessError::Store(_) => AgentApiError::internal(error.to_string()),
+        _ => AgentApiError::rejected(error.to_string()),
+    }
 }

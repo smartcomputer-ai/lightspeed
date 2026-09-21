@@ -174,15 +174,15 @@ channels, and integrations evolve. The
 [controller page](tools-and-controller-workflows.md) explains the bindings,
 promises, and ownership that make these relationships durable.
 
-The Platform sits at another boundary. It owns login and the browser application,
-and currently maintains its own organizations and membership checks. A separate
-[core identity registry](../deployment/identity-and-access.md) now stores canonical
-principals, groups, scoped roles, and service capabilities. Gateway and shared-service
-checks enforce actions and explicit resource ownership against these records.
-The Platform canonical user mapping and membership cutover remain pending. Its PostgreSQL database is separate
-from the runtime database. The runtime remains usable through its public API
-without the Platform, and the Platform uses that API rather than importing
-reducer internals into browser clients.
+The Platform owns login, external identity mapping, human profiles and the browser
+application. Its separate database maps each account to an immutable canonical
+user UUID and keeps universe display/routing metadata. The
+[core identity registry](../deployment/identity-and-access.md) owns principals,
+groups, scoped roles and service capabilities. All interactive Platform calls
+assert their user through the service's `assert_user` capability; gateway and
+shared-service checks enforce that user's permissions and resource ownership.
+Platform and CLI administration use the same core records. The runtime remains
+usable without Platform; public clients do not import reducer internals.
 
 ## Attach compute when the task needs it
 

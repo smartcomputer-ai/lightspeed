@@ -64,7 +64,7 @@ export function ProfilesPage({ admin }: { admin: boolean }) {
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !canManage(universe, admin)) {
+  if (!universe || !universe.role) {
     return (
       <div className="p-6">
         <UniverseNotFound slug={slug} />
