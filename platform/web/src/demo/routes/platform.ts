@@ -17,6 +17,12 @@ export function platformRoutes(store: DemoStore): Hono {
     c.json([...store.users.values()].map(({ id, name, email }) => ({ id, name, email }))),
   );
 
+  app.get("/universes/:id/key-principals", (c) => {
+    const universe = universeFor(store, c);
+    if (!universe || !universe.universe.role) return notFound(c);
+    return c.json([{ id: store.currentUser.id, displayName: store.currentUser.name, kind: "user" }]);
+  });
+
   app.get("/universes", (c) => c.json([...store.universes.values()].map((state) => state.universe)));
 
   app.post("/universes", async (c) => {

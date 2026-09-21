@@ -251,8 +251,15 @@ Important boundaries:
 - **Evidence:** attribute requests, permission changes, approvals, and outcomes
   to actors and execution identities, preserving attribution after offboarding.
   Administrative/access audit records need a lifecycle independent of session
-  deletion, without retaining secret values. Sensitive reads and exceptional
-  private-content access require auditable access records beyond domain events.
+  deletion, without retaining secret values. Keep two streams: transactional
+  permission changes (`access_audit_changes`) and significant security decisions
+  (`access_audit_events`). Record run admission, meaningful configuration/control
+  actions and denials; keep routine reads, credential leasing and individual
+  model/tool steps out of access audit. Consequential administrative operations
+  retain admission/outcome correlation, without duplicate records from nested
+  checks. Establish this policy before designing retention. Sensitive reads and
+  exceptional private-content access will require auditable access records beyond
+  domain events.
 
 ## Implementation sequence
 

@@ -85,8 +85,6 @@ the [local development guide](docs/documentation/development/local-development.m
 
 Core identity/bootstrap commands and scoped access records are available through
 [host administration](docs/documentation/deployment/identity-and-access.md).
-Gateway and shared-service action/ownership checks are enforced; Platform canonical
-user mapping remains the next integration step.
 
 ## Features
 
@@ -177,6 +175,9 @@ Lightspeed covers the table stakes of a modern agent harness. Everything below w
   exposing them to the model
 - [x] **Multi-tenant by default**: isolate tenants in universes on one deployment
   or run dedicated per-tenant deployments
+- [x] **Canonical access control**: core-owned roles and groups, user-attributed
+  service requests, and durable auditing of significant access actions;
+  see [authentication and access](docs/documentation/deployment/authentication-and-tenancy.md)
 
 **Interfaces**
 

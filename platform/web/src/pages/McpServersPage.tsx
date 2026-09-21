@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { McpToolPicker } from "@/components/mcp/tool-picker";
 import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
@@ -75,7 +76,7 @@ import {
 } from "@/components/ui/table";
 import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
 import { ProgressSteps } from "@/components/ui/progress-steps";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { useActiveUniverse } from "@/lib/universes";
 
 const MCP_CREATE_STEPS = [
   { id: 1 as const, label: "Server" },
@@ -85,13 +86,17 @@ const MCP_CREATE_STEPS = [
 /// U5a: the universe's MCP server registry — what the profile editor's
 /// server picker links against. Full-document saves mirror the engine's
 /// put-with-revision catalog semantics.
-export function McpServersPage({ admin }: { admin: boolean }) {
+export function McpServersPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
+  const permissions = useActionPermissions(universe?.id);
 
-  if (isLoading) {
+  if (isLoading || permissions.isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !canManage(universe, admin)) {
+  if (permissions.error) {
+    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
+  }
+  if (!universe || !permissions.can("read")) {
     return <UniverseNotFound slug={slug} />;
   }
 
@@ -101,6 +106,7 @@ export function McpServersPage({ admin }: { admin: boolean }) {
 const APPROVALS = ["always", "never"] as const;
 
 function ServerList({ universeId }: { universeId: string }) {
+  const writable = useActionPermissions(universeId).can("configure_resource");
   const queryClient = useQueryClient();
   const servers = useQuery({
     queryKey: ["mcp-servers", universeId],
@@ -136,12 +142,12 @@ function ServerList({ universeId }: { universeId: string }) {
       <PageHeader
         title="MCP servers"
         description="Connect remote tools once, then make them available to profiles and sessions."
-        actions={
+        actions={writable && (
           <Button onClick={() => setCreateOpen(true)}>
             <Plus data-icon="inline-start" />
             Add server
           </Button>
-        }
+        )}
       />
       {servers.isLoading && <LoadingNote />}
       {servers.error && (
@@ -152,7 +158,7 @@ function ServerList({ universeId }: { universeId: string }) {
       )}
       {servers.data && rows.length === 0 && (
         <p className="mb-4 text-sm text-muted-foreground">
-          No MCP servers yet — add one, then link it from a profile's MCP section.
+          No MCP servers configured.
         </p>
       )}
       {rows.length > 0 && (
@@ -194,69 +200,71 @@ function ServerList({ universeId }: { universeId: string }) {
                     <div className="flex items-center gap-2">
                       <StatusBadge status={server.status} />
                       {/* The one thing to do on a row that needs auth is right here, not behind an icon. */}
-                      {isOAuthPolicy(server.authPolicy.type) && !server.credential && (
+                      {writable && isOAuthPolicy(server.authPolicy.type) && !server.credential && (
                         <Button variant="outline" size="xs" onClick={() => setOAuthServer(server)}>
                           <LogIn data-icon="inline-start" /> Connect
                         </Button>
                       )}
                     </div>
                   </TableCell>
-                  <TableActionsCell>
-                    {isOAuthPolicy(server.authPolicy.type) && server.credential && (
+                  {writable && (
+                    <TableActionsCell>
+                      {isOAuthPolicy(server.authPolicy.type) && server.credential && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`Reconnect ${server.serverId} with OAuth`}
+                          title="Sign in again"
+                          onClick={() => setOAuthServer(server)}
+                        >
+                          <LogIn />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        aria-label={`Reconnect ${server.serverId} with OAuth`}
-                        title="Sign in again"
-                        onClick={() => setOAuthServer(server)}
+                        aria-label={`Edit ${server.serverId}`}
+                        onClick={() => setEditing(server)}
                       >
-                        <LogIn />
+                        <Pencil />
                       </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Edit ${server.serverId}`}
-                      onClick={() => setEditing(server)}
-                    >
-                      <Pencil />
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            className="text-destructive"
-                            aria-label={`Delete ${server.serverId}`}
-                          />
-                        }
-                      >
-                        <Trash2 />
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            Delete {server.displayName ?? server.serverId}?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Profiles referencing{" "}
-                            <span className="font-mono text-xs">{server.serverId}</span>{" "}
-                            will fail to link it into new sessions.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            className="bg-destructive text-white hover:bg-destructive/90"
-                            onClick={() => remove.mutate(server.serverId)}
-                          >
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </TableActionsCell>
+                      <AlertDialog>
+                        <AlertDialogTrigger
+                          render={
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              className="text-destructive"
+                              aria-label={`Delete ${server.serverId}`}
+                            />
+                          }
+                        >
+                          <Trash2 />
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              Delete {server.displayName ?? server.serverId}?
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Profiles referencing{" "}
+                              <span className="font-mono text-xs">{server.serverId}</span>{" "}
+                              will fail to link it into new sessions.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              className="bg-destructive text-white hover:bg-destructive/90"
+                              onClick={() => remove.mutate(server.serverId)}
+                            >
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </TableActionsCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -268,48 +276,52 @@ function ServerList({ universeId }: { universeId: string }) {
         select its id. OAuth servers discover their authorization metadata and store a brokered
         universe credential after you approve access.
       </p>
-      <ServerDialog
-        key={createOpen ? "create-open" : "create-closed"}
-        universeId={universeId}
-        open={createOpen}
-        server={null}
-        authGrants={authGrants.data ?? []}
-        authGrantsLoading={authGrants.isLoading}
-        onOpenChange={setCreateOpen}
-        onDone={(server, connectOAuth) => {
-          invalidate();
-          if (connectOAuth) setOAuthServer(server);
-        }}
-      />
-      <ServerDialog
-        key={`edit-${editing?.serverId ?? "closed"}`}
-        universeId={universeId}
-        open={editing !== null}
-        server={editing}
-        authGrants={authGrants.data ?? []}
-        authGrantsLoading={authGrants.isLoading}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEditing(null);
-          }
-        }}
-        onDone={(server, connectOAuth) => {
-          invalidate();
-          if (connectOAuth) setOAuthServer(server);
-        }}
-      />
-      <OAuthDialog
-        key={oauthServer?.serverId ?? "closed"}
-        universeId={universeId}
-        server={oauthServer}
-        onOpenChange={(open) => {
-          if (!open) setOAuthServer(null);
-        }}
-        onDone={() => {
-          invalidate();
-          queryClient.invalidateQueries({ queryKey: ["auth-grants", universeId] });
-        }}
-      />
+      {writable && (
+        <>
+          <ServerDialog
+            key={createOpen ? "create-open" : "create-closed"}
+            universeId={universeId}
+            open={createOpen}
+            server={null}
+            authGrants={authGrants.data ?? []}
+            authGrantsLoading={authGrants.isLoading}
+            onOpenChange={setCreateOpen}
+            onDone={(server, connectOAuth) => {
+              invalidate();
+              if (connectOAuth) setOAuthServer(server);
+            }}
+          />
+          <ServerDialog
+            key={`edit-${editing?.serverId ?? "closed"}`}
+            universeId={universeId}
+            open={editing !== null}
+            server={editing}
+            authGrants={authGrants.data ?? []}
+            authGrantsLoading={authGrants.isLoading}
+            onOpenChange={(open) => {
+              if (!open) {
+                setEditing(null);
+              }
+            }}
+            onDone={(server, connectOAuth) => {
+              invalidate();
+              if (connectOAuth) setOAuthServer(server);
+            }}
+          />
+          <OAuthDialog
+            key={oauthServer?.serverId ?? "closed"}
+            universeId={universeId}
+            server={oauthServer}
+            onOpenChange={(open) => {
+              if (!open) setOAuthServer(null);
+            }}
+            onDone={() => {
+              invalidate();
+              queryClient.invalidateQueries({ queryKey: ["auth-grants", universeId] });
+            }}
+          />
+        </>
+      )}
     </>
   );
 }

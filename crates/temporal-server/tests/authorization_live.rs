@@ -165,7 +165,7 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             assert_eq!(tokio::spawn(async move { unscoped_api.list_profiles(api::ProfileListParams {}).await }).await?.unwrap_err().kind, AgentApiErrorKind::Rejected);
             let headers = { let mut h = axum::http::HeaderMap::new(); h.insert("authorization", format!("Bearer {}", viewer.secret.expose()).parse()?); h };
             let context = temporal_server::gateway::authentication::authenticate(&keys, &access, &headers,
-                api::MethodAccess::Universe(UniverseAction::Read), 10).await?;
+                api::METHOD_SESSION_READ, 10).await?;
             let denied = with_request_context(context.clone(), api.rename_session(api::SessionRenameParams {
                 session_id: session.into(), display_name: None })).await.unwrap_err();
             assert_eq!(denied.kind, AgentApiErrorKind::Rejected);
@@ -184,9 +184,9 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             // Deleting content does not erase attribution or allow identity takeover.
             rejected(rpc(&endpoint, bob, "session/start", start).await);
             assert!(access.ownership(universe, &ResourceRef::Session(session.into())).await?.is_some());
-            let admissions: i64 = sqlx::query_scalar("SELECT count(*) FROM access_action_audit WHERE universe_id=$1 AND actor->>'id'=$2 AND action='session/runs/start' AND admitted")
-                .bind(universe).bind(alice.record.principal_id.to_string()).fetch_one(&pool).await?;
-            assert!(admissions > 0);
+            let admissions: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events WHERE scope->>'universeId'=$1 AND actor->>'id'=$2 AND method='session/runs/start' AND outcome='allowed'")
+                .bind(universe.to_string()).bind(alice.record.principal_id.to_string()).fetch_one(&pool).await?;
+            assert_eq!(admissions, 1, "one admission per run, despite nested service calls");
             anyhow::Ok(())
         };
         let result = tokio::time::timeout(Duration::from_secs(150), outcome).await;

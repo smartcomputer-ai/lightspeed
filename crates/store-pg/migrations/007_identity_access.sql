@@ -1,5 +1,5 @@
--- Canonical deployment identity and access records. Credentials remain in the
--- auth registry; these tables contain no credential values or login sessions.
+-- Canonical deployment identity, authorization and inbound API keys.
+-- No login sessions, external identity mapping or plaintext credentials.
 CREATE TABLE IF NOT EXISTS access_principals (
     principal_id uuid PRIMARY KEY CHECK (principal_id <> '00000000-0000-0000-0000-000000000000'),
     kind text NOT NULL CHECK (kind IN ('user', 'service')),
@@ -62,11 +62,19 @@ CREATE TABLE IF NOT EXISTS access_policy (
 );
 INSERT INTO access_policy (singleton) VALUES (true) ON CONFLICT DO NOTHING;
 
--- No foreign keys to mutable identities, universes or session content: audit
--- must survive deletion/offboarding. Only access change metadata is recorded.
-CREATE TABLE IF NOT EXISTS access_audit (
-    revision bigint PRIMARY KEY CHECK (revision > 0),
-    actor_id uuid,
-    occurred_at_ms bigint NOT NULL CHECK (occurred_at_ms >= 0),
-    event jsonb NOT NULL
+-- Inbound API keys authenticate a canonical principal within a credential scope.
+-- Only hashes and non-secret key references are persisted; plaintext is shown
+-- once at issuance. A null universe selects deployment scope.
+CREATE TABLE api_keys (
+    key_hash text PRIMARY KEY CHECK (key_hash ~ '^[0-9a-f]{64}$'),
+    key_prefix text NOT NULL UNIQUE CHECK (key_prefix <> ''),
+    universe_id uuid REFERENCES universes(universe_id) ON DELETE CASCADE,
+    principal_id uuid NOT NULL REFERENCES access_principals(principal_id),
+    created_by uuid NOT NULL REFERENCES access_principals(principal_id),
+    display_name text,
+    created_at_ms bigint NOT NULL CHECK (created_at_ms >= 0),
+    revoked_at_ms bigint CHECK (revoked_at_ms IS NULL OR revoked_at_ms >= created_at_ms),
+    last_used_at_ms bigint
 );
+CREATE INDEX authenticated_keys_universe_idx ON api_keys(universe_id);
+

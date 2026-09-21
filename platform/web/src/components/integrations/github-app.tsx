@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ChevronDown, RefreshCw } from "lucide-react";
@@ -213,7 +214,9 @@ export function GitHubAppDetails({
   onChanged: () => void;
   onRemoved: () => void;
 }) {
+  const writable = useActionPermissions(universeId).can("configure_resource");
   const installations = useQuery({
+    enabled: writable,
     queryKey: ["integrations", "github", universeId, app.providerId, "installations"],
     queryFn: () =>
       api<GitHubInstallation[]>(
@@ -262,106 +265,116 @@ export function GitHubAppDetails({
         </dd>
       </dl>
 
-      <div>
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <p className="text-sm font-medium">Installations</p>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void installations.refetch()}
-            disabled={installations.isFetching}
-          >
-            <RefreshCw className={installations.isFetching ? "animate-spin" : undefined} />
-            Refresh
-          </Button>
-        </div>
-        <p className="mb-2 text-sm text-muted-foreground">
-          Accounts where this App is installed, live from GitHub. Grant an installation to let this
-          universe mint tokens for its repositories.
-        </p>
-        {installations.isLoading && <LoadingNote />}
-        {installations.error && (
-          <p className="text-sm text-destructive">{installations.error.message}</p>
-        )}
-        {grant.error && <p className="mb-2 text-sm text-destructive">{grant.error.message}</p>}
-        {installations.data && installations.data.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            No installations yet. Install the App on a GitHub account or organization, then refresh.
+      {writable && (
+        <div>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-sm font-medium">Installations</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void installations.refetch()}
+              disabled={installations.isFetching}
+            >
+              <RefreshCw className={installations.isFetching ? "animate-spin" : undefined} />
+              Refresh
+            </Button>
+          </div>
+          <p className="mb-2 text-sm text-muted-foreground">
+            Accounts where this App is installed, live from GitHub. Grant an installation to let this
+            universe mint tokens for its repositories.
           </p>
-        )}
-        {installations.data && installations.data.length > 0 && (
-          <TableCard>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Account</TableHead>
-                  <TableHead>Repositories</TableHead>
-                  <TableHead>Permissions</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-0" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {installations.data.map((installation) => {
-                  const existing = installationGrantFor(grants, installation.installationId);
-                  const granting =
-                    grant.isPending && grant.variables?.installationId === installation.installationId;
-                  return (
-                    <TableRow key={installation.installationId}>
-                      <TableTitleCell
-                        title={installation.accountLogin ?? "Unknown account"}
-                        subtitle={`installation ${installation.installationId}`}
-                      />
-                      <TableCell className="text-muted-foreground">
-                        {installation.repositorySelection ?? "—"}
-                      </TableCell>
-                      <TableCell className="whitespace-normal text-muted-foreground">
-                        <PermissionList permissions={installation.permissions} />
-                      </TableCell>
-                      <TableCell>
-                        {existing ? (
-                          <InstallationStatusBadge status={existing.status} />
-                        ) : (
-                          <Badge variant="outline">not granted</Badge>
-                        )}
-                      </TableCell>
-                      <TableActionsCell>
-                        {(!existing || existing.status !== "active") && (
-                          <Button
-                            size="sm"
-                            variant={existing ? "outline" : "default"}
-                            disabled={granting}
-                            onClick={() => grant.mutate(installation)}
-                          >
-                            {granting ? "Granting…" : existing ? "Re-grant" : "Grant"}
-                          </Button>
-                        )}
-                      </TableActionsCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </TableCard>
-        )}
-      </div>
+          {installations.isLoading && <LoadingNote />}
+          {installations.error && (
+            <p className="text-sm text-destructive">{installations.error.message}</p>
+          )}
+          {grant.error && <p className="mb-2 text-sm text-destructive">{grant.error.message}</p>}
+          {installations.data && installations.data.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No installations yet. Install the App on a GitHub account or organization, then refresh.
+            </p>
+          )}
+          {installations.data && installations.data.length > 0 && (
+            <TableCard>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Account</TableHead>
+                    <TableHead>Repositories</TableHead>
+                    <TableHead>Permissions</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="w-0" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {installations.data.map((installation) => {
+                    const existing = installationGrantFor(grants, installation.installationId);
+                    const granting =
+                      grant.isPending && grant.variables?.installationId === installation.installationId;
+                    return (
+                      <TableRow key={installation.installationId}>
+                        <TableTitleCell
+                          title={installation.accountLogin ?? "Unknown account"}
+                          subtitle={`installation ${installation.installationId}`}
+                        />
+                        <TableCell className="text-muted-foreground">
+                          {installation.repositorySelection ?? "—"}
+                        </TableCell>
+                        <TableCell className="whitespace-normal text-muted-foreground">
+                          <PermissionList permissions={installation.permissions} />
+                        </TableCell>
+                        <TableCell>
+                          {existing ? (
+                            <InstallationStatusBadge status={existing.status} />
+                          ) : (
+                            <Badge variant="outline">not granted</Badge>
+                          )}
+                        </TableCell>
+                        <TableActionsCell>
+                          {(!existing || existing.status !== "active") && (
+                            <Button
+                              size="sm"
+                              variant={existing ? "outline" : "default"}
+                              disabled={granting}
+                              onClick={() => grant.mutate(installation)}
+                            >
+                              {granting ? "Granting…" : existing ? "Re-grant" : "Grant"}
+                            </Button>
+                          )}
+                        </TableActionsCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableCard>
+          )}
+        </div>
+      )}
+      {!writable && <div className="grid gap-2 text-sm">
+        <p className="font-medium">Granted installations</p>
+        {grants.length ? grants.map((grant) => (
+          <p key={grant.grantId}>{grant.displayName ?? grant.subjectHint ?? grant.grantId} · {grant.status}</p>
+        )) : <p className="text-muted-foreground">No installation grants.</p>}
+      </div>}
 
       {remove.error && <p className="text-sm text-destructive">{remove.error.message}</p>}
-      <DialogFooter>
-        <ConfirmDangerButton
-          label="Remove GitHub App"
-          title="Remove this GitHub App?"
-          description={
-            <>
-              The stored private key is deleted and installation credentials of{" "}
-              <span className="font-mono text-xs">{app.providerId}</span> stop resolving tokens.
-              The App itself stays installed on GitHub.
-            </>
-          }
-          pending={remove.isPending}
-          onConfirm={() => remove.mutate()}
-        />
-      </DialogFooter>
+      {writable && (
+        <DialogFooter>
+          <ConfirmDangerButton
+            label="Remove GitHub App"
+            title="Remove this GitHub App?"
+            description={
+              <>
+                The stored private key is deleted and installation credentials of{" "}
+                <span className="font-mono text-xs">{app.providerId}</span> stop resolving tokens.
+                The App itself stays installed on GitHub.
+              </>
+            }
+            pending={remove.isPending}
+            onConfirm={() => remove.mutate()}
+          />
+        </DialogFooter>
+      )}
     </div>
   );
 }

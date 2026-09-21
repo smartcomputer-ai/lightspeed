@@ -60,6 +60,23 @@ const universeReads = [
 ];
 
 describe("demo router", () => {
+  it("serves action previews while keeping read-only and non-member universes distinct", async () => {
+    const { store, call } = await boot();
+    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const body = { resources: [{ kind: "session", id: "session-flaky-scheduler" }, { kind: "session", id: "missing" }] };
+    const path = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/access`;
+    const admin = await call("POST", path, body);
+    expect(admin.status).toBe(200);
+    expect(admin.json).toMatchObject({ actions: expect.arrayContaining(["create_session", "configure_resource"]), resources: [
+      { actions: expect.arrayContaining(["control_session", "stop_session"]) }, { actions: [] },
+    ] });
+    universe.universe.role = "viewer";
+    const viewer = await call("POST", path, body);
+    expect(viewer.json).toMatchObject({ actions: ["read"], resources: [{ actions: ["read"] }, { actions: [] }] });
+    universe.universe.role = null;
+    expect((await call("POST", path, body)).status).toBe(403);
+  });
+
   it("keeps full run output after its entries leave active context", async () => {
     const { store } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;

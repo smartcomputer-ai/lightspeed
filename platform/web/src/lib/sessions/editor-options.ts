@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -12,6 +13,7 @@ import type {
 } from "@/components/session/session-config-editor";
 
 export function useSessionConfigEditorOptions(universeId: string, enabled = true) {
+  const permissions = useActionPermissions(enabled ? universeId : undefined);
   const servers = useQuery({
     queryKey: ["mcp-servers", universeId],
     queryFn: () => api<McpServerOption[]>("GET", `/api/v1/universes/${universeId}/mcp-servers`),
@@ -47,6 +49,6 @@ export function useSessionConfigEditorOptions(universeId: string, enabled = true
     models: models.data?.models,
     profiles: profiles.data,
     environments: environments.data,
-    mcpToolDiscovery,
+    mcpToolDiscovery: permissions.can("configure_resource") ? mcpToolDiscovery : undefined,
   };
 }

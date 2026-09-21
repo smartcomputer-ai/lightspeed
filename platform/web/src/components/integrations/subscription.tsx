@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Copy } from "lucide-react";
@@ -153,6 +154,7 @@ export function SubscriptionDetails({
   grant: SecretGrant;
   onDisconnected: () => void;
 }) {
+  const writable = useActionPermissions(universeId).can("configure_resource");
   const binding = subscriptionBinding(grant);
   const disconnect = useMutation({
     mutationFn: () =>
@@ -188,21 +190,23 @@ export function SubscriptionDetails({
       </p>
       {isCodexTokenSet(grant) && <CodexBootstrapNote />}
       {disconnect.error && <p className="text-sm text-destructive">{disconnect.error.message}</p>}
-      <DialogFooter>
-        <ConfirmDangerButton
-          label="Disconnect"
-          title="Disconnect this subscription?"
-          description={
-            <>
-              Environments bound to <span className="font-mono text-xs">{grant.grantId}</span> stop
-              receiving the credential on their next job. The subscription itself is unaffected;
-              revoke the token with the provider if it leaked.
-            </>
-          }
-          pending={disconnect.isPending}
-          onConfirm={() => disconnect.mutate()}
-        />
-      </DialogFooter>
+      {writable && (
+        <DialogFooter>
+          <ConfirmDangerButton
+            label="Disconnect"
+            title="Disconnect this subscription?"
+            description={
+              <>
+                Environments bound to <span className="font-mono text-xs">{grant.grantId}</span> stop
+                receiving the credential on their next job. The subscription itself is unaffected;
+                revoke the token with the provider if it leaked.
+              </>
+            }
+            pending={disconnect.isPending}
+            onConfirm={() => disconnect.mutate()}
+          />
+        </DialogFooter>
+      )}
     </div>
   );
 }

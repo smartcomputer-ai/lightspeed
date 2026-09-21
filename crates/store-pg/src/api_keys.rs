@@ -308,9 +308,20 @@ impl PgApiKeyStore {
         if !rights.active() || (!admin && rights.roles.is_empty()) {
             return Err(ApiKeyError::Denied);
         }
-        let row = sqlx::query("UPDATE api_keys SET revoked_at_ms = COALESCE(revoked_at_ms, $4) WHERE universe_id IS NOT DISTINCT FROM $1 AND key_prefix = $2 AND ($3 OR principal_id = $5) RETURNING *")
-            .bind(scope_id(scope)).bind(prefix).bind(admin).bind(ms_to_i64(now_ms)?).bind(actor).fetch_optional(&mut *tx).await.map_err(map_sqlx_error)?;
-        if row.is_some() {
+        let mut record = sqlx::query("SELECT * FROM api_keys WHERE universe_id IS NOT DISTINCT FROM $1 AND key_prefix = $2 AND ($3 OR principal_id = $4) FOR UPDATE")
+            .bind(scope_id(scope)).bind(prefix).bind(admin).bind(actor)
+            .fetch_optional(&mut *tx).await.map_err(map_sqlx_error)?
+            .map(api_key_record_from_row).transpose()?;
+        if let Some(record) = record.as_mut()
+            && record.revoked_at_ms.is_none()
+        {
+            sqlx::query("UPDATE api_keys SET revoked_at_ms = $2 WHERE key_prefix = $1")
+                .bind(prefix)
+                .bind(ms_to_i64(now_ms)?)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_sqlx_error)?;
+            record.revoked_at_ms = Some(now_ms);
             audit(
                 &mut tx,
                 Some(actor),
@@ -321,6 +332,6 @@ impl PgApiKeyStore {
             .map_err(map_access_error)?;
         }
         tx.commit().await.map_err(map_sqlx_error)?;
-        row.map(api_key_record_from_row).transpose()
+        Ok(record)
     }
 }

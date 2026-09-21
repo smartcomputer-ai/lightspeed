@@ -218,9 +218,9 @@ covers the controller, daemon, and gateway responsibilities in more detail.
 ## Database migrations
 
 Runtime and Platform data have separate owners and migration histories.
-Runtime PostgreSQL holds sessions and domain records such as bots and channel
-accounts. Platform owns people, authentication, organization/universe mapping,
-and setup provenance. Add a table to the database that owns its behavior.
+Runtime PostgreSQL holds canonical principals, groups, permissions, sessions and
+domain records such as bots and channel accounts. Platform owns login credentials,
+external identity mapping, organization/universe mapping and setup provenance. Add a table to the database that owns its behavior.
 
 ### Runtime migrations
 
@@ -230,6 +230,20 @@ migration under `crates/store-pg/migrations/`, register it in
 `crates/store-pg/src/migrations.rs`, and update `REQUIRED_SCHEMA_REVISION`
 and `LIGHTSPEED_SCHEMA_REVISION` in `release/metadata.env` together. Maintain
 the `LIGHTSPEED_TABLES` ownership list when tables are added or removed.
+
+During greenfield development, an explicitly agreed database reset permits
+consolidating unreleased changes into their owning domain definitions. The
+current baseline has eleven files: identity and inbound API keys share one;
+resource ownership and access audit have their own. Fold alterations into the
+definition they refine; keep distinct domains separate and retain post-create
+foreign keys needed by dependency order. Do not retain transitional tables,
+backfills or copy steps when no existing data must survive.
+
+A changed baseline requires recreation of both the runtime schema and its
+migration ledger; deleting rows or changing stored checksums is insufficient.
+For disposable local state, `./dev.sh reset` also recreates the Platform database
+and clears the Lightspeed MinIO prefix. Stop the supervisor first. Checksum
+validation and startup verification remain enabled; resets are never automatic.
 
 Normal Rust startup verifies the ledger. Apply migrations explicitly before
 starting the upgraded runtime:

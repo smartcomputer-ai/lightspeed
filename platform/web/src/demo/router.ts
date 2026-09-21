@@ -1,3 +1,4 @@
+import { accessRoutes } from "./routes/access";
 import { identityRoutes } from "./routes/identity";
 /// The in-browser stand-in for the platform server: one Hono app the fetch
 /// shim hands every same-origin `/api/*` request to.
@@ -28,6 +29,7 @@ export function createDemoRouter(store: DemoStore): Hono {
   api.route("/", identityRoutes(store));
   api.route("/", adminRoutes(store));
   for (const routes of [
+    accessRoutes,
     sessionRoutes,
     profileRoutes,
     workspaceRoutes,

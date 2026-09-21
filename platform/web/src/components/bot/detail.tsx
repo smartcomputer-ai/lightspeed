@@ -36,6 +36,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { useActionPermissions } from "@/lib/permissions";
 import { BotActivity } from "./activity";
 import { BotChat } from "./chat";
 import { BotEditorDialog } from "./editor-dialog";
@@ -130,7 +131,6 @@ export function BotDetail({
   bot,
   state,
   stateError,
-  manage,
   view,
   sessionId,
 }: {
@@ -139,10 +139,12 @@ export function BotDetail({
   bot: BotView;
   state?: BotStateView;
   stateError?: string;
-  manage: boolean;
   view: BotTab;
   sessionId: string | undefined;
 }) {
+  const permissions = useActionPermissions(universeId, [{ kind: "bot", id: bot.botId }]);
+  const manage = permissions.can("manage_bot", { kind: "bot", id: bot.botId });
+  const invoke = permissions.can("invoke_bot", { kind: "bot", id: bot.botId });
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const base = `/u/${slug}/bots/${bot.botId}`;
@@ -295,7 +297,7 @@ export function BotDetail({
       {view === "chat" ? (
         <BotChat universeId={universeId} slug={slug} bot={bot} state={state} stateError={stateError} sessionId={sessionId} />
       ) : (
-        <BotActivity universeId={universeId} slug={slug} bot={bot} state={state} stateError={stateError} manage={manage} />
+        <BotActivity universeId={universeId} slug={slug} bot={bot} state={state} stateError={stateError} manage={manage} invoke={invoke} />
       )}
       <BotEditorDialog
         open={settingsOpen}
@@ -483,7 +485,7 @@ function ConversationMenu({
         </DropdownMenuContent>
       </DropdownMenu>
       <AlertDialog
-        open={resetOpen}
+        open={resetOpen && manage}
         onOpenChange={(open) => {
           setResetOpen(open);
           if (open) reset.reset();
@@ -500,7 +502,7 @@ function ConversationMenu({
           {reset.error && <p className="text-sm text-destructive">{reset.error.message}</p>}
           <AlertDialogFooter>
             <AlertDialogCancel>Keep</AlertDialogCancel>
-            <AlertDialogAction disabled={reset.isPending} onClick={() => reset.mutate()}>
+            <AlertDialogAction disabled={!manage || reset.isPending} onClick={() => manage && reset.mutate()}>
               {reset.isPending ? "Resetting…" : "Reset"}
             </AlertDialogAction>
           </AlertDialogFooter>

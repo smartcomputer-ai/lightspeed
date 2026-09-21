@@ -2074,6 +2074,7 @@ function McpFields({
                 revision={options.get(string(attachment.serverId))?.revision}
                 allowedTools={options.get(string(attachment.serverId))?.allowedTools}
                 source={discoverySource}
+                discoveryDisabledReason={!discoverySource ? "Live tool discovery requires permission to configure resources." : undefined}
                 value={Array.isArray(attachment.tools) ? stringList(attachment.tools) : undefined}
                 onChange={(tools) => updateAttachment(index, (next) => {
                   if (tools === undefined) delete next.tools;

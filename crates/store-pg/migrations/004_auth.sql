@@ -54,8 +54,8 @@ CREATE TABLE IF NOT EXISTS auth_grants (
     grant_id text NOT NULL,
     provider_id text NOT NULL,
     provider_kind text NOT NULL,
-    principal_kind text NOT NULL DEFAULT 'universe_default',
-    principal_id text,
+    principal_kind text NOT NULL,
+    principal_id text NOT NULL,
     display_name text,
     subject_hint text,
     scopes text[] NOT NULL DEFAULT '{}',
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS auth_grants (
             )
         ),
     CONSTRAINT auth_grants_principal_kind_known
-        CHECK (principal_kind IN ('user', 'service_account', 'universe_default')),
+        CHECK (principal_kind IN ('user', 'service_account')),
     CONSTRAINT auth_grants_display_name_not_empty
         CHECK (display_name IS NULL OR display_name <> ''),
     CONSTRAINT auth_grants_subject_hint_not_empty
@@ -204,8 +204,8 @@ CREATE TABLE IF NOT EXISTS auth_flows (
     client_id text NOT NULL,
     provider_id text NOT NULL,
     provider_kind text NOT NULL,
-    principal_kind text NOT NULL DEFAULT 'universe_default',
-    principal_id text,
+    principal_kind text NOT NULL,
+    principal_id text NOT NULL,
     state_hash text NOT NULL,
     expected_issuer text,
     require_issuer boolean NOT NULL DEFAULT false,
@@ -238,7 +238,7 @@ CREATE TABLE IF NOT EXISTS auth_flows (
             )
         ),
     CONSTRAINT auth_flows_principal_kind_known
-        CHECK (principal_kind IN ('user', 'service_account', 'universe_default')),
+        CHECK (principal_kind IN ('user', 'service_account')),
     CONSTRAINT auth_flows_expected_issuer_not_empty
         CHECK (expected_issuer IS NULL OR expected_issuer <> ''),
     CONSTRAINT auth_flows_state_hash_not_empty

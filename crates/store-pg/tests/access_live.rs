@@ -485,13 +485,13 @@ async fn exercise(pool: &sqlx::PgPool) {
         .await
         .unwrap()
         .policy_revision;
-    let audit_count: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit")
+    let audit_count: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_changes")
         .fetch_one(pool)
         .await
         .unwrap();
     assert_eq!(audit_count as u64, revision);
     let recovery_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM access_audit WHERE event->>'operation' = 'recover_universe'",
+        "SELECT count(*) FROM access_audit_changes WHERE event->>'operation' = 'recover_universe'",
     )
     .fetch_one(pool)
     .await
@@ -511,7 +511,7 @@ async fn exercise(pool: &sqlx::PgPool) {
             .is_empty()
     );
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM access_audit")
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM access_audit_changes")
             .fetch_one(pool)
             .await
             .unwrap(),

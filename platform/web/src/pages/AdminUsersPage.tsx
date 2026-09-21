@@ -200,6 +200,8 @@ function EditUserDialog({
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+      void queryClient.invalidateQueries({ queryKey: ["universes"] });
       const signedOutSelf = isCurrentUser && Boolean(password);
       const refreshedSelf = isCurrentUser && hasProfileChanges;
       close();
@@ -374,6 +376,8 @@ function CreateUserDialog({
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+      void queryClient.invalidateQueries({ queryKey: ["universes"] });
       onOpenChange(false);
       reset();
     },

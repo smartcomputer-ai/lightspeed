@@ -17,8 +17,8 @@ const MIGRATION_ADVISORY_LOCK_ID: i64 = 0x4c53_5047_4d49_4752;
 /// migration ledger is evidence of a pre-ledger Lightspeed database, not an
 /// empty schema that can safely receive the initial migration.
 const LIGHTSPEED_TABLES: &[&str] = &[
-    "access_action_audit",
-    "access_audit",
+    "access_audit_changes",
+    "access_audit_events",
     "access_capabilities",
     "access_groups",
     "access_memberships",
@@ -97,8 +97,8 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 7,
-        name: "api_keys",
-        sql: include_str!("../migrations/007_api_keys.sql"),
+        name: "identity_access",
+        sql: include_str!("../migrations/007_identity_access.sql"),
     },
     EmbeddedMigration {
         version: 8,
@@ -112,27 +112,17 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 10,
-        name: "independent_environment_lifecycle",
-        sql: include_str!("../migrations/010_independent_environment_lifecycle.sql"),
+        name: "resource_ownership",
+        sql: include_str!("../migrations/010_resource_ownership.sql"),
     },
     EmbeddedMigration {
         version: 11,
-        name: "identity_access",
-        sql: include_str!("../migrations/011_identity_access.sql"),
-    },
-    EmbeddedMigration {
-        version: 12,
-        name: "authenticated_keys",
-        sql: include_str!("../migrations/012_authenticated_keys.sql"),
-    },
-    EmbeddedMigration {
-        version: 13,
-        name: "resource_ownership",
-        sql: include_str!("../migrations/013_resource_ownership.sql"),
+        name: "access_audit",
+        sql: include_str!("../migrations/011_access_audit.sql"),
     },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 13;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 11;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {
@@ -401,8 +391,8 @@ mod tests {
                 .all(|migration| checksum(migration.sql).len() == 64)
         );
         assert!(LIGHTSPEED_TABLES.windows(2).all(|pair| pair[0] < pair[1]));
-        // Apply table creation/deletion in migration order, including a
-        // deliberate replacement under the same relation name.
+        // Follow table declarations in migration order, including any future
+        // removal or replacement of a relation.
         let mut migrated_tables = BTreeSet::new();
         for line in MIGRATIONS
             .iter()

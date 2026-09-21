@@ -48,9 +48,39 @@ pub async fn authenticate(
     keys: &PgApiKeyStore,
     access: &PgAccessStore,
     headers: &HeaderMap,
-    method: MethodAccess,
+    method: &str,
     now_ms: u64,
 ) -> Result<RequestContext, AgentApiError> {
+    let mut audit = super::audit::request(method, access::AuditStage::Authentication);
+    // Authentication starts without trusting an outer task context or any header claims.
+    audit.identity = Default::default();
+    audit.actor = None;
+    audit.scope = None;
+    let result = authenticate_inner(keys, access, headers, method, now_ms, &mut audit).await;
+    if let Err(error) = &result {
+        audit.actor = audit
+            .identity
+            .acting_principal
+            .map(|id| access::ActionActor::Principal { id });
+        audit.occurred_at_ms = now_ms;
+        super::audit::failed(&mut audit, error);
+        access
+            .record_audit_event(&audit)
+            .await
+            .map_err(store_error)?;
+    }
+    result
+}
+
+async fn authenticate_inner(
+    keys: &PgApiKeyStore,
+    access: &PgAccessStore,
+    headers: &HeaderMap,
+    method: &str,
+    now_ms: u64,
+    audit: &mut access::AuditEvent,
+) -> Result<RequestContext, AgentApiError> {
+    let method = api::method_access(method).ok_or_else(denied)?;
     let value = header_value(headers, header::AUTHORIZATION.as_str())?.ok_or_else(denied)?;
     let secret = value
         .strip_prefix("Bearer ")
@@ -61,6 +91,11 @@ pub async fn authenticate(
         .await
         .map_err(store_error)?
         .ok_or_else(denied)?;
+    audit.identity.authenticated_principal = Some(key.principal_id);
+    audit.identity.credential = Some(AuthenticationReference::ApiKey {
+        key_prefix: key.key_prefix.clone(),
+    });
+    audit.identity.credential_scope = Some(key.scope);
     let selected = header_value(headers, UNIVERSE_HEADER)?
         .map(Uuid::parse_str)
         .transpose()
@@ -84,6 +119,7 @@ pub async fn authenticate(
         _ if key.scope == AccessScope::Deployment && selected.is_none() => AccessScope::Deployment,
         _ => return Err(denied()),
     };
+    audit.scope = Some(target_scope);
     let authenticated_principal = access
         .principal(key.principal_id)
         .await
@@ -120,6 +156,7 @@ pub async fn authenticate(
     } else {
         authenticated_principal.clone()
     };
+    audit.identity.acting_principal = Some(acting_principal.id);
     let rights = access
         .effective_access(acting_principal.id, target_scope)
         .await

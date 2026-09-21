@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { useEffect } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import {
@@ -40,7 +41,7 @@ import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
 import { isMobileDetailRoute } from "@/lib/shell-navigation";
 import type { SessionUser } from "@/auth";
-import { canAdminister, canManage, rememberUniverse, useUniverses } from "@/lib/universes";
+import { rememberUniverse, useUniverses } from "@/lib/universes";
 
 /// The sidebar has three modes. Universe mode is the app's top level:
 /// switcher + universe nav. Admin and account are modes *above* the
@@ -106,6 +107,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
   const active = activeSlug
     ? universes.data?.find((u) => u.slug === activeSlug)
     : undefined;
+  const permissions = useActionPermissions(active?.id);
   const location = useLocation();
   const mode: ShellMode = location.pathname.startsWith("/admin")
     ? "admin"
@@ -139,9 +141,8 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         <SidebarContent>
           {mode === "universe" && active && (
             <>
-              {/* No group label: the switcher above already names the
-                  universe. Members see only the Settings group. */}
-              {active.role && (
+              {/* The switcher above already names the universe. */}
+              {permissions.can("read") && (
                 <SidebarGroup>
                   <SidebarGroupContent>
                     <SidebarMenu>
@@ -173,29 +174,32 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
                   </SidebarGroupContent>
                 </SidebarGroup>
               )}
-              {/* Configuration: which chats bind here, who has access,
-                  and (owner/admin) the universe itself. */}
+              {/* Readable resource catalogs and administrative settings. */}
               <SidebarGroup>
                 <SidebarGroupLabel>Settings</SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {canManage(active, admin) && (
+                    {permissions.can("read") && (
                       <>
-                        <NavItem
-                          to={`/u/${active.slug}/settings/general`}
-                          icon={Settings}
-                          label="General"
-                        />
+                        {permissions.can("manage_access") && (
+                          <NavItem
+                            to={`/u/${active.slug}/settings/general`}
+                            icon={Settings}
+                            label="General"
+                          />
+                        )}
                         <NavItem
                           to={`/u/${active.slug}/settings/integrations`}
                           icon={Plug}
                           label="Integrations"
                         />
-                        <NavItem
-                          to={`/u/${active.slug}/settings/setups`}
-                          icon={PackageOpen}
-                          label="Templates"
-                        />
+                        {permissions.can("manage_access") && (
+                          <NavItem
+                            to={`/u/${active.slug}/settings/setups`}
+                            icon={PackageOpen}
+                            label="Templates"
+                          />
+                        )}
                         <NavItem
                           to={`/u/${active.slug}/settings/environments`}
                           icon={Boxes}
@@ -213,7 +217,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
                         />
                       </>
                     )}
-                    {canManage(active, admin) && (
+                    {permissions.can("read") && (
                       <>
                         <NavItem
                           to={`/u/${active.slug}/settings/secrets`}
@@ -227,11 +231,13 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
                         />
                       </>
                     )}
-                    {canAdminister(active) && <NavItem
-                      to={`/u/${active.slug}/settings/members`}
-                      icon={Users}
-                      label="Members"
-                    />}
+                    {permissions.can("manage_access") && (
+                      <NavItem
+                        to={`/u/${active.slug}/settings/members`}
+                        icon={Users}
+                        label="Members"
+                      />
+                    )}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>

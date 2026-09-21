@@ -162,6 +162,14 @@ their own display name and password under **Account**. Self-service email
 changes stay disabled until the deployment provides an email-verification
 sender.
 
+The UI reads action permissions from the runtime through `access/read`, including
+ownership and delegated controller checks for sessions, profiles and bots. Creation,
+configuration, invocation, stopping and deletion are separate controls. Unknown or
+failed permission lookups leave mutation controls unavailable; previews are scoped
+to the signed-in account and refreshed on focus, after mutations and periodically.
+The runtime still authorizes every operation independently. These controls do not
+introduce private sessions or resource-specific sharing policies.
+
 ## Development
 
 The manual's [Local development](../docs/documentation/development/local-development.md)

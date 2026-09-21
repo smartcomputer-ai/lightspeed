@@ -277,4 +277,117 @@ async fn exercise(pool: &sqlx::PgPool) {
             .await
             .unwrap()
     );
+
+    // Ownership reservations alone must not advertise usable controls. This
+    // includes broad operator grants that normally need no ownership lookup.
+    for caller in [alice, operator, universe_admin] {
+        for resource in [&personal, &bot, &profile] {
+            assert!(
+                store
+                    .resource_actions(caller, resource, false)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+    for id in ["personal", "bot-session", "child", "bot-child", "fork"] {
+        sqlx::query("INSERT INTO sessions(universe_id,session_id,retention_root_session_id,created_at_ms,updated_at_ms) VALUES($1,$2,$2,1,1)")
+            .bind(universe).bind(id).execute(pool).await.unwrap();
+    }
+    sqlx::query("UPDATE sessions SET source_session_id='personal',source_seq=0,retention_root_session_id='personal' WHERE universe_id=$1 AND session_id='fork'")
+        .bind(universe).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO bots(universe_id,bot_id,revision,document_json,created_at_ms,updated_at_ms) VALUES($1,'assistant',1,'{}',1,1)")
+        .bind(universe).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO agent_profiles(universe_id,profile_id,revision,document_json,created_at_ms,updated_at_ms) VALUES($1,'template',1,'{}',1,1)")
+        .bind(universe).execute(pool).await.unwrap();
+
+    use UniverseAction::*;
+    assert_eq!(
+        store
+            .resource_actions(viewer, &personal, false)
+            .await
+            .unwrap(),
+        vec![Read]
+    );
+    assert_eq!(
+        store
+            .resource_actions(alice, &personal, false)
+            .await
+            .unwrap(),
+        vec![Read, ControlSession, StopSession, DeleteSession]
+    );
+    for caller in [operator, universe_admin] {
+        assert_eq!(
+            store
+                .resource_actions(caller, &personal, false)
+                .await
+                .unwrap(),
+            vec![Read, StopSession]
+        );
+        assert_eq!(
+            store
+                .resource_actions(caller, &bot_child, false)
+                .await
+                .unwrap(),
+            vec![Read, ControlSession, StopSession, DeleteSession]
+        );
+        assert_eq!(
+            store.resource_actions(caller, &bot, false).await.unwrap(),
+            vec![Read, ManageBot, InvokeBot]
+        );
+        assert_eq!(
+            store
+                .resource_actions(caller, &profile, false)
+                .await
+                .unwrap(),
+            vec![Read, ManageProfile]
+        );
+    }
+    assert_eq!(
+        store.resource_actions(bob, &bot, false).await.unwrap(),
+        vec![Read, InvokeBot]
+    );
+    assert_eq!(
+        store.resource_actions(bob, &profile, false).await.unwrap(),
+        vec![Read]
+    );
+    // Another principal's history fork blocks cascade deletion, although the
+    // parent still permits non-cascade deletion subject to leaf validation.
+    assert_eq!(
+        store
+            .resource_actions(alice, &personal, true)
+            .await
+            .unwrap(),
+        vec![Read, ControlSession, StopSession]
+    );
+    assert_eq!(
+        store
+            .resource_actions(bob, &fork.resource, true)
+            .await
+            .unwrap(),
+        vec![Read, ControlSession, StopSession, DeleteSession]
+    );
+    let mut foreign_scope = alice.clone();
+    foreign_scope.scope = AccessScope::Universe {
+        universe_id: Uuid::new_v4(),
+    };
+    assert!(
+        store
+            .resource_actions(&foreign_scope, &personal, false)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let audit_events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM access_audit_events WHERE scope->>'universeId'=$1",
+    )
+    .bind(universe.to_string())
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        audit_events, 0,
+        "preview must not record hypothetical admissions"
+    );
 }

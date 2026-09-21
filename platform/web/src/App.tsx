@@ -1,3 +1,4 @@
+import { PermissionIdentityProvider, useActionPermissions } from "@/lib/permissions";
 import { AdminGroupsPage } from "@/pages/AdminGroupsPage";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
@@ -5,7 +6,7 @@ import type { SessionUser } from "./auth.js";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { authClient, isPlatformAdmin } from "./auth.js";
 import { AppShell } from "@/components/app-shell";
-import { canManage, universeHome, useActiveUniverse } from "@/lib/universes";
+import { universeHome, useActiveUniverse } from "@/lib/universes";
 import { AccountPage } from "@/pages/AccountPage";
 import { ApiKeysPage } from "@/pages/ApiKeysPage";
 import { AdminUniversesPage } from "@/pages/AdminUniversesPage";
@@ -38,17 +39,18 @@ function UniverseIndexRedirect() {
 
 /// Bare /settings → General for people who can manage the universe, else
 /// the first section members can see.
-function SettingsIndexRedirect({ admin }: { admin: boolean }) {
+function SettingsIndexRedirect({ admin: _admin }: { admin: boolean }) {
   const { universe, slug } = useActiveUniverse();
-  if (!universe) {
+  const permissions = useActionPermissions(universe?.id);
+  if (!universe || permissions.isLoading) {
     return null;
   }
   return (
     <Navigate
       to={
-        canManage(universe, admin)
+        permissions.can("manage_access")
           ? `/u/${slug}/settings/general`
-          : `/u/${slug}/bots`
+          : `/u/${slug}/settings/integrations`
       }
       replace
     />
@@ -90,7 +92,9 @@ export function App() {
     <Routes>
       <Route element={
         <UserPreferencesProvider userId={user.id}>
-          <AppShell user={user} admin={admin} />
+          <PermissionIdentityProvider userId={user.id}>
+            <AppShell user={user} admin={admin} />
+          </PermissionIdentityProvider>
         </UserPreferencesProvider>
       }>
         <Route index element={<HomeRedirect admin={admin} />} />

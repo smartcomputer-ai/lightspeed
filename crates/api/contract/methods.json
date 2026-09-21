@@ -5,6 +5,28 @@
         "kind": "universe",
         "requirement": "read"
       },
+      "description": "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
+      "method": "access/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AccessReadParams"
+        },
+        "type": "AccessReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAccessReadResponse"
+        },
+        "type": "AgentApiOutcome<AccessReadResponse>"
+      },
+      "scope": "universe",
+      "summary": "Read current action permissions"
+    },
+    {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns protocol version, server identity, and supported capabilities without changing universe state.",
       "method": "initialize",
       "params": {

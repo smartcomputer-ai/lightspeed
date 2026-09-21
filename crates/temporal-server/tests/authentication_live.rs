@@ -179,8 +179,8 @@ async fn exercise(pool: &sqlx::PgPool) {
     let user_key = issue(&keys, scope, user, user).await;
     let service_key = issue(&keys, AccessScope::Deployment, service, admin).await;
     let root_key = issue(&keys, AccessScope::Deployment, admin, admin).await;
-    let read = api::MethodAccess::Universe(UniverseAction::Read);
-    let lease = api::MethodAccess::Service(ServiceCapability::LeaseCredentials);
+    let read = api::METHOD_SESSION_READ;
+    let lease = api::METHOD_AUTH_GRANTS_LEASE;
     let user_headers = headers(&user_key, None, None);
     let context = authenticate(&keys, &identities, &user_headers, read, 20)
         .await
@@ -217,7 +217,7 @@ async fn exercise(pool: &sqlx::PgPool) {
             &keys,
             &identities,
             &user_headers,
-            api::MethodAccess::DeploymentAdmin,
+            api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
             20
         )
         .await
@@ -556,6 +556,6 @@ async fn exercise(pool: &sqlx::PgPool) {
         identities.initialize_local_development(universe, 41).await,
         Err(AccessError::Denied)
     ));
-    let audit_count:i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit WHERE event->>'operation' IN ('key_created','key_revoked')").fetch_one(pool).await.unwrap();
+    let audit_count:i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_changes WHERE event->>'operation' IN ('key_created','key_revoked')").fetch_one(pool).await.unwrap();
     assert!(audit_count >= 5);
 }

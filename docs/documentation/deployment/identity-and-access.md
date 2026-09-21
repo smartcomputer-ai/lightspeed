@@ -91,7 +91,10 @@ this is powerful authority because membership can affect privileged group roles.
 It does not permit direct role/capability assignment or universe recovery.
 
 Identity changes serialize on a deployment policy row. Authorization, the write,
-the last-admin guard, revision increment, and audit append commit together. Guarded
+the last-admin guard, revision increment, and `access_audit_changes` append commit
+together. No-op changes add no committed change record. See the
+[access audit policy](authentication-and-tenancy.md#durable-access-audit) for
+significant runtime events and deliberately quiet routine traffic. Guarded
 role/membership removal accounts for active principals reached through groups.
 Identity disablement can still remove the last administrator. An active
 DeploymentAdmin can explicitly recover an orphaned universe by assigning a named
@@ -113,6 +116,21 @@ The gateway now uses these records for key authentication, membership admission,
 service capabilities, and authenticated user assertions. See
 [authentication and access](authentication-and-tenancy.md) for key issuance,
 canonical keys, core action/ownership enforcement, and current stream-revocation limitations.
+
+## UI action permissions
+
+`access/read` previews the current caller's universe actions and actions on up to
+100 requested sessions, bots or profiles. The runtime resolves ownership and
+controller lineage using the same policy as mutations; the client supplies no
+owner or alternate actor. `sessionDeleteCascade` also checks deletion permission
+for every descendant. Missing targets return no actions. Previews describe access,
+not lifecycle readiness: a permitted deletion still requires closed sessions.
+
+Platform uses these decisions to show creation, editing, invocation, stop and
+delete controls separately. Viewers retain readable content; they cannot send,
+steer, approve tools or mutate resources. Operator/Admin may stop another user's
+session without receiving its input or settings controls. Permission previews are
+account-scoped presentation hints; each operation remains independently authorized.
 
 ## Platform directory access
 

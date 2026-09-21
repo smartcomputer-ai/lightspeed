@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -50,7 +51,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { LoadingNote, UniverseNotFound } from "@/components/page";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 
 /// U4b: workspace explorer + functional editor. Pane = workspace picker +
@@ -58,16 +59,20 @@ import { cn } from "@/lib/utils";
 /// (images), or metadata (binary). Writes run the full VFS dance
 /// server-side (blob → manifest → snapshot → head advance) guarded by the
 /// workspace revision the tree was loaded at.
-export function WorkspacesPage({ admin }: { admin: boolean }) {
+export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
+  const permissions = useActionPermissions(universe?.id);
   const params = useParams<{ workspaceId: string; "*": string }>();
   const workspaceId = params.workspaceId;
   const filePath = params["*"] || undefined;
 
-  if (isLoading) {
+  if (isLoading || permissions.isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !universe.role) {
+  if (permissions.error) {
+    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
+  }
+  if (!universe || !permissions.can("read")) {
     return (
       <div className="p-6">
         <UniverseNotFound slug={slug} />
@@ -103,8 +108,8 @@ export function WorkspacesPage({ admin }: { admin: boolean }) {
         ) : (
           <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
             {workspaceId
-              ? "Select a file, or create one."
-              : "Select a workspace, or create one."}
+              ? "Select a file."
+              : "Select a workspace."}
           </div>
         )}
       </section>
@@ -124,6 +129,9 @@ function WorkspacePane({
   filePath: string | undefined;
 }) {
   const navigate = useNavigate();
+  const permissions = useActionPermissions(universeId);
+  const writable = permissions.can("configure_resource");
+  const canEditFiles = writable && permissions.can("use_resource");
   const workspaces = useQuery({
     queryKey: ["workspaces", universeId],
     queryFn: () =>
@@ -154,15 +162,17 @@ function WorkspacePane({
     <>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
         <h1 className="text-sm font-semibold">Workspaces</h1>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="ml-auto"
-          onClick={() => setCreateOpen(true)}
-          aria-label="New workspace"
-        >
-          <Plus />
-        </Button>
+        {writable && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="ml-auto"
+            onClick={() => setCreateOpen(true)}
+            aria-label="New workspace"
+          >
+            <Plus />
+          </Button>
+        )}
       </div>
       <div className="grid gap-2 border-b p-3">
         {workspaces.data && workspaces.data.length > 0 ? (
@@ -208,15 +218,17 @@ function WorkspacePane({
               {tree.data.workspace.files} file{tree.data.workspace.files === 1 ? "" : "s"} ·
               r{tree.data.workspace.revision}
             </span>
-            <Button
-              variant="ghost"
-              size="xs"
-              className="ml-auto"
-              onClick={() => setNewFileOpen(true)}
-            >
-              <FilePlus data-icon="inline-start" />
-              New file
-            </Button>
+            {canEditFiles && (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="ml-auto"
+                onClick={() => setNewFileOpen(true)}
+              >
+                <FilePlus data-icon="inline-start" />
+                New file
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -226,7 +238,7 @@ function WorkspacePane({
         )}
         {tree.data && Object.keys(tree.data.manifest.root.entries).length === 0 && (
           <p className="p-2 text-sm text-muted-foreground">
-            Empty workspace — create a file to get started.
+            Empty workspace.
           </p>
         )}
         {tree.data && (
@@ -239,13 +251,15 @@ function WorkspacePane({
           />
         )}
       </div>
-      <NewWorkspaceDialog
-        universeId={universeId}
-        slug={slug}
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-      />
-      {workspaceId && tree.data && (
+      {writable && (
+        <NewWorkspaceDialog
+          universeId={universeId}
+          slug={slug}
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+        />
+      )}
+      {canEditFiles && workspaceId && tree.data && (
         <NewFileDialog
           universeId={universeId}
           slug={slug}
@@ -396,6 +410,9 @@ function FileDetail({
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const permissions = useActionPermissions(universeId);
+  const writable = permissions.can("configure_resource");
+  const canEditFiles = writable && permissions.can("use_resource");
   const tree = useQuery({
     queryKey: ["workspace-tree", universeId, workspaceId],
     queryFn: () =>
@@ -495,7 +512,7 @@ function FileDetail({
           {file ? formatBytes(file.size_bytes) : ""}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          {decoded?.kind === "text" && (
+          {canEditFiles && decoded?.kind === "text" && (
             <Button
               size="sm"
               disabled={!dirty || save.isPending}
@@ -504,37 +521,39 @@ function FileDetail({
               {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
             </Button>
           )}
-          <AlertDialog>
-            <AlertDialogTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="text-destructive"
-                  aria-label="Delete file"
-                />
-              }
-            >
-              <Trash2 />
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete {filePath}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Commits a new snapshot without this file. Earlier snapshots keep it.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  className="bg-destructive text-white hover:bg-destructive/90"
-                  onClick={() => remove.mutate()}
-                >
-                  Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          {canEditFiles && (
+            <AlertDialog>
+              <AlertDialogTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-destructive"
+                    aria-label="Delete file"
+                  />
+                }
+              >
+                <Trash2 />
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete {filePath}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Commits a new snapshot without this file. Earlier snapshots keep it.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-white hover:bg-destructive/90"
+                    onClick={() => remove.mutate()}
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </div>
       </header>
       {error && <p className="border-b px-4 py-2 text-sm text-destructive">{error}</p>}
@@ -549,6 +568,8 @@ function FileDetail({
             value={value}
             onChange={(e) => setDraft(e.target.value)}
             spellCheck={false}
+            readOnly={!canEditFiles}
+            aria-label={canEditFiles ? "File contents" : "File contents (read only)"}
           />
         )}
         {decoded?.kind === "image" && (

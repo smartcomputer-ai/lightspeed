@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -68,17 +69,21 @@ import {
   environmentCredentialSourceLabel,
   environmentCredentialSourceValue,
 } from "@/lib/environment-credentials";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { useActiveUniverse } from "@/lib/universes";
 
 /// Universe environments are provisioned through operator-enabled bindings and
 /// immutable provider templates. Physical provider registration stays admin-only.
-export function EnvironmentsPage({ admin }: { admin: boolean }) {
+export function EnvironmentsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
+  const permissions = useActionPermissions(universe?.id);
 
-  if (isLoading) {
+  if (isLoading || permissions.isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !canManage(universe, admin)) {
+  if (permissions.error) {
+    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
+  }
+  if (!universe || !permissions.can("read")) {
     return <UniverseNotFound slug={slug} />;
   }
 
@@ -88,6 +93,7 @@ export function EnvironmentsPage({ admin }: { admin: boolean }) {
 const REFRESH_MS = 10_000;
 
 function ProviderList({ universeId }: { universeId: string }) {
+  const writable = useActionPermissions(universeId).can("configure_resource");
   const bindings = useQuery({
     queryKey: ["environment-provider-bindings", universeId],
     queryFn: () =>
@@ -132,6 +138,7 @@ function ProviderList({ universeId }: { universeId: string }) {
   });
   const registrationKeys = useQuery({
     queryKey: ["environment-registration-keys", universeId],
+    enabled: writable,
     queryFn: () =>
       api<EnvironmentRegistrationKey[]>(
         "GET",
@@ -178,7 +185,7 @@ function ProviderList({ universeId }: { universeId: string }) {
       <PageHeader
         title="Environments"
         description="Computers and sandboxes agents can use in this universe."
-        actions={
+        actions={writable && (
           <div className="flex items-center gap-2">
             <RegisterExternalEnvironmentDialog
               universeId={universeId}
@@ -195,7 +202,7 @@ function ProviderList({ universeId }: { universeId: string }) {
             )}
             <CreateRegistrationKeyDialog universeId={universeId} />
           </div>
-        }
+        )}
       />
       {(bindings.isLoading || templates.isLoading || environments.isLoading || secrets.isLoading) && <LoadingNote />}
       {bindings.error && (
@@ -260,7 +267,7 @@ function ProviderList({ universeId }: { universeId: string }) {
           />
         ))}
       </div>
-      {keyRows.length > 0 && <RegistrationKeys universeId={universeId} keys={keyRows} />}
+      {writable && keyRows.length > 0 && <RegistrationKeys universeId={universeId} keys={keyRows} />}
       {bindingRows.length > 0 && <ProviderBindings bindings={bindingRows} />}
     </>
   );
@@ -281,6 +288,7 @@ function EnvironmentCard({
 }) {
   const [open, setOpen] = useState(false);
   const [policyOpen, setPolicyOpen] = useState(false);
+  const writable = useActionPermissions(universeId).can("configure_resource");
   const source = environment.source;
   const gone = ["closing", "closed", "failed"].includes(environment.status);
   const registered = source.type === "registered";
@@ -361,7 +369,7 @@ function EnvironmentCard({
               secrets={secrets}
               enabled={open}
             />
-            {source.type === "provisioned" && (
+            {writable && source.type === "provisioned" && (
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
                 <EnvironmentPowerControls universeId={universeId} environment={environment} />
                 {!gone && (
@@ -375,7 +383,7 @@ function EnvironmentCard({
                 <CloseEnvironmentButton universeId={universeId} environment={environment} />
               </div>
             )}
-            {registered && !gone && (
+            {writable && registered && !gone && (
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
                 <CloseEnvironmentButton universeId={universeId} environment={environment} />
                 <span className="text-xs text-muted-foreground">
@@ -383,7 +391,7 @@ function EnvironmentCard({
                 </span>
               </div>
             )}
-            {source.type === "provisioned" && !gone && (
+            {writable && source.type === "provisioned" && !gone && (
               <EnvironmentIdlePolicyDialog
                 key={`${environment.environmentId}:${policyOpen ? "open" : "closed"}`}
                 universeId={universeId}
@@ -411,6 +419,7 @@ function EnvironmentCredentials({
   enabled: boolean;
 }) {
   const queryClient = useQueryClient();
+  const writable = useActionPermissions(universeId).can("configure_resource");
   const credentials = useQuery({
     queryKey: ["environment-credentials", universeId, environment.environmentId],
     queryFn: () =>
@@ -443,12 +452,14 @@ function EnvironmentCredentials({
             Resolved when a process or job starts. Secret values are never shown here.
           </p>
         </div>
-        <AssignCredentialDialog
-          universeId={universeId}
-          environmentId={environment.environmentId}
-          secrets={secrets}
-          disabled={!canAssign}
-        />
+        {writable && (
+          <AssignCredentialDialog
+            universeId={universeId}
+            environmentId={environment.environmentId}
+            secrets={secrets}
+            disabled={!canAssign}
+          />
+        )}
       </div>
       {credentials.isLoading && <p className="mt-3 text-xs text-muted-foreground">Loading…</p>}
       {credentials.error && (
@@ -486,39 +497,41 @@ function EnvironmentCredentials({
                     unavailable
                   </Badge>
                 )}
-                <AlertDialog>
-                  <AlertDialogTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="text-destructive"
-                        aria-label={`Unassign ${credential.envName}`}
-                      />
-                    }
-                  >
-                    <Trash2 />
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Unassign this environment variable?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        New processes and jobs in this environment will no longer receive{" "}
-                        <span className="font-mono text-xs">{credential.envName}</span>. The stored
-                        access credential itself will not be deleted.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        className="bg-destructive text-white hover:bg-destructive/90"
-                        onClick={() => unbind.mutate(credential.envName)}
-                      >
-                        Unassign variable
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                {writable && (
+                  <AlertDialog>
+                    <AlertDialogTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="text-destructive"
+                          aria-label={`Unassign ${credential.envName}`}
+                        />
+                      }
+                    >
+                      <Trash2 />
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Unassign this environment variable?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          New processes and jobs in this environment will no longer receive{" "}
+                          <span className="font-mono text-xs">{credential.envName}</span>. The stored
+                          access credential itself will not be deleted.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-white hover:bg-destructive/90"
+                          onClick={() => unbind.mutate(credential.envName)}
+                        >
+                          Unassign variable
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
               </div>
             );
           })}

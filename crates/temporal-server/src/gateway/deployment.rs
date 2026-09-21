@@ -62,6 +62,65 @@ impl GatewayDeploymentApi {
         self.runtime.stores().pool()
     }
 
+    /// Apply the same current-credential checks to direct calls as HTTP calls.
+    /// Contextual identity/key policy remains transactional in the store. These
+    /// records distinguish method admission from its eventual operation result.
+    async fn audited<T>(
+        &self,
+        method: &str,
+        target: Option<serde_json::Value>,
+        operation: impl Future<Output = Result<T, AgentApiError>>,
+    ) -> Result<T, AgentApiError> {
+        super::audit::operation(async {
+            let mut audit = super::audit::request(method, access::AuditStage::Admission);
+            audit.target = target;
+            let admission = async {
+                let (context, rights) = super::authentication::current_context(self.pool()).await?;
+                let requirement = api::method_access(method)
+                    .ok_or_else(|| AgentApiError::rejected("unknown method"))?;
+                let deployment_only = matches!(
+                    requirement,
+                    api::MethodAccess::DeploymentAdmin
+                        | api::MethodAccess::DeploymentAdminOrCapability(_)
+                );
+                if (deployment_only
+                    && (context.credential_scope != AccessScope::Deployment
+                        || context.target_scope != AccessScope::Deployment))
+                    || !super::authentication::method_permitted(&rights, requirement)
+                {
+                    return Err(AgentApiError::rejected("request is not authorized"));
+                }
+                audit.policy_revision = Some(rights.policy_revision);
+                Ok(())
+            }
+            .await;
+            if let Err(error) = admission {
+                super::audit::failure(self.pool(), &mut audit, &error).await?;
+                return Err(error);
+            }
+            // Inventories and self queries are quiet; mutations retain admission/outcome.
+            let administrative = super::audit::significant(method);
+            if administrative {
+                super::audit::record(self.pool(), &mut audit).await?;
+            }
+            let result = operation.await;
+            audit.stage = access::AuditStage::Completion;
+            match &result {
+                Err(error) if administrative || error.kind == api::AgentApiErrorKind::Rejected => {
+                    super::audit::failure(self.pool(), &mut audit, error).await?
+                }
+                Err(_) => {}
+                Ok(_) if administrative => {
+                    audit.outcome = access::AuditOutcome::Succeeded;
+                    super::audit::record(self.pool(), &mut audit).await?;
+                }
+                Ok(_) => {}
+            }
+            result
+        })
+        .await
+    }
+
     fn temporal(&self) -> &Client {
         self.runtime.client()
     }
@@ -131,207 +190,277 @@ impl DeploymentApiService for GatewayDeploymentApi {
         &self,
         params: api::DeploymentUniverseReadParams,
     ) -> Result<AgentApiOutcome<api::EnvironmentProviderBindingListResponse>, AgentApiError> {
-        let (context, rights) = super::authentication::current_context(self.pool()).await?;
-        if context.credential_scope != AccessScope::Deployment
-            || !rights.has_role(access::Role::DeploymentAdmin)
-        {
-            return Err(AgentApiError::rejected("deployment administrator required"));
-        }
-        let universe_id = parse_universe_id(&params.universe_id)?;
-        self.require_universe(universe_id).await?;
-        let bindings = self
-            .runtime
-            .stores()
-            .store_for(universe_id)
-            .list_provider_bindings(universe_id)
-            .await
-            .map_err(super::service::environment_providers::map_environments_error)?;
-        Ok(AgentApiOutcome::new(
-            api::EnvironmentProviderBindingListResponse {
-                bindings: bindings
+        self.audited(
+            api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST,
+            Some(
+                serde_json::json!({"universeId": Uuid::parse_str(params.universe_id.trim()).ok()}),
+            ),
+            async {
+                let universe_id = parse_universe_id(&params.universe_id)?;
+                self.require_universe(universe_id).await?;
+                let bindings = self
+                    .runtime
+                    .stores()
+                    .store_for(universe_id)
+                    .list_provider_bindings(universe_id)
+                    .await
+                    .map_err(super::service::environment_providers::map_environments_error)?;
+                let bindings = bindings
                     .iter()
                     .map(super::service::environment_providers::environment_provider_binding_view)
-                    .collect(),
+                    .collect();
+                Ok(AgentApiOutcome::new(
+                    api::EnvironmentProviderBindingListResponse { bindings },
+                ))
             },
-        ))
+        )
+        .await
     }
 
     async fn identity_self(
         &self,
         params: api::IdentityScopeParams,
     ) -> Result<AgentApiOutcome<api::IdentitySelfResponse>, AgentApiError> {
-        let (context, _) = super::authentication::current_context(self.pool()).await?;
-        require_identity_scope(&context, params.scope)?;
-        let store = store_pg::PgAccessStore::new(self.pool().clone());
-        let access = store
-            .effective_access(context.acting_principal.id, params.scope)
-            .await
-            .map_err(identity_error)?;
-        let mut universes = Vec::new();
-        for universe_id in store
-            .accessible_universes(context.acting_principal.id)
-            .await
-            .map_err(identity_error)?
-        {
-            let scope = AccessScope::Universe { universe_id };
-            if context.credential_scope == AccessScope::Deployment
-                || context.credential_scope == scope
-            {
-                universes.push(
-                    store
-                        .effective_access(context.acting_principal.id, scope)
-                        .await
-                        .map_err(identity_error)?,
-                );
-            }
-        }
-        Ok(AgentApiOutcome::new(api::IdentitySelfResponse {
-            access,
-            universes,
-        }))
+        self.audited(
+            api::METHOD_DEPLOYMENT_IDENTITY_SELF,
+            Some(serde_json::json!({"scope": params.scope})),
+            async {
+                let (context, _) = super::authentication::current_context(self.pool()).await?;
+                require_identity_scope(&context, params.scope)?;
+                let store = store_pg::PgAccessStore::new(self.pool().clone());
+                let access = store
+                    .effective_access(context.acting_principal.id, params.scope)
+                    .await
+                    .map_err(identity_error)?;
+                let mut universes = Vec::new();
+                for universe_id in store
+                    .accessible_universes(context.acting_principal.id)
+                    .await
+                    .map_err(identity_error)?
+                {
+                    let scope = AccessScope::Universe { universe_id };
+                    let credential_allows = context.credential_scope == AccessScope::Deployment
+                        || context.credential_scope == scope;
+                    let assertion_allows = context.acting_principal.id
+                        == context.authenticated_principal.id
+                        || context.target_scope == AccessScope::Deployment
+                        || context.target_scope == scope;
+                    if credential_allows && assertion_allows {
+                        universes.push(
+                            store
+                                .effective_access(context.acting_principal.id, scope)
+                                .await
+                                .map_err(identity_error)?,
+                        );
+                    }
+                }
+                Ok(AgentApiOutcome::new(api::IdentitySelfResponse {
+                    access,
+                    universes,
+                }))
+            },
+        )
+        .await
     }
 
     async fn identity_directory(
         &self,
         params: api::IdentityScopeParams,
     ) -> Result<AgentApiOutcome<api::AccessDirectory>, AgentApiError> {
-        let (context, _) = super::authentication::current_context(self.pool()).await?;
-        require_identity_scope(&context, params.scope)?;
-        store_pg::PgAccessStore::new(self.pool().clone())
-            .directory(context.acting_principal.id, params.scope)
-            .await
-            .map(AgentApiOutcome::new)
-            .map_err(identity_error)
+        self.audited(
+            api::METHOD_DEPLOYMENT_IDENTITY_DIRECTORY,
+            Some(serde_json::json!({"scope": params.scope})),
+            async {
+                let (context, _) = super::authentication::current_context(self.pool()).await?;
+                require_identity_scope(&context, params.scope)?;
+                store_pg::PgAccessStore::new(self.pool().clone())
+                    .directory(context.acting_principal.id, params.scope)
+                    .await
+                    .map(AgentApiOutcome::new)
+                    .map_err(identity_error)
+            },
+        )
+        .await
     }
 
     async fn apply_identity(
         &self,
         change: access::AccessChange,
     ) -> Result<AgentApiOutcome<access::AccessChangeResult>, AgentApiError> {
-        let (context, _) = super::authentication::current_context(self.pool()).await?;
-        let scope = match &change {
-            access::AccessChange::AssignRole { assignment }
-            | access::AccessChange::RevokeRole { assignment } => assignment.scope,
-            access::AccessChange::CreatePrincipal {
-                management_scope, ..
-            } => *management_scope,
-            _ => AccessScope::Deployment,
-        };
-        require_identity_scope(&context, scope)?;
-        store_pg::PgAccessStore::new(self.pool().clone())
-            .apply(context.acting_principal.id, change, current_time_ms()?)
-            .await
-            .map(AgentApiOutcome::new)
-            .map_err(identity_error)
+        self.audited(
+            api::METHOD_DEPLOYMENT_IDENTITY_APPLY,
+            Some(identity_audit_target(&change)),
+            async {
+                let (context, _) = super::authentication::current_context(self.pool()).await?;
+                let scope = match &change {
+                    access::AccessChange::AssignRole { assignment }
+                    | access::AccessChange::RevokeRole { assignment } => assignment.scope,
+                    access::AccessChange::CreatePrincipal {
+                        management_scope, ..
+                    } => *management_scope,
+                    _ => AccessScope::Deployment,
+                };
+                require_identity_scope(&context, scope)?;
+                store_pg::PgAccessStore::new(self.pool().clone())
+                    .apply(context.acting_principal.id, change, current_time_ms()?)
+                    .await
+                    .map(AgentApiOutcome::new)
+                    .map_err(identity_error)
+            },
+        )
+        .await
     }
 
     async fn create_universe(
         &self,
         params: DeploymentUniverseCreateParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseCreateResponse>, AgentApiError> {
-        let universe_id = parse_universe_id(&params.universe_id)?;
-        let actor = super::principal::request_context()?.acting_principal.id;
-        let created = store_pg::PgAccessStore::new(self.pool().clone())
-            .apply(
-                actor,
-                access::AccessChange::CreateUniverse {
-                    universe_id,
-                    slug: None,
-                },
-                current_time_ms()?,
-            )
-            .await
-            .map_err(|e| AgentApiError::rejected(e.to_string()))?
-            .changed;
-        let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
-            AgentApiError::internal(format!("universe disappeared after create: {universe_id}"))
-        })?;
-        Ok(AgentApiOutcome::new(DeploymentUniverseCreateResponse {
-            universe,
-            created,
-        }))
+        self.audited(
+            api::METHOD_DEPLOYMENT_UNIVERSES_CREATE,
+            Some(
+                serde_json::json!({"universeId": Uuid::parse_str(params.universe_id.trim()).ok()}),
+            ),
+            async {
+                let universe_id = parse_universe_id(&params.universe_id)?;
+                let actor = super::principal::request_context()?.acting_principal.id;
+                let created = store_pg::PgAccessStore::new(self.pool().clone())
+                    .apply(
+                        actor,
+                        access::AccessChange::CreateUniverse {
+                            universe_id,
+                            slug: None,
+                        },
+                        current_time_ms()?,
+                    )
+                    .await
+                    .map_err(identity_error)?
+                    .changed;
+                let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
+                    AgentApiError::internal(format!(
+                        "universe disappeared after create: {universe_id}"
+                    ))
+                })?;
+                Ok(AgentApiOutcome::new(DeploymentUniverseCreateResponse {
+                    universe,
+                    created,
+                }))
+            },
+        )
+        .await
     }
 
     async fn put_environment_provider(
         &self,
         params: DeploymentEnvironmentProviderPutParams,
     ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderPutResponse>, AgentApiError> {
-        let store = self.runtime.stores().store_for(Uuid::nil());
-        let provider = store
-            .put_provider(PutEnvironmentProvider {
-                provider_id: parse_environment_provider_id(params.provider_id)?,
-                display_name: params.display_name,
-                controller_connection: provider_connection_from_api(params.controller_connection),
-                metadata: params.metadata,
-                updated_at_ms: i64::try_from(current_time_ms()?)
-                    .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?,
-            })
-            .await
-            .map_err(super::service::environment_providers::map_environments_error)?;
-        Ok(AgentApiOutcome::new(
-            DeploymentEnvironmentProviderPutResponse {
-                provider: environment_provider_view(provider),
+        self.audited(
+            api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT,
+            Some(serde_json::json!({"providerId": audit_identifier(&params.provider_id)})),
+            async {
+                let store = self.runtime.stores().store_for(Uuid::nil());
+                let provider = store
+                    .put_provider(PutEnvironmentProvider {
+                        provider_id: parse_environment_provider_id(params.provider_id)?,
+                        display_name: params.display_name,
+                        controller_connection: provider_connection_from_api(
+                            params.controller_connection,
+                        ),
+                        metadata: params.metadata,
+                        updated_at_ms: i64::try_from(current_time_ms()?).map_err(|_| {
+                            AgentApiError::internal("current timestamp exceeds i64")
+                        })?,
+                    })
+                    .await
+                    .map_err(super::service::environment_providers::map_environments_error)?;
+                Ok(AgentApiOutcome::new(
+                    DeploymentEnvironmentProviderPutResponse {
+                        provider: environment_provider_view(provider),
+                    },
+                ))
             },
-        ))
+        )
+        .await
     }
 
     async fn list_environment_providers(
         &self,
         _params: DeploymentEnvironmentProviderListParams,
     ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderListResponse>, AgentApiError> {
-        let store = self.runtime.stores().store_for(Uuid::nil());
-        let providers = store
-            .list_providers(ListEnvironmentProviders::default())
-            .await
-            .map_err(super::service::environment_providers::map_environments_error)?;
-        Ok(AgentApiOutcome::new(
-            DeploymentEnvironmentProviderListResponse {
-                providers: providers
-                    .into_iter()
-                    .map(environment_provider_view)
-                    .collect(),
+        self.audited(
+            api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST,
+            None,
+            async {
+                let store = self.runtime.stores().store_for(Uuid::nil());
+                let providers = store
+                    .list_providers(ListEnvironmentProviders::default())
+                    .await
+                    .map_err(super::service::environment_providers::map_environments_error)?;
+                Ok(AgentApiOutcome::new(
+                    DeploymentEnvironmentProviderListResponse {
+                        providers: providers
+                            .into_iter()
+                            .map(environment_provider_view)
+                            .collect(),
+                    },
+                ))
             },
-        ))
+        )
+        .await
     }
 
     async fn read_environment_provider(
         &self,
         params: DeploymentEnvironmentProviderReadParams,
     ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderReadResponse>, AgentApiError> {
-        let store = self.runtime.stores().store_for(Uuid::nil());
-        let provider_id = parse_environment_provider_id(params.provider_id)?;
-        let provider = store
-            .read_provider(&provider_id)
-            .await
-            .map_err(super::service::environment_providers::map_environments_error)?;
-        Ok(AgentApiOutcome::new(
-            DeploymentEnvironmentProviderReadResponse {
-                provider: environment_provider_view(provider),
+        self.audited(
+            api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ,
+            Some(serde_json::json!({"providerId": audit_identifier(&params.provider_id)})),
+            async {
+                let store = self.runtime.stores().store_for(Uuid::nil());
+                let provider_id = parse_environment_provider_id(params.provider_id)?;
+                let provider = store
+                    .read_provider(&provider_id)
+                    .await
+                    .map_err(super::service::environment_providers::map_environments_error)?;
+                Ok(AgentApiOutcome::new(
+                    DeploymentEnvironmentProviderReadResponse {
+                        provider: environment_provider_view(provider),
+                    },
+                ))
             },
-        ))
+        )
+        .await
     }
 
     async fn delete_environment_provider(
         &self,
         params: DeploymentEnvironmentProviderDeleteParams,
     ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderDeleteResponse>, AgentApiError> {
-        let store = self.runtime.stores().store_for(Uuid::nil());
-        let provider_id = parse_environment_provider_id(params.provider_id)?;
-        let provider = store
-            .delete_provider(&provider_id)
-            .await
-            .map_err(super::service::environment_providers::map_environments_error)?;
-        Ok(AgentApiOutcome::new(
-            DeploymentEnvironmentProviderDeleteResponse {
-                provider: environment_provider_view(provider),
+        self.audited(
+            api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE,
+            Some(serde_json::json!({"providerId": audit_identifier(&params.provider_id)})),
+            async {
+                let store = self.runtime.stores().store_for(Uuid::nil());
+                let provider_id = parse_environment_provider_id(params.provider_id)?;
+                let provider = store
+                    .delete_provider(&provider_id)
+                    .await
+                    .map_err(super::service::environment_providers::map_environments_error)?;
+                Ok(AgentApiOutcome::new(
+                    DeploymentEnvironmentProviderDeleteResponse {
+                        provider: environment_provider_view(provider),
+                    },
+                ))
             },
-        ))
+        )
+        .await
     }
 
     async fn put_environment_provider_binding(
         &self,
         params: DeploymentProviderBindingPutParams,
     ) -> Result<AgentApiOutcome<DeploymentProviderBindingPutResponse>, AgentApiError> {
+        self.audited(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT, Some(serde_json::json!({"universeId": Uuid::parse_str(params.universe_id.trim()).ok(), "bindingId": audit_identifier(&params.binding_id), "providerId": audit_identifier(&params.provider_id)})), async {
         let universe_id = parse_universe_id(&params.universe_id)?;
         self.require_universe(universe_id).await?;
         let store = self.runtime.stores().store_for(universe_id);
@@ -364,12 +493,14 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 &binding,
             ),
         }))
+        }).await
     }
 
     async fn delete_environment_provider_binding(
         &self,
         params: DeploymentProviderBindingDeleteParams,
     ) -> Result<AgentApiOutcome<DeploymentProviderBindingDeleteResponse>, AgentApiError> {
+        self.audited(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE, Some(serde_json::json!({"universeId": Uuid::parse_str(params.universe_id.trim()).ok(), "bindingId": audit_identifier(&params.binding_id)})), async {
         let universe_id = parse_universe_id(&params.universe_id)?;
         self.require_universe(universe_id).await?;
         let binding_id =
@@ -388,12 +519,14 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 ),
             },
         ))
+        }).await
     }
 
     async fn adopt_environment(
         &self,
         params: DeploymentEnvironmentAdoptParams,
     ) -> Result<AgentApiOutcome<DeploymentEnvironmentAdoptResponse>, AgentApiError> {
+        self.audited(api::METHOD_DEPLOYMENT_ENVIRONMENTS_ADOPT, Some(serde_json::json!({"universeId": Uuid::parse_str(params.universe_id.trim()).ok(), "bindingId": audit_identifier(&params.binding_id), "requestId": audit_identifier(&params.request_id)})), async {
         if !params.take_ownership {
             return Err(AgentApiError::invalid_request(
                 "takeOwnership must be true because adoption transfers lifecycle ownership to Lightspeed",
@@ -436,64 +569,78 @@ impl DeploymentApiService for GatewayDeploymentApi {
         Ok(AgentApiOutcome::new(DeploymentEnvironmentAdoptResponse {
             environment: super::service::environment_providers::environment_view(&environment),
         }))
+        }).await
     }
 
     async fn list_universes(
         &self,
         _params: DeploymentUniverseListParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseListResponse>, AgentApiError> {
-        let universes = store_pg::list_universe_stats(self.pool())
-            .await
-            .map_err(map_store_error)?;
-        Ok(AgentApiOutcome::new(DeploymentUniverseListResponse {
-            universes: universes.into_iter().map(universe_view).collect(),
-        }))
+        self.audited(api::METHOD_DEPLOYMENT_UNIVERSES_LIST, None, async {
+            let universes = store_pg::list_universe_stats(self.pool())
+                .await
+                .map_err(map_store_error)?;
+            Ok(AgentApiOutcome::new(DeploymentUniverseListResponse {
+                universes: universes.into_iter().map(universe_view).collect(),
+            }))
+        })
+        .await
     }
 
-    /// The connector host's discovery call: every enabled provider account
-    /// of the deployment with its universe id.
     async fn list_deployment_channel_accounts(
         &self,
         params: api::DeploymentChannelAccountListParams,
     ) -> Result<AgentApiOutcome<api::DeploymentChannelAccountListResponse>, AgentApiError> {
-        let accounts = store_pg::list_channel_accounts_all(
-            self.pool(),
-            params.provider,
-            params.include_disabled,
-        )
+        self.audited(api::METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST, None, async {
+            let accounts = store_pg::list_channel_accounts_all(
+                self.pool(),
+                params.provider,
+                params.include_disabled,
+            )
+            .await
+            .map_err(map_store_error)?;
+            Ok(AgentApiOutcome::new(
+                api::DeploymentChannelAccountListResponse {
+                    accounts: accounts
+                        .into_iter()
+                        .map(|(universe_id, record)| api::DeploymentChannelAccountView {
+                            universe_id: universe_id.to_string(),
+                            account: record.view(),
+                        })
+                        .collect(),
+                },
+            ))
+        })
         .await
-        .map_err(map_store_error)?;
-        Ok(AgentApiOutcome::new(
-            api::DeploymentChannelAccountListResponse {
-                accounts: accounts
-                    .into_iter()
-                    .map(|(universe_id, record)| api::DeploymentChannelAccountView {
-                        universe_id: universe_id.to_string(),
-                        account: record.view(),
-                    })
-                    .collect(),
-            },
-        ))
     }
 
     async fn read_universe(
         &self,
         params: DeploymentUniverseReadParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
-        let universe_id = parse_universe_id(&params.universe_id)?;
-        let universe = self
-            .read_universe_view(universe_id)
-            .await?
-            .ok_or_else(|| AgentApiError::not_found(format!("unknown universe: {universe_id}")))?;
-        Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
-            universe,
-        }))
+        self.audited(
+            api::METHOD_DEPLOYMENT_UNIVERSES_READ,
+            Some(
+                serde_json::json!({"universeId": Uuid::parse_str(params.universe_id.trim()).ok()}),
+            ),
+            async {
+                let universe_id = parse_universe_id(&params.universe_id)?;
+                let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
+                    AgentApiError::not_found(format!("unknown universe: {universe_id}"))
+                })?;
+                Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
+                    universe,
+                }))
+            },
+        )
+        .await
     }
 
     async fn delete_universe(
         &self,
         params: DeploymentUniverseDeleteParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError> {
+        self.audited(api::METHOD_DEPLOYMENT_UNIVERSES_DELETE, Some(serde_json::json!({"universeId": Uuid::parse_str(params.universe_id.trim()).ok()})), async {
         let universe_id = parse_universe_id(&params.universe_id)?;
         if !store_pg::universe_exists(self.pool(), universe_id)
             .await
@@ -578,78 +725,94 @@ impl DeploymentApiService for GatewayDeploymentApi {
             workflows_terminated,
             blob_objects_deleted,
         }))
+        }).await
     }
 
     async fn create_api_key(
         &self,
         params: DeploymentApiKeyCreateParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
-        let context = key_context(params.scope)?;
-        let display_name = params.display_name.trim();
-        if display_name.is_empty() {
-            return Err(AgentApiError::invalid_request(
-                "api key displayName must not be empty",
-            ));
-        }
-        let store = store_pg::PgApiKeyStore::new(self.pool().clone());
-        for _ in 0..3 {
-            let minted = auth::mint_api_key(
-                params.scope,
-                params.principal_id,
-                context.acting_principal.id,
-                Some(display_name.to_owned()),
-                current_time_ms()?,
-            );
-            match store
-                .create_api_key(auth::CreateApiKey {
-                    authority_scope: context.credential_scope,
-                    key_hash: minted.key_hash,
-                    record: minted.record.clone(),
-                })
-                .await
-            {
-                Ok(()) => {
-                    return Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
-                        api_key: api_key_view(minted.record),
-                        secret: minted.secret.expose().to_owned(),
-                    }));
+        self.audited(
+            api::METHOD_DEPLOYMENT_API_KEYS_CREATE,
+            Some(serde_json::json!({"scope": params.scope, "principalId": params.principal_id})),
+            async {
+                let context = key_context(params.scope)?;
+                let display_name = params.display_name.trim();
+                if display_name.is_empty() {
+                    return Err(AgentApiError::invalid_request(
+                        "api key displayName must not be empty",
+                    ));
                 }
-                // A display-prefix collision is rare and entirely
-                // server-generated, so retry instead of burdening callers.
-                Err(auth::ApiKeyError::AlreadyExists { .. }) => continue,
-                Err(error) => return Err(map_api_key_error(error)),
-            }
-        }
-        Err(AgentApiError::internal(
-            "could not allocate a unique api key prefix",
-        ))
+                let store = store_pg::PgApiKeyStore::new(self.pool().clone());
+                for _ in 0..3 {
+                    let minted = auth::mint_api_key(
+                        params.scope,
+                        params.principal_id,
+                        context.acting_principal.id,
+                        Some(display_name.to_owned()),
+                        current_time_ms()?,
+                    );
+                    match store
+                        .create_api_key(auth::CreateApiKey {
+                            authority_scope: context.credential_scope,
+                            key_hash: minted.key_hash,
+                            record: minted.record.clone(),
+                        })
+                        .await
+                    {
+                        Ok(()) => {
+                            return Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
+                                api_key: api_key_view(minted.record),
+                                secret: minted.secret.expose().to_owned(),
+                            }));
+                        }
+                        // A display-prefix collision is rare and entirely
+                        // server-generated, so retry instead of burdening callers.
+                        Err(auth::ApiKeyError::AlreadyExists { .. }) => continue,
+                        Err(error) => return Err(map_api_key_error(error)),
+                    }
+                }
+                Err(AgentApiError::internal(
+                    "could not allocate a unique api key prefix",
+                ))
+            },
+        )
+        .await
     }
 
     async fn list_api_keys(
         &self,
         params: DeploymentApiKeyListParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyListResponse>, AgentApiError> {
-        let context = key_context(params.scope)?;
-        let api_keys = store_pg::PgApiKeyStore::new(self.pool().clone())
-            .list_managed_keys(
-                context.acting_principal.id,
-                context.credential_scope,
-                params.scope,
-            )
-            .await
-            .map_err(map_api_key_error)?
-            .into_iter()
-            .map(api_key_view)
-            .collect();
-        Ok(AgentApiOutcome::new(DeploymentApiKeyListResponse {
-            api_keys,
-        }))
+        self.audited(
+            api::METHOD_DEPLOYMENT_API_KEYS_LIST,
+            Some(serde_json::json!({"scope": params.scope})),
+            async {
+                let context = key_context(params.scope)?;
+                let api_keys = store_pg::PgApiKeyStore::new(self.pool().clone())
+                    .list_managed_keys(
+                        context.acting_principal.id,
+                        context.credential_scope,
+                        params.scope,
+                    )
+                    .await
+                    .map_err(map_api_key_error)?
+                    .into_iter()
+                    .map(api_key_view)
+                    .collect();
+                Ok(AgentApiOutcome::new(DeploymentApiKeyListResponse {
+                    api_keys,
+                }))
+            },
+        )
+        .await
     }
 
     async fn revoke_api_key(
         &self,
         params: DeploymentApiKeyRevokeParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyRevokeResponse>, AgentApiError> {
+        self.audited(api::METHOD_DEPLOYMENT_API_KEYS_REVOKE, Some(serde_json::json!({"scope": params.scope, "keyPrefix": audit_identifier(&params.key_prefix)})), async {
         let context = key_context(params.scope)?;
         let key_prefix = params.key_prefix.trim();
         if key_prefix.is_empty() {
@@ -671,6 +834,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
         Ok(AgentApiOutcome::new(DeploymentApiKeyRevokeResponse {
             api_key: api_key_view(record),
         }))
+        }).await
     }
 }
 
@@ -814,6 +978,14 @@ fn require_identity_scope(
             "identity scope exceeds credential scope",
         ));
     }
+    if context.acting_principal.id != context.authenticated_principal.id
+        && context.target_scope != AccessScope::Deployment
+        && context.target_scope != scope
+    {
+        return Err(AgentApiError::rejected(
+            "identity scope exceeds assertion scope",
+        ));
+    }
     Ok(())
 }
 fn identity_error(error: access::AccessError) -> AgentApiError {
@@ -824,5 +996,79 @@ fn identity_error(error: access::AccessError) -> AgentApiError {
         }
         access::AccessError::Store(_) => AgentApiError::internal(error.to_string()),
         _ => AgentApiError::rejected(error.to_string()),
+    }
+}
+
+// Invalid or oversized identifiers are not copied into audit records.
+fn audit_identifier(value: &str) -> Option<&str> {
+    (!value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control))
+        .then_some(value)
+}
+
+fn identity_audit_target(change: &access::AccessChange) -> serde_json::Value {
+    use access::AccessChange::*;
+    use serde_json::json;
+    let operation = match change {
+        CreatePrincipal { .. } => "create_principal",
+        SetPrincipalStatus { .. } => "set_principal_status",
+        CreateGroup { .. } => "create_group",
+        RenameGroup { .. } => "rename_group",
+        PutMembership { .. } => "put_membership",
+        RemoveMembership { .. } => "remove_membership",
+        AssignRole { .. } => "assign_role",
+        RevokeRole { .. } => "revoke_role",
+        AssignCapability { .. } => "assign_capability",
+        RevokeCapability { .. } => "revoke_capability",
+        CreateUniverse { .. } => "create_universe",
+        RecoverUniverse { .. } => "recover_universe",
+    };
+    let mut target = match change {
+        CreatePrincipal { id, .. } | SetPrincipalStatus { id, .. } => json!({"principalId": id}),
+        CreateGroup { id, .. } | RenameGroup { id, .. } => json!({"groupId": id}),
+        PutMembership { membership } | RemoveMembership { membership } => {
+            json!({"membership": membership})
+        }
+        AssignRole { assignment } | RevokeRole { assignment } => {
+            json!({"roleAssignment": assignment})
+        }
+        AssignCapability { assignment } | RevokeCapability { assignment } => {
+            json!({"capabilityAssignment": assignment})
+        }
+        CreateUniverse { universe_id, .. } => json!({"universeId": universe_id}),
+        RecoverUniverse {
+            universe_id,
+            principal_id,
+        } => json!({"universeId": universe_id, "principalId": principal_id}),
+    };
+    target["operation"] = json!(operation);
+    target
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identity_audit_targets_exclude_display_data_and_distinguish_operations() {
+        let id = Uuid::from_u128(1);
+        let create = access::AccessChange::CreateGroup {
+            id,
+            display_name: "sensitive display data".into(),
+        };
+        let rename = access::AccessChange::RenameGroup {
+            id,
+            display_name: "another sensitive value".into(),
+        };
+        assert_eq!(
+            identity_audit_target(&create),
+            serde_json::json!({"operation":"create_group","groupId":id})
+        );
+        assert_eq!(
+            identity_audit_target(&rename),
+            serde_json::json!({"operation":"rename_group","groupId":id})
+        );
+        assert_eq!(audit_identifier("provider-1"), Some("provider-1"));
+        assert_eq!(audit_identifier("unsafe\nidentifier"), None);
+        assert_eq!(audit_identifier(&"x".repeat(257)), None);
     }
 }

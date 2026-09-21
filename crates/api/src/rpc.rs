@@ -323,6 +323,8 @@ macro_rules! api_methods {
 }
 
 api_methods! {
+    METHOD_ACCESS_READ => read_access(AccessReadParams) -> AccessReadResponse =>
+        ["Read current action permissions", "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse =>
         ["Inspect the Lightspeed protocol", "Returns protocol version, server identity, and supported capabilities without changing universe state."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_SESSION_START => start_session(SessionStartParams) -> SessionStartResponse =>

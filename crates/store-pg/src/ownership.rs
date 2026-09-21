@@ -18,6 +18,99 @@ fn key(resource: &ResourceRef) -> (&'static str, &str) {
 }
 
 impl PgAccessStore {
+    /// Read-only action preview for an existing resource. The mutation path
+    /// uses the same permission evaluator and retention-tree traversal.
+    pub async fn resource_actions(
+        &self,
+        rights: &EffectiveAccess,
+        resource: &ResourceRef,
+        session_delete_cascade: bool,
+    ) -> Result<Vec<UniverseAction>, AccessError> {
+        let AccessScope::Universe { universe_id } = rights.scope else {
+            return Ok(Vec::new());
+        };
+        if !self.resource_exists(universe_id, resource).await? {
+            return Ok(Vec::new());
+        }
+        use UniverseAction::*;
+        let candidates: &[UniverseAction] = match resource {
+            ResourceRef::Session(_) => &[Read, ControlSession, StopSession, DeleteSession],
+            ResourceRef::Bot(_) => &[Read, ManageBot, InvokeBot],
+            ResourceRef::Profile(_) => &[Read, ManageProfile],
+        };
+        let mut actions = Vec::new();
+        for &action in candidates {
+            if !self
+                .resource_permitted(rights, action, Some(resource))
+                .await?
+            {
+                continue;
+            }
+            if action == DeleteSession
+                && session_delete_cascade
+                && let ResourceRef::Session(id) = resource
+            {
+                let targets = self.session_deletion_targets(universe_id, id).await?;
+                let mut permitted = true;
+                for target in targets {
+                    if !self
+                        .resource_permitted(
+                            rights,
+                            DeleteSession,
+                            Some(&ResourceRef::Session(target)),
+                        )
+                        .await?
+                    {
+                        permitted = false;
+                        break;
+                    }
+                }
+                if !permitted {
+                    continue;
+                }
+            }
+            actions.push(action);
+        }
+        Ok(actions)
+    }
+
+    /// Content existence is separate from ownership reservations, which can
+    /// survive failed creation. Permission previews must not expose actions on
+    /// those reservations or on deleted content.
+    pub async fn resource_exists(
+        &self,
+        universe: Uuid,
+        resource: &ResourceRef,
+    ) -> Result<bool, AccessError> {
+        let (_, id) = key(resource);
+        match resource {
+            ResourceRef::Session(_) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE universe_id=$1 AND session_id=$2)"),
+            ResourceRef::Bot(_) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM bots WHERE universe_id=$1 AND bot_id=$2)"),
+            ResourceRef::Profile(_) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_profiles WHERE universe_id=$1 AND profile_id=$2)"),
+        }.bind(universe).bind(id).fetch_one(&self.pool).await.map_err(error)
+    }
+
+    /// The retention tree determines cascade deletion targets. It is broader
+    /// than controller lineage: a history fork can belong to another principal.
+    pub async fn session_deletion_targets(
+        &self,
+        universe: Uuid,
+        session: &str,
+    ) -> Result<Vec<String>, AccessError> {
+        sqlx::query_scalar(
+            "WITH RECURSIVE tree(session_id) AS (
+            SELECT $2::text UNION SELECT child.session_id FROM sessions child JOIN tree parent
+            ON (child.source_seq IS NOT NULL AND child.source_session_id=parent.session_id)
+            OR child.origin_parent_session_id=parent.session_id WHERE child.universe_id=$1)
+            SELECT session_id FROM tree",
+        )
+        .bind(universe)
+        .bind(session)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(error)
+    }
+
     pub async fn ownership(
         &self,
         universe: Uuid,
@@ -143,32 +236,5 @@ impl PgAccessStore {
             return Ok(true);
         }
         Ok(chain.last() == Some(&ResourceController::Principal(rights.principal.id)))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub async fn record_action_admission(
-        &self,
-        universe: Uuid,
-        actor: &ActionActor,
-        authentication: Option<&RequestContext>,
-        action: &str,
-        resource: Option<&ResourceRef>,
-        revision: Option<u64>,
-        admitted: bool,
-        now: u64,
-    ) -> Result<(), AccessError> {
-        let authentication = authentication.map(|c| {
-            json!({
-                "authenticatedPrincipal": c.authenticated_principal.id,
-                "credential": c.authentication,
-                "scope": c.credential_scope,
-            })
-        });
-        sqlx::query("INSERT INTO access_action_audit(universe_id,actor,authentication,action,resource,policy_revision,admitted,occurred_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
-            .bind(universe).bind(json!(actor)).bind(authentication).bind(action)
-            .bind(resource.map(|r| json!(r))).bind(revision.map(i64::try_from).transpose().map_err(error)?)
-            .bind(admitted).bind(i64::try_from(now).map_err(error)?)
-            .execute(&self.pool).await.map_err(error)?;
-        Ok(())
     }
 }

@@ -6,8 +6,8 @@ use super::*;
 pub use ::access::{
     AccessChange, AccessChangeResult, AccessDirectory, AccessScope, CapabilityAssignment,
     EffectiveAccess, Group as IdentityGroup, Membership, Principal as IdentityPrincipal,
-    PrincipalKind as IdentityPrincipalKind, PrincipalStatus, Role as AccessRole, RoleAssignment,
-    RoleDecision, ServiceCapability, Subject, UniverseAction,
+    PrincipalKind as IdentityPrincipalKind, PrincipalStatus, ResourceRef, Role as AccessRole,
+    RoleAssignment, RoleDecision, ServiceCapability, Subject, UniverseAction,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -117,4 +117,34 @@ pub struct IdentityScopeParams {
 pub struct IdentitySelfResponse {
     pub access: EffectiveAccess,
     pub universes: Vec<EffectiveAccess>,
+}
+
+/// Current caller's action permissions. This is an advisory snapshot: mutations
+/// always authorize again, and runtime prerequisites still apply.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessReadParams {
+    /// Up to 100 existing sessions, bots or profiles in the selected universe.
+    /// Missing resources return no actions.
+    #[serde(default)]
+    pub resources: Vec<ResourceRef>,
+    /// Include every retention descendant when previewing session deletion.
+    #[serde(default)]
+    pub session_delete_cascade: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceAccessView {
+    pub resource: ResourceRef,
+    pub actions: Vec<UniverseAction>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessReadResponse {
+    /// Allowed actions that do not require a target. Resource actions are
+    /// returned only under `resources`, even when the caller has a broad role.
+    pub actions: Vec<UniverseAction>,
+    pub resources: Vec<ResourceAccessView>,
 }

@@ -161,7 +161,7 @@ pub(crate) async fn audit(
     .fetch_one(&mut *connection)
     .await
     .map_err(db_error)?;
-    sqlx::query("INSERT INTO access_audit (revision, actor_id, occurred_at_ms, event) VALUES ($1, $2, $3, $4)")
+    sqlx::query("INSERT INTO access_audit_changes (revision, actor_id, occurred_at_ms, event) VALUES ($1, $2, $3, $4)")
         .bind(next).bind(actor).bind(now_ms).bind(event).execute(connection).await.map_err(db_error)?;
     nonnegative(next)
 }

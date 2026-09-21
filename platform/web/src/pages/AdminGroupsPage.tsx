@@ -19,6 +19,7 @@ export function AdminGroupsPage() {
   const [role, setRole] = useState<AccessRole>("viewer");
   const change = useMutation({ mutationFn: (body: AccessChange) => api("POST", "/api/v1/admin/identity", body), onSuccess: () => {
     void cache.invalidateQueries({ queryKey: ["identity"] });
+    void cache.invalidateQueries({ queryKey: ["me"] });
     void cache.invalidateQueries({ queryKey: ["universes"] });
     void cache.invalidateQueries({ queryKey: ["admin", "users"] });
   } });

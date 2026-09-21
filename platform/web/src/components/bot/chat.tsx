@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { LoaderCircle } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, botLabel, type BotControllerSnapshot, type BotStateView, type BotView } from "@/api";
+import { useActionPermissions } from "@/lib/permissions";
 import { sessionDraftKey } from "@/lib/sessions/draft";
 import { SessionDetail } from "@/pages/SessionsPage";
 
@@ -39,8 +40,10 @@ export function BotChat({
   const isMain = selected !== undefined && selected === main;
   const sessionHref = (id: string) => (id === main ? base : `${base}/chat/${encodeURIComponent(id)}`);
   const ready = controller?.setupStatus === "ready";
+  const permissions = useActionPermissions(universeId, main ? [{ kind: "session", id: main }] : []);
+  const controlMain = !!main && permissions.can("control_session", { kind: "session", id: main });
 
-  useIntroduction(universeId, bot, controller, isMain);
+  useIntroduction(universeId, bot, controller, isMain, controlMain);
 
   if (selected === undefined) {
     return (
@@ -90,6 +93,7 @@ function useIntroduction(
   bot: BotView,
   controller: BotControllerSnapshot | undefined,
   isMain: boolean,
+  controlMain: boolean,
 ) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -97,14 +101,15 @@ function useIntroduction(
   const sent = useRef(false);
   const ready = controller?.setupStatus === "ready";
   const mainSessionId = controller?.mainSessionId;
+  const introductionKey = `${universeId}:${bot.botId}`;
   useEffect(() => {
-    if (!requested || !isMain || !ready || !mainSessionId || sent.current || introduced.has(bot.botId)) return;
+    if (!controlMain || !requested || !isMain || !ready || !mainSessionId || sent.current || introduced.has(introductionKey)) return;
     sent.current = true;
-    introduced.add(bot.botId);
+    introduced.add(introductionKey);
     void api("POST", `/api/v1/universes/${universeId}/sessions/${mainSessionId}/messages`, {
       text: INTRODUCTION_PROMPT,
       submissionId: crypto.randomUUID(),
     }).catch(() => undefined);
     navigate(location.pathname, { replace: true, state: null });
-  }, [requested, isMain, ready, mainSessionId, bot.botId, universeId, navigate, location.pathname]);
+  }, [controlMain, requested, isMain, ready, mainSessionId, introductionKey, universeId, navigate, location.pathname]);
 }

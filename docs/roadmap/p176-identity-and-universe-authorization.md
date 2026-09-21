@@ -1,7 +1,7 @@
 # P176 — Identity foundation and universe authorization
 
-**Status:** Steps 1–3 complete; Platform directory integration in step 4 implemented;
-response-time revocation and remaining audit pending. First slice of
+**Status:** Implementation steps 1–4 complete, including Platform directory
+integration, response-time revocation and significant access auditing. First slice of
 [enterprise authorization and identity](later/pNNN-enterprise-authorization.md).
 Core contracts, method classification, authenticated request contexts and scoped
 service keys, ownership and action enforcement are implemented. Platform
@@ -84,8 +84,9 @@ role evaluation live in `access`; `PgAccessStore` owns transactional persistence
 
 6. **Audit and UI.** Add a small groups/roles UI driven by core permissions.
    Persist audit records for identity, role, key, capability changes, denials,
-   and deployment operations; retain actor attribution on other domain actions
-   and traces. Audit survives session deletion and offboarding without storing
+   run admission and consequential configuration/control/deployment operations;
+   keep routine successes quiet and retain actor attribution on other domain
+   actions and traces. Audit survives session deletion and offboarding without storing
    credentials or session contents. Later sensitive reads and exceptional
    private-content access must support durable access auditing too.
 
@@ -130,9 +131,13 @@ Start without authorization caches: key, status, membership, and permission
 checks read authoritative committed state. A committed local change is visible
 to subsequent access decisions. External directory changes still require delivery
 and reconciliation; moving local ownership into core does not remove that work.
-Existing streams/long polls must recheck before delivery or stop within a declared
-bound. Current transcript delivery uses bounded long polls; admission alone does
-not reauthorize an in-flight response. Exact queries and the bound stay open.
+Transcript delivery uses bounded long polls. Shared services recheck current keys,
+principal status, assertion capabilities and effective membership while waiting
+(at most 250 ms between polls), and again after projecting forward/backward pages.
+Buffered universe reads receive a final HTTP-boundary check too. The interval
+excludes database/I/O latency; failed checks release no content. Already-sent
+responses cannot be recalled. There are no persistent user-content streams;
+environment daemon connections retain their separate authentication boundary.
 
 This revokes access to the API and content. Stopping already admitted execution,
 revoking standing bot authority, and cancelling external processes belong to the
@@ -150,11 +155,11 @@ revoke an independent service identity.
 3. [x] Introduce service authentication, key scopes, explicit contexts, and ownership
    facts; enforce checks across gateway and shared-service entry points. Authentication,
    scoped keys, contexts, caller migration, ownership and action enforcement are complete.
-4. [ ] Connect Platform and CLI administration to core records, removing competing
+4. [x] Connect Platform and CLI administration to core records, removing competing
    Platform-owned authorization state. **Directory integration complete:** canonical
    account mapping, authenticated user assertions, core membership/group/role APIs,
-   administration UI/CLI and bootstrap. **Remaining:** response-time revocation,
-   streams and the remaining audit surfaces.
+   administration UI/CLI and bootstrap. Response-time revocation for the current
+   long-poll transport and the remaining request/deployment audit surfaces are complete.
 
 ## Implemented foundation
 
@@ -164,7 +169,7 @@ revoke an independent service identity.
   service capabilities, typed access changes, effective rights, and the initial
   role/action matrix. Session control still requires ownership for every role;
   Operator/Admin may stop other sessions.
-- Schema revision 11 stores these records. Identity writes authorize and commit
+- The identity baseline stores these records. Identity writes authorize and commit
   with revision/audit updates and group-aware last-admin guards. Disablement may
   orphan a universe; explicit recovery assigns an active principal without
   giving the recovering administrator membership. No authorization cache.
@@ -180,8 +185,8 @@ request context. `single` uses a named local development identity; no implicit
 principal remains. Bare trusted headers are retired. Assertions require scoped
 `assert_user`, retain both identities, and never union their permissions.
 
-Schema revision 12 replaces the old key table outright and requires canonical
-credentials. There is no legacy-key archive or compatibility path. Issuance
+The identity baseline defines canonical scoped API keys directly. There is no
+legacy-key archive, replacement table or compatibility path. Issuance
 checks the named creator's current authority, credential ceiling and principal
 management scope transactionally; key creation/revocation is audited.
 Platform and connectors send service credentials. Configurator setup provisions
@@ -189,8 +194,8 @@ a universe-managed service and key. Platform now asserts its mapped user and
 uses core access records; the following cutover replaces its former directory.
 A small authenticated identity-mutation endpoint supports service provisioning.
 
-Schema revision 13 adds immutable resource ownership reservations and separate
-mutation-admission attribution. Creation records the trusted principal or internal
+A separate ownership baseline defines immutable resource reservations; the audit
+baseline stores significant action admission attribution. Creation records the trusted principal or internal
 controller cause; retries cannot transfer ownership. Deleted content retains its
 reservation. No legacy ownership inference or backfill is provided.
 
@@ -206,7 +211,7 @@ reserves the control edge before creation. Channel reply reads require the admit
 conversation binding and receive read-only authority for that session. Internal
 actors do not inherit user roles.
 
-Step 4 still owns response-time/stream revocation and remaining audit surfaces.
+Response-time revocation and request/deployment auditing are implemented below.
 Content remains universe-visible;
 private access and standing execution authority are follow-ups.
 The host CLI's `--actor-principal` is trusted database administration, not a remote
@@ -284,7 +289,7 @@ Validation for ownership and action enforcement (2026-09-21):
   tests and builds), documentation checks/build, release metadata and formatting
   passed. Generated checks used a temporary Git index; the real index was unchanged.
 - Private-session/standing-execution semantics and response-time revocation were
-  not claimed or tested by this slice.
+  not claimed or tested by that ownership-only validation run.
 
 Validation for Platform integration (2026-09-21):
 
@@ -305,8 +310,107 @@ Validation for Platform integration (2026-09-21):
   rejection/preservation of populated legacy authorization state.
 - Documentation checks/build, release metadata, formatting and whitespace checks
   passed. Tests used disposable services and no model/provider credentials.
-  Full per-action UI affordances, response-time reauthorization and the remaining
-  access-audit surfaces remain follow-up work.
+  Response-time reauthorization and the remaining access-audit surfaces are
+  tracked separately below; UI action affordances are covered by the follow-up implementation.
+
+## UI action affordances
+
+- Added a bounded `access/read` preview backed by core action/ownership policy,
+  including delegated controllers and optional cascade-deletion checks. Platform
+  forwards the authenticated user; the UI does not infer ownership from metadata.
+- Session input, steering, approvals, settings, stop/cancel, close and delete use
+  separate action decisions. Bulk controls count only permitted targets. Bot and
+  profile creation is available to Contributors; editing follows ownership or
+  Operator/Admin rights. Resource configuration and use remain distinct.
+- Permission hints are isolated by signed-in account, refreshed after mutations,
+  on focus and periodically, and fail closed on lookup errors. Runtime enforcement
+  remains authoritative; these hints do not add private/shared session semantics.
+- API-key controls expose members' own keys and eligible universe-managed service
+  principals for admins instead of inviting arbitrary principal IDs.
+
+Validation for UI action affordances (2026-09-21):
+
+- Full `npm run check` passed: 576 consumer tests (439 web), TypeScript checks,
+  regenerated contract/client checks, and live/demo production builds. Generated
+  checks used a temporary Git index; the real index was unchanged.
+- 88 API tests and 2 focused runtime preview tests passed. The expanded ownership
+  live suite passed against disposable PostgreSQL, covering foreign ownership,
+  bot/delegated controller lineage, missing resources, cascade permission checks
+  and absence of hypothetical mutation audit writes. The container was removed.
+- Rendered UI tests cover read-only sessions, stop without control, mixed bulk
+  selections, bot invoke versus manage, profile ownership, resource configuration,
+  own-key issuance, failed lookups and permission changes. MCP discovery requires
+  resource configuration permission even inside a writable session/profile editor.
+- Formatting, whitespace and documentation checks passed.
+
+## Revocation and remaining audit
+
+- Event long polls reauthorize in the shared service while waiting and after
+  projection, including quiet polls and backward history pages. HTTP also checks
+  buffered universe reads before delivery. This revokes content access without
+  cancelling already admitted execution.
+- The access-audit baseline directly defines committed permission changes in
+  `access_audit_changes` and security decisions in `access_audit_events`.
+  No transitional request/action tables or history-copy steps remain.
+  Deployment methods revalidate current credentials and roles on direct calls
+  as well as through HTTP. Contextual key/identity checks remain in stores.
+- An explicit significant-action policy keeps run admission, control/deletion/
+  approval actions, configuration changes, denials and consequential deployment
+  admission/outcome. Routine reads/inventories, credential leasing (including bot
+  polling), MCP discovery, session naming/context edits, profile editing and
+  storage housekeeping/ingress successes are quiet. Model/tool steps remain in
+  session history.
+  A run gets one admission, a deployment mutation two correlated event rows, and
+  a propagated denial one event. Committed permission changes add their own
+  transactional row; repeated key revocation does not add a change row.
+  Retention/export/pruning remain deferred. See the
+  [audit policy](../documentation/deployment/authentication-and-tenancy.md#durable-access-audit)
+  for the current scope and limitations.
+- Audit retains authenticated and acting identities, safe target identifiers and
+  stable error categories, never raw headers, bodies, secrets, metadata or content.
+  Committed identity changes retain typed change metadata.
+  Records survive target deletion/offboarding. A deployment operation must persist
+  admission before effects; admission is not success, and missing completion means
+  an unknown outcome. Audit-outcome failure cannot roll back prior effects.
+- Universe-scoped user assertions cannot escape into other identity scopes or
+  enumerate access outside their assertion scope.
+- Focused live tests passed 20 deterministic revocation races through HTTP and
+  direct services, plus administrative attribution, denial/redaction, purge survival,
+  assertion scope and fail-closed audit admission checks. Existing authentication,
+  ownership/authorization, schema-migration and Platform identity live suites also
+  passed; the latter exercised 62 HTTP checks. All used disposable PostgreSQL/
+  Temporal with no external provider credentials.
+- Audit simplification validation: nine live tests passed across seven suites,
+  including zero new audit events for 50 successful routine calls, exactly one
+  run admission, one denial per revocation attempt, two correlated events per
+  significant deployment operation and no-op key revocation. Test services were disposable; provider credentials were absent.
+- Final validation: 360 affected Rust library tests passed (one existing ignored),
+  strict all-target Clippy passed for access/store/server, and documentation,
+  release metadata, formatting and whitespace checks passed.
+
+## Greenfield migration baseline
+
+The runtime schema is consolidated from fifteen migrations into eleven domain
+files. `007_identity_access.sql` includes canonical scoped API keys;
+`010_resource_ownership.sql` keeps immutable control facts separate;
+`011_access_audit.sql` creates the two final audit tables. Auth principal constraints
+and independent environment lifecycle are folded into their original definitions.
+Obsolete table creation/replacement, renaming, history copying and their upgrade
+fixture are removed. The embedded and release revisions are both 11.
+
+This is a reset boundary for development databases, not an upgrade path. Recreate
+the runtime schema and migration ledger; keep checksum, locking and startup
+verification intact. The normal local reset command also resets Platform and the
+Lightspeed MinIO prefix. No existing user database was reset for this change.
+
+A before/after catalog comparison on disposable PostgreSQL matched all 38 tables,
+358 columns, 355 constraints and 91 indexes, plus identity-sequence configuration
+and the initial policy row. Physical column order, constraint/index names and the
+migration ledger are excluded from that comparison. All 10 store library tests
+and seven focused live tests passed (migration/ledger checks, identity, keys,
+ownership, revocation and audit). Store Clippy with warnings denied, documentation
+build/checks, release metadata and formatting checks passed. Live services used
+disposable PostgreSQL/Temporal with no provider credentials and were removed.
 
 ## Boundary and follow-up
 

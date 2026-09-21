@@ -110,10 +110,10 @@ async fn platform_accounts_use_canonical_access_end_to_end() -> anyhow::Result<(
             assert_eq!(ownership.created_by, ActionActor::Principal { id });
             assert_eq!(ownership.controller, ResourceController::Principal(id));
         }
-        let assertions: i64 = sqlx::query_scalar("SELECT count(*) FROM access_action_audit WHERE universe_id=$1 AND authentication->>'authenticatedPrincipal' IS NOT NULL")
-            .bind(universe).fetch_one(&pool).await?;
+        let assertions: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events WHERE scope->>'universeId'=$1 AND identity->>'authenticatedPrincipal'=$2")
+            .bind(universe.to_string()).bind(service.to_string()).fetch_one(&pool).await?;
         assert!(assertions >= 2, "missing authenticated service attribution");
-        println!("Platform identity live: {} HTTP checks; {assertions} attributed admissions", summary["checks"]);
+        println!("Platform identity live: {} HTTP checks; {assertions} attributed events", summary["checks"]);
         Ok(())
     }).await
 }

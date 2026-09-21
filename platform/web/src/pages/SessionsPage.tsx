@@ -118,7 +118,8 @@ import {
   setupResourceFeatureError,
 } from "@/lib/sessions/resource-features";
 import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { useActionPermissions } from "@/lib/permissions";
+import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import {
   metadataFilterFromSearchParams,
@@ -176,7 +177,7 @@ export function SessionsPage({ admin }: { admin: boolean }) {
           />
         ) : (
           <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-            Select a session, or start a new one.
+            Select a session to view its conversation.
           </div>
         )}
       </section>
@@ -233,8 +234,11 @@ function SessionList({
   const tree = buildSessionTree(sessions);
   const visibleIds = sessions.map((session) => session.id);
   const selectedSessions = sessions.filter((session) => selected.has(session.id));
-  const selectedOpen = selectedSessions.filter((session) => session.lifecycleStatus !== "closed");
-  const selectedClosed = selectedSessions.filter((session) => session.lifecycleStatus === "closed");
+  const permissions = useActionPermissions(universeId, sessions.map((session) => ({ kind: "session", id: session.id })));
+  const canCreate = permissions.can("create_session");
+  const canSelect = sessions.some((session) => !session.managed && permissions.can(session.lifecycleStatus === "closed" ? "delete_session" : "stop_session", { kind: "session", id: session.id }));
+  const selectedOpen = selectedSessions.filter((session) => !session.managed && session.lifecycleStatus !== "closed" && permissions.can("stop_session", { kind: "session", id: session.id }));
+  const selectedClosed = selectedSessions.filter((session) => !session.managed && session.lifecycleStatus === "closed" && permissions.can("delete_session", { kind: "session", id: session.id }));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const activeFilterCount = sessionListActiveFilterCount(metadataFilter, preferences);
   const listSearch = searchParams.toString();
@@ -329,6 +333,8 @@ function SessionList({
   /// primitive and the client loops, a few requests at a time.
   const bulk = useMutation({
     mutationFn: async ({ action, ids }: { action: "close" | "delete"; ids: string[] }) => {
+      const actionName = action === "close" ? "stop_session" : "delete_session";
+      if (ids.some((id) => !permissions.can(actionName, { kind: "session", id }))) throw new Error("Session permissions changed. Review the selection.");
       const results = await runBatched(ids, 6, (id): Promise<unknown> =>
         action === "close"
           ? api<SessionView>(
@@ -517,7 +523,7 @@ function SessionList({
             </div>
           </PopoverContent>
         </Popover>
-        <Button
+        {(canSelect || selecting) && <Button
           variant="ghost"
           size="icon-sm"
           className={cn(selecting && "text-primary")}
@@ -526,15 +532,15 @@ function SessionList({
           title={selecting ? "Exit selection" : "Select sessions to close or delete"}
         >
           <ListChecks />
-        </Button>
-        <Button
+        </Button>}
+        {canCreate && <Button
           variant="ghost"
           size="icon-sm"
           onClick={() => setCreateOpen(true)}
           aria-label="New session"
         >
           <Plus />
-        </Button>
+        </Button>}
       </div>
       {selecting && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/40 px-4 py-2 text-xs">
@@ -547,7 +553,7 @@ function SessionList({
             aria-label="Select all listed sessions"
           />
           <span className="text-muted-foreground">
-            {selected.size} selected
+            {selected.size} selected · {selectedOpen.length + selectedClosed.length} actionable
             {pages.hasNextPage ? ` of ${sessions.length} loaded` : ""}
           </span>
           {pages.hasNextPage && (
@@ -644,13 +650,13 @@ function SessionList({
           </Button>
         </div>
       )}
-      <NewSessionDialog
+      {canCreate && <NewSessionDialog
         universeId={universeId}
         slug={slug}
         open={createOpen}
         onOpenChange={setCreateOpen}
         search={listSearch}
-      />
+      />}
     </>
   );
 }
@@ -705,8 +711,8 @@ function BulkActionDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             {action === "close"
-              ? "Each selected open session is force-closed in turn: active and queued work is cancelled and the session cannot be reopened. Closed sessions in the selection are left alone."
-              : "Each selected closed session is deleted in turn, removing its history. Open sessions in the selection are left alone."}
+              ? "Each permitted open session is force-closed in turn: active and queued work is cancelled and the session cannot be reopened. Other selected sessions are left alone."
+              : "Each permitted closed session is deleted in turn, removing its history. Other selected sessions are left alone."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -1291,6 +1297,13 @@ export function SessionDetail({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteCascade, setDeleteCascade] = useState(false);
+  const target = { kind: "session" as const, id: sessionId };
+  const permissions = useActionPermissions(universeId, [target]);
+  const cascadePermissions = useActionPermissions(deleteOpen ? universeId : undefined, [target], { sessionDeleteCascade: true });
+  const canControl = permissions.can("control_session", target);
+  const canStop = permissions.can("stop_session", target);
+  const canDelete = permissions.can("delete_session", target);
+  const canDeleteCascade = cascadePermissions.can("delete_session", target);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [decidingApproval, setDecidingApproval] = useState<{
     approvalId: string;
@@ -1487,7 +1500,7 @@ export function SessionDetail({
     null;
   const runActive = runInProgress(tail.transcript) || pending.length > 0;
   const stopping = stoppingRunId !== null && steerTargetRunId === stoppingRunId;
-  const canSteer = steerTargetRunId !== null && !(activeRun?.cancelling ?? false) && !stopping;
+  const canSteer = canControl && steerTargetRunId !== null && !(activeRun?.cancelling ?? false) && !stopping;
   const queuedItems: QueuedRunItem[] = [
     ...queuedRuns.map((run) => {
       const sent = resolvedPending.find((message) => message.runId === run.runId);
@@ -1567,6 +1580,7 @@ export function SessionDetail({
   }, [settingsOpen, runActive]);
 
   const send = async (text: string, mode: ComposerMode | null) => {
+    if (!canControl) return;
     setSendError(null);
     if (mode === "steer") {
       await steer(text);
@@ -1611,6 +1625,7 @@ export function SessionDetail({
   };
 
   const steer = async (text: string) => {
+    if (!canControl) return;
     const runId = steerTargetRunId;
     if (!runId) {
       setSendError(
@@ -1634,6 +1649,7 @@ export function SessionDetail({
   };
 
   const cancelRun = async (runId: string) => {
+    if (!canStop) return null;
     setSendError(null);
     try {
       return await api<SessionRunCancelled>(
@@ -1695,7 +1711,7 @@ export function SessionDetail({
     approvalId: string,
     decision: "approve" | "reject",
   ) => {
-    if (!approvalRun) return;
+    if (!canControl || !approvalRun) return;
     setApprovalError(null);
     setDecidingApproval({ approvalId, decision });
     try {
@@ -1840,11 +1856,11 @@ export function SessionDetail({
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {`Lifecycle and chat input are controlled by ${managerLabel}; configuration remains editable.`}
+                  {`Lifecycle and chat input are controlled by ${managerLabel}.`}
                 </TooltipContent>
               </Tooltip>
             )}
-            {!closed && !managed && (
+            {canStop && !closed && !managed && (
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -1860,7 +1876,7 @@ export function SessionDetail({
                 {closeSession.isPending ? <LoaderCircle className="animate-spin" /> : <Archive />}
               </Button>
             )}
-            {closed && !managed && (
+            {canDelete && closed && !managed && (
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -1877,7 +1893,7 @@ export function SessionDetail({
                 {deleteSession.isPending ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
               </Button>
             )}
-            <Button
+            {canControl && <Button
               variant="ghost"
               size="icon-sm"
               onClick={() => setSettingsOpen(true)}
@@ -1885,12 +1901,12 @@ export function SessionDetail({
               title="Session settings"
             >
               <SlidersHorizontal />
-            </Button>
+            </Button>}
           </div>
         </header>
 
         <AlertDialog
-          open={closeOpen}
+          open={closeOpen && canStop}
           onOpenChange={(open) => {
             setCloseOpen(open);
             if (open) setCloseError(null);
@@ -1934,7 +1950,7 @@ export function SessionDetail({
         </AlertDialog>
 
         <AlertDialog
-          open={deleteOpen}
+          open={deleteOpen && canDelete}
           onOpenChange={(open) => {
             setDeleteOpen(open);
             if (open) {
@@ -1956,12 +1972,12 @@ export function SessionDetail({
               <Checkbox
                 checked={deleteCascade}
                 onCheckedChange={(checked) => setDeleteCascade(checked === true)}
-                disabled={deleteSession.isPending}
+                disabled={deleteSession.isPending || !canDeleteCascade}
               />
               <span className="min-w-0">
                 <span className="block font-medium">Also delete forks and delegated children</span>
                 <span className="block text-xs text-muted-foreground">
-                  Every descendant must already be closed. Config-only clones are not included.
+                  Every descendant must already be closed and you must have permission to delete each one. Config-only clones are not included.
                 </span>
               </span>
             </label>
@@ -1970,7 +1986,7 @@ export function SessionDetail({
               <AlertDialogCancel disabled={deleteSession.isPending}>Cancel</AlertDialogCancel>
               <AlertDialogAction
                 className="bg-destructive text-white hover:bg-destructive/90"
-                disabled={deleteSession.isPending}
+                disabled={deleteSession.isPending || (deleteCascade && !canDeleteCascade)}
                 onClick={() => deleteSession.mutate()}
               >
                 {deleteSession.isPending ? "Deleting…" : "Delete permanently"}
@@ -2041,8 +2057,8 @@ export function SessionDetail({
                     approvals={approvalRun.pendingApprovals ?? []}
                     deciding={decidingApproval}
                     error={approvalError}
-                    onDecide={(approvalId, decision) =>
-                      void decideApproval(approvalId, decision)}
+                    onDecide={canControl ? (approvalId, decision) =>
+                      void decideApproval(approvalId, decision) : undefined}
                   />
                 </MessageScrollerItem>
               )}
@@ -2065,7 +2081,7 @@ export function SessionDetail({
       </MessageScrollerProvider>
       </TranscriptLinksContext.Provider>
       {!closed && (
-        <QueuedRunsBar items={queuedItems} onCancel={(runId) => void cancelQueued(runId)} />
+        <QueuedRunsBar items={queuedItems} onCancel={canStop ? (runId) => void cancelQueued(runId) : undefined} />
       )}
       <SessionComposer
         key={sessionDraftKey(universeId, sessionId)}
@@ -2073,11 +2089,14 @@ export function SessionDetail({
         runActive={runActive}
         canSteer={canSteer}
         stopping={stopping}
-        disabled={closed || (managedGate && !directInput)}
-        disabledReason={managedGate && !directInput
+        canStop={canStop && !closed}
+        disabled={!canControl || closed || (managedGate && !directInput)}
+        disabledReason={!canControl
+          ? permissions.isLoading ? "Checking session permissions…" : permissions.error ? "Session permissions are unavailable." : "You have read-only access to this session."
+          : managedGate && !directInput
           ? `Managed by ${managerLabel} — flip Direct input to message this session anyway.`
           : undefined}
-        banner={managedGate && !closed ? (
+        banner={canControl && managedGate && !closed ? (
           <div className="flex min-w-0 items-center gap-2 pb-2 text-xs">
             <Switch
               className="shrink-0"
@@ -2102,7 +2121,7 @@ export function SessionDetail({
         onSend={(text, mode) => void send(text, mode)}
         onStop={() => void stop()}
       />
-      {!embedded && (
+      {!embedded && canControl && (
         <SessionSettingsDialog
           universeId={universeId}
           sessionId={sessionId}

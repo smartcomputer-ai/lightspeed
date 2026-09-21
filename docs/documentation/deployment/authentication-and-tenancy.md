@@ -13,10 +13,10 @@ evaluates the user’s current permissions without adding service privileges.
 | `single` | Explicit local development service principal with deployment and configured-universe administration rights. Startup creates the configured universe and initializes this identity. Rejects bearer, universe and principal headers. Keep this development listener private. |
 | `authenticated` | Requires `Authorization: Bearer lsk_…`. Reads the key, active canonical principal and current scoped rights on every request. |
 
-`trusted-header` and `api-key` modes are retired. Schema revision 12 replaces the
-API-key table outright; issue canonical credentials after migration. There is no
-legacy-key archive or compatibility path. Anonymous principal records are no
-longer supported.
+`trusted-header` and `api-key` modes are retired. The greenfield baseline creates
+canonical scoped credentials directly, without legacy keys or anonymous
+principal records. Development databases from an earlier baseline require
+recreation of the runtime schema and migration ledger before issuing new keys.
 
 A universe key selects exactly its universe. An optional matching
 `x-lightspeed-universe` is accepted; a different UUID is rejected. A deployment
@@ -46,10 +46,70 @@ backfill: content without trusted ownership cannot be claimed by retrying creati
 Mutating service admissions retain actor and credential-reference facts separately
 from session content; an admission record does not claim that an operation succeeded.
 
-Session content remains universe-visible. Private-session policies, response-time
-reauthorization, and standing execution authority remain pending. Committed
-status, membership, capability and key changes affect subsequent admission; they
-do not stop admitted runs or withdraw an already admitted long-poll response.
+Session content remains universe-visible. Committed status, membership, capability
+and key changes affect subsequent admission and in-flight transcript delivery.
+Event long polls recheck while waiting (at most 250 ms between polls), and forward
+and backward event pages recheck after projection before returning from the shared
+service. The HTTP gateway also rechecks buffered universe reads before sending
+them. The check interval excludes database/I/O latency; failed checks release no
+content. A response already handed to the transport cannot be recalled.
+
+Live transcripts use these bounded long polls, not persistent user-content
+sockets. Environment daemon connections retain their separate authentication
+boundary. Private-session policies and standing execution authority remain
+pending: access revocation does not stop admitted runs or external processes.
+
+## Durable access audit
+
+The baseline defines two access-audit tables. The purpose is
+accountability for authority changes and significant actions, not a second copy
+of the session event log.
+
+| Table | What is written |
+| --- | --- |
+| `access_audit_changes` | One committed identity, group, membership, role, capability or API-key change, in the same transaction as its policy revision. No-op changes, including repeated key revocation, add no change row. |
+| `access_audit_events` | Authentication/authorization failures, revoked delivery, significant universe action admissions, and consequential deployment operation admission/outcome. |
+
+Significant universe actions include run admission, cancellation, approvals,
+session configuration/closure/deletion/retention, bot and trigger configuration,
+MCP and integration configuration, credential import/revocation/binding,
+environment administration, channel configuration and workspace deletion.
+A run produces one compact admission record; it does not produce an audit event
+for every model iteration or tool call. Universe action admissions describe the
+permission decision, not completion; domain events describe execution.
+
+Consequential deployment mutations (identity/key administration, universe
+creation/deletion, provider/binding configuration and environment adoption) record
+admission before effects and completion with the same attempt ID. Thus a successful
+API permission change normally adds two event rows and one committed change row.
+Repeated checks and propagated failures within an RPC do not duplicate admissions
+or terminal denial records. Separate requests remain separate attempts.
+
+Successful reads, inventories, self queries, permission previews, transcript
+polls, session creation/renaming/context edits, profile editing, blob/snapshot
+writes, workspace head updates, credential leasing, MCP discovery, and routine
+bot/channel ingress add no access-audit events. Ordinary missing read results
+are also quiet. Normal MCP tool execution uses session history, not access audit;
+a tool calling a significant Lightspeed administration API is audited as that
+API operation. Denials remain recorded even for otherwise quiet methods.
+The runtime's explicit policy lives in `gateway/audit.rs`.
+
+Event records retain verified identities (including both the authenticated
+service and acting user), explicit internal-controller attribution, a non-secret
+credential reference, method, selected target identifiers, available policy
+revision, stage and error category. Unverified assertions never become acting
+users. Events exclude bodies, credential values, display names, endpoint URLs,
+metadata and session content. Committed change records contain typed identity
+change metadata, such as group display names, but no credential values or session
+content. Both tables survive target deletion and offboarding. The baseline
+creates their final definitions directly, without transitional audit tables.
+
+A selected admission must persist before the operation proceeds. For deployment
+mutations, missing completion means an unknown outcome (for example cancellation
+or a crash), not success; failed operations can have partial effects. A failed outcome write
+returns an error without undoing effects already committed. Retention, pruning
+and export are deferred until this auditing policy has been exercised; no
+automatic audit cleanup is implemented.
 
 ## Issue a key for an API client
 

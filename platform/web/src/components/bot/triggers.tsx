@@ -540,11 +540,13 @@ export function SavedTriggerFormCard({
         : "Say what the bot should do when this fires."
       : triggerFormProblem(trigger.kind, forms);
   const save = useMutation({
-    mutationFn: () =>
-      api("PUT", `/api/v1/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
+    mutationFn: () => {
+      if (!editable) throw new Error("You do not have permission to edit this trigger.");
+      return api("PUT", `/api/v1/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
         trigger: triggerUpdateBody(trigger, forms, deliveryOnly),
         expectedRevision: trigger.revision,
-      }),
+      });
+    },
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["bot-triggers", universeId, botId] }),
@@ -571,7 +573,7 @@ export function SavedTriggerFormCard({
       secondarySummary={secondarySummary}
       problem={formIssue}
       error={error}
-      open={open}
+      open={open && editable}
       onOpenChange={onOpenChange}
       expandable={editable}
       badges={badges}
@@ -597,7 +599,7 @@ export function SavedTriggerFormCard({
               setError(null);
               save.mutate();
             }}
-            disabled={save.isPending || formIssue !== null}
+            disabled={!editable || save.isPending || formIssue !== null}
           >
             {save.isPending ? "Saving…" : "Save"}
           </Button>

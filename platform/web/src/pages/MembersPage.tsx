@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -46,19 +47,23 @@ import {
   PageHeader,
   UniverseNotFound,
 } from "@/components/page";
-import { canAdminister, useActiveUniverse } from "@/lib/universes";
+import { useActiveUniverse } from "@/lib/universes";
 
-export function MembersPage({ admin }: { admin: boolean }) {
+export function MembersPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
+  const permissions = useActionPermissions(universe?.id);
 
-  if (isLoading) {
+  if (isLoading || permissions.isLoading) {
     return <LoadingNote />;
   }
-  if (!universe) {
+  if (permissions.error) {
+    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
+  }
+  if (!universe || !permissions.can("manage_access")) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <MemberList universeId={universe.id} writable={canAdminister(universe, admin)} />;
+  return <MemberList universeId={universe.id} writable={permissions.can("manage_access")} />;
 }
 
 function MemberList({ universeId, writable }: { universeId: string; writable: boolean }) {
@@ -68,8 +73,11 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
     queryKey: ["members", universeId],
     queryFn: () => api<Member[]>("GET", `/api/v1/universes/${universeId}/members`),
   });
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ["members", universeId] });
+  const invalidate = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["members", universeId] }),
+    queryClient.invalidateQueries({ queryKey: ["universes"] }),
+    queryClient.invalidateQueries({ queryKey: ["me"] }),
+  ]);
 
   const remove = useMutation({
     mutationFn: (memberId: string) =>
@@ -92,6 +100,7 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
         }
       />
       {members.isLoading && <LoadingNote />}
+      {remove.error && <p className="mb-3 text-sm text-destructive">{remove.error.message}</p>}
       {members.error && <ReadError error={members.error} loading={!members.data} />}
       {members.data && (
         <TableCard className="mb-6">
@@ -101,7 +110,9 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
-                {writable && <TableHead className="w-0" />}
+                {writable && (
+                  <TableHead className="w-0" />
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -128,7 +139,7 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
                           <AlertDialogHeader>
                             <AlertDialogTitle>Remove {member.email}?</AlertDialogTitle>
                             <AlertDialogDescription>
-                              They lose access to this universe immediately.
+                              This role assignment is removed immediately. Other direct or group assignments still apply.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>

@@ -115,6 +115,46 @@ export type ServiceCapability =
   | "discover_channel_accounts"
   | "manage_identity";
 /**
+ * Durable control facts, distinct from an agent's execution credentials.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ResourceRef".
+ */
+export type ResourceRef =
+  | {
+      id: string;
+      kind: "session";
+    }
+  | {
+      id: string;
+      kind: "bot";
+    }
+  | {
+      id: string;
+      kind: "profile";
+    };
+/**
+ * Actions are independent of RPC spelling. Ownership and resource policy are
+ * evaluated by the service that resolves the target, not from client claims.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "UniverseAction".
+ */
+export type UniverseAction =
+  | "read"
+  | "create_session"
+  | "control_session"
+  | "stop_session"
+  | "delete_session"
+  | "create_profile"
+  | "manage_profile"
+  | "create_bot"
+  | "manage_bot"
+  | "invoke_bot"
+  | "use_resource"
+  | "configure_resource"
+  | "manage_access";
+/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolKindView".
  */
@@ -1791,27 +1831,6 @@ export type MethodAccess =
       requirement: ServiceCapability;
     };
 /**
- * Actions are independent of RPC spelling. Ownership and resource policy are
- * evaluated by the service that resolves the target, not from client claims.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "UniverseAction".
- */
-export type UniverseAction =
-  | "read"
-  | "create_session"
-  | "control_session"
-  | "stop_session"
-  | "delete_session"
-  | "create_profile"
-  | "manage_profile"
-  | "create_bot"
-  | "manage_bot"
-  | "invoke_bot"
-  | "use_resource"
-  | "configure_resource"
-  | "manage_access";
-/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunStartSource".
  */
@@ -1903,6 +1922,44 @@ export interface IdentityPrincipal {
    */
   managementScope: AccessScope;
   status: PrincipalStatus;
+}
+/**
+ * Current caller's action permissions. This is an advisory snapshot: mutations
+ * always authorize again, and runtime prerequisites still apply.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessReadParams".
+ */
+export interface AccessReadParams {
+  /**
+   * Up to 100 existing sessions, bots or profiles in the selected universe.
+   * Missing resources return no actions.
+   */
+  resources?: ResourceRef[];
+  /**
+   * Include every retention descendant when previewing session deletion.
+   */
+  sessionDeleteCascade?: boolean;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessReadResponse".
+ */
+export interface AccessReadResponse {
+  /**
+   * Allowed actions that do not require a target. Resource actions are
+   * returned only under `resources`, even when the caller has a broad role.
+   */
+  actions: UniverseAction[];
+  resources: ResourceAccessView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ResourceAccessView".
+ */
+export interface ResourceAccessView {
+  actions: UniverseAction[];
+  resource: ResourceRef;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2860,6 +2917,14 @@ export interface ToolCallMediaView {
 export interface AgentApiOutcomeOfAccessDirectory {
   notifications?: AgentNotification[];
   result: AccessDirectory;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfAccessReadResponse".
+ */
+export interface AgentApiOutcomeOfAccessReadResponse {
+  notifications?: AgentNotification[];
+  result: AccessReadResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

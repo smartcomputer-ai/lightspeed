@@ -104,6 +104,12 @@ impl GatewayRoutes {
 }
 
 impl GatewayState {
+    fn pool(&self) -> &sqlx::PgPool {
+        match &self.resolution {
+            UniverseResolution::FixedApi { api } => api.store().pool(),
+            UniverseResolution::Multi { runtime, .. } => runtime.stores().pool(),
+        }
+    }
     /// Route every request to one existing service instance.
     pub fn for_api(api: Arc<GatewayAgentApi>) -> Self {
         let public_base_url = api.public_base_url().to_owned();
@@ -212,8 +218,31 @@ impl GatewayState {
         headers: &HeaderMap,
         method: &str,
     ) -> Result<RequestContext, AgentApiError> {
-        let requirement =
-            api::method_access(method).ok_or_else(|| AgentApiError::rejected("unknown method"))?;
+        let result = self.request_context_inner(headers, method).await;
+        // Authenticated mode records failures as it verifies each identity fact.
+        // Development mode has no trustworthy caller on a rejected admission.
+        if !matches!(
+            &self.resolution,
+            UniverseResolution::Multi {
+                mode: GatewayAuthMode::Authenticated,
+                ..
+            }
+        ) && let Err(error) = &result
+        {
+            let mut audit = super::audit::request(method, access::AuditStage::Authentication);
+            audit.identity = Default::default();
+            audit.actor = None;
+            audit.scope = None;
+            super::audit::failure(self.pool(), &mut audit, error).await?;
+        }
+        result
+    }
+
+    async fn request_context_inner(
+        &self,
+        headers: &HeaderMap,
+        method: &str,
+    ) -> Result<RequestContext, AgentApiError> {
         let deployment = is_deployment_method(method);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -230,12 +259,14 @@ impl GatewayState {
                     api_keys,
                     &PgAccessStore::new(runtime.stores().pool().clone()),
                     headers,
-                    requirement,
+                    method,
                     now,
                 )
                 .await
             }
             _ => {
+                let requirement = api::method_access(method)
+                    .ok_or_else(|| AgentApiError::rejected("unknown method"))?;
                 authentication::reject_identity_headers(headers)?;
                 let (pool, universe_id) = match &self.resolution {
                     UniverseResolution::FixedApi { api } => {
@@ -987,6 +1018,14 @@ async fn rpc(
     headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> Response {
+    super::audit::operation(rpc_inner(state, headers, request)).await
+}
+
+async fn rpc_inner(
+    state: Arc<GatewayState>,
+    headers: HeaderMap,
+    request: JsonRpcRequest,
+) -> Response {
     let context = match state.request_context(&headers, &request.method).await {
         Ok(context) => context,
         Err(error) => return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into())),
@@ -1011,8 +1050,52 @@ async fn rpc(
         Err(error) => return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into())),
     };
     let method = request.method.clone();
-    let response =
-        principal::with_request_context(context, dispatch_json_rpc(api.as_ref(), request)).await;
+    let response = principal::with_request_context(context, async {
+        let mut response = dispatch_json_rpc(api.as_ref(), request).await;
+        // JSON-RPC content is buffered, so revalidate once more after serialization.
+        // Persistent user-content sockets do not exist; daemon sockets have their
+        // separate registration/connection authority boundary.
+        if response.result.is_some()
+            && matches!(
+                api::method_access(&method),
+                Some(api::MethodAccess::Universe(access::UniverseAction::Read))
+            )
+        {
+            let decision = authentication::current_context(state.pool())
+                .await
+                .and_then(|(_, rights)| {
+                    if authentication::method_permitted(
+                        &rights,
+                        api::MethodAccess::Universe(access::UniverseAction::Read),
+                    ) {
+                        Ok(())
+                    } else {
+                        Err(AgentApiError::rejected("request is not authorized"))
+                    }
+                });
+            if let Err(error) = decision {
+                let mut audit = super::audit::request(&method, access::AuditStage::Delivery);
+                let error = match super::audit::failure(state.pool(), &mut audit, &error).await {
+                    Ok(()) => error,
+                    Err(audit_error) => audit_error,
+                };
+                response = JsonRpcResponse::failure(response.id, error.into());
+            }
+        }
+        if let Some(error) = response
+            .error
+            .as_ref()
+            .and_then(|error| error.data.as_ref())
+            && error.kind == api::AgentApiErrorKind::Rejected
+        {
+            let mut audit = super::audit::request(&method, access::AuditStage::Completion);
+            if let Err(error) = super::audit::failure(state.pool(), &mut audit, error).await {
+                response = JsonRpcResponse::failure(response.id, error.into());
+            }
+        }
+        response
+    })
+    .await;
     if response_budget_exempt(&method) {
         no_store_json_rpc(response)
     } else {

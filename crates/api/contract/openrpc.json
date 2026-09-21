@@ -318,6 +318,48 @@
         ],
         "type": "object"
       },
+      "AccessReadParams": {
+        "additionalProperties": false,
+        "description": "Current caller's action permissions. This is an advisory snapshot: mutations\nalways authorize again, and runtime prerequisites still apply.",
+        "properties": {
+          "resources": {
+            "default": [],
+            "description": "Up to 100 existing sessions, bots or profiles in the selected universe.\nMissing resources return no actions.",
+            "items": {
+              "$ref": "#/components/schemas/ResourceRef"
+            },
+            "type": "array"
+          },
+          "sessionDeleteCascade": {
+            "default": false,
+            "description": "Include every retention descendant when previewing session deletion.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "AccessReadResponse": {
+        "properties": {
+          "actions": {
+            "description": "Allowed actions that do not require a target. Resource actions are\nreturned only under `resources`, even when the caller has a broad role.",
+            "items": {
+              "$ref": "#/components/schemas/UniverseAction"
+            },
+            "type": "array"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/ResourceAccessView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "actions",
+          "resources"
+        ],
+        "type": "object"
+      },
       "AccessScope": {
         "oneOf": [
           {
@@ -450,6 +492,23 @@
           },
           "result": {
             "$ref": "#/components/schemas/AccessDirectory"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfAccessReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AccessReadResponse"
           }
         },
         "required": [
@@ -12968,6 +13027,77 @@
         ],
         "type": "string"
       },
+      "ResourceAccessView": {
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/UniverseAction"
+            },
+            "type": "array"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/ResourceRef"
+          }
+        },
+        "required": [
+          "resource",
+          "actions"
+        ],
+        "type": "object"
+      },
+      "ResourceRef": {
+        "description": "Durable control facts, distinct from an agent's execution credentials.",
+        "oneOf": [
+          {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "session",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "bot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "profile",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Role": {
         "enum": [
           "viewer",
@@ -18027,6 +18157,31 @@
     "version": "0.1.0"
   },
   "methods": [
+    {
+      "description": "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
+      "name": "access/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/AccessReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAccessReadResponse"
+        }
+      },
+      "summary": "Read current action permissions",
+      "x-lightspeed-access": {
+        "kind": "universe",
+        "requirement": "read"
+      }
+    },
     {
       "description": "Returns protocol version, server identity, and supported capabilities without changing universe state.",
       "name": "initialize",

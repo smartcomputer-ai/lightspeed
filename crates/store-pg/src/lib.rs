@@ -4,6 +4,7 @@
 //! CAS catalog; across universes, both metadata and object keys are isolated.
 
 mod access;
+mod access_audit;
 mod api_keys;
 mod auth;
 mod blob;
@@ -43,7 +44,7 @@ pub const MCP_SCHEMA_SQL: &str = include_str!("../migrations/003_mcp.sql");
 pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/004_auth.sql");
 pub const ENVIRONMENT_SCHEMA_SQL: &str = include_str!("../migrations/005_environments.sql");
 pub const PROFILE_SCHEMA_SQL: &str = include_str!("../migrations/006_agent_profiles.sql");
-pub const API_KEYS_SCHEMA_SQL: &str = include_str!("../migrations/007_api_keys.sql");
+pub const IDENTITY_ACCESS_SCHEMA_SQL: &str = include_str!("../migrations/007_identity_access.sql");
 pub const BOTS_SCHEMA_SQL: &str = include_str!("../migrations/008_bots.sql");
 pub const CHANNELS_SCHEMA_SQL: &str = include_str!("../migrations/009_channels.sql");
 

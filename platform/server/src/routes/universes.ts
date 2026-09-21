@@ -191,6 +191,26 @@ export function universeRoutes(ctx: AppContext) {
   /// Universe API-key management stays deployment-scoped engine-side: the platform
   /// asserts the human in the selected universe; core evaluates issuance/ownership. The plaintext secret exists only in the create
   /// response and is never persisted by the platform.
+  app.get("/:id/key-principals", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    return withGateway(c, async () => {
+      const client = engineClientFor(ctx, access.universe);
+      const scope = { kind: "universe" as const, universeId: access.universe.lightspeedUniverseId };
+      const self = await client.call("deployment/identity/self", { scope });
+      const principals = [self.result.access.principal];
+      if (self.result.access.roles.includes("admin")) {
+        const directory = await client.call("deployment/identity/directory", { scope });
+        principals.push(...directory.result.principals.filter((principal) =>
+          principal.kind === "service" && principal.status === "active"
+          && principal.managementScope.kind === "universe"
+          && principal.managementScope.universeId === scope.universeId,
+        ));
+      }
+      return c.json(principals.map(({ id, displayName, kind }) => ({ id, displayName, kind })));
+    });
+  });
+
   app.get("/:id/api-keys", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {

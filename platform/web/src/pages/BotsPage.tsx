@@ -17,16 +17,18 @@ import { StatusDot, relativeTime, type BotTone } from "@/components/bot/status";
 import { BotFace } from "@/components/icons/bot";
 import { Button } from "@/components/ui/button";
 import { LoadingNote, UniverseNotFound } from "@/components/page";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
+import { useActionPermissions } from "@/lib/permissions";
 
 const ROSTER_REFRESH_MS = 5_000;
 
 /// Bots: a roster on the left and one bot's conversations or activity on the right.
-export function BotsPage({ admin, view = "chat" }: { admin: boolean; view?: BotTab }) {
+export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const { botId, sessionId } = useParams<{ botId?: string; sessionId?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
+  const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) return <LoadingNote />;
   if (!universe) {
@@ -37,7 +39,7 @@ export function BotsPage({ admin, view = "chat" }: { admin: boolean; view?: BotT
     );
   }
 
-  const manage = canManage(universe, admin);
+  const create = permissions.can("create_bot");
   const createOpen = searchParams.get("new") === "bot";
   const setCreateOpen = (open: boolean) => {
     const next = new URLSearchParams(searchParams);
@@ -57,7 +59,7 @@ export function BotsPage({ admin, view = "chat" }: { admin: boolean; view?: BotT
           universeId={universe.id}
           slug={slug!}
           activeId={botId}
-          manage={manage}
+          create={create}
           onCreate={() => setCreateOpen(true)}
         />
       </aside>
@@ -70,13 +72,12 @@ export function BotsPage({ admin, view = "chat" }: { admin: boolean; view?: BotT
             botId={botId}
             view={view}
             sessionId={sessionId}
-            manage={manage}
           />
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
             <BotFace size={40} className="text-muted-foreground/60" />
-            <span>Pick a bot{manage ? ", or create one" : ""}.</span>
-            {manage && (
+            <span>Pick a bot{create ? ", or create one" : ""}.</span>
+            {create && (
               <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
                 <Plus data-icon="inline-start" /> New bot
               </Button>
@@ -84,7 +85,7 @@ export function BotsPage({ admin, view = "chat" }: { admin: boolean; view?: BotT
           </div>
         )}
       </section>
-      {manage && (
+      {create && (
         <BotCreateDialog
           universeId={universe.id}
           slug={slug!}
@@ -138,13 +139,13 @@ function BotsPane({
   universeId,
   slug,
   activeId,
-  manage,
+  create,
   onCreate,
 }: {
   universeId: string;
   slug: string;
   activeId: string | undefined;
-  manage: boolean;
+  create: boolean;
   onCreate: () => void;
 }) {
   const bots = useQuery({
@@ -161,7 +162,7 @@ function BotsPane({
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
         <h1 className="text-sm font-semibold">Bots</h1>
         {bots.data && <span className="text-xs text-muted-foreground">{roster.length}</span>}
-        {manage && (
+        {create && (
           <Button
             variant="ghost"
             size="icon-sm"
@@ -179,7 +180,7 @@ function BotsPane({
         {bots.data && roster.length === 0 && (
           <div className="grid gap-3 p-4 text-sm text-muted-foreground">
             <p>No bots yet.</p>
-            {manage && (
+            {create && (
               <Button size="sm" onClick={onCreate}>
                 <Plus data-icon="inline-start" /> Create your first bot
               </Button>
@@ -246,14 +247,12 @@ function BotWorkspace({
   botId,
   view,
   sessionId,
-  manage,
 }: {
   universeId: string;
   slug: string;
   botId: string;
   view: BotTab;
   sessionId: string | undefined;
-  manage: boolean;
 }) {
   const bot = useQuery({
     queryKey: ["bot", universeId, botId],
@@ -284,7 +283,6 @@ function BotWorkspace({
       bot={bot.data.bot}
       {...(state.data?.state ? { state: state.data.state } : {})}
       {...(state.error ? { stateError: state.error.message } : {})}
-      manage={manage}
       view={view}
       sessionId={sessionId}
     />

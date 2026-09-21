@@ -1,5 +1,6 @@
 //! `api` gateway for the Temporal-backed agent workflow.
 
+mod access_preview;
 mod api_config;
 pub(crate) mod authorization;
 use access::ResourceRef;
@@ -1535,6 +1536,16 @@ fn validate_subagent_deadline_for_existing_bindings(
 
 #[async_trait]
 impl AgentApiService for GatewayAgentApi {
+    async fn read_access(
+        &self,
+        params: AccessReadParams,
+    ) -> Result<AgentApiOutcome<AccessReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ACCESS_READ, None).await?;
+        self.read_action_permissions(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
     // ── Bots ────────────────────────────────────────────────────────────
 
     async fn create_bot(
@@ -2307,15 +2318,15 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionEventsReadParams,
     ) -> Result<AgentApiOutcome<SessionEventsReadResponse>, AgentApiError> {
-        self.authorize_method(
-            METHOD_SESSION_EVENTS_READ,
-            Some(ResourceRef::Session(params.session_id.clone())),
-        )
-        .await?;
+        let resource = Some(ResourceRef::Session(params.session_id.clone()));
+        self.authorize_method(METHOD_SESSION_EVENTS_READ, resource.clone())
+            .await?;
         if params.direction == SessionEventDirection::Backward {
-            return event_history::read(self.store.as_ref(), self.store.as_ref(), params)
-                .await
-                .map(AgentApiOutcome::new);
+            let response =
+                event_history::read(self.store.as_ref(), self.store.as_ref(), params).await?;
+            self.authorize_delivery(METHOD_SESSION_EVENTS_READ, resource)
+                .await?;
+            return Ok(AgentApiOutcome::new(response));
         }
         if params.before.is_some() {
             return Err(AgentApiError::invalid_request(
@@ -2338,6 +2349,10 @@ impl AgentApiService for GatewayAgentApi {
         let wait = Duration::from_millis(params.wait_ms.unwrap_or(0)).min(self.events_wait_cap);
         let deadline = Instant::now() + wait;
         loop {
+            // Recheck parked readers too: a quiet transcript must not keep a
+            // revoked key, user, group membership or assertion alive until timeout.
+            self.authorize_delivery(METHOD_SESSION_EVENTS_READ, resource.clone())
+                .await?;
             let page = self
                 .store
                 .read_after(ReadSessionEvents {
@@ -2369,6 +2384,10 @@ impl AgentApiService for GatewayAgentApi {
                 events.push(self.projector().project_entry(&session_id, &entry).await?);
             }
 
+            // Projection may itself wait on blob I/O. Check after materialization,
+            // not just after waking, before any events leave the shared service.
+            self.authorize_delivery(METHOD_SESSION_EVENTS_READ, resource.clone())
+                .await?;
             return Ok(AgentApiOutcome::new(SessionEventsReadResponse {
                 events,
                 next_cursor: page.next_after.map(event_cursor),
@@ -2782,11 +2801,6 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: RunStartParams,
     ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
-        self.authorize_method(
-            METHOD_SESSION_RUNS_START,
-            Some(ResourceRef::Session(params.session_id.clone())),
-        )
-        .await?;
         self.start_run_internal(params, Vec::new()).await
     }
 

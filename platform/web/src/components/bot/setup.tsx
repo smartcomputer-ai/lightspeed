@@ -52,6 +52,7 @@ import {
   setupResourceFeatureError,
 } from "@/lib/sessions/resource-features";
 import { cn } from "@/lib/utils";
+import { useActionPermissions } from "@/lib/permissions";
 import { BotEnvironmentCard } from "./environment-card";
 import { BotAvatar } from "./face";
 import { botInputOf } from "./identity";
@@ -391,6 +392,8 @@ function SessionProfileSection({
   profile: ProfileDocument | undefined;
   profileError: string | undefined;
 }) {
+  const permissions = useActionPermissions(universeId, [{ kind: "profile", id: bot.profileId }]);
+  const manageProfile = permissions.can("manage_profile", { kind: "profile", id: bot.profileId });
   const queryClient = useQueryClient();
   const profileUrl = `/api/v1/universes/${universeId}/profiles/${encodeURIComponent(bot.profileId)}`;
   const options = useSessionConfigEditorOptions(universeId);
@@ -438,6 +441,7 @@ function SessionProfileSection({
 
   const save = useMutation({
     mutationFn: async ({ fields }: ProfileSaveRequest) => {
+      if (!manageProfile) throw new Error("You do not have permission to edit this profile.");
       const latest = await api<ProfileDocument>("GET", profileUrl);
       const next = mergeSessionProfileFields(latest, fields);
       const problem = setupResourceFeatureError(next);
@@ -454,7 +458,7 @@ function SessionProfileSection({
   });
   const merged = { ...(profile ?? {}), config: configDraft };
   const closed = bot.closedAtMs != null;
-  const readOnly = !manage || closed;
+  const readOnly = !manageProfile || closed;
   const defaultEnvironment = defaultEnvironmentAttachment(configDraft);
   const capabilities = capabilitySummary(profileConfig);
   const environment = hasSessionFeature(profileConfig, "environments")
@@ -495,7 +499,7 @@ function SessionProfileSection({
               />
               {textRef && <FieldDescription>Stored as a blob reference; edit it on the Profiles page.</FieldDescription>}
             </Field>
-            <SessionConfigEditor
+            {!readOnly ? <SessionConfigEditor
               value={configDraft}
               mcpServers={options.mcpServers}
               workspaces={options.workspaces}
@@ -505,9 +509,6 @@ function SessionProfileSection({
               environments={options.environments}
               mcpToolDiscovery={options.mcpToolDiscovery}
               featureDisableReasons={resourceFeatureDisableReasons(merged)}
-              environmentSetup={defaultEnvironment?.environmentId ? (
-                <BotEnvironmentCard slug={slug} universeId={universeId} environmentId={defaultEnvironment.environmentId} manage={manage} />
-              ) : undefined}
               metadataSetup={(
                 <MetadataMapEditor value={metadataDraft} onChange={setMetadataDraft} disabled={readOnly} />
               )}
@@ -523,8 +524,15 @@ function SessionProfileSection({
               retentionDescription="Default automatic deletion for each new root session this bot creates."
               onValidityChange={setConfigError}
               onChange={(config) => setConfigDraft(config as Record<string, unknown> | undefined)}
-            />
-            {manage && (
+            /> : (
+              <pre className="overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 text-xs" aria-label="Profile configuration">
+                {JSON.stringify({ config: profile.config, metadata: profile.metadata, retention: profile.retention }, null, 2)}
+              </pre>
+            )}
+            {defaultEnvironment?.environmentId && (
+              <BotEnvironmentCard slug={slug} universeId={universeId} environmentId={defaultEnvironment.environmentId} />
+            )}
+            {manageProfile && (
               <SaveRow
                 dirty={configDirty || instructionsDirty || metadataDirty || retentionDirty}
                 pending={save.isPending}
@@ -596,7 +604,7 @@ function ProfileSwitcher({
             ))}
           </SelectContent>
         </Select>
-        {selected !== bot.profileId ? (
+        {manage && selected !== bot.profileId ? (
           <>
             <Button size="sm" disabled={patch.isPending} onClick={() => patch.mutate({ profileId: selected })}>
               {patch.isPending ? "Switching…" : "Use this profile"}

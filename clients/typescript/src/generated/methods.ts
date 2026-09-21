@@ -5,6 +5,7 @@
 import type * as Api from "./types.js";
 
 export const METHODS = [
+  "access/read",
   "initialize",
   "session/start",
   "session/managed/start",
@@ -139,6 +140,12 @@ export const METHODS = [
 ] as const;
 
 export const METHOD_INFO = {
+  "access/read": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"read"},
+    summary: "Read current action permissions",
+    description: "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
+  },
   "initialize": {
     scope: "universe",
     access: {"kind":"universe","requirement":"read"},
@@ -940,6 +947,15 @@ export type Method = (typeof METHODS)[number];
 export type NotificationMethod = (typeof NOTIFICATIONS)[number];
 
 export interface MethodMap {
+  /**
+   * Read current action permissions
+   *
+   * Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
+   */
+  "access/read": {
+    params: Api.AccessReadParams;
+    result: Api.AgentApiOutcomeOfAccessReadResponse;
+  };
   /**
    * Inspect the Lightspeed protocol
    *
@@ -2129,6 +2145,14 @@ export interface RpcCaller {
 }
 
 export const rpc = {
+  /**
+   * Read current action permissions
+   *
+   * Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
+   */
+  accessRead(client: RpcCaller, params: Api.AccessReadParams): Promise<Api.AgentApiOutcomeOfAccessReadResponse> {
+    return client.call("access/read", params);
+  },
   /**
    * Inspect the Lightspeed protocol
    *

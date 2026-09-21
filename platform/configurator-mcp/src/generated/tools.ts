@@ -6,6 +6,92 @@ import type { GeneratedToolDescriptor } from "../tool-descriptor.js";
 
 export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
+    "name": "lightspeed_access_read",
+    "method": "access/read",
+    "summary": "Read current action permissions",
+    "description": "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
+    "paramsType": "AccessReadParams",
+    "resultType": "AgentApiOutcome<AccessReadResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "description": "Current caller's action permissions. This is an advisory snapshot: mutations\nalways authorize again, and runtime prerequisites still apply.",
+      "properties": {
+        "resources": {
+          "default": [],
+          "description": "Up to 100 existing sessions, bots or profiles in the selected universe.\nMissing resources return no actions.",
+          "items": {
+            "$ref": "#/definitions/ResourceRef"
+          },
+          "type": "array"
+        },
+        "sessionDeleteCascade": {
+          "default": false,
+          "description": "Include every retention descendant when previewing session deletion.",
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "definitions": {
+        "ResourceRef": {
+          "description": "Durable control facts, distinct from an agent's execution credentials.",
+          "oneOf": [
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "session",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "bot",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "profile",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
     "name": "lightspeed_session_start",
     "method": "session/start",
     "summary": "Create or reopen a session",

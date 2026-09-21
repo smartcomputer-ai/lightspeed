@@ -12,6 +12,7 @@ pub const PROTOCOL_VERSION: &str = "lightspeed.agent.api.v1";
 // ── Protocol handshake ──────────────────────────────────────────────────────
 
 pub const METHOD_INITIALIZE: &str = "initialize";
+pub const METHOD_ACCESS_READ: &str = "access/read";
 
 // ── Sessions: lifecycle ─────────────────────────────────────────────────────
 

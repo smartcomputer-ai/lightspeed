@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { RefreshCw, Search } from "lucide-react";
@@ -240,6 +241,7 @@ export function ModelApiKeyDetails({
   onChanged: () => void;
   onRemoved: () => void;
 }) {
+  const writable = useActionPermissions(universeId).can("configure_resource");
   const [replacing, setReplacing] = useState(false);
   const remove = useMutation({
     mutationFn: () =>
@@ -252,7 +254,7 @@ export function ModelApiKeyDetails({
   const providerKey: ModelKeyProvider =
     provider.providerId === "openai" ? "openai" : "anthropic";
 
-  if (replacing) {
+  if (writable && replacing) {
     return (
       <ModelApiKeyForm
         universeId={universeId}
@@ -318,23 +320,25 @@ export function ModelApiKeyDetails({
       {remove.error && (
         <p className="text-sm text-destructive">{remove.error.message}</p>
       )}
-      <DialogFooter>
-        <ConfirmDangerButton
-          label="Remove key"
-          title="Remove this API key?"
-          description={
-            <>
-              Sessions using{" "}
-              <span className="font-mono text-xs">{provider.providerId}</span>{" "}
-              fall back to the deployment-wide key, or fail if none is
-              configured.
-            </>
-          }
-          pending={remove.isPending}
-          onConfirm={() => remove.mutate()}
-        />
-        <Button onClick={() => setReplacing(true)}>Replace key</Button>
-      </DialogFooter>
+      {writable && (
+        <DialogFooter>
+          <ConfirmDangerButton
+            label="Remove key"
+            title="Remove this API key?"
+            description={
+              <>
+                Sessions using{" "}
+                <span className="font-mono text-xs">{provider.providerId}</span>{" "}
+                fall back to the deployment-wide key, or fail if none is
+                configured.
+              </>
+            }
+            pending={remove.isPending}
+            onConfirm={() => remove.mutate()}
+          />
+          <Button onClick={() => setReplacing(true)}>Replace key</Button>
+        </DialogFooter>
+      )}
     </div>
   );
 }
@@ -576,6 +580,7 @@ export function OpenAiCompatibleDetails({
   onChanged: () => void;
   onRemoved: () => void;
 }) {
+  const writable = useActionPermissions(universeId).can("configure_resource");
   const [editing, setEditing] = useState(false);
   const remove = useMutation({
     mutationFn: () =>
@@ -585,7 +590,7 @@ export function OpenAiCompatibleDetails({
       ),
     onSuccess: onRemoved,
   });
-  if (editing)
+  if (writable && editing)
     return (
       <OpenAiCompatibleForm
         universeId={universeId}
@@ -624,16 +629,18 @@ export function OpenAiCompatibleDetails({
         universeId={universeId}
         providerId={provider.providerId}
       />
-      <DialogFooter>
-        <ConfirmDangerButton
-          label="Remove provider"
-          title="Remove this model provider?"
-          description="New calls using this provider ID will fail immediately."
-          pending={remove.isPending}
-          onConfirm={() => remove.mutate()}
-        />
-        <Button onClick={() => setEditing(true)}>Edit provider</Button>
-      </DialogFooter>
+      {writable && (
+        <DialogFooter>
+          <ConfirmDangerButton
+            label="Remove provider"
+            title="Remove this model provider?"
+            description="New calls using this provider ID will fail immediately."
+            pending={remove.isPending}
+            onConfirm={() => remove.mutate()}
+          />
+          <Button onClick={() => setEditing(true)}>Edit provider</Button>
+        </DialogFooter>
+      )}
     </div>
   );
 }

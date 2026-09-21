@@ -4,6 +4,16 @@ Generated from the Rust API method manifest. Parameter and result field details 
 
 ## Universe methods
 
+### `access/read`
+
+**Read current action permissions**
+
+Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
+
+- Access: `{"kind":"universe","requirement":"read"}`
+- Params: `AccessReadParams`
+- Result: `AgentApiOutcome<AccessReadResponse>`
+
 ### `initialize`
 
 **Inspect the Lightspeed protocol**

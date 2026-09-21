@@ -2,6 +2,15 @@ use super::*;
 
 #[async_trait]
 pub trait AgentApiService: Send + Sync {
+    async fn read_access(
+        &self,
+        _params: AccessReadParams,
+    ) -> Result<AgentApiOutcome<AccessReadResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "action permissions are unavailable",
+        ))
+    }
+
     async fn initialize(
         &self,
         params: InitializeParams,

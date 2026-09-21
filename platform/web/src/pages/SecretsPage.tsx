@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
@@ -65,17 +66,21 @@ import {
   UniverseNotFound,
 } from "@/components/page";
 import { subscriptionProviderOf } from "@/lib/subscriptions";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { useActiveUniverse } from "@/lib/universes";
 
 type SecretKind = "bearer" | "environment";
 
-export function SecretsPage({ admin }: { admin: boolean }) {
+export function SecretsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
+  const permissions = useActionPermissions(universe?.id);
 
-  if (isLoading) {
+  if (isLoading || permissions.isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !canManage(universe, admin)) {
+  if (permissions.error) {
+    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
+  }
+  if (!universe || !permissions.can("read")) {
     return <UniverseNotFound slug={slug} />;
   }
 
@@ -85,6 +90,7 @@ export function SecretsPage({ admin }: { admin: boolean }) {
 function SecretsList({ universeId, slug }: { universeId: string; slug: string }) {
   const integrationsHref = `/u/${slug}/settings/integrations`;
   const queryClient = useQueryClient();
+  const writable = useActionPermissions(universeId).can("configure_resource");
   const [createOpen, setCreateOpen] = useState(false);
   const inventory = useQuery({
     queryKey: ["secrets", universeId],
@@ -130,12 +136,12 @@ function SecretsList({ universeId, slug }: { universeId: string; slug: string })
       <PageHeader
         title="Secrets"
         description="Encrypted secrets owned by this universe. Values are never read back to users; explicitly retrievable credentials may be leased by trusted services. Provider connections are managed under Integrations."
-        actions={
+        actions={writable && (
           <Button onClick={() => setCreateOpen(true)}>
             <Plus data-icon="inline-start" />
             Add secret
           </Button>
-        }
+        )}
       />
       {inventory.isLoading && <LoadingNote />}
       {inventory.error && (
@@ -163,7 +169,7 @@ function SecretsList({ universeId, slug }: { universeId: string; slug: string })
               description="API keys and OAuth connections used by session models for discovery and inference. These are not used for MCP servers or general service authentication."
               actions={
                 <Button variant="outline" size="sm" nativeButton={false} render={<Link to={integrationsHref} />}>
-                  Manage in Integrations
+                  View integrations
                 </Button>
               }
             />
@@ -206,42 +212,44 @@ function SecretsList({ universeId, slug }: { universeId: string; slug: string })
                           {formatTimestamp(provider.updatedAtMs)}
                         </TableCell>
                         <TableActionsCell>
-                          <AlertDialog>
-                            <AlertDialogTrigger
-                              render={
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  className="text-destructive"
-                                  aria-label={`Remove ${provider.displayName ?? provider.providerId}`}
-                                />
-                              }
-                            >
-                              <Trash2 />
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>
-                                  Remove this model provider credential?
-                                </AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Session model configurations and future environment bindings that
-                                  reference{" "}
-                                  <span className="font-mono text-xs">{provider.providerId}</span>{" "}
-                                  will stop resolving its credential.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  className="bg-destructive text-white hover:bg-destructive/90"
-                                  onClick={() => removeProvider.mutate(provider.credentialId)}
-                                >
-                                  Remove model credential
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
+                          {writable && (
+                            <AlertDialog>
+                              <AlertDialogTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="text-destructive"
+                                    aria-label={`Remove ${provider.displayName ?? provider.providerId}`}
+                                  />
+                                }
+                              >
+                                <Trash2 />
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>
+                                    Remove this model provider credential?
+                                  </AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Session model configurations and future environment bindings that
+                                    reference{" "}
+                                    <span className="font-mono text-xs">{provider.providerId}</span>{" "}
+                                    will stop resolving its credential.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="bg-destructive text-white hover:bg-destructive/90"
+                                    onClick={() => removeProvider.mutate(provider.credentialId)}
+                                  >
+                                    Remove model credential
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
                         </TableActionsCell>
                       </TableRow>
                     ))}
@@ -307,7 +315,7 @@ function SecretsList({ universeId, slug }: { universeId: string; slug: string })
                           <GrantStatusBadge status={grant.status} />
                         </TableCell>
                         <TableActionsCell>
-                          {grant.status !== "revoked" && (
+                          {writable && grant.status !== "revoked" && (
                             <AlertDialog>
                               <AlertDialogTrigger
                                 render={
@@ -357,14 +365,16 @@ function SecretsList({ universeId, slug }: { universeId: string; slug: string })
         Credentials created by integrations (GitHub App installations, coding-agent subscriptions,
         OAuth flows) appear here automatically; revoking one here disconnects it there.
       </p>
-      <CreateSecretDialog
-        universeId={universeId}
-        integrationsHref={integrationsHref}
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onCreated={invalidate}
-        existingGrants={grants}
-      />
+      {writable && (
+        <CreateSecretDialog
+          universeId={universeId}
+          integrationsHref={integrationsHref}
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          onCreated={invalidate}
+          existingGrants={grants}
+        />
+      )}
     </>
   );
 }

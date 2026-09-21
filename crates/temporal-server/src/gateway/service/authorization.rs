@@ -74,21 +74,19 @@ impl GatewayAgentApi {
         session: &str,
         method: &str,
     ) -> Result<(), AgentApiError> {
-        let ids: Vec<String> = sqlx::query_scalar(
-            "WITH RECURSIVE tree(session_id) AS (
-            SELECT $2::text UNION SELECT child.session_id FROM sessions child JOIN tree parent
-            ON (child.source_seq IS NOT NULL AND child.source_session_id=parent.session_id)
-            OR child.origin_parent_session_id=parent.session_id WHERE child.universe_id=$1)
-            SELECT session_id FROM tree",
-        )
-        .bind(self.universe_id())
-        .bind(session)
-        .fetch_all(self.store.pool())
-        .await
-        .map_err(|e| AgentApiError::internal(e.to_string()))?;
+        let ids = self
+            .access_store()
+            .session_deletion_targets(self.universe_id(), session)
+            .await
+            .map_err(access_error)?;
         for id in ids {
-            self.authorize_method(method, Some(ResourceRef::Session(id)))
-                .await?;
+            self.authorize_at(
+                method,
+                Some(ResourceRef::Session(id)),
+                access::AuditStage::Admission,
+                false,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -140,22 +138,6 @@ impl GatewayAgentApi {
         if !configured {
             return Err(denied());
         }
-        self.access_store()
-            .record_action_admission(
-                self.universe_id(),
-                &ActionActor::Internal {
-                    component: "bot_poll".into(),
-                    cause: authority.cause,
-                },
-                None,
-                METHOD_AUTH_GRANTS_LEASE,
-                Some(&authority.resource),
-                None,
-                true,
-                now_ms()? as u64,
-            )
-            .await
-            .map_err(access_error)?;
         self.lease_grant_token(params).await
     }
 
@@ -259,7 +241,7 @@ impl GatewayAgentApi {
         store_pg::PgAccessStore::new(self.store.pool().clone())
     }
 
-    async fn current_rights(
+    pub(super) async fn current_rights(
         &self,
     ) -> Result<(access::RequestContext, access::EffectiveAccess), AgentApiError> {
         let context = crate::gateway::principal::request_context()?;
@@ -280,10 +262,64 @@ impl GatewayAgentApi {
         method: &str,
         resource: Option<ResourceRef>,
     ) -> Result<(), AgentApiError> {
+        self.authorize_at(method, resource, access::AuditStage::Admission, true)
+            .await
+    }
+
+    pub(super) async fn authorize_delivery(
+        &self,
+        method: &str,
+        resource: Option<ResourceRef>,
+    ) -> Result<(), AgentApiError> {
+        self.authorize_at(method, resource, access::AuditStage::Delivery, false)
+            .await
+    }
+
+    async fn authorize_at(
+        &self,
+        method: &str,
+        resource: Option<ResourceRef>,
+        stage: access::AuditStage,
+        record_admission: bool,
+    ) -> Result<(), AgentApiError> {
+        let mut audit = super::super::audit::request(method, stage);
+        audit.scope = Some(access::AccessScope::Universe {
+            universe_id: self.universe_id(),
+        });
+        audit.target = resource
+            .as_ref()
+            .and_then(access::auditable_resource)
+            .map(|resource| serde_json::json!(resource));
+        let result = self
+            .authorize_method_inner(method, resource, &mut audit)
+            .await;
+        match &result {
+            Err(error) => {
+                super::super::audit::failure(self.store.pool(), &mut audit, error).await?
+            }
+            Ok(()) if record_admission && super::super::audit::significant(method) => {
+                super::super::audit::record(self.store.pool(), &mut audit).await?;
+            }
+            Ok(()) => {}
+        }
+        result
+    }
+
+    async fn authorize_method_inner(
+        &self,
+        method: &str,
+        resource: Option<ResourceRef>,
+        audit: &mut access::AuditEvent,
+    ) -> Result<(), AgentApiError> {
         let requirement = api::method_access(method).ok_or_else(denied)?;
         let store = self.access_store();
         let (actor, context, revision, allowed) =
             if let Ok(controller) = CONTROLLER.try_with(Clone::clone) {
+                audit.identity = Default::default();
+                audit.actor = Some(ActionActor::Internal {
+                    component: "controller".into(),
+                    cause: controller.cause.clone(),
+                });
                 let allowed = self
                     .controller_permitted(&controller, requirement, resource.as_ref())
                     .await?;
@@ -315,21 +351,12 @@ impl GatewayAgentApi {
                     allowed,
                 )
             };
-        if !allowed || !matches!(requirement, MethodAccess::Universe(UniverseAction::Read)) {
-            store
-                .record_action_admission(
-                    self.universe_id(),
-                    &actor,
-                    context.as_ref(),
-                    method,
-                    resource.as_ref(),
-                    revision,
-                    allowed,
-                    now_ms()? as u64,
-                )
-                .await
-                .map_err(access_error)?;
-        }
+        audit.actor = Some(actor);
+        audit.identity = context
+            .as_ref()
+            .map(access::AuditIdentity::from)
+            .unwrap_or_default();
+        audit.policy_revision = revision;
         if allowed { Ok(()) } else { Err(denied()) }
     }
 

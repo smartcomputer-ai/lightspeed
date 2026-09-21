@@ -354,6 +354,20 @@ export function deploymentClientFor(ctx: AppContext, endpoint?: string | null): 
 export function gatewayRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
+  app.post("/:id/access", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    const body = await parseBody(c, z.object({
+      resources: z.array(z.object({ kind: z.enum(["session", "bot", "profile"]), id: z.string().min(1) }).strict()).max(100).optional(),
+      sessionDeleteCascade: z.boolean().optional(),
+    }).strict());
+    if (!body.ok) return body.response;
+    return withGateway(c, async () => {
+      const response = await engineClientFor(ctx, access.universe).call("access/read", body.data);
+      return c.json(response.result);
+    });
+  });
+
   app.get("/:id/profiles", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {

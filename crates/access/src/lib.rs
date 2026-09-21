@@ -535,5 +535,8 @@ pub struct RequestContext {
     pub target_scope: AccessScope,
 }
 
+mod audit;
+pub use audit::*;
+
 #[cfg(test)]
 mod tests;

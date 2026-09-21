@@ -318,6 +318,48 @@
       ],
       "type": "object"
     },
+    "AccessReadParams": {
+      "additionalProperties": false,
+      "description": "Current caller's action permissions. This is an advisory snapshot: mutations\nalways authorize again, and runtime prerequisites still apply.",
+      "properties": {
+        "resources": {
+          "default": [],
+          "description": "Up to 100 existing sessions, bots or profiles in the selected universe.\nMissing resources return no actions.",
+          "items": {
+            "$ref": "#/definitions/ResourceRef"
+          },
+          "type": "array"
+        },
+        "sessionDeleteCascade": {
+          "default": false,
+          "description": "Include every retention descendant when previewing session deletion.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "AccessReadResponse": {
+      "properties": {
+        "actions": {
+          "description": "Allowed actions that do not require a target. Resource actions are\nreturned only under `resources`, even when the caller has a broad role.",
+          "items": {
+            "$ref": "#/definitions/UniverseAction"
+          },
+          "type": "array"
+        },
+        "resources": {
+          "items": {
+            "$ref": "#/definitions/ResourceAccessView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "actions",
+        "resources"
+      ],
+      "type": "object"
+    },
     "AccessScope": {
       "oneOf": [
         {
@@ -450,6 +492,23 @@
         },
         "result": {
           "$ref": "#/definitions/AccessDirectory"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfAccessReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/AccessReadResponse"
         }
       },
       "required": [
@@ -12967,6 +13026,77 @@
         "search"
       ],
       "type": "string"
+    },
+    "ResourceAccessView": {
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/definitions/UniverseAction"
+          },
+          "type": "array"
+        },
+        "resource": {
+          "$ref": "#/definitions/ResourceRef"
+        }
+      },
+      "required": [
+        "resource",
+        "actions"
+      ],
+      "type": "object"
+    },
+    "ResourceRef": {
+      "description": "Durable control facts, distinct from an agent's execution credentials.",
+      "oneOf": [
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "session",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "bot",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "profile",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "Role": {
       "enum": [
