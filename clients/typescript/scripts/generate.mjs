@@ -87,6 +87,9 @@ const methods = manifest.methods ?? [];
 const notifications = manifest.notifications ?? [];
 
 for (const entry of methods) {
+  if (!entry.access || typeof entry.access.kind !== "string") {
+    throw new Error(`method ${entry.method} is missing access classification`);
+  }
   if (typeof entry.summary !== "string" || entry.summary.trim().length === 0) {
     throw new Error(`method ${entry.method} is missing summary documentation`);
   }
@@ -160,6 +163,7 @@ const methodLines = [
   ...methods.flatMap((entry) => [
     `  ${q(entry.method)}: {`,
     `    scope: ${q(entry.scope)},`,
+    `    access: ${JSON.stringify(entry.access)},`,
     `    summary: ${q(entry.summary)},`,
     `    description: ${q(entry.description)},`,
     "  },",

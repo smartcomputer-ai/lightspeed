@@ -42,6 +42,14 @@ pub struct ExportedSchemas {
 pub fn export_schemas() -> ExportedSchemas {
     let mut generator = SchemaSettings::draft07().into_generator();
 
+    // Core contracts are exported before their remote administration endpoints
+    // are enabled, so CLI/provisioning clients share the canonical vocabulary.
+    generator.subschema_for::<crate::AccessChange>();
+    generator.subschema_for::<crate::AccessChangeResult>();
+    generator.subschema_for::<crate::EffectiveAccess>();
+    generator.subschema_for::<crate::IdentityGroup>();
+    generator.subschema_for::<crate::MethodAccess>();
+
     let mut methods = Vec::new();
     let mut openrpc_methods = Vec::new();
     let mut api_reference = String::from(
@@ -62,8 +70,13 @@ pub fn export_schemas() -> ExportedSchemas {
         }
         write!(
             api_reference,
-            "### `{}`\n\n**{}**\n\n{}\n\n- Params: `{}`\n- Result: `{}`\n\n",
-            spec.method, spec.summary, spec.description, spec.params_type, spec.result_type
+            "### `{}`\n\n**{}**\n\n{}\n\n- Access: `{}`\n- Params: `{}`\n- Result: `{}`\n\n",
+            spec.method,
+            spec.summary,
+            spec.description,
+            serde_json::to_string(&spec.access).expect("access serializes"),
+            spec.params_type,
+            spec.result_type
         )
         .expect("write string");
         let schemas = (spec.register_schemas)(&mut generator);
@@ -72,6 +85,7 @@ pub fn export_schemas() -> ExportedSchemas {
         methods.push(json!({
             "method": spec.method,
             "scope": spec.scope.as_str(),
+            "access": spec.access,
             "summary": spec.summary,
             "description": spec.description,
             "params": { "type": spec.params_type, "schema": params_schema },
@@ -79,6 +93,7 @@ pub fn export_schemas() -> ExportedSchemas {
         }));
         openrpc_methods.push(json!({
             "name": spec.method,
+            "x-lightspeed-access": spec.access,
             "paramStructure": "by-name",
             "summary": spec.summary,
             "description": spec.description,
@@ -229,6 +244,8 @@ mod tests {
             assert_eq!(method["method"], openrpc["name"]);
             assert_eq!(method["summary"], openrpc["summary"]);
             assert_eq!(method["description"], openrpc["description"]);
+            assert_eq!(method["access"], openrpc["x-lightspeed-access"]);
+            assert!(method["access"].is_object());
         }
     }
 

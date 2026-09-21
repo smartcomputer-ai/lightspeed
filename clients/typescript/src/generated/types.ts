@@ -5,6 +5,117 @@
 
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessChange".
+ */
+export type AccessChange =
+  | {
+      displayName: string;
+      id: string;
+      kind: IdentityPrincipalKind;
+      managementScope: AccessScope;
+      operation: "create_principal";
+    }
+  | {
+      id: string;
+      operation: "set_principal_status";
+      status: PrincipalStatus;
+    }
+  | {
+      displayName: string;
+      id: string;
+      operation: "create_group";
+    }
+  | {
+      displayName: string;
+      id: string;
+      operation: "rename_group";
+    }
+  | {
+      membership: Membership;
+      operation: "put_membership";
+    }
+  | {
+      membership: Membership;
+      operation: "remove_membership";
+    }
+  | {
+      assignment: RoleAssignment;
+      operation: "assign_role";
+    }
+  | {
+      assignment: RoleAssignment;
+      operation: "revoke_role";
+    }
+  | {
+      assignment: CapabilityAssignment;
+      operation: "assign_capability";
+    }
+  | {
+      assignment: CapabilityAssignment;
+      operation: "revoke_capability";
+    }
+  | {
+      operation: "create_universe";
+      slug?: string | null;
+      universeId: string;
+    }
+  | {
+      operation: "recover_universe";
+      principalId: string;
+      universeId: string;
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "IdentityPrincipalKind".
+ */
+export type IdentityPrincipalKind = "user" | "service";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessScope".
+ */
+export type AccessScope =
+  | {
+      kind: "deployment";
+    }
+  | {
+      kind: "universe";
+      universeId: string;
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "PrincipalStatus".
+ */
+export type PrincipalStatus = "active" | "disabled";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "Role".
+ */
+export type Role = "viewer" | "contributor" | "operator" | "admin" | "deployment_admin";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "Subject".
+ */
+export type Subject =
+  | {
+      id: string;
+      kind: "principal";
+    }
+  | {
+      id: string;
+      kind: "group";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ServiceCapability".
+ */
+export type ServiceCapability =
+  | "assert_user"
+  | "lease_credentials"
+  | "admit_channel_inbound"
+  | "discover_channel_accounts"
+  | "manage_identity";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolKindView".
  */
 export type ToolKindView =
@@ -1655,6 +1766,47 @@ export type ProfileSource =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "MethodAccess".
+ */
+export type MethodAccess =
+  | {
+      kind: "universe";
+      requirement: UniverseAction;
+    }
+  | {
+      kind: "service";
+      requirement: ServiceCapability;
+    }
+  | {
+      kind: "deployment_admin";
+    }
+  | {
+      kind: "deployment_admin_or_capability";
+      requirement: ServiceCapability;
+    };
+/**
+ * Actions are independent of RPC spelling. Ownership and resource policy are
+ * evaluated by the service that resolves the target, not from client claims.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "UniverseAction".
+ */
+export type UniverseAction =
+  | "read"
+  | "create_session"
+  | "control_session"
+  | "stop_session"
+  | "delete_session"
+  | "create_profile"
+  | "manage_profile"
+  | "create_bot"
+  | "manage_bot"
+  | "invoke_bot"
+  | "use_resource"
+  | "configure_resource"
+  | "manage_access";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunStartSource".
  */
 export type RunStartSource = {
@@ -1672,6 +1824,40 @@ export type SessionEventDirection = "forward" | "backward";
  */
 export interface LightspeedAgentAPI {
   [k: string]: unknown;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "Membership".
+ */
+export interface Membership {
+  groupId: string;
+  principalId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "RoleAssignment".
+ */
+export interface RoleAssignment {
+  role: Role;
+  scope: AccessScope;
+  subject: Subject;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CapabilityAssignment".
+ */
+export interface CapabilityAssignment {
+  capability: ServiceCapability;
+  principalId: string;
+  scope: AccessScope;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessChangeResult".
+ */
+export interface AccessChangeResult {
+  changed: boolean;
+  policyRevision: number;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6842,6 +7028,39 @@ export interface DeploymentUniverseReadParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EffectiveAccess".
+ */
+export interface EffectiveAccess {
+  /**
+   * Explicit service capabilities in this exact scope; no role implies one.
+   */
+  capabilities: ServiceCapability[];
+  policyRevision: number;
+  principal: IdentityPrincipal;
+  /**
+   * Only assignments in this exact scope, including group-derived roles.
+   */
+  roles: Role[];
+  scope: AccessScope;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "IdentityPrincipal".
+ */
+export interface IdentityPrincipal {
+  createdAtMs: number;
+  displayName: string;
+  id: string;
+  kind: IdentityPrincipalKind;
+  /**
+   * Who may manage this service identity; it does not grant access itself.
+   * Human identities are deployment-managed.
+   */
+  managementScope: AccessScope;
+  status: PrincipalStatus;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EnvironmentCloseParams".
  */
 export interface EnvironmentCloseParams {
@@ -7098,6 +7317,15 @@ export interface EnvironmentTemplateListParams {
 export interface EnvironmentTemplateReadParams {
   bindingId: string;
   templateId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "IdentityGroup".
+ */
+export interface IdentityGroup {
+  createdAtMs: number;
+  displayName: string;
+  id: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

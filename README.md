@@ -83,6 +83,10 @@ For other development profiles, service addresses, resets, and live tests, see
 the [local development guide](docs/documentation/development/local-development.md). See
 [Environment variables](docs/documentation/reference/environment-variables.md) for environment variables.
 
+Core identity/bootstrap commands and scoped access records are available through
+[host administration](docs/documentation/deployment/identity-and-access.md).
+Gateway and Platform role enforcement are still being integrated.
+
 ## Features
 
 Lightspeed covers the table stakes of a modern agent harness. Everything below works today.

@@ -3,6 +3,18 @@
 version = 4
 
 [[package]]
+name = "access"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -158,6 +170,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "api"
 version = "0.1.0"
 dependencies = [
+ "access",
  "async-trait",
  "jsonschema",
  "schemars",
@@ -4623,6 +4636,7 @@ dependencies = [
 name = "store-pg"
 version = "0.1.0"
 dependencies = [
+ "access",
  "aes-gcm",
  "api",
  "async-trait",
@@ -4773,6 +4787,7 @@ dependencies = [
 name = "temporal-server"
 version = "0.3.0"
 dependencies = [
+ "access",
  "anyhow",
  "api",
  "api-projection",

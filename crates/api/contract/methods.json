@@ -1,6 +1,10 @@
 {
   "methods": [
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns protocol version, server identity, and supported capabilities without changing universe state.",
       "method": "initialize",
       "params": {
@@ -19,6 +23,10 @@
       "summary": "Inspect the Lightspeed protocol"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "create_session"
+      },
       "description": "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.",
       "method": "session/start",
       "params": {
@@ -37,6 +45,10 @@
       "summary": "Create or reopen a session"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "create_session"
+      },
       "description": "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.",
       "method": "session/managed/start",
       "params": {
@@ -55,6 +67,10 @@
       "summary": "Create or reopen a managed session"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
       "method": "session/read",
       "params": {
@@ -73,6 +89,10 @@
       "summary": "Read a session"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.",
       "method": "session/list",
       "params": {
@@ -91,6 +111,10 @@
       "summary": "List sessions"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
       "method": "session/config/put",
       "params": {
@@ -109,6 +133,10 @@
       "summary": "Replace session configuration"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Sets the display name, or clears it when displayName is omitted.",
       "method": "session/rename",
       "params": {
@@ -127,6 +155,10 @@
       "summary": "Rename a session"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.",
       "method": "session/metadata/put",
       "params": {
@@ -145,6 +177,10 @@
       "summary": "Replace session metadata"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.",
       "method": "session/retention/put",
       "params": {
@@ -163,6 +199,10 @@
       "summary": "Replace session retention"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "stop_session"
+      },
       "description": "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
       "method": "session/close",
       "params": {
@@ -181,6 +221,10 @@
       "summary": "Close a session"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "delete_session"
+      },
       "description": "Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.",
       "method": "session/delete",
       "params": {
@@ -199,6 +243,10 @@
       "summary": "Delete closed sessions"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls.",
       "method": "session/events/read",
       "params": {
@@ -217,6 +265,10 @@
       "summary": "Read the session event stream"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.",
       "method": "session/context/append",
       "params": {
@@ -235,6 +287,10 @@
       "summary": "Append keyed session context"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
       "method": "session/context/remove",
       "params": {
@@ -253,6 +309,10 @@
       "summary": "Remove keyed session context"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
       "method": "session/context/compact",
       "params": {
@@ -271,6 +331,10 @@
       "summary": "Compact session context"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
       "method": "session/runs/start",
       "params": {
@@ -289,6 +353,10 @@
       "summary": "Start an agent run"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns a newest-first keyset page of bounded run summaries projected from current reducer state.",
       "method": "session/runs/list",
       "params": {
@@ -307,6 +375,10 @@
       "summary": "List session runs"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Reads and projects one run from its bounded event interval, paged by event sequence.",
       "method": "session/runs/read",
       "params": {
@@ -325,6 +397,10 @@
       "summary": "Read one session run"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "stop_session"
+      },
       "description": "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
       "method": "session/runs/cancel",
       "params": {
@@ -343,6 +419,10 @@
       "summary": "Cancel a run"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.",
       "method": "session/runs/approvals/decide",
       "params": {
@@ -361,6 +441,10 @@
       "summary": "Decide pending run approvals"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.",
       "method": "session/runs/steer",
       "params": {
@@ -379,6 +463,10 @@
       "summary": "Steer the active run"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted.",
       "method": "session/skills/list",
       "params": {
@@ -397,6 +485,10 @@
       "summary": "List available session skills"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
       "method": "session/profiles/apply",
       "params": {
@@ -415,6 +507,10 @@
       "summary": "Apply a profile to a session"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Selects an allowed, live universe environment for environment-targeted tools while the session is idle.",
       "method": "session/environments/activate",
       "params": {
@@ -433,6 +529,10 @@
       "summary": "Activate a session environment"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "control_session"
+      },
       "description": "Clears active environment selection without changing or closing the universe environment.",
       "method": "session/environments/deactivate",
       "params": {
@@ -451,6 +551,10 @@
       "summary": "Deactivate the session environment"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. The response exposes only the source handle, never secret material.",
       "method": "environments/credentials/bind",
       "params": {
@@ -469,6 +573,10 @@
       "summary": "Bind a credential into an environment"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.",
       "method": "environments/credentials/list",
       "params": {
@@ -487,6 +595,10 @@
       "summary": "List environment credential bindings"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
       "method": "environments/credentials/unbind",
       "params": {
@@ -505,6 +617,10 @@
       "summary": "Unbind an environment credential"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.",
       "method": "environments/create",
       "params": {
@@ -523,6 +639,10 @@
       "summary": "Create an environment"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.",
       "method": "environments/read",
       "params": {
@@ -541,6 +661,10 @@
       "summary": "Read an environment"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.",
       "method": "environments/list",
       "params": {
@@ -559,6 +683,10 @@
       "summary": "List environments"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.",
       "method": "environments/close",
       "params": {
@@ -577,6 +705,10 @@
       "summary": "Close an environment"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.",
       "method": "environments/external/create",
       "params": {
@@ -595,6 +727,10 @@
       "summary": "Register an external environment"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
       "method": "environments/ingress/put",
       "params": {
@@ -613,6 +749,10 @@
       "summary": "Configure environment public ingress"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Records the desired power state (running, paused, suspended, or stopped) of a provisioned environment; the lifecycle reconciler converges the provider target asynchronously. Powered-down environments wake transparently on their next use. Rejected when the provider does not support the state.",
       "method": "environments/power/put",
       "params": {
@@ -631,6 +771,10 @@
       "summary": "Set environment power intent"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Replaces or clears the staged idle policy of a provisioned environment. The power reaper measures the daemon's idle duration against the pause/suspend/stop/close thresholds and escalates through the stages the provider supports.",
       "method": "environments/idle-policy/put",
       "params": {
@@ -649,6 +793,10 @@
       "summary": "Set environment idle policy"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",
       "method": "environments/provider-bindings/list",
       "params": {
@@ -667,6 +815,10 @@
       "summary": "List environment provider bindings"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.",
       "method": "environments/provider-bindings/read",
       "params": {
@@ -685,6 +837,10 @@
       "summary": "Read an environment provider binding"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Reads immutable templates directly from the selected bound provider controller.",
       "method": "environments/templates/list",
       "params": {
@@ -703,6 +859,10 @@
       "summary": "List environment templates"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns one immutable template version from the selected bound provider controller.",
       "method": "environments/templates/read",
       "params": {
@@ -721,6 +881,10 @@
       "summary": "Read an environment template"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "use_resource"
+      },
       "description": "Starts a dependency-aware job group on one environment instance, injecting the environment's configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance rather than a session. A powered-down environment is woken on use: the call fails with environment_not_ready while the wake is in progress; retry with backoff.",
       "method": "environments/jobs/create",
       "params": {
@@ -739,6 +903,10 @@
       "summary": "Create environment jobs"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.",
       "method": "environments/jobs/read",
       "params": {
@@ -757,6 +925,10 @@
       "summary": "Read environment jobs"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "use_resource"
+      },
       "description": "Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.",
       "method": "environments/jobs/cancel",
       "params": {
@@ -775,6 +947,10 @@
       "summary": "Cancel environment jobs"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode, active limit, disconnect grace, and expiry are the key's policy. Treat the secret like a cluster-join credential.",
       "method": "environments/registration-keys/create",
       "params": {
@@ -793,6 +969,10 @@
       "summary": "Mint an environment registration key"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.",
       "method": "environments/registration-keys/read",
       "params": {
@@ -811,6 +991,10 @@
       "summary": "Read an environment registration key"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.",
       "method": "environments/registration-keys/list",
       "params": {
@@ -829,6 +1013,10 @@
       "summary": "List environment registration keys"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.",
       "method": "environments/registration-keys/revoke",
       "params": {
@@ -847,6 +1035,10 @@
       "summary": "Revoke an environment registration key"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others.",
       "method": "models/list",
       "params": {
@@ -865,6 +1057,10 @@
       "summary": "Discover available models"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "create_profile"
+      },
       "description": "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
       "method": "profiles/create",
       "params": {
@@ -883,6 +1079,10 @@
       "summary": "Create an agent profile"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns the complete profile document and current revision.",
       "method": "profiles/read",
       "params": {
@@ -901,6 +1101,10 @@
       "summary": "Read an agent profile"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns lightweight summaries of universe-scoped reusable profiles.",
       "method": "profiles/list",
       "params": {
@@ -919,6 +1123,10 @@
       "summary": "List agent profiles"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_profile"
+      },
       "description": "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
       "method": "profiles/put",
       "params": {
@@ -937,6 +1145,10 @@
       "summary": "Create or replace an agent profile"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_profile"
+      },
       "description": "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
       "method": "profiles/delete",
       "params": {
@@ -955,6 +1167,10 @@
       "summary": "Delete an agent profile"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "use_resource"
+      },
       "description": "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
       "method": "blobs/put",
       "params": {
@@ -973,6 +1189,10 @@
       "summary": "Store content-addressed blobs"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.",
       "method": "blobs/read",
       "params": {
@@ -991,6 +1211,10 @@
       "summary": "Read a content-addressed blob"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Checks a batch of content references without returning blob bodies, preserving request order.",
       "method": "blobs/has",
       "params": {
@@ -1009,6 +1233,10 @@
       "summary": "Check blob availability"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "use_resource"
+      },
       "description": "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
       "method": "vfs/snapshots/commit",
       "params": {
@@ -1027,6 +1255,10 @@
       "summary": "Commit a VFS snapshot"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
       "method": "vfs/snapshots/read",
       "params": {
@@ -1045,6 +1277,10 @@
       "summary": "Read a VFS snapshot"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.",
       "method": "vfs/workspaces/create",
       "params": {
@@ -1063,6 +1299,10 @@
       "summary": "Create a mutable VFS workspace"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns workspace metadata, current head snapshot, and revision for safe updates.",
       "method": "vfs/workspaces/read",
       "params": {
@@ -1081,6 +1321,10 @@
       "summary": "Read a VFS workspace"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Lists mutable universe workspaces with head snapshots, sizes, and revisions.",
       "method": "vfs/workspaces/list",
       "params": {
@@ -1099,6 +1343,10 @@
       "summary": "List VFS workspaces"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.",
       "method": "vfs/workspaces/update",
       "params": {
@@ -1117,6 +1365,10 @@
       "summary": "Update a VFS workspace"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
       "method": "vfs/workspaces/delete",
       "params": {
@@ -1135,6 +1387,10 @@
       "summary": "Delete a VFS workspace"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Stores the complete universe catalog document, including its optional universe auth-grant credential. Use expectedRevision when replacing; token material is never accepted or returned.",
       "method": "mcp/servers/put",
       "params": {
@@ -1153,6 +1409,10 @@
       "summary": "Create or replace an MCP server record"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.",
       "method": "mcp/servers/auth/discover",
       "params": {
@@ -1171,6 +1431,10 @@
       "summary": "Discover MCP server authentication"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.",
       "method": "mcp/servers/tools/discover",
       "params": {
@@ -1189,6 +1453,10 @@
       "summary": "Discover MCP server tools"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.",
       "method": "mcp/servers/read",
       "params": {
@@ -1207,6 +1475,10 @@
       "summary": "Read an MCP server record"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Lists universe catalog entries, optionally filtered by lifecycle/configuration status.",
       "method": "mcp/servers/list",
       "params": {
@@ -1225,6 +1497,10 @@
       "summary": "List MCP server records"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
       "method": "mcp/servers/delete",
       "params": {
@@ -1243,6 +1519,10 @@
       "summary": "Delete an MCP server record"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
       "method": "auth/grants/import",
       "params": {
@@ -1261,6 +1541,10 @@
       "summary": "Import a static bearer grant"
     },
     {
+      "access": {
+        "kind": "service",
+        "requirement": "lease_credentials"
+      },
       "description": "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.",
       "method": "auth/grants/lease",
       "params": {
@@ -1279,6 +1563,10 @@
       "summary": "Lease a retrievable authentication grant"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
       "method": "auth/grants/read",
       "params": {
@@ -1297,6 +1585,10 @@
       "summary": "Read authentication grant metadata"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Lists non-secret grant metadata for the universe, optionally filtered by status.",
       "method": "auth/grants/list",
       "params": {
@@ -1315,6 +1607,10 @@
       "summary": "List authentication grants"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
       "method": "auth/grants/revoke",
       "params": {
@@ -1333,6 +1629,10 @@
       "summary": "Revoke an authentication grant"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
       "method": "auth/clients/create",
       "params": {
@@ -1351,6 +1651,10 @@
       "summary": "Register an OAuth client"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
       "method": "auth/clients/read",
       "params": {
@@ -1369,6 +1673,10 @@
       "summary": "Read OAuth client metadata"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Lists non-secret OAuth client registrations in the universe.",
       "method": "auth/clients/list",
       "params": {
@@ -1387,6 +1695,10 @@
       "summary": "List OAuth clients"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
       "method": "auth/clients/delete",
       "params": {
@@ -1405,6 +1717,10 @@
       "summary": "Delete an OAuth client"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
       "method": "auth/flows/start",
       "params": {
@@ -1423,6 +1739,10 @@
       "summary": "Start an OAuth authorization flow"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
       "method": "auth/flows/read",
       "params": {
@@ -1441,6 +1761,10 @@
       "summary": "Read OAuth flow status"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
       "method": "auth/providers/create",
       "params": {
@@ -1459,6 +1783,10 @@
       "summary": "Register an authentication provider"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
       "method": "auth/providers/read",
       "params": {
@@ -1477,6 +1805,10 @@
       "summary": "Read authentication provider metadata"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Lists non-secret model/GitHub provider registrations for the universe.",
       "method": "auth/providers/list",
       "params": {
@@ -1495,6 +1827,10 @@
       "summary": "List authentication providers"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
       "method": "auth/providers/delete",
       "params": {
@@ -1513,6 +1849,10 @@
       "summary": "Delete an authentication provider"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
       "method": "auth/github/installations/list",
       "params": {
@@ -1531,6 +1871,10 @@
       "summary": "List GitHub App installations"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
       "method": "auth/github/installations/grant",
       "params": {
@@ -1549,6 +1893,10 @@
       "summary": "Grant access to a GitHub App installation"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "create_bot"
+      },
       "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
       "method": "bots/create",
       "params": {
@@ -1567,6 +1915,10 @@
       "summary": "Create a bot"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_bot"
+      },
       "description": "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.",
       "method": "bots/put",
       "params": {
@@ -1585,6 +1937,10 @@
       "summary": "Create or replace a bot document"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns the bot record, its current revision, and lifecycle columns.",
       "method": "bots/read",
       "params": {
@@ -1603,6 +1959,10 @@
       "summary": "Read a bot"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event.",
       "method": "bots/list",
       "params": {
@@ -1621,6 +1981,10 @@
       "summary": "List bots"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_bot"
+      },
       "description": "Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.",
       "method": "bots/close",
       "params": {
@@ -1639,6 +2003,10 @@
       "summary": "Close a bot"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_bot"
+      },
       "description": "Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.",
       "method": "bots/delete",
       "params": {
@@ -1657,6 +2025,10 @@
       "summary": "Delete a bot"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.",
       "method": "bots/state/read",
       "params": {
@@ -1675,6 +2047,10 @@
       "summary": "Read bot controller state"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_bot"
+      },
       "description": "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.",
       "method": "bots/sessions/rotate",
       "params": {
@@ -1693,6 +2069,10 @@
       "summary": "Rotate a bot session"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_bot"
+      },
       "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
       "method": "bots/triggers/put",
       "params": {
@@ -1711,6 +2091,10 @@
       "summary": "Create or replace a trigger"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are shown only to managing principals.",
       "method": "bots/triggers/read",
       "params": {
@@ -1729,6 +2113,10 @@
       "summary": "Read a trigger"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns every trigger of the bot ordered by id, secrets redacted for non-managing principals.",
       "method": "bots/triggers/list",
       "params": {
@@ -1747,6 +2135,10 @@
       "summary": "List a bot's triggers"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_bot"
+      },
       "description": "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.",
       "method": "bots/triggers/delete",
       "params": {
@@ -1765,6 +2157,10 @@
       "summary": "Delete a trigger"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "invoke_bot"
+      },
       "description": "Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.",
       "method": "bots/events/admit",
       "params": {
@@ -1783,6 +2179,10 @@
       "summary": "Admit an event manually"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_bot"
+      },
       "description": "Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.",
       "method": "bots/events/replay",
       "params": {
@@ -1801,6 +2201,10 @@
       "summary": "Replay a stored event"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.",
       "method": "bots/events/list",
       "params": {
@@ -1819,6 +2223,10 @@
       "summary": "List a bot's events"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns the event row and its full stored envelope document.",
       "method": "bots/events/read",
       "params": {
@@ -1837,6 +2245,10 @@
       "summary": "Read an event by number"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_bot"
+      },
       "description": "Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.",
       "method": "bots/filters/test",
       "params": {
@@ -1855,6 +2267,10 @@
       "summary": "Test a CEL filter"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.",
       "method": "channels/accounts/create",
       "params": {
@@ -1873,6 +2289,10 @@
       "summary": "Create a channel account"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.",
       "method": "channels/accounts/put",
       "params": {
@@ -1891,6 +2311,10 @@
       "summary": "Create or replace a channel account"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns the account document and revision.",
       "method": "channels/accounts/read",
       "params": {
@@ -1909,6 +2333,10 @@
       "summary": "Read a channel account"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Lists this universe's provider accounts, optionally by provider.",
       "method": "channels/accounts/list",
       "params": {
@@ -1927,6 +2355,10 @@
       "summary": "List channel accounts"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Removes the account and its pairings; chat triggers that reference it stop serving conversations.",
       "method": "channels/accounts/delete",
       "params": {
@@ -1945,6 +2377,10 @@
       "summary": "Delete a channel account"
     },
     {
+      "access": {
+        "kind": "service",
+        "requirement": "admit_channel_inbound"
+      },
       "description": "Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.",
       "method": "channels/inbound/admit",
       "params": {
@@ -1963,6 +2399,10 @@
       "summary": "Admit a provider message"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Lists conversations paired to chat triggers, optionally by account or bot.",
       "method": "channels/pairings/list",
       "params": {
@@ -1981,6 +2421,10 @@
       "summary": "List chat pairings"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "configure_resource"
+      },
       "description": "Removes one pairing; the conversation must present the pairing code again to reconnect.",
       "method": "channels/pairings/delete",
       "params": {
@@ -1999,6 +2443,10 @@
       "summary": "Unpair a conversation"
     },
     {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
       "method": "channels/conversations/read",
       "params": {
@@ -2017,6 +2465,9 @@
       "summary": "Read a conversation snapshot"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
       "method": "deployment/universes/create",
       "params": {
@@ -2035,6 +2486,9 @@
       "summary": "Create a universe"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.",
       "method": "deployment/universes/list",
       "params": {
@@ -2053,6 +2507,9 @@
       "summary": "List universes"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
       "method": "deployment/universes/read",
       "params": {
@@ -2071,6 +2528,9 @@
       "summary": "Read a universe"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
       "method": "deployment/universes/delete",
       "params": {
@@ -2089,6 +2549,9 @@
       "summary": "Purge a universe"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
       "method": "deployment/api-keys/create",
       "params": {
@@ -2107,6 +2570,9 @@
       "summary": "Create a universe API key"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
       "method": "deployment/api-keys/list",
       "params": {
@@ -2125,6 +2591,9 @@
       "summary": "List universe API keys"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.",
       "method": "deployment/api-keys/revoke",
       "params": {
@@ -2143,6 +2612,9 @@
       "summary": "Revoke a universe API key"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
       "method": "deployment/environment-providers/put",
       "params": {
@@ -2161,6 +2633,9 @@
       "summary": "Put an environment provider"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Returns every deployment-registered deployment provider and its controller connection.",
       "method": "deployment/environment-providers/list",
       "params": {
@@ -2179,6 +2654,9 @@
       "summary": "List environment providers"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Returns one deployment-registered deployment provider and its controller connection.",
       "method": "deployment/environment-providers/read",
       "params": {
@@ -2197,6 +2675,9 @@
       "summary": "Read an environment provider"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Deletes a deployment provider only when no universe binding references it.",
       "method": "deployment/environment-providers/delete",
       "params": {
@@ -2215,6 +2696,9 @@
       "summary": "Delete an environment provider"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.",
       "method": "deployment/environment-providers/bindings/put",
       "params": {
@@ -2233,6 +2717,9 @@
       "summary": "Put an environment provider binding"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Deletes a universe provider binding only after every referencing environment has reached Closed.",
       "method": "deployment/environment-providers/bindings/delete",
       "params": {
@@ -2251,6 +2738,9 @@
       "summary": "Delete an environment provider binding"
     },
     {
+      "access": {
+        "kind": "deployment_admin"
+      },
       "description": "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.",
       "method": "deployment/environments/adopt",
       "params": {
@@ -2269,6 +2759,10 @@
       "summary": "Adopt a provider environment"
     },
     {
+      "access": {
+        "kind": "deployment_admin_or_capability",
+        "requirement": "discover_channel_accounts"
+      },
       "description": "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.",
       "method": "deployment/channels/accounts/list",
       "params": {

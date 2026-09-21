@@ -16,6 +16,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;
 
+mod access;
 mod auth;
 mod bots;
 mod channels;
@@ -38,6 +39,7 @@ mod skills;
 mod storage;
 mod views;
 
+pub use access::*;
 pub use auth::*;
 pub use bots::*;
 pub use channels::*;

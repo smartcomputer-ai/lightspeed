@@ -1,6 +1,309 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
+    "AccessChange": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "displayName": {
+              "type": "string"
+            },
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/IdentityPrincipalKind"
+            },
+            "managementScope": {
+              "$ref": "#/definitions/AccessScope"
+            },
+            "operation": {
+              "const": "create_principal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "id",
+            "kind",
+            "displayName",
+            "managementScope"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "operation": {
+              "const": "set_principal_status",
+              "type": "string"
+            },
+            "status": {
+              "$ref": "#/definitions/PrincipalStatus"
+            }
+          },
+          "required": [
+            "operation",
+            "id",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "displayName": {
+              "type": "string"
+            },
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "operation": {
+              "const": "create_group",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "id",
+            "displayName"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "displayName": {
+              "type": "string"
+            },
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "operation": {
+              "const": "rename_group",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "id",
+            "displayName"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "membership": {
+              "$ref": "#/definitions/Membership"
+            },
+            "operation": {
+              "const": "put_membership",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "membership"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "membership": {
+              "$ref": "#/definitions/Membership"
+            },
+            "operation": {
+              "const": "remove_membership",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "membership"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "assignment": {
+              "$ref": "#/definitions/RoleAssignment"
+            },
+            "operation": {
+              "const": "assign_role",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "assignment"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "assignment": {
+              "$ref": "#/definitions/RoleAssignment"
+            },
+            "operation": {
+              "const": "revoke_role",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "assignment"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "assignment": {
+              "$ref": "#/definitions/CapabilityAssignment"
+            },
+            "operation": {
+              "const": "assign_capability",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "assignment"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "assignment": {
+              "$ref": "#/definitions/CapabilityAssignment"
+            },
+            "operation": {
+              "const": "revoke_capability",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "assignment"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Creates the universe and the actor's Admin assignment atomically.",
+          "properties": {
+            "operation": {
+              "const": "create_universe",
+              "type": "string"
+            },
+            "slug": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "universeId": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "universeId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Explicit deployment administration; does not grant content access to\nthe recovering administrator. Only valid for an orphaned universe.",
+          "properties": {
+            "operation": {
+              "const": "recover_universe",
+              "type": "string"
+            },
+            "principalId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "universeId": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "universeId",
+            "principalId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AccessChangeResult": {
+      "properties": {
+        "changed": {
+          "type": "boolean"
+        },
+        "policyRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "changed",
+        "policyRevision"
+      ],
+      "type": "object"
+    },
+    "AccessScope": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "deployment",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "universe",
+              "type": "string"
+            },
+            "universeId": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "universeId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ActiveToolsView": {
       "properties": {
         "revision": {
@@ -6143,6 +6446,27 @@
         }
       ]
     },
+    "CapabilityAssignment": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "$ref": "#/definitions/ServiceCapability"
+        },
+        "principalId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/definitions/AccessScope"
+        }
+      },
+      "required": [
+        "scope",
+        "principalId",
+        "capability"
+      ],
+      "type": "object"
+    },
     "ChannelAccountCreateParams": {
       "properties": {
         "account": {
@@ -8466,6 +8790,45 @@
       ],
       "type": "object"
     },
+    "EffectiveAccess": {
+      "properties": {
+        "capabilities": {
+          "description": "Explicit service capabilities in this exact scope; no role implies one.",
+          "items": {
+            "$ref": "#/definitions/ServiceCapability"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "policyRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "principal": {
+          "$ref": "#/definitions/IdentityPrincipal"
+        },
+        "roles": {
+          "description": "Only assignments in this exact scope, including group-derived roles.",
+          "items": {
+            "$ref": "#/definitions/Role"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "scope": {
+          "$ref": "#/definitions/AccessScope"
+        }
+      },
+      "required": [
+        "principal",
+        "scope",
+        "roles",
+        "capabilities",
+        "policyRevision"
+      ],
+      "type": "object"
+    },
     "EnvironmentAccess": {
       "description": "Per-attachment environment access, an ordered ladder: `edit` adds file\nediting to `read`, `exec` adds processes, `jobs` adds durable jobs.\nProcesses can write files regardless of the file-tool level, so\nread-only files with commands is deliberately not expressible.",
       "enum": [
@@ -10193,6 +10556,76 @@
       ],
       "type": "object"
     },
+    "IdentityGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "displayName",
+        "createdAtMs"
+      ],
+      "type": "object"
+    },
+    "IdentityPrincipal": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/IdentityPrincipalKind"
+        },
+        "managementScope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AccessScope"
+            }
+          ],
+          "description": "Who may manage this service identity; it does not grant access itself.\nHuman identities are deployment-managed."
+        },
+        "status": {
+          "$ref": "#/definitions/PrincipalStatus"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "status",
+        "displayName",
+        "managementScope",
+        "createdAtMs"
+      ],
+      "type": "object"
+    },
+    "IdentityPrincipalKind": {
+      "enum": [
+        "user",
+        "service"
+      ],
+      "type": "string"
+    },
     "InitializeParams": {
       "properties": {
         "capabilities": {
@@ -11326,6 +11759,91 @@
       ],
       "type": "string"
     },
+    "Membership": {
+      "additionalProperties": false,
+      "properties": {
+        "groupId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "principalId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "groupId",
+        "principalId"
+      ],
+      "type": "object"
+    },
+    "MethodAccess": {
+      "oneOf": [
+        {
+          "description": "An active, authenticated caller with universe membership.",
+          "properties": {
+            "kind": {
+              "const": "universe",
+              "type": "string"
+            },
+            "requirement": {
+              "$ref": "#/definitions/UniverseAction"
+            }
+          },
+          "required": [
+            "kind",
+            "requirement"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An explicitly scoped service capability; service kind is insufficient.",
+          "properties": {
+            "kind": {
+              "const": "service",
+              "type": "string"
+            },
+            "requirement": {
+              "$ref": "#/definitions/ServiceCapability"
+            }
+          },
+          "required": [
+            "kind",
+            "requirement"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "deployment_admin",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Deployment discovery serves both administration and scoped connectors.",
+          "properties": {
+            "kind": {
+              "const": "deployment_admin_or_capability",
+              "type": "string"
+            },
+            "requirement": {
+              "$ref": "#/definitions/ServiceCapability"
+            }
+          },
+          "required": [
+            "kind",
+            "requirement"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ModelCapabilitiesView": {
       "properties": {
         "maxInputTokens": {
@@ -11932,6 +12450,13 @@
       },
       "type": "object"
     },
+    "PrincipalStatus": {
+      "enum": [
+        "active",
+        "disabled"
+      ],
+      "type": "string"
+    },
     "ProfileApplyParams": {
       "properties": {
         "expectedConfigRevision": {
@@ -12278,6 +12803,36 @@
         "search"
       ],
       "type": "string"
+    },
+    "Role": {
+      "enum": [
+        "viewer",
+        "contributor",
+        "operator",
+        "admin",
+        "deployment_admin"
+      ],
+      "type": "string"
+    },
+    "RoleAssignment": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "$ref": "#/definitions/Role"
+        },
+        "scope": {
+          "$ref": "#/definitions/AccessScope"
+        },
+        "subject": {
+          "$ref": "#/definitions/Subject"
+        }
+      },
+      "required": [
+        "scope",
+        "subject",
+        "role"
+      ],
+      "type": "object"
     },
     "RunAcceptedSourceView": {
       "oneOf": [
@@ -12903,6 +13458,16 @@
         "envd"
       ],
       "type": "object"
+    },
+    "ServiceCapability": {
+      "enum": [
+        "assert_user",
+        "lease_credentials",
+        "admit_channel_inbound",
+        "discover_channel_accounts",
+        "manage_identity"
+      ],
+      "type": "string"
     },
     "SessionCloseParams": {
       "properties": {
@@ -15806,6 +16371,46 @@
       ],
       "type": "object"
     },
+    "Subject": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "kind": {
+              "const": "principal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "kind": {
+              "const": "group",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "TimersFeature": {
       "additionalProperties": false,
       "description": "Grants timer promises through the sleep tool plus the base concurrency\ntools (await/cancel/detach).",
@@ -16373,6 +16978,25 @@
         "kind"
       ],
       "type": "object"
+    },
+    "UniverseAction": {
+      "description": "Actions are independent of RPC spelling. Ownership and resource policy are\nevaluated by the service that resolves the target, not from client claims.",
+      "enum": [
+        "read",
+        "create_session",
+        "control_session",
+        "stop_session",
+        "delete_session",
+        "create_profile",
+        "manage_profile",
+        "create_bot",
+        "manage_bot",
+        "invoke_bot",
+        "use_resource",
+        "configure_resource",
+        "manage_access"
+      ],
+      "type": "string"
     },
     "VfsFeature": {
       "additionalProperties": false,

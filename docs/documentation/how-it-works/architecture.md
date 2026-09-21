@@ -174,8 +174,12 @@ channels, and integrations evolve. The
 [controller page](tools-and-controller-workflows.md) explains the bindings,
 promises, and ownership that make these relationships durable.
 
-The Platform sits at another boundary. It owns people, login, organizations,
-memberships, and the browser application. Its PostgreSQL database is separate
+The Platform sits at another boundary. It owns login and the browser application,
+and currently maintains its own organizations and membership checks. A separate
+[core identity registry](../deployment/identity-and-access.md) now stores canonical
+principals, groups, scoped roles, and service capabilities through host
+administration commands. Gateway enforcement and the Platform membership cutover
+are not yet connected to those records. Its PostgreSQL database is separate
 from the runtime database. The runtime remains usable through its public API
 without the Platform, and the Platform uses that API rather than importing
 reducer internals into browser clients.

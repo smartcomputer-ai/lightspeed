@@ -1,3 +1,5 @@
+mod identity_cli;
+
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::{Args, Parser, Subcommand};
@@ -60,6 +62,11 @@ enum Command {
         about = "Manage inbound gateway API keys"
     )]
     ApiKey(ApiKeyCommand),
+    #[command(
+        subcommand,
+        about = "Host administration of canonical identity and access records"
+    )]
+    Identity(identity_cli::IdentityCommand),
 }
 
 #[derive(Debug, Subcommand)]
@@ -68,6 +75,9 @@ enum UniverseCommand {
     Create {
         #[arg(long)]
         universe_id: Option<uuid::Uuid>,
+        /// Active deployment administrator that becomes this universe's Admin.
+        #[arg(long)]
+        creator_principal: uuid::Uuid,
         #[arg(long)]
         slug: Option<String>,
     },
@@ -185,6 +195,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::CasSweep { dry_run }) => run_cas_sweep(dry_run).await,
         Some(Command::Universe(command)) => run_universe_command(command).await,
         Some(Command::ApiKey(command)) => run_api_key_command(command).await,
+        Some(Command::Identity(command)) => identity_cli::run(command).await,
         None => run_roles(cli.run).await,
     }
 }
@@ -243,10 +254,23 @@ async fn run_cas_sweep(dry_run: bool) -> anyhow::Result<()> {
 async fn run_universe_command(command: UniverseCommand) -> anyhow::Result<()> {
     let stores = DeploymentStores::from_env().await?;
     match command {
-        UniverseCommand::Create { universe_id, slug } => {
+        UniverseCommand::Create {
+            universe_id,
+            creator_principal,
+            slug,
+        } => {
             let universe_id = universe_id.unwrap_or_else(uuid::Uuid::new_v4);
-            let store = stores.store_for_with_slug(universe_id, slug.clone());
-            store.ensure_universe().await?;
+            use access::AccessStore as _;
+            store_pg::PgAccessStore::new(stores.pool().clone())
+                .apply(
+                    creator_principal,
+                    access::AccessChange::CreateUniverse {
+                        universe_id,
+                        slug: slug.clone(),
+                    },
+                    identity_cli::now_ms()?,
+                )
+                .await?;
             println!("universe_id: {universe_id}");
             if let Some(slug) = slug {
                 println!("slug: {slug}");

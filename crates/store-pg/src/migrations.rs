@@ -17,6 +17,13 @@ const MIGRATION_ADVISORY_LOCK_ID: i64 = 0x4c53_5047_4d49_4752;
 /// migration ledger is evidence of a pre-ledger Lightspeed database, not an
 /// empty schema that can safely receive the initial migration.
 const LIGHTSPEED_TABLES: &[&str] = &[
+    "access_audit",
+    "access_capabilities",
+    "access_groups",
+    "access_memberships",
+    "access_policy",
+    "access_principals",
+    "access_role_assignments",
     "agent_profiles",
     "api_keys",
     "auth_clients",
@@ -106,9 +113,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "independent_environment_lifecycle",
         sql: include_str!("../migrations/010_independent_environment_lifecycle.sql"),
     },
+    EmbeddedMigration {
+        version: 11,
+        name: "identity_access",
+        sql: include_str!("../migrations/011_identity_access.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 10;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 11;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

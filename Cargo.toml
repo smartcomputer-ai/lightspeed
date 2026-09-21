@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/access",
     "crates/release-info",
     "crates/environment-client",
     "crates/environment-daemon",

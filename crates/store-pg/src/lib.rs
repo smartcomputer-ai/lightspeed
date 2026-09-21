@@ -3,6 +3,7 @@
 //! `PgStore` is scoped to one universe. Within that universe, sessions share a
 //! CAS catalog; across universes, both metadata and object keys are isolated.
 
+mod access;
 mod api_keys;
 mod auth;
 mod blob;
@@ -32,6 +33,8 @@ use object_store::aws::AmazonS3Builder;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use thiserror::Error;
 use uuid::Uuid;
+
+pub use access::PgAccessStore;
 
 pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");
 pub const VFS_SCHEMA_SQL: &str = include_str!("../migrations/002_vfs.sql");

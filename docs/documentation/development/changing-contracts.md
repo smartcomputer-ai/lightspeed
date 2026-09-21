@@ -38,6 +38,11 @@ method metadata together; operator methods have their corresponding
 [operator manifest](../../../crates/api/src/operator.rs). Implement the
 service behavior in the runtime and test the actual admission and result.
 
+Every method declaration requires an explicit `access:` classification. Its scope
+is derived from that requirement; omitted access does not compile. The generated
+manifest, OpenRPC extension, and TypeScript `METHOD_INFO` carry the same metadata.
+Contextual ownership and resource checks still belong in the runtime.
+
 Choose the operation's scope deliberately. Universe, service, and deployment
 methods cross different authority boundaries. The Configurator generator
 selects universe-scoped methods and applies

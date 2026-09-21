@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+access = { path = "../access" }
 aes-gcm = "0.10"
 api = { path = "../api" }
 auth = { path = "../auth" }

@@ -11,6 +11,10 @@ Configure that path first, then add accounts and client credentials. The
 which infrastructure they share. The [self-hosting guide](self-hosting.md)
 provides the initial service configuration and public proxy routes.
 
+The [core identity registry](identity-and-access.md) also provides headless
+bootstrap and scoped role records. It is not yet connected to these gateway and
+Platform authorization paths.
+
 ## Choose the gateway authentication mode
 
 Each gateway process selects one `LIGHTSPEED_AUTH_MODE`:
@@ -141,7 +145,10 @@ them with the intended runtime database configuration, from a protected
 administrative environment:
 
 ```bash
-lightspeed-server universe create --slug acme
+lightspeed-server identity bootstrap \
+  --principal-id "<admin-principal-uuid>" --display-name "Administrator"
+lightspeed-server universe create --slug acme \
+  --creator-principal "<admin-principal-uuid>"
 lightspeed-server universe list
 ```
 

@@ -1,9 +1,10 @@
 # P176 — Identity foundation and universe authorization
 
-**Status:** Proposed first slice of
+**Status:** Implementation-order steps 1–2 implemented; steps 3–4 pending. First slice of
 [enterprise authorization and identity](later/pNNN-enterprise-authorization.md).
-Scope and contract sketch only; detailed schemas, method permissions, and
-acceptance criteria remain deferred.
+Core contracts and the initial method/action mapping are implemented. Runtime
+enforcement and Platform integration remain pending; acceptance criteria remain
+deferred.
 
 Lightspeed is still greenfield. Reshape contracts and replace implicit defaults
 where needed; compatibility with the current authorization model is not a goal.
@@ -33,8 +34,8 @@ Platform, CLI, and future provisioning integrations use the same core identity
 and access contracts. There is no separate Platform-owned authorization directory
 to project into runtime. External directories may own imported membership; their
 connectors still need reliable synchronization into these effective local records.
-The deterministic engine performs no identity or policy I/O. Exact module/crate
-placement and tables remain implementation decisions.
+The deterministic engine performs no identity or policy I/O. Core contracts and
+role evaluation live in `access`; `PgAccessStore` owns transactional persistence.
 
 ## Scope
 
@@ -140,16 +141,53 @@ revoke an independent service identity.
 
 ## Implementation order
 
-1. Rename deployment-facing `operator/*`, scope/types, and consumers to
+1. [x] Rename deployment-facing `operator/*`, scope/types, and consumers to
    `deployment/*` in a separate mechanical commit, regenerating contracts. Keep
    Operator as the universe role; qualified binding names need no rename.
-2. Define core identity/access contracts, persistence, bootstrap, and the initial
+2. [x] Define core identity/access contracts, persistence, bootstrap, and the initial
    method/action mapping. Reserve credential grant terminology for `auth/grants/*`;
    use access policy/resource permission for authorization.
-3. Introduce service authentication, key scopes, explicit contexts, and ownership
+3. [ ] Introduce service authentication, key scopes, explicit contexts, and ownership
    facts; enforce checks across gateway and shared-service entry points.
-4. Connect Platform and CLI administration to core records, removing competing
+4. [ ] Connect Platform and CLI administration to core records, removing competing
    Platform-owned authorization state. Complete revocation, streams, and audit.
+
+## Implemented foundation
+
+- Mechanical deployment API rename committed separately (`72d7b332`), including
+  generated contracts, TypeScript consumers, connector discovery, and docs.
+- `access` defines stable UUID principals, flat deployment groups, scoped roles,
+  service capabilities, typed access changes, effective rights, and the initial
+  role/action matrix. Session control still requires ownership for every role;
+  Operator/Admin may stop other sessions.
+- Schema revision 11 stores these records. Identity writes authorize and commit
+  with revision/audit updates and group-aware last-admin guards. Disablement may
+  orphan a universe; explicit recovery assigns an active principal without
+  giving the recovering administrator membership. No authorization cache.
+- Host CLI supports one-shot bootstrap, typed identity changes, effective-rights
+  queries, and accessible-universe queries. CLI universe creation requires a
+  named deployment administrator and atomically assigns them universe Admin.
+- Every API declaration requires `access:` metadata; scope derives from it.
+  Manifest, OpenRPC, API reference, and generated TypeScript carry the mapping.
+
+The new records do **not** yet change HTTP admission or Platform permissions.
+Existing RPC universe creation, implicit principals, API keys, and trusted-header
+behavior are replaced when steps 3–4 connect authenticated context and enforcement.
+The host CLI's `--actor-principal` is trusted database administration, not a remote
+identity assertion. Full Platform/CLI administration UX remains in step 4.
+See [core identity administration](../documentation/deployment/identity-and-access.md).
+
+Validation for steps 1–2 (2026-09-21):
+
+- `cargo check --workspace --all-targets` passed.
+- Core/API/store tests: 111 passed, including schema-artifact checks. Server
+  library/CLI tests: 345 passed; one existing library test remained ignored.
+- Strict Clippy passed for `access`, `api`, and `store-pg`, including all targets.
+- `npm install`, contract/client regeneration, and `npm run check` passed.
+- Release schema metadata, changed-document links, formatting, and whitespace
+  checks passed.
+- The isolated PostgreSQL lifecycle suite compiles. Its live execution requires
+  the repository's explicit test-service approval and has not been run.
 
 ## Boundary and follow-up
 
