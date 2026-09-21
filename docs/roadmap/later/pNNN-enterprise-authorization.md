@@ -233,13 +233,15 @@ Important boundaries:
   Administrative/access audit records need a lifecycle independent of session
   deletion, without retaining secret values.
 
-## Suggested first slice
+## Implementation sequence
 
-1. Establish identity propagation and universe/resource permission contracts.
-2. Implement private/shared sessions and their content using local users and
-   groups, including resource-use checks and attributable audit records.
-3. Carry bounded authority through one complete execution/delegation path and
-   demonstrate revocation after a restart.
+1. [Identity foundation and universe authorization](../p176-identity-and-universe-authorization.md):
+   local identity propagation, runtime-owned universe roles, consistent request
+   authorization, access revocation, and attributable audit records.
+2. Implement private/shared sessions and their content together with one complete
+   authorized execution path, including stable bindings and bounded run authority.
+3. Extend resource restrictions and execution/delegation enforcement across tools,
+   environments, bots, and background work.
 4. Connect SSO and provisioning to the same identity and membership lifecycle;
    offboarding must also govern API keys and delegated work.
 
