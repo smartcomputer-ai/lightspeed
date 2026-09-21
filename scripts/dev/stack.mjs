@@ -13,9 +13,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startProcesses, waitForService as awaitService, tcpUp } from "./startup.mjs";
 
 const devDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(devDir, "..", "..");
@@ -93,15 +93,7 @@ if (plan.profile === "full") {
 }
 
 try {
-  for (const processPlan of plan.processes) {
-    if (processPlan.startAfter) {
-      console.log(
-        `[startup] waiting for ${processPlan.startAfter.name} before ${processPlan.name}`,
-      );
-      await waitForService(processPlan.startAfter);
-    }
-    startProcess(processPlan);
-  }
+  await startProcesses(plan.processes, { start: startProcess, wait: waitForService });
   await waitForReadiness(plan);
 } catch (error) {
   console.error(`[readiness] ${error.message}`);
@@ -325,6 +317,12 @@ function createPlan(profile, sourceEnv) {
         args: ["watch", "platform/server/src/main.ts"],
         cwd: repoRoot,
         env,
+        // First-login bootstrap checks the canonical administrator through RPC.
+        // Wait for the configured runtime in both full and platform-only loops.
+        startAfter: {
+          name: "runtime gateway",
+          url: new URL("health", platformApiUrl).href,
+        },
       },
       {
         name: "web",
@@ -665,23 +663,8 @@ async function waitForReadiness(plan) {
   for (const service of plan.readiness) console.log(`  ready  ${service.name}`);
 }
 
-async function waitForService(service) {
-  const deadline = Date.now() + 60_000;
-  while (!stopping && Date.now() < deadline) {
-    const ready = service.url ? await httpUp(service.url) : await tcpUp(service.port);
-    if (ready) return;
-    await delay(250);
-  }
-  throw new Error(`${service.name} did not become ready within 60 seconds`);
-}
-
-async function httpUp(url) {
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
-    return response.ok;
-  } catch {
-    return false;
-  }
+function waitForService(service) {
+  return awaitService(service, { isStopping: () => stopping });
 }
 
 function runChecked(name, command, args, env) {
@@ -743,21 +726,6 @@ function waitForExit(child) {
   return new Promise((resolve) => child.once("exit", resolve));
 }
 
-function tcpUp(port) {
-  return new Promise((resolve) => {
-    const socket = net.connect({ port, host: "127.0.0.1", timeout: 500 });
-    socket.once("connect", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.once("error", () => resolve(false));
-    socket.once("timeout", () => {
-      socket.destroy();
-      resolve(false);
-    });
-  });
-}
-
 function printPlan(plan) {
   console.log(`profile: ${plan.profile}`);
   console.log(`infrastructure: ${plan.infra ? "postgres, pgadmin, minio, temporal" : "none"}`);
@@ -770,6 +738,9 @@ function printPlan(plan) {
     console.log(
       `process: ${processPlan.name} -> ${displayCommand(processPlan.command, processPlan.args)}`,
     );
+    if (processPlan.startAfter) {
+      console.log(`  after: ${processPlan.startAfter.name} -> ${processPlan.startAfter.url ?? processPlan.startAfter.port}`);
+    }
   }
   console.log(`connectors: ${plan.connectors.length > 0 ? plan.connectors.join(", ") : "none"}`);
   console.log(`runtime auth: ${plan.env.LIGHTSPEED_AUTH_MODE}`);

@@ -94,6 +94,12 @@ The `full` profile defaults to authenticated runtime access. Without a configure
 service principal and mints a key, passing the secret to child processes in memory.
 The `runtime` profile defaults to `single` for direct CLI development.
 
+Platform waits for the configured runtime's HTTP health endpoint before starting,
+including in the `platform` profile. First-login bootstrap validates the canonical
+administrator through that API, so Rust compilation must finish first. The
+supervisor logs this dependency wait and fails startup after 60 seconds if the
+runtime never becomes ready. `--plan` also shows startup dependencies.
+
 The full profile also runs Configurator MCP; Bots and Channels core run inside
 the Rust runtime. The connector host is opt-in: naming providers starts one
 `connectors` process that discovers every enabled account of those providers

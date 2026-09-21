@@ -239,7 +239,10 @@ identity assertion. See [core identity administration](../documentation/deployme
 - Platform migration 2 deliberately requires a fresh Platform database; it neither
   imports permissions nor invents canonical identities for legacy accounts.
   Bootstrap binds a pre-provisioned core administrator. The full development
-  launcher provisions separate user and service identities.
+  launcher provisions separate user and service identities. Platform startup
+  waits for the configured runtime's HTTP health endpoint before bootstrap,
+  including in the platform-only profile. This prevents fresh-database bootstrap
+  racing Rust compilation; unavailable runtimes stop dependent startup.
 
 Validation for steps 1–2 (2026-09-21):
 
