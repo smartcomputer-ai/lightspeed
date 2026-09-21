@@ -169,6 +169,28 @@
         },
         {
           "additionalProperties": false,
+          "description": "Atomically replaces one existing grant, preserving other direct/group grants.\nA missing source grant is a conflict; last-administrator protection applies.",
+          "properties": {
+            "assignment": {
+              "$ref": "#/definitions/RoleAssignment"
+            },
+            "operation": {
+              "const": "replace_role",
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/definitions/Role"
+            }
+          },
+          "required": [
+            "operation",
+            "assignment",
+            "role"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "properties": {
             "assignment": {
               "$ref": "#/definitions/CapabilityAssignment"

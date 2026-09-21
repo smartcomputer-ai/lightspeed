@@ -3,7 +3,7 @@ import { directoryFor } from "./identity";
 /// universe API keys. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
-import { slugify } from "@lightspeed/platform-shared";
+import { memberUpdateSchema, slugify } from "@lightspeed/platform-shared";
 import type { EngineUniverse, Member, Universe, UniverseApiKey } from "@/api";
 import type { DemoStore, UniverseState } from "../store";
 import { conflict, badRequest, notFound, nowIso, readBody, universeFor } from "./common";
@@ -144,6 +144,21 @@ export function platformRoutes(store: DemoStore): Hono {
     };
     state.members.push(created);
     return c.json(created, 201);
+  });
+
+  app.patch("/universes/:id/members/:memberId", async (c) => {
+    const state = universeFor(store, c);
+    if (!state) return notFound(c);
+    const body = memberUpdateSchema.safeParse(await readBody(c));
+    if (!body.success) return badRequest(c, "invalid role");
+    const member = state.members.find((m) => m.id === c.req.param("memberId"));
+    if (!member) return notFound(c);
+    if (member.role === "admin" && body.data.role !== "admin" && !state.members.some((m) => m.id !== member.id && m.role === "admin")) {
+      return conflict(c, "At least one administrator must remain.");
+    }
+    member.role = body.data.role;
+    if (member.userId === store.currentUser.id) state.universe.role = member.role;
+    return c.json(member);
   });
 
   app.delete("/universes/:id/members/:memberId", (c) => {

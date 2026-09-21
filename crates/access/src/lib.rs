@@ -306,6 +306,12 @@ pub enum AccessChange {
     RevokeRole {
         assignment: RoleAssignment,
     },
+    /// Atomically replaces one existing grant, preserving other direct/group grants.
+    /// A missing source grant is a conflict; last-administrator protection applies.
+    ReplaceRole {
+        assignment: RoleAssignment,
+        role: Role,
+    },
     AssignCapability {
         assignment: CapabilityAssignment,
     },
@@ -360,6 +366,19 @@ impl AccessChange {
                     return Err(AccessError::Invalid("role does not belong to scope".into()));
                 }
                 Ok(())
+            }
+            ReplaceRole { assignment, role } => {
+                AssignRole {
+                    assignment: *assignment,
+                }
+                .validate()?;
+                AssignRole {
+                    assignment: RoleAssignment {
+                        role: *role,
+                        ..*assignment
+                    },
+                }
+                .validate()
             }
             AssignCapability { assignment } | RevokeCapability { assignment } => {
                 valid_id(assignment.principal_id)?;

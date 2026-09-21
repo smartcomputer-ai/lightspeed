@@ -294,7 +294,8 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 let (context, _) = super::authentication::current_context(self.pool()).await?;
                 let scope = match &change {
                     access::AccessChange::AssignRole { assignment }
-                    | access::AccessChange::RevokeRole { assignment } => assignment.scope,
+                    | access::AccessChange::RevokeRole { assignment }
+                    | access::AccessChange::ReplaceRole { assignment, .. } => assignment.scope,
                     access::AccessChange::CreatePrincipal {
                         management_scope, ..
                     } => *management_scope,
@@ -1017,6 +1018,7 @@ fn identity_audit_target(change: &access::AccessChange) -> serde_json::Value {
         RemoveMembership { .. } => "remove_membership",
         AssignRole { .. } => "assign_role",
         RevokeRole { .. } => "revoke_role",
+        ReplaceRole { .. } => "replace_role",
         AssignCapability { .. } => "assign_capability",
         RevokeCapability { .. } => "revoke_capability",
         CreateUniverse { .. } => "create_universe",
@@ -1030,6 +1032,9 @@ fn identity_audit_target(change: &access::AccessChange) -> serde_json::Value {
         }
         AssignRole { assignment } | RevokeRole { assignment } => {
             json!({"roleAssignment": assignment})
+        }
+        ReplaceRole { assignment, role } => {
+            json!({"roleAssignment": assignment, "role": role})
         }
         AssignCapability { assignment } | RevokeCapability { assignment } => {
             json!({"capabilityAssignment": assignment})

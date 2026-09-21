@@ -85,6 +85,8 @@ the [local development guide](docs/documentation/development/local-development.m
 
 Core identity/bootstrap commands and scoped access records are available through
 [host administration](docs/documentation/deployment/identity-and-access.md).
+Universe admins can assign and edit user/group roles in Platform's Members page;
+role changes preserve other grants and protect the last active administrator.
 
 ## Features
 

@@ -47,6 +47,11 @@ export type AccessChange =
       operation: "revoke_role";
     }
   | {
+      assignment: RoleAssignment;
+      operation: "replace_role";
+      role: Role;
+    }
+  | {
       assignment: CapabilityAssignment;
       operation: "assign_capability";
     }

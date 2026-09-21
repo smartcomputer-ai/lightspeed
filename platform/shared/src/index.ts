@@ -33,6 +33,11 @@ export const memberAddSchema = z
 
 export type MemberAddInput = z.infer<typeof memberAddSchema>;
 
+export const memberUpdateSchema = z.object({
+  role: z.enum(["viewer", "contributor", "operator", "admin"]),
+});
+export type MemberUpdateInput = z.infer<typeof memberUpdateSchema>;
+
 export const workspaceCreateSchema = z.object({
   /// Gateway workspace id; minted from the display name (or randomly) when
   /// omitted.

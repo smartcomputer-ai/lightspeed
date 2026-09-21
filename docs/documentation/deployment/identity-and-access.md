@@ -153,3 +153,11 @@ The Platform CLI exposes `identity list` and `identity apply '<AccessChange JSON
 through these same records. Its member commands use Viewer, Contributor, Operator
 and Admin assignments; deleting one assignment leaves independent direct/group
 assignments intact.
+
+In Platform, universe Admins can edit a user or group's role from Settings →
+Members. A role edit atomically replaces the selected grant; independent direct
+and group grants still apply. Core rejects stale assignments and changes that
+would remove the last active administrator, leaving the original grant intact.
+The same operation is available through `identity apply` as `replace_role` with
+the existing `assignment` and replacement `role`, and produces one committed
+access-change record.

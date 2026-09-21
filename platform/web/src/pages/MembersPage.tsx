@@ -2,7 +2,7 @@ import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { api, type Member } from "@/api";
 import {
   AlertDialog,
@@ -69,6 +69,7 @@ export function MembersPage({ admin: _admin }: { admin: boolean }) {
 function MemberList({ universeId, writable }: { universeId: string; writable: boolean }) {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [editing, setEditing] = useState<Member | null>(null);
   const members = useQuery({
     queryKey: ["members", universeId],
     queryFn: () => api<Member[]>("GET", `/api/v1/universes/${universeId}/members`),
@@ -77,6 +78,7 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
     queryClient.invalidateQueries({ queryKey: ["members", universeId] }),
     queryClient.invalidateQueries({ queryKey: ["universes"] }),
     queryClient.invalidateQueries({ queryKey: ["me"] }),
+    queryClient.invalidateQueries({ queryKey: ["action-permissions"] }),
   ]);
 
   const remove = useMutation({
@@ -123,6 +125,14 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
                   <TableCell>{member.role}</TableCell>
                   {writable && (
                     <TableActionsCell>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Edit role for ${member.name || member.email}`}
+                        onClick={() => setEditing(member)}
+                      >
+                        <Pencil />
+                      </Button>
                       <AlertDialog>
                         <AlertDialogTrigger
                           render={
@@ -170,7 +180,66 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
           onDone={invalidate}
         />
       )}
+      {writable && editing && (
+        <EditMemberRoleDialog
+          key={editing.id}
+          universeId={universeId}
+          member={editing}
+          onClose={() => setEditing(null)}
+          onDone={invalidate}
+        />
+      )}
     </>
+  );
+}
+
+function EditMemberRoleDialog({ universeId, member, onClose, onDone }: {
+  universeId: string;
+  member: Member;
+  onClose: () => void;
+  onDone: () => Promise<unknown>;
+}) {
+  const [role, setRole] = useState(member.role);
+  const edit = useMutation({
+    mutationFn: () => api("PATCH", `/api/v1/universes/${universeId}/members/${member.id}`, { role }),
+    onSuccess: async () => {
+      onClose();
+      await onDone();
+    },
+    onError: () => { void onDone(); },
+  });
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit universe role</DialogTitle>
+          <DialogDescription>
+            Change the role assigned to {member.name || member.email} in this universe.
+            Other direct or group assignments still apply. At least one active administrator must remain.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); edit.mutate(); }}>
+          <FieldLabel htmlFor="edit-member-role">Role</FieldLabel>
+          <Select value={role} onValueChange={(value) => setRole(value as string)} disabled={edit.isPending}>
+            <SelectTrigger id="edit-member-role"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="viewer">viewer</SelectItem>
+              <SelectItem value="contributor">contributor</SelectItem>
+              <SelectItem value="operator">operator</SelectItem>
+              <SelectItem value="admin">admin</SelectItem>
+            </SelectContent>
+          </Select>
+          {edit.error && <p role="alert" className="text-sm text-destructive">{edit.error.message}</p>}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={edit.isPending || role === member.role}>
+              {edit.isPending ? "Saving…" : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

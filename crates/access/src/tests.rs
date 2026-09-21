@@ -192,6 +192,42 @@ fn role_and_capability_assignments_cannot_cross_scope_classes() {
 }
 
 #[test]
+fn replacement_roles_must_belong_to_the_existing_scope() {
+    let assignment = RoleAssignment {
+        scope: universe(),
+        subject: Subject::Group(Uuid::from_u128(3)),
+        role: Role::Viewer,
+    };
+    assert!(
+        AccessChange::ReplaceRole {
+            assignment,
+            role: Role::Operator
+        }
+        .validate()
+        .is_ok()
+    );
+    assert!(matches!(
+        AccessChange::ReplaceRole {
+            assignment,
+            role: Role::DeploymentAdmin
+        }
+        .validate(),
+        Err(AccessError::Invalid(_))
+    ));
+    assert!(matches!(
+        AccessChange::ReplaceRole {
+            assignment: RoleAssignment {
+                role: Role::DeploymentAdmin,
+                ..assignment
+            },
+            role: Role::Admin,
+        }
+        .validate(),
+        Err(AccessError::Invalid(_))
+    ));
+}
+
+#[test]
 fn identity_inputs_are_explicit_and_validated() {
     let nil = AccessChange::CreateGroup {
         id: Uuid::nil(),

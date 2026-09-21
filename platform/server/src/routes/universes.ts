@@ -5,6 +5,7 @@ import { LightspeedRpcError } from "@lightspeed-ai/agent-client";
 import { schema } from "@lightspeed/platform-db";
 import {
   memberAddSchema,
+  memberUpdateSchema,
   slugify,
   universeCreateSchema,
   universeUpdateSchema,
@@ -390,6 +391,21 @@ export function universeRoutes(ctx: AppContext) {
       operation: "assign_role", assignment: { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, subject, role: body.data.role },
     });
     return c.json(result.result, 201);
+  }));
+
+  app.patch("/:id/members/:memberId", (c) => withGateway(c, async () => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access || access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
+    const body = await parseBody(c, memberUpdateSchema);
+    if (!body.ok) return body.response;
+    const [kind, id, role, extra] = c.req.param("memberId").split(":");
+    const parsed = z.object({ kind: z.enum(["principal", "group"]), id: z.string().uuid(), role: z.enum(["viewer", "contributor", "operator", "admin"]) }).safeParse({ kind, id, role });
+    if (!parsed.success || extra !== undefined) return c.json({ error: "invalid assignment" }, 400);
+    const result = await deploymentClientFor(ctx).call("deployment/identity/apply", {
+      operation: "replace_role", assignment: { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, subject: { kind: parsed.data.kind, id: parsed.data.id }, role: parsed.data.role },
+      role: body.data.role,
+    });
+    return c.json(result.result);
   }));
 
   app.delete("/:id/members/:memberId", (c) => withGateway(c, async () => {

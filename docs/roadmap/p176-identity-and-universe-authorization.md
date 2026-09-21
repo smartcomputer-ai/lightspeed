@@ -330,6 +330,16 @@ Validation for Platform integration (2026-09-21):
   remains authoritative; these hints do not add private/shared session semantics.
 - API-key controls expose members' own keys and eligible universe-managed service
   principals for admins instead of inviting arbitrary principal IDs.
+- User creation/editing presents deployment administration as an explicit switch,
+  separate from universe roles. The user list shows effective administrator access;
+  editing distinguishes direct grants from access inherited through groups.
+- Universe Members provides role editing for users and groups. A core atomic
+  replacement preserves independent grants, rejects stale edits, and rolls back
+  last-administrator demotions without partially adding or removing permissions.
+  Validation passed: full `npm run check` (443 web tests), affected Rust library
+  tests, two identity tests against disposable PostgreSQL, strict all-target
+  Clippy for access/store/server, and documentation checks/build. The role editor
+  covers successful user/group edits, rejected edits, and permission revocation.
 
 Validation for UI action affordances (2026-09-21):
 

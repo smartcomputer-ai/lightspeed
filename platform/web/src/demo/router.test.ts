@@ -219,6 +219,20 @@ describe("demo router", () => {
     }
   });
 
+  it("edits member roles and preserves the final administrator on a rejected edit", async () => {
+    const { store, call } = await boot();
+    const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const admin = state.members.find((member) => member.role === "admin")!;
+    state.members = [admin];
+    const path = `/api/v1/universes/${state.universe.id}/members/${admin.id}`;
+    expect((await call("PATCH", path, { role: "viewer" })).status).toBe(409);
+    expect(admin.role).toBe("admin");
+    state.members.push({ ...admin, id: "other-admin", userId: "other-user" });
+    expect((await call("PATCH", path, { role: "operator" })).status).toBe(200);
+    expect(admin.role).toBe("operator");
+    expect((await call("PATCH", path, { role: "deployment_admin" })).status).toBe(400);
+  });
+
   it("updates a user's admin-managed account fields and accepts a password reset", async () => {
     const { store, call } = await boot();
     const target = [...store.users.values()].find((user) => user.id !== store.currentUser.id)!;

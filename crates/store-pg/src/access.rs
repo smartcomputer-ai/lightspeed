@@ -182,7 +182,9 @@ async fn authorize_change(
     // membership. Direct role/capability assignment and recovery are separate.
     let provisioning = deployment.has_capability(ServiceCapability::ManageIdentity);
     match change {
-        AccessChange::AssignRole { assignment } | AccessChange::RevokeRole { assignment }
+        AccessChange::AssignRole { assignment }
+        | AccessChange::RevokeRole { assignment }
+        | AccessChange::ReplaceRole { assignment, .. }
             if matches!(assignment.scope, AccessScope::Universe { .. }) =>
         {
             if effective(connection, actor, assignment.scope)
@@ -295,6 +297,19 @@ async fn apply_change(
             sqlx::query("DELETE FROM access_role_assignments WHERE universe_id IS NOT DISTINCT FROM $1 AND principal_id IS NOT DISTINCT FROM $2 AND group_id IS NOT DISTINCT FROM $3 AND role = $4")
                 .bind(scope_id(assignment.scope)).bind(principal).bind(group).bind(enum_name(assignment.role)?)
                 .execute(connection).await.map_err(db_error)?.rows_affected()
+        }
+        ReplaceRole { assignment, role } => {
+            let (principal, group) = match assignment.subject { Subject::Principal(id) => (Some(id), None), Subject::Group(id) => (None, Some(id)) };
+            let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM access_role_assignments WHERE universe_id IS NOT DISTINCT FROM $1 AND principal_id IS NOT DISTINCT FROM $2 AND group_id IS NOT DISTINCT FROM $3 AND role = $4)")
+                .bind(scope_id(assignment.scope)).bind(principal).bind(group).bind(enum_name(assignment.role)?)
+                .fetch_one(&mut *connection).await.map_err(db_error)?;
+            if !exists { return Err(AccessError::Conflict); }
+            if *role == assignment.role { return Ok(false); }
+            sqlx::query("DELETE FROM access_role_assignments WHERE universe_id IS NOT DISTINCT FROM $1 AND principal_id IS NOT DISTINCT FROM $2 AND group_id IS NOT DISTINCT FROM $3 AND role = $4")
+                .bind(scope_id(assignment.scope)).bind(principal).bind(group).bind(enum_name(assignment.role)?)
+                .execute(&mut *connection).await.map_err(db_error)?;
+            put_role(connection, RoleAssignment { role: *role, ..*assignment }).await?;
+            1
         }
         AssignCapability { assignment } | RevokeCapability { assignment } => {
             let principal = read_principal(connection, assignment.principal_id).await?;

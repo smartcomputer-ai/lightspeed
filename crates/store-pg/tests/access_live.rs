@@ -13,6 +13,16 @@ use uuid::Uuid;
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires explicitly approved LIGHTSPEED_TEST_POSTGRES_URL; creates an isolated schema"]
 async fn identity_lifecycle_is_transactional_scoped_and_revocable() {
+    with_isolated_schema(exercise).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires explicitly approved LIGHTSPEED_TEST_POSTGRES_URL; creates an isolated schema"]
+async fn role_replacement_is_atomic_scoped_and_preserves_independent_grants() {
+    with_isolated_schema(exercise_role_replacement).await;
+}
+
+async fn with_isolated_schema(test: impl for<'a> AsyncFn(&'a sqlx::PgPool)) {
     let url =
         std::env::var("LIGHTSPEED_TEST_POSTGRES_URL").expect("explicit test Postgres URL required");
     let admin = PgPoolOptions::new()
@@ -33,7 +43,7 @@ async fn identity_lifecycle_is_transactional_scoped_and_revocable() {
         .connect_with(options)
         .await
         .unwrap();
-    let outcome = AssertUnwindSafe(exercise(&pool)).catch_unwind().await;
+    let outcome = AssertUnwindSafe(test(&pool)).catch_unwind().await;
     pool.close().await;
     admin
         .execute(format!("DROP SCHEMA \"{schema}\" CASCADE").as_str())
@@ -43,6 +53,279 @@ async fn identity_lifecycle_is_transactional_scoped_and_revocable() {
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+}
+
+async fn exercise_role_replacement(pool: &sqlx::PgPool) {
+    PgStore::migrate(pool).await.unwrap();
+    let store = PgAccessStore::new(pool.clone());
+    let actor = Uuid::new_v4();
+    let alice = Uuid::new_v4();
+    let bob = Uuid::new_v4();
+    let group = Uuid::new_v4();
+    let u = Uuid::new_v4();
+    let v = Uuid::new_v4();
+    let scope = AccessScope::Universe { universe_id: u };
+    store
+        .bootstrap(actor, "Deployment admin".into(), 1)
+        .await
+        .unwrap();
+    for id in [u, v] {
+        store
+            .apply(
+                actor,
+                AccessChange::CreateUniverse {
+                    universe_id: id,
+                    slug: None,
+                },
+                2,
+            )
+            .await
+            .unwrap();
+    }
+    for id in [alice, bob] {
+        store
+            .apply(
+                actor,
+                AccessChange::CreatePrincipal {
+                    id,
+                    kind: PrincipalKind::User,
+                    display_name: id.to_string(),
+                    management_scope: AccessScope::Deployment,
+                },
+                3,
+            )
+            .await
+            .unwrap();
+    }
+    for (id, granted) in [
+        (alice, Role::Admin),
+        (bob, Role::Viewer),
+        (bob, Role::Operator),
+    ] {
+        store
+            .apply(
+                actor,
+                AccessChange::AssignRole {
+                    assignment: role(scope, Subject::Principal(id), granted),
+                },
+                4,
+            )
+            .await
+            .unwrap();
+    }
+    let source = role(scope, Subject::Principal(bob), Role::Viewer);
+    let before = store
+        .effective_access(bob, scope)
+        .await
+        .unwrap()
+        .policy_revision;
+    let result = store
+        .apply(
+            alice,
+            AccessChange::ReplaceRole {
+                assignment: source,
+                role: Role::Contributor,
+            },
+            5,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.policy_revision, before + 1);
+    assert_eq!(
+        store.effective_access(bob, scope).await.unwrap().roles,
+        [Role::Contributor, Role::Operator].into()
+    );
+    let event: serde_json::Value =
+        sqlx::query_scalar("SELECT event FROM access_audit_changes WHERE revision = $1")
+            .bind(result.policy_revision as i64)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        event,
+        serde_json::to_value(AccessChange::ReplaceRole {
+            assignment: source,
+            role: Role::Contributor
+        })
+        .unwrap()
+    );
+    assert_eq!(
+        store
+            .apply(
+                alice,
+                AccessChange::ReplaceRole {
+                    assignment: source,
+                    role: Role::Admin
+                },
+                6
+            )
+            .await,
+        Err(AccessError::Conflict)
+    );
+    let contributor = RoleAssignment {
+        role: Role::Contributor,
+        ..source
+    };
+    store
+        .apply(
+            alice,
+            AccessChange::ReplaceRole {
+                assignment: contributor,
+                role: Role::Operator,
+            },
+            7,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.effective_access(bob, scope).await.unwrap().roles,
+        [Role::Operator].into()
+    );
+    let revision = store
+        .effective_access(bob, scope)
+        .await
+        .unwrap()
+        .policy_revision;
+    let noop = store
+        .apply(
+            alice,
+            AccessChange::ReplaceRole {
+                assignment: RoleAssignment {
+                    role: Role::Operator,
+                    ..source
+                },
+                role: Role::Operator,
+            },
+            8,
+        )
+        .await
+        .unwrap();
+    assert!(!noop.changed);
+    assert_eq!(noop.policy_revision, revision);
+    let actor_role = role(scope, Subject::Principal(actor), Role::Admin);
+    assert_eq!(
+        store
+            .apply(
+                bob,
+                AccessChange::ReplaceRole {
+                    assignment: actor_role,
+                    role: Role::Viewer
+                },
+                9
+            )
+            .await,
+        Err(AccessError::Denied)
+    );
+    assert_eq!(
+        store
+            .apply(
+                alice,
+                AccessChange::ReplaceRole {
+                    assignment: RoleAssignment {
+                        scope: AccessScope::Universe { universe_id: v },
+                        ..actor_role
+                    },
+                    role: Role::Viewer
+                },
+                9
+            )
+            .await,
+        Err(AccessError::Denied)
+    );
+
+    store
+        .apply(
+            actor,
+            AccessChange::CreateGroup {
+                id: group,
+                display_name: "Administrators".into(),
+            },
+            10,
+        )
+        .await
+        .unwrap();
+    store
+        .apply(
+            actor,
+            AccessChange::PutMembership {
+                membership: Membership {
+                    group_id: group,
+                    principal_id: alice,
+                },
+            },
+            11,
+        )
+        .await
+        .unwrap();
+    let group_role = role(scope, Subject::Group(group), Role::Admin);
+    store
+        .apply(
+            actor,
+            AccessChange::AssignRole {
+                assignment: group_role,
+            },
+            12,
+        )
+        .await
+        .unwrap();
+    for id in [actor, alice] {
+        store
+            .apply(
+                actor,
+                AccessChange::RevokeRole {
+                    assignment: role(scope, Subject::Principal(id), Role::Admin),
+                },
+                13,
+            )
+            .await
+            .unwrap();
+    }
+    let revision = store
+        .effective_access(alice, scope)
+        .await
+        .unwrap()
+        .policy_revision;
+    assert_eq!(
+        store
+            .apply(
+                alice,
+                AccessChange::ReplaceRole {
+                    assignment: group_role,
+                    role: Role::Viewer
+                },
+                14
+            )
+            .await,
+        Err(AccessError::LastAdministrator { scope })
+    );
+    let after = store.effective_access(alice, scope).await.unwrap();
+    assert_eq!(after.roles, [Role::Admin].into());
+    assert_eq!(after.policy_revision, revision);
+    store
+        .apply(
+            actor,
+            AccessChange::AssignRole {
+                assignment: actor_role,
+            },
+            15,
+        )
+        .await
+        .unwrap();
+    store
+        .apply(
+            alice,
+            AccessChange::ReplaceRole {
+                assignment: group_role,
+                role: Role::Viewer,
+            },
+            16,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.effective_access(alice, scope).await.unwrap().roles,
+        [Role::Viewer].into()
+    );
 }
 
 fn role(scope: AccessScope, subject: Subject, role: Role) -> RoleAssignment {

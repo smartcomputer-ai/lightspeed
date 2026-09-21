@@ -16,13 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -85,7 +79,7 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
-                <TableHead>Role</TableHead>
+                <TableHead>Deployment administrator (root)</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="w-0" />
               </TableRow>
@@ -97,9 +91,11 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
                   <TableCell>{user.email}</TableCell>
                   <TableCell>
                     {user.role?.split(",").includes("admin") ? (
-                      <Badge variant="secondary">admin</Badge>
+                      <Badge variant="secondary">
+                        {user.directRole === "user" ? "Yes · via group" : "Yes"}
+                      </Badge>
                     ) : (
-                      <span className="text-muted-foreground">user</span>
+                      <span className="text-muted-foreground">No</span>
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
@@ -274,23 +270,30 @@ function EditUserDialog({
               </FieldDescription>
             </Field>
             <Field>
-              <FieldLabel htmlFor="edit-user-role">Direct deployment role</FieldLabel>
-              <Select
-                value={role}
-                onValueChange={(value) => setRole(value as string)}
-                disabled={isCurrentUser}
-              >
-                <SelectTrigger id="edit-user-role" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="user">user</SelectItem>
-                  <SelectItem value="admin">admin</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex items-center justify-between gap-3">
+                <FieldLabel htmlFor="edit-user-deployment-admin">Deployment administrator</FieldLabel>
+                <Switch
+                  id="edit-user-deployment-admin"
+                  checked={role === "admin"}
+                  onCheckedChange={(checked) => setRole(checked ? "admin" : "user")}
+                  disabled={isCurrentUser}
+                  aria-describedby="edit-user-deployment-admin-description"
+                />
+              </div>
+              <FieldDescription id="edit-user-deployment-admin-description">
+                Deployment-wide administration ("root" admin): manage users, groups,
+                universes, and infrastructure.
+                Universe roles are assigned separately. This switch controls the direct
+                administrator grant; grants through groups still apply.
+              </FieldDescription>
+              {user?.role === "admin" && user.directRole === "user" && (
+                <FieldDescription>
+                  This account has administrator access through a group. Manage that access under Groups.
+                </FieldDescription>
+              )}
               {isCurrentUser && (
                 <FieldDescription>
-                  Direct roles are separate from roles inherited through groups.
+                  You cannot change your own administrator grant here.
                 </FieldDescription>
               )}
             </Field>
@@ -434,16 +437,20 @@ function CreateUserDialog({
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="user-role">Role</FieldLabel>
-                <Select value={role} onValueChange={(value) => setRole(value as string)}>
-                  <SelectTrigger id="user-role" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="user">user</SelectItem>
-                    <SelectItem value="admin">admin</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center justify-between gap-3">
+                  <FieldLabel htmlFor="user-deployment-admin">Deployment administrator</FieldLabel>
+                  <Switch
+                    id="user-deployment-admin"
+                    checked={role === "admin"}
+                    onCheckedChange={(checked) => setRole(checked ? "admin" : "user")}
+                    aria-describedby="user-deployment-admin-description"
+                  />
+                </div>
+                <FieldDescription id="user-deployment-admin-description">
+                  Deployment-wide administration ("root" admin): manage users, groups,
+                  universes, and infrastructure.
+                  Universe roles are assigned separately.
+                </FieldDescription>
               </Field>
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
