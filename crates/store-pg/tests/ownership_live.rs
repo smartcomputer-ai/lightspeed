@@ -110,14 +110,10 @@ async fn exercise(pool: &sqlx::PgPool) {
         unreachable!()
     };
     let principal = ResourceController::Principal(alice.principal.id);
-    let own = |resource, controller| ResourceOwnership {
-        resource,
-        created_by: ActionActor::Principal {
-            id: alice.principal.id,
-        },
-        controller,
-        created_at_ms: 5,
+    let alice_actor = ActionActor::Principal {
+        id: alice.principal.id,
     };
+    let own = |resource: ResourceRef, controller: ResourceController| (resource, controller);
     let personal = ResourceRef::Session("personal".into());
     let bot = ResourceRef::Bot("assistant".into());
     let bot_session = ResourceRef::Session("bot-session".into());
@@ -141,8 +137,26 @@ async fn exercise(pool: &sqlx::PgPool) {
         ),
         own(profile.clone(), principal.clone()),
     ] {
-        store.reserve_ownership(universe, &record).await.unwrap();
-        store.reserve_ownership(universe, &record).await.unwrap();
+        // Retries are idempotent and return the original facts.
+        for _ in 0..2 {
+            let stored = store
+                .reserve_ownership(universe, &record.0, &alice_actor, &record.1, 5)
+                .await
+                .unwrap();
+            assert_eq!(stored.owner, alice.principal.id);
+        }
+    }
+    // The owner and managing bot are copied down the admitted lineage.
+    for (resource, expected_bot) in [
+        (&personal, None),
+        (&child, None),
+        (&bot, None),
+        (&bot_session, Some("assistant")),
+        (&bot_child, Some("assistant")),
+    ] {
+        let stored = store.ownership(universe, resource).await.unwrap().unwrap();
+        assert_eq!(stored.owner, alice.principal.id, "{resource:?}");
+        assert_eq!(stored.bot.as_deref(), expected_bot, "{resource:?}");
     }
     for resource in [&personal, &child] {
         for caller in [alice, bob, operator, universe_admin, viewer] {
@@ -213,15 +227,14 @@ async fn exercise(pool: &sqlx::PgPool) {
         );
     }
     // Creation races cannot transfer a resource, and the original attribution remains.
-    let first = own(ResourceRef::Session("race".into()), principal.clone());
-    let mut other = first.clone();
-    other.controller = ResourceController::Principal(bob.principal.id);
-    other.created_by = ActionActor::Principal {
+    let race = ResourceRef::Session("race".into());
+    let bob_actor = ActionActor::Principal {
         id: bob.principal.id,
     };
+    let bob_controller = ResourceController::Principal(bob.principal.id);
     let (a, b) = tokio::join!(
-        store.reserve_ownership(universe, &first),
-        store.reserve_ownership(universe, &other)
+        store.reserve_ownership(universe, &race, &alice_actor, &principal, 5),
+        store.reserve_ownership(universe, &race, &bob_actor, &bob_controller, 5)
     );
     assert_ne!(a.is_ok(), b.is_ok());
     assert!(matches!(
@@ -243,16 +256,20 @@ async fn exercise(pool: &sqlx::PgPool) {
             .await
             .unwrap()
     );
-    store
-        .reserve_ownership(
-            universe,
-            &own(
-                missing.clone(),
-                ResourceController::Session("missing".into()),
-            ),
-        )
-        .await
-        .unwrap();
+    // A controller without admitted ownership of its own cannot delegate.
+    assert_eq!(
+        store
+            .reserve_ownership(
+                universe,
+                &missing,
+                &alice_actor,
+                &ResourceController::Session("missing".into()),
+                5,
+            )
+            .await
+            .unwrap_err(),
+        AccessError::Denied
+    );
     assert!(
         !store
             .resource_permitted(alice, UniverseAction::ControlSession, Some(&missing))
@@ -260,20 +277,20 @@ async fn exercise(pool: &sqlx::PgPool) {
             .unwrap()
     );
     // A history fork carries provenance but has its own explicit controller.
-    let fork = own(
-        ResourceRef::Session("fork".into()),
-        ResourceController::Principal(bob.principal.id),
-    );
-    store.reserve_ownership(universe, &fork).await.unwrap();
+    let fork = ResourceRef::Session("fork".into());
+    store
+        .reserve_ownership(universe, &fork, &bob_actor, &bob_controller, 5)
+        .await
+        .unwrap();
     assert!(
         !store
-            .resource_permitted(alice, UniverseAction::ControlSession, Some(&fork.resource))
+            .resource_permitted(alice, UniverseAction::ControlSession, Some(&fork))
             .await
             .unwrap()
     );
     assert!(
         store
-            .resource_permitted(bob, UniverseAction::ControlSession, Some(&fork.resource))
+            .resource_permitted(bob, UniverseAction::ControlSession, Some(&fork))
             .await
             .unwrap()
     );
@@ -362,10 +379,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         vec![Read, ControlSession, StopSession]
     );
     assert_eq!(
-        store
-            .resource_actions(bob, &fork.resource, true)
-            .await
-            .unwrap(),
+        store.resource_actions(bob, &fork, true).await.unwrap(),
         vec![Read, ControlSession, StopSession, DeleteSession]
     );
     let mut foreign_scope = alice.clone();
@@ -379,13 +393,12 @@ async fn exercise(pool: &sqlx::PgPool) {
             .unwrap()
             .is_empty()
     );
-    let audit_events: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM access_audit_events WHERE scope->>'universeId'=$1",
-    )
-    .bind(universe.to_string())
-    .fetch_one(pool)
-    .await
-    .unwrap();
+    let audit_events: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM access_audit_events WHERE universe_id=$1")
+            .bind(universe)
+            .fetch_one(pool)
+            .await
+            .unwrap();
     assert_eq!(
         audit_events, 0,
         "preview must not record hypothetical admissions"

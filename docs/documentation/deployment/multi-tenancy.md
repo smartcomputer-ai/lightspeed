@@ -139,8 +139,8 @@ capabilities and immutable ownership. Contributor control requires ownership;
 Operator/Admin may stop another person's session but cannot steer it. Existing
 content is readable by universe members. Private-session policies and individual
 resource isolation remain follow-ups, so principal attribution alone is not a
-privacy boundary. Lists and subsequent requests see committed revocations;
-response-time reauthorization of in-flight reads remains separate work.
+privacy boundary. Lists and subsequent requests see committed revocations, and
+parked transcript long polls end when their caller's authority is revoked.
 
 ## Keep Platform and runtime records aligned
 

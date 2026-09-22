@@ -185,7 +185,7 @@ async fn exercise(pool: &sqlx::PgPool) {
     let context = authenticate(&keys, &identities, &user_headers, read, 20)
         .await
         .unwrap();
-    assert_eq!(context.acting_principal.id, user);
+    assert_eq!(context.acting_principal().id, user);
     assert_eq!(context.authenticated_principal.id, user);
     assert_eq!(context.credential_scope, scope);
     assert!(matches!(
@@ -288,7 +288,7 @@ async fn exercise(pool: &sqlx::PgPool) {
     let context = authenticate(&keys, &identities, &asserted_headers, read, 22)
         .await
         .unwrap();
-    assert_eq!(context.acting_principal.id, user);
+    assert_eq!(context.acting_principal().id, user);
     assert_eq!(context.authenticated_principal.id, service);
     assert!(
         authenticate(

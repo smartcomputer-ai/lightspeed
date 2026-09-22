@@ -3,7 +3,7 @@
 //! The store uses the deployment pool because authentication precedes universe
 //! resolution. Issuance serializes with identity changes and audits the issuer.
 
-use auth::{ApiKeyError, ApiKeyRecord, ApiKeyStore, CreateApiKey};
+use auth::{ApiKeyError, ApiKeyRecord, ApiKeyStore, CreateApiKey, ResolvedApiKey};
 use sqlx::{PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
 
@@ -92,24 +92,71 @@ impl ApiKeyStore for PgApiKeyStore {
         &self,
         key_hash: &str,
         observed_at_ms: u64,
-    ) -> Result<Option<ApiKeyRecord>, ApiKeyError> {
-        let row = sqlx::query(
+    ) -> Result<Option<ResolvedApiKey>, ApiKeyError> {
+        let Some(row) = sqlx::query(
             r#"
-            UPDATE api_keys
-            SET last_used_at_ms = $2
-            WHERE key_hash = $1 AND revoked_at_ms IS NULL
-              AND EXISTS (SELECT 1 FROM access_principals p
-                          WHERE p.principal_id = api_keys.principal_id AND p.status = 'active')
-            RETURNING key_prefix, universe_id, principal_id, created_by,
-                      display_name, created_at_ms, revoked_at_ms, last_used_at_ms
+            SELECT k.key_prefix, k.universe_id, k.principal_id, k.created_by,
+                   k.display_name, k.created_at_ms, k.revoked_at_ms, k.last_used_at_ms,
+                   p.kind AS principal_kind, p.status AS principal_status,
+                   p.display_name AS principal_display_name,
+                   p.management_universe_id AS principal_management_universe_id,
+                   p.created_at_ms AS principal_created_at_ms,
+                   (SELECT revision FROM access_policy WHERE singleton) AS policy_revision
+            FROM api_keys k
+            JOIN access_principals p ON p.principal_id = k.principal_id
+            WHERE k.key_hash = $1 AND k.revoked_at_ms IS NULL AND p.status = 'active'
             "#,
         )
         .bind(key_hash)
-        .bind(ms_to_i64(observed_at_ms)?)
         .fetch_optional(&self.pool)
         .await
-        .map_err(map_sqlx_error)?;
-        row.map(api_key_record_from_row).transpose()
+        .map_err(map_sqlx_error)?
+        else {
+            return Ok(None);
+        };
+        let principal = access::Principal {
+            id: row.try_get("principal_id").map_err(map_sqlx_error)?,
+            kind: crate::access::parse_enum(row.try_get("principal_kind").map_err(map_sqlx_error)?)
+                .map_err(map_access_error)?,
+            status: crate::access::parse_enum(
+                row.try_get("principal_status").map_err(map_sqlx_error)?,
+            )
+            .map_err(map_access_error)?,
+            display_name: row
+                .try_get("principal_display_name")
+                .map_err(map_sqlx_error)?,
+            management_scope: row
+                .try_get::<Option<Uuid>, _>("principal_management_universe_id")
+                .map_err(map_sqlx_error)?
+                .map_or(AccessScope::Deployment, |universe_id| {
+                    AccessScope::Universe { universe_id }
+                }),
+            created_at_ms: i64_to_ms(
+                row.try_get("principal_created_at_ms")
+                    .map_err(map_sqlx_error)?,
+            )?,
+        };
+        let policy_revision = i64_to_ms(row.try_get("policy_revision").map_err(map_sqlx_error)?)?;
+        let record = api_key_record_from_row(row)?;
+        // Usage is coarse on purpose: authentication stays a read.
+        if record.last_used_at_ms.is_none_or(|last| {
+            last.saturating_add(auth::API_KEY_LAST_USED_RESOLUTION_MS) <= observed_at_ms
+        }) {
+            sqlx::query(
+                "UPDATE api_keys SET last_used_at_ms = $2 WHERE key_hash = $1 AND \
+                 (last_used_at_ms IS NULL OR last_used_at_ms < $2)",
+            )
+            .bind(key_hash)
+            .bind(ms_to_i64(observed_at_ms)?)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        }
+        Ok(Some(ResolvedApiKey {
+            record,
+            principal,
+            policy_revision,
+        }))
     }
 
     async fn list_api_keys(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyError> {
@@ -125,70 +172,6 @@ impl ApiKeyStore for PgApiKeyStore {
         .await
         .map_err(map_sqlx_error)?;
         rows.into_iter().map(api_key_record_from_row).collect()
-    }
-
-    async fn list_api_keys_for_universe(
-        &self,
-        universe_id: Uuid,
-    ) -> Result<Vec<ApiKeyRecord>, ApiKeyError> {
-        let rows = sqlx::query(
-            r#"
-            SELECT key_prefix, universe_id, principal_id, created_by,
-                   display_name, created_at_ms, revoked_at_ms, last_used_at_ms
-            FROM api_keys
-            WHERE universe_id = $1
-            ORDER BY created_at_ms, key_prefix
-            "#,
-        )
-        .bind(universe_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        rows.into_iter().map(api_key_record_from_row).collect()
-    }
-
-    async fn revoke_api_key(
-        &self,
-        key_prefix: &str,
-        revoked_at_ms: u64,
-    ) -> Result<bool, ApiKeyError> {
-        let result = sqlx::query(
-            r#"
-            UPDATE api_keys
-            SET revoked_at_ms = COALESCE(revoked_at_ms, $2)
-            WHERE key_prefix = $1
-            "#,
-        )
-        .bind(key_prefix)
-        .bind(ms_to_i64(revoked_at_ms)?)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(result.rows_affected() > 0)
-    }
-
-    async fn revoke_api_key_for_universe(
-        &self,
-        universe_id: Uuid,
-        key_prefix: &str,
-        revoked_at_ms: u64,
-    ) -> Result<Option<ApiKeyRecord>, ApiKeyError> {
-        let row = sqlx::query(
-            r#"
-            UPDATE api_keys
-            SET revoked_at_ms = COALESCE(revoked_at_ms, $3)
-            WHERE universe_id = $1 AND key_prefix = $2
-            RETURNING key_prefix, universe_id, principal_id, created_by,
-                      display_name, created_at_ms, revoked_at_ms, last_used_at_ms
-            "#,
-        )
-        .bind(universe_id)
-        .bind(key_prefix)
-        .bind(ms_to_i64(revoked_at_ms)?)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        row.map(api_key_record_from_row).transpose()
     }
 }
 
@@ -250,6 +233,29 @@ fn map_access_error(error: access::AccessError) -> ApiKeyError {
 }
 
 impl PgApiKeyStore {
+    /// Whether the referenced credential still authenticates: not revoked, same
+    /// binding, and its principal active. Used to revalidate a parked request.
+    pub async fn key_is_active(
+        &self,
+        key_prefix: &str,
+        principal_id: Uuid,
+        scope: AccessScope,
+    ) -> Result<bool, ApiKeyError> {
+        sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM api_keys k \
+             JOIN access_principals p ON p.principal_id = k.principal_id \
+             WHERE k.key_prefix = $1 AND k.principal_id = $2 \
+               AND k.universe_id IS NOT DISTINCT FROM $3 \
+               AND k.revoked_at_ms IS NULL AND p.status = 'active')",
+        )
+        .bind(key_prefix)
+        .bind(principal_id)
+        .bind(scope_id(scope))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
     /// Members see their own keys. Scope administrators see keys in their
     /// scope, without acquiring authority to mint integration identities.
     pub async fn list_managed_keys(
@@ -258,7 +264,7 @@ impl PgApiKeyStore {
         authority_scope: AccessScope,
         scope: AccessScope,
     ) -> Result<Vec<ApiKeyRecord>, ApiKeyError> {
-        if authority_scope != AccessScope::Deployment && authority_scope != scope {
+        if !authority_scope.permits(scope) {
             return Err(ApiKeyError::Denied);
         }
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
@@ -288,7 +294,7 @@ impl PgApiKeyStore {
         prefix: &str,
         now_ms: u64,
     ) -> Result<Option<ApiKeyRecord>, ApiKeyError> {
-        if authority_scope != AccessScope::Deployment && authority_scope != scope {
+        if !authority_scope.permits(scope) {
             return Err(ApiKeyError::Denied);
         }
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;

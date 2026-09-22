@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use super::authentication;
-use access::{AccessScope, AccessStore, PrincipalStatus, RequestContext};
+use access::{AccessScope, RequestContext};
 use api::{
     AgentApiError, JsonRpcRequest, JsonRpcResponse, dispatch_deployment_json_rpc,
     dispatch_json_rpc, is_deployment_method,
@@ -22,8 +22,7 @@ use environment_protocol::{
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
-use store_pg::{PgAccessStore, PgApiKeyStore, PgStore};
-use temporalio_client::Client;
+use store_pg::{PgAccessStore, PgApiKeyStore};
 use tokio_tungstenite::{connect_async, tungstenite::Message as ProviderMessage};
 use uuid::Uuid;
 
@@ -213,109 +212,85 @@ impl GatewayState {
         }
     }
 
+    /// Resolve the caller once: credential, assertion and the acting
+    /// principal's rights in the scope the method addresses.
     async fn request_context(
         &self,
         headers: &HeaderMap,
         method: &str,
-    ) -> Result<RequestContext, AgentApiError> {
-        let result = self.request_context_inner(headers, method).await;
-        // Authenticated mode records failures as it verifies each identity fact.
-        // Development mode has no trustworthy caller on a rejected admission.
-        if !matches!(
-            &self.resolution,
-            UniverseResolution::Multi {
-                mode: GatewayAuthMode::Authenticated,
-                ..
-            }
-        ) && let Err(error) = &result
-        {
-            let mut audit = super::audit::request(method, access::AuditStage::Authentication);
-            audit.identity = Default::default();
-            audit.actor = None;
-            audit.scope = None;
-            super::audit::failure(self.pool(), &mut audit, error).await?;
-        }
-        result
-    }
-
-    async fn request_context_inner(
-        &self,
-        headers: &HeaderMap,
-        method: &str,
-    ) -> Result<RequestContext, AgentApiError> {
-        let deployment = is_deployment_method(method);
+    ) -> Result<RequestContext, authentication::Refusal> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| AgentApiError::internal(e.to_string()))?
             .as_millis() as u64;
-        match &self.resolution {
+        let (pool, universe_id) = match &self.resolution {
             UniverseResolution::Multi {
                 mode: GatewayAuthMode::Authenticated,
                 runtime,
                 api_keys,
                 ..
             } => {
-                authentication::authenticate(
+                return authentication::authenticate(
                     api_keys,
                     &PgAccessStore::new(runtime.stores().pool().clone()),
                     headers,
                     method,
                     now,
                 )
-                .await
+                .await;
             }
-            _ => {
-                let requirement = api::method_access(method)
-                    .ok_or_else(|| AgentApiError::rejected("unknown method"))?;
-                authentication::reject_identity_headers(headers)?;
-                let (pool, universe_id) = match &self.resolution {
-                    UniverseResolution::FixedApi { api } => {
-                        (api.store().pool().clone(), api.universe_id())
-                    }
-                    UniverseResolution::Multi {
-                        mode: GatewayAuthMode::Single { universe_id },
-                        runtime,
-                        ..
-                    } => (runtime.stores().pool().clone(), *universe_id),
-                    _ => unreachable!(),
-                };
-                let access = PgAccessStore::new(pool);
-                self.local_initialized
-                    .get_or_try_init(|| async {
-                        access
-                            .initialize_local_development(universe_id, now)
-                            .await
-                            .map(|_| ())
-                    })
+            UniverseResolution::FixedApi { api } => (api.store().pool().clone(), api.universe_id()),
+            UniverseResolution::Multi {
+                mode: GatewayAuthMode::Single { universe_id },
+                runtime,
+                ..
+            } => (runtime.stores().pool().clone(), *universe_id),
+        };
+        // Development mode: one explicit local identity, never a header claim.
+        let requirement = api::method_access(method).ok_or_else(authentication::unknown_method)?;
+        authentication::reject_identity_headers(headers)?;
+        let access = PgAccessStore::new(pool);
+        self.local_initialized
+            .get_or_try_init(|| async {
+                access
+                    .initialize_local_development(universe_id, now)
                     .await
-                    .map_err(|e| AgentApiError::rejected(e.to_string()))?;
-                let target = if deployment {
-                    AccessScope::Deployment
-                } else {
-                    AccessScope::Universe { universe_id }
-                };
-                let rights = access
-                    .effective_access(store_pg::LOCAL_DEVELOPMENT_PRINCIPAL, target)
-                    .await
-                    .map_err(|e| AgentApiError::rejected(e.to_string()))?;
-                if !authentication::method_permitted(&rights, requirement)
-                    || rights.principal.status != PrincipalStatus::Active
-                {
-                    return Err(AgentApiError::rejected(
-                        "local development identity is not authorized",
-                    ));
-                }
-                Ok(authentication::local_context(rights.principal, target))
-            }
+                    .map(|_| ())
+            })
+            .await
+            .map_err(|e| AgentApiError::internal(e.to_string()))?;
+        let target = if is_deployment_method(method) {
+            AccessScope::Deployment
+        } else {
+            AccessScope::Universe { universe_id }
+        };
+        let context =
+            authentication::local_context(&access, store_pg::LOCAL_DEVELOPMENT_PRINCIPAL, target)
+                .await?;
+        if !authentication::method_permitted(&context.rights, requirement) {
+            return Err(AgentApiError::forbidden().into());
         }
+        Ok(context)
     }
 
-    fn deployment_for_request(&self) -> Result<&Arc<GatewayDeploymentApi>, AgentApiError> {
-        match &self.resolution {
-            UniverseResolution::FixedApi { .. } => Err(AgentApiError::rejected(
-                "deployment methods are not available on this gateway",
-            )),
-            UniverseResolution::Multi { deployment, .. } => Ok(deployment),
+    async fn dispatch(&self, context: &RequestContext, request: JsonRpcRequest) -> JsonRpcResponse {
+        if is_deployment_method(&request.method) {
+            return match &self.resolution {
+                UniverseResolution::Multi { deployment, .. } => {
+                    dispatch_deployment_json_rpc(deployment.as_ref(), request).await
+                }
+                UniverseResolution::FixedApi { .. } => JsonRpcResponse::failure(
+                    request.id,
+                    AgentApiError::invalid_request(
+                        "deployment methods are not available on this gateway",
+                    )
+                    .into(),
+                ),
+            };
+        }
+        match self.api_for_request(context).await {
+            Ok(api) => dispatch_json_rpc(api.as_ref(), request).await,
+            Err(error) => JsonRpcResponse::failure(request.id, error.into()),
         }
     }
 
@@ -323,8 +298,8 @@ impl GatewayState {
         &self,
         context: &RequestContext,
     ) -> Result<Arc<GatewayAgentApi>, AgentApiError> {
-        let AccessScope::Universe { universe_id } = context.target_scope else {
-            return Err(AgentApiError::rejected("universe context required"));
+        let AccessScope::Universe { universe_id } = context.target_scope() else {
+            return Err(AgentApiError::invalid_request("universe context required"));
         };
         match &self.resolution {
             UniverseResolution::FixedApi { api } => Ok(api.clone()),
@@ -427,65 +402,6 @@ pub async fn prewarm_single_universe(
             .initialize_local_development(*universe_id, now)
             .await?;
     }
-    Ok(())
-}
-
-/// Single-instance gateway over an injected client/store (tests and
-/// single-universe embeddings). The full multi-universe path is
-/// [`serve_gateway`].
-pub async fn serve_gateway_with_client_store(
-    client: Client,
-    store: Arc<PgStore>,
-    config: GatewayServerConfig,
-) -> anyhow::Result<()> {
-    let public_base_url = public_base_url_or_default(&config);
-    let api = Arc::new(
-        GatewayAgentApi::builder(client, store)
-            .with_task_queue(config.task_queue)
-            .with_public_base_url(public_base_url)
-            .build(),
-    );
-    let reconciler_api = api.clone();
-    let reconciler = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
-        let mut failures = crate::gateway::ReconcileFailureLog::default();
-        let universe_id = reconciler_api.universe_id();
-        loop {
-            interval.tick().await;
-            match reconciler_api
-                .environment_service()
-                .reconcile_environment_lifecycle_once()
-                .await
-            {
-                Ok(_) => failures.succeeded(universe_id),
-                Err(error) => failures.failed(universe_id, &error),
-            }
-        }
-    });
-    let power_api = api.clone();
-    let power_reaper = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(crate::universe::POWER_REAPER_INTERVAL);
-        let mut failures = crate::gateway::ReconcileFailureLog::default();
-        let universe_id = power_api.universe_id();
-        loop {
-            interval.tick().await;
-            match power_api
-                .environment_service()
-                .reconcile_idle_power_once()
-                .await
-            {
-                Ok(_) => failures.succeeded(universe_id),
-                Err(error) => failures.failed(universe_id, &error),
-            }
-        }
-    });
-    let state = Arc::new(GatewayState::for_api(api));
-    let app = gateway_router(state, config.max_request_body_bytes, GatewayRoutes::ALL);
-    let listener = tokio::net::TcpListener::bind(config.bind).await?;
-    tracing::info!(target: "temporal_server", bind = %config.bind, "gateway listening");
-    axum::serve(listener, app).await?;
-    reconciler.abort();
-    power_reaper.abort();
     Ok(())
 }
 
@@ -1018,84 +934,26 @@ async fn rpc(
     headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> Response {
-    super::audit::operation(rpc_inner(state, headers, request)).await
-}
-
-async fn rpc_inner(
-    state: Arc<GatewayState>,
-    headers: HeaderMap,
-    request: JsonRpcRequest,
-) -> Response {
-    let context = match state.request_context(&headers, &request.method).await {
-        Ok(context) => context,
-        Err(error) => return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into())),
-    };
-    if is_deployment_method(&request.method) {
-        let deployment = match state.deployment_for_request() {
-            Ok(deployment) => deployment,
-            Err(error) => {
-                return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into()));
-            }
-        };
-        return no_store_json_rpc(
-            principal::with_request_context(
-                context,
-                dispatch_deployment_json_rpc(deployment.as_ref(), request),
-            )
-            .await,
-        );
-    }
-    let api = match state.api_for_request(&context).await {
-        Ok(api) => api,
-        Err(error) => return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into())),
-    };
     let method = request.method.clone();
-    let response = principal::with_request_context(context, async {
-        let mut response = dispatch_json_rpc(api.as_ref(), request).await;
-        // JSON-RPC content is buffered, so revalidate once more after serialization.
-        // Persistent user-content sockets do not exist; daemon sockets have their
-        // separate registration/connection authority boundary.
-        if response.result.is_some()
-            && matches!(
-                api::method_access(&method),
-                Some(api::MethodAccess::Universe(access::UniverseAction::Read))
-            )
-        {
-            let decision = authentication::current_context(state.pool())
-                .await
-                .and_then(|(_, rights)| {
-                    if authentication::method_permitted(
-                        &rights,
-                        api::MethodAccess::Universe(access::UniverseAction::Read),
-                    ) {
-                        Ok(())
-                    } else {
-                        Err(AgentApiError::rejected("request is not authorized"))
-                    }
-                });
-            if let Err(error) = decision {
-                let mut audit = super::audit::request(&method, access::AuditStage::Delivery);
-                let error = match super::audit::failure(state.pool(), &mut audit, &error).await {
-                    Ok(()) => error,
-                    Err(audit_error) => audit_error,
-                };
-                response = JsonRpcResponse::failure(response.id, error.into());
+    let target = super::audit::target(request.params.as_ref());
+    let context = match state.request_context(&headers, &method).await {
+        Ok(context) => context,
+        Err(refusal) => {
+            match refusal.event {
+                Some(event) => super::audit::refused(state.pool(), *event, target).await,
+                None => tracing::warn!(
+                    target: "temporal_server",
+                    %method,
+                    kind = ?refusal.error.kind,
+                    "request refused before authentication"
+                ),
             }
+            return no_store_json_rpc(JsonRpcResponse::failure(request.id, refusal.error.into()));
         }
-        if let Some(error) = response
-            .error
-            .as_ref()
-            .and_then(|error| error.data.as_ref())
-            && error.kind == api::AgentApiErrorKind::Rejected
-        {
-            let mut audit = super::audit::request(&method, access::AuditStage::Completion);
-            if let Err(error) = super::audit::failure(state.pool(), &mut audit, error).await {
-                response = JsonRpcResponse::failure(response.id, error.into());
-            }
-        }
-        response
-    })
-    .await;
+    };
+    let response =
+        principal::with_request_context(context.clone(), state.dispatch(&context, request)).await;
+    super::audit::completed(state.pool(), &method, target, &context, &response).await;
     if response_budget_exempt(&method) {
         no_store_json_rpc(response)
     } else {

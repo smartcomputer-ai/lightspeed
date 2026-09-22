@@ -5,6 +5,8 @@ export type JsonRpcErrorPayload = ApiJsonRpcError;
 export type LightspeedRpcErrorKind =
   | "invalid_request"
   | "method_not_found"
+  | "unauthenticated"
+  | "forbidden"
   | "not_found"
   | "conflict"
   | "rejected"
@@ -18,6 +20,10 @@ export function lightspeedRpcErrorKind(code: number): LightspeedRpcErrorKind {
       return "invalid_request";
     case -32601:
       return "method_not_found";
+    case -32001:
+      return "unauthenticated";
+    case -32003:
+      return "forbidden";
     case -32004:
       return "not_found";
     case -32009:

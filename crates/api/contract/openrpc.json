@@ -459,7 +459,6 @@
               "invalid_request",
               "not_found",
               "conflict",
-              "rejected",
               "unsupported_audio_mime",
               "audio_blob_too_large",
               "audio_duration_too_long",
@@ -468,6 +467,21 @@
               "transcription_failure",
               "internal"
             ],
+            "type": "string"
+          },
+          {
+            "const": "rejected",
+            "description": "The request was understood and the caller may make it, but current\nstate or policy refuses it. Never an authorization decision.",
+            "type": "string"
+          },
+          {
+            "const": "unauthenticated",
+            "description": "No valid credential was presented.",
+            "type": "string"
+          },
+          {
+            "const": "forbidden",
+            "description": "The authenticated caller lacks permission for this operation or target.",
             "type": "string"
           },
           {

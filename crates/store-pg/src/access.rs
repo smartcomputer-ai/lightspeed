@@ -37,7 +37,7 @@ fn enum_name<T: Serialize>(value: T) -> Result<String, AccessError> {
         .map(str::to_owned)
         .ok_or_else(|| AccessError::Store("invalid stored enum".into()))
 }
-fn parse_enum<T: DeserializeOwned>(value: String) -> Result<T, AccessError> {
+pub(crate) fn parse_enum<T: DeserializeOwned>(value: String) -> Result<T, AccessError> {
     serde_json::from_value(Value::String(value)).map_err(store_error)
 }
 fn store_error(error: impl std::fmt::Display) -> AccessError {
@@ -88,42 +88,48 @@ async fn revision(connection: &mut PgConnection) -> Result<u64, AccessError> {
             .map_err(db_error)?,
     )
 }
+/// One statement, hence one committed snapshot: the principal, its direct and
+/// group-derived roles, its capabilities in `scope`, and the policy revision.
+/// Disabled principals resolve with no rights.
 pub(crate) async fn effective(
     connection: &mut PgConnection,
     id: Uuid,
     scope: AccessScope,
 ) -> Result<EffectiveAccess, AccessError> {
-    let principal = read_principal(connection, id).await?;
-    let mut result = EffectiveAccess {
-        principal,
+    let row = sqlx::query(
+        "SELECT p.*,
+           (SELECT revision FROM access_policy WHERE singleton) AS policy_revision,
+           ARRAY(SELECT DISTINCT r.role FROM access_role_assignments r
+             WHERE p.status = 'active' AND r.universe_id IS NOT DISTINCT FROM $2 AND
+               (r.principal_id = p.principal_id OR EXISTS
+                 (SELECT 1 FROM access_memberships m
+                   WHERE m.group_id = r.group_id AND m.principal_id = p.principal_id))) AS roles,
+           ARRAY(SELECT c.capability FROM access_capabilities c
+             WHERE p.status = 'active' AND p.kind = 'service' AND
+               c.universe_id IS NOT DISTINCT FROM $2 AND c.principal_id = p.principal_id) AS capabilities
+         FROM access_principals p WHERE p.principal_id = $1",
+    )
+    .bind(id)
+    .bind(scope_id(scope))
+    .fetch_optional(connection)
+    .await
+    .map_err(db_error)?
+    .ok_or(AccessError::NotFound)?;
+    let roles: Vec<String> = row.try_get("roles").map_err(db_error)?;
+    let capabilities: Vec<String> = row.try_get("capabilities").map_err(db_error)?;
+    Ok(EffectiveAccess {
         scope,
-        roles: Default::default(),
-        capabilities: Default::default(),
-        policy_revision: revision(connection).await?,
-    };
-    if !result.active() {
-        return Ok(result);
-    }
-    let roles: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT role FROM access_role_assignments r
-         WHERE r.universe_id IS NOT DISTINCT FROM $1 AND
-           (r.principal_id = $2 OR EXISTS
-             (SELECT 1 FROM access_memberships m WHERE m.group_id = r.group_id AND m.principal_id = $2))")
-        .bind(scope_id(scope)).bind(id).fetch_all(&mut *connection).await.map_err(db_error)?;
-    result.roles = roles
-        .into_iter()
-        .map(parse_enum)
-        .collect::<Result<_, _>>()?;
-    if result.principal.kind == PrincipalKind::Service {
-        let capabilities: Vec<String> = sqlx::query_scalar(
-            "SELECT capability FROM access_capabilities WHERE universe_id IS NOT DISTINCT FROM $1 AND principal_id = $2")
-            .bind(scope_id(scope)).bind(id).fetch_all(connection).await.map_err(db_error)?;
-        result.capabilities = capabilities
+        roles: roles
             .into_iter()
             .map(parse_enum)
-            .collect::<Result<_, _>>()?;
-    }
-    Ok(result)
+            .collect::<Result<_, _>>()?,
+        capabilities: capabilities
+            .into_iter()
+            .map(parse_enum)
+            .collect::<Result<_, _>>()?,
+        policy_revision: nonnegative(row.try_get("policy_revision").map_err(db_error)?)?,
+        principal: principal_row(row)?,
+    })
 }
 
 /// Every scope which currently has at least one active administrator. Comparing
@@ -316,7 +322,7 @@ async fn apply_change(
             if principal.kind != PrincipalKind::Service { return Err(AccessError::Invalid("capabilities require a service principal".into())); }
             // Universe-managed services must never acquire deployment-wide powers
             // or capabilities in a different universe.
-            if principal.management_scope != AccessScope::Deployment && principal.management_scope != assignment.scope {
+            if !principal.management_scope.permits(assignment.scope) {
                 return Err(AccessError::Invalid("capability exceeds service management scope".into()));
             }
             let query = if matches!(change, AssignCapability { .. }) {
@@ -360,14 +366,8 @@ impl AccessStore for PgAccessStore {
         principal_id: Uuid,
         scope: AccessScope,
     ) -> Result<EffectiveAccess, AccessError> {
-        let mut transaction = self.pool.begin().await.map_err(db_error)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-            .execute(&mut *transaction)
-            .await
-            .map_err(db_error)?;
-        let result = effective(&mut transaction, principal_id, scope).await?;
-        transaction.commit().await.map_err(db_error)?;
-        Ok(result)
+        let mut connection = self.pool.acquire().await.map_err(db_error)?;
+        effective(&mut connection, principal_id, scope).await
     }
 
     async fn accessible_universes(&self, principal_id: Uuid) -> Result<Vec<Uuid>, AccessError> {
@@ -496,6 +496,40 @@ impl AccessStore for PgAccessStore {
             changed: true,
             policy_revision,
         })
+    }
+}
+
+impl PgAccessStore {
+    /// The committed policy revision. Every identity, role, capability, key
+    /// and universe-removal change advances it, so an unchanged revision means
+    /// previously resolved rights still hold.
+    pub async fn policy_revision(&self) -> Result<u64, AccessError> {
+        let mut connection = self.pool.acquire().await.map_err(db_error)?;
+        revision(&mut connection).await
+    }
+
+    /// Whether an authenticated service may act for a user in `target`: an
+    /// `assert_user` capability in that scope, or deployment-wide when the
+    /// presented credential itself is deployment-scoped.
+    pub async fn may_assert_user(
+        &self,
+        service: Uuid,
+        target: AccessScope,
+        credential_scope: AccessScope,
+    ) -> Result<bool, AccessError> {
+        sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM access_capabilities c \
+             JOIN access_principals p ON p.principal_id = c.principal_id \
+             WHERE c.principal_id = $1 AND c.capability = 'assert_user' \
+               AND p.status = 'active' AND p.kind = 'service' \
+               AND (c.universe_id IS NOT DISTINCT FROM $2 OR ($3 AND c.universe_id IS NULL)))",
+        )
+        .bind(service)
+        .bind(scope_id(target))
+        .bind(credential_scope == AccessScope::Deployment)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_error)
     }
 }
 

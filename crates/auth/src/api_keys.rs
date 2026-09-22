@@ -110,49 +110,38 @@ fn generate_api_key_secret() -> String {
     generate_prefixed_secret(API_KEY_SECRET_PREFIX)
 }
 
+/// A presented key resolved to its record and its active principal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedApiKey {
+    pub record: ApiKeyRecord,
+    pub principal: access::Principal,
+    /// Policy revision of the snapshot that resolved the key. Anything a
+    /// request resolves afterwards is at least this recent, so it is the
+    /// baseline a parked request revalidates against.
+    pub policy_revision: u64,
+}
+
+/// How stale `last_used_at_ms` may become. Resolution is a read; the usage
+/// stamp is refreshed at most this often so a busy key is not a hot row.
+pub const API_KEY_LAST_USED_RESOLUTION_MS: u64 = 60_000;
+
 /// Deployment-scoped API key persistence. Implementations sit above the
-/// universe boundary (see module docs).
+/// universe boundary (see module docs). Listing and revocation are contextual
+/// management operations of the concrete store.
 #[async_trait::async_trait]
 pub trait ApiKeyStore: Send + Sync {
     async fn create_api_key(&self, create: CreateApiKey) -> Result<(), ApiKeyError>;
 
-    /// Resolve an active (non-revoked) key by secret hash, recording
-    /// `observed_at_ms` as its last use. Returns `None` for unknown or
-    /// revoked keys — resolution never distinguishes the two.
+    /// Resolve an active key of an active principal by secret hash. Returns
+    /// `None` for unknown keys, revoked keys and disabled principals —
+    /// resolution never distinguishes them.
     async fn resolve_api_key(
         &self,
         key_hash: &str,
         observed_at_ms: u64,
-    ) -> Result<Option<ApiKeyRecord>, ApiKeyError>;
+    ) -> Result<Option<ResolvedApiKey>, ApiKeyError>;
 
     async fn list_api_keys(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyError>;
-
-    /// List keys belonging to exactly one universe. Management APIs should
-    /// use this scoped operation rather than loading the deployment-wide
-    /// catalog and filtering in application code.
-    async fn list_api_keys_for_universe(
-        &self,
-        universe_id: Uuid,
-    ) -> Result<Vec<ApiKeyRecord>, ApiKeyError>;
-
-    /// Revoke by display prefix. Returns `false` when no such key exists.
-    /// Idempotent: revoking an already-revoked key returns `true` without
-    /// moving the original revocation time.
-    async fn revoke_api_key(
-        &self,
-        key_prefix: &str,
-        revoked_at_ms: u64,
-    ) -> Result<bool, ApiKeyError>;
-
-    /// Revoke a key only when both its display prefix and owning universe
-    /// match. Returns the resulting record, or `None` for unknown and
-    /// foreign-universe prefixes.
-    async fn revoke_api_key_for_universe(
-        &self,
-        universe_id: Uuid,
-        key_prefix: &str,
-        revoked_at_ms: u64,
-    ) -> Result<Option<ApiKeyRecord>, ApiKeyError>;
 }
 
 #[cfg(test)]

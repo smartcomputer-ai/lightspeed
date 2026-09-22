@@ -37,6 +37,36 @@ impl BotWorkerActivities {
     }
 }
 
+impl BotWorkerActivities {
+    /// The universe's service plus the authority of the bot controller workflow
+    /// this activity runs for, bound to the Temporal workflow identity.
+    async fn controller(
+        &self,
+        ctx: &ActivityContext,
+        universe_id: uuid::Uuid,
+        bot: Option<&api::BotId>,
+    ) -> Result<
+        (
+            Arc<GatewayAgentApi>,
+            crate::gateway::service::authorization::ControllerAuthority,
+        ),
+        ActivityError,
+    > {
+        let api = self.universes.api_for(universe_id).await?;
+        let workflow_id = &ctx
+            .info()
+            .workflow_execution
+            .as_ref()
+            .ok_or_else(|| authority_error("missing controller workflow identity"))?
+            .workflow_id;
+        let authority = api
+            .bot_activity_authority(workflow_id, bot)
+            .await
+            .map_err(authority_error)?;
+        Ok((api, authority))
+    }
+}
+
 #[activities]
 impl BotWorkerActivities {
     #[activity(name = ACTIVITY_BOT_ENSURE_SESSION)]
@@ -45,17 +75,9 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotEnsureSessionRequest,
     ) -> Result<BotEnsureSessionResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, Some(&request.bot_id))
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self
+            .controller(&_ctx, request.universe_id, Some(&request.bot_id))
+            .await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::ensure_session(&api, request),
@@ -69,17 +91,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotRenameSessionRequest,
     ) -> Result<(), ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, None)
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self.controller(&_ctx, request.universe_id, None).await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::rename_session(&api, request),
@@ -93,17 +105,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotSessionRequest,
     ) -> Result<BotSessionStatus, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, None)
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self.controller(&_ctx, request.universe_id, None).await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::read_session_status(&api, request),
@@ -117,17 +119,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotReadRunUsageRequest,
     ) -> Result<BotReadRunUsageResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, None)
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self.controller(&_ctx, request.universe_id, None).await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::read_run_usage(&api, request),
@@ -141,17 +133,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotStartRunRequest,
     ) -> Result<BotStartRunResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, None)
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self.controller(&_ctx, request.universe_id, None).await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::start_run(&api, request),
@@ -165,17 +147,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotSteerRunRequest,
     ) -> Result<BotSteerRunResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, None)
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self.controller(&_ctx, request.universe_id, None).await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::steer_run(&api, request),
@@ -189,17 +161,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotAppendContextRequest,
     ) -> Result<(), ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, None)
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self.controller(&_ctx, request.universe_id, None).await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::append_context(&api, request),
@@ -213,17 +175,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotCloseSessionRequest,
     ) -> Result<BotCloseSessionResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, None)
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self.controller(&_ctx, request.universe_id, None).await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::close_session(&api, request),
@@ -237,17 +189,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotCountDescendantsRequest,
     ) -> Result<BotCountDescendantsResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, None)
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self.controller(&_ctx, request.universe_id, None).await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::count_descendants(&api, request),
@@ -261,17 +203,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotReadToolInvocationsRequest,
     ) -> Result<BotReadToolInvocationsResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, None)
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self.controller(&_ctx, request.universe_id, None).await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::read_tool_invocations(&api, request),
@@ -285,17 +217,7 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotReadJsonBlobRequest,
     ) -> Result<serde_json::Value, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, None)
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self.controller(&_ctx, request.universe_id, None).await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::read_json_blob(&api, request),
@@ -309,17 +231,9 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotExecuteToolRequest,
     ) -> Result<BotExecuteToolResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, Some(&request.bot_id))
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self
+            .controller(&_ctx, request.universe_id, Some(&request.bot_id))
+            .await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::tools::execute_tool(&api, request),
@@ -333,17 +247,9 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotRecordOutcomesRequest,
     ) -> Result<BotRecordOutcomesResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, Some(&request.bot_id))
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self
+            .controller(&_ctx, request.universe_id, Some(&request.bot_id))
+            .await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::receipts::record_outcomes(&api, request),
@@ -357,17 +263,9 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotRecordClosedRequest,
     ) -> Result<BotRecordClosedResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, Some(&request.bot_id))
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self
+            .controller(&_ctx, request.universe_id, Some(&request.bot_id))
+            .await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::receipts::record_closed(&api, request),
@@ -381,17 +279,9 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotSendDeliveryReceiptsRequest,
     ) -> Result<BotReceiptsSent, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, Some(&request.bot_id))
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self
+            .controller(&_ctx, request.universe_id, Some(&request.bot_id))
+            .await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::receipts::send_delivery_receipts(&api, request),
@@ -405,17 +295,9 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotSendBotReceiptsRequest,
     ) -> Result<BotReceiptsSent, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, Some(&request.bot_id))
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self
+            .controller(&_ctx, request.universe_id, Some(&request.bot_id))
+            .await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::receipts::send_bot_receipts(&api, request),
@@ -429,17 +311,9 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotPublishDirectoryRequest,
     ) -> Result<BotPublishDirectoryResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, Some(&request.bot_id))
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self
+            .controller(&_ctx, request.universe_id, Some(&request.bot_id))
+            .await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::receipts::publish_directory(&api, request),
@@ -453,17 +327,9 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotTriggerFireRequest,
     ) -> Result<BotScheduleFireResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, Some(&request.bot_id))
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self
+            .controller(&_ctx, request.universe_id, Some(&request.bot_id))
+            .await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::fires::admit_schedule_event(&api, request),
@@ -477,17 +343,9 @@ impl BotWorkerActivities {
         _ctx: ActivityContext,
         request: BotTriggerFireRequest,
     ) -> Result<BotPollFireResult, ActivityError> {
-        let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = &_ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
-        let authority = api
-            .bot_activity_authority(workflow_id, Some(&request.bot_id))
-            .await
-            .map_err(authority_error)?;
+        let (api, authority) = self
+            .controller(&_ctx, request.universe_id, Some(&request.bot_id))
+            .await?;
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::fires::poll_trigger(&api, request),

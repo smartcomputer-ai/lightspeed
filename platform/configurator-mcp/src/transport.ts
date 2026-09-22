@@ -198,8 +198,12 @@ function httpStatus(error: unknown): number {
   }
   if (error instanceof LightspeedRpcError) {
     switch (error.data?.kind) {
-      case "rejected":
+      case "unauthenticated":
         return 401;
+      case "forbidden":
+        return 403;
+      case "rejected":
+        return 409;
       case "not_found":
         return 404;
       case "invalid_request":

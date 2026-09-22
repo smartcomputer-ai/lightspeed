@@ -1,90 +1,103 @@
-//! Significant access decisions complement transactional identity changes.
-//! Only trusted identity references and explicitly selected target identifiers belong here.
+//! Durable record of significant access decisions: one row per audited operation
+//! or post-authentication denial. It complements the transactional identity
+//! change log and holds trusted identity references and selected target
+//! identifiers only, never request bodies, results or error messages.
 use crate::{AccessScope, AuthenticationReference, RequestContext};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Reject malformed/oversized references rather than copying arbitrary caller
-/// strings into a durable security log before parameter validation runs.
-pub fn auditable_resource(resource: &crate::ResourceRef) -> Option<&crate::ResourceRef> {
-    let (crate::ResourceRef::Session(id)
-    | crate::ResourceRef::Bot(id)
-    | crate::ResourceRef::Profile(id)) = resource;
-    (!id.is_empty() && id.len() <= 256 && !id.chars().any(char::is_control)).then_some(resource)
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuditIdentity {
-    pub authenticated_principal: Option<Uuid>,
-    pub acting_principal: Option<Uuid>,
-    pub credential: Option<AuthenticationReference>,
-    pub credential_scope: Option<AccessScope>,
-}
-
-impl From<&RequestContext> for AuditIdentity {
-    fn from(context: &RequestContext) -> Self {
-        Self {
-            authenticated_principal: Some(context.authenticated_principal.id),
-            acting_principal: Some(context.acting_principal.id),
-            credential: Some(context.authentication.clone()),
-            credential_scope: Some(context.credential_scope),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AuditStage {
-    Authentication,
-    Admission,
-    Completion,
-    Delivery,
+/// Malformed or oversized identifiers are dropped rather than copied into a
+/// durable security log before parameter validation has run.
+pub fn auditable_identifier(value: &str) -> Option<&str> {
+    (!value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control))
+        .then_some(value)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditOutcome {
-    Allowed,
-    Denied,
     Succeeded,
+    /// The operation was admitted and then failed; effects may be partial.
     Failed,
+    /// An authenticated caller was refused.
+    Denied,
 }
 
-/// An admission does not claim completion. Some actions have admission-only
-/// auditing; where policy also requires completion, its absence means an unknown
-/// outcome (cancellation, a crash, or failure to persist after a side effect).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+impl AuditOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Denied => "denied",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuditEvent {
-    pub attempt_id: Uuid,
-    /// A recognized API method, or None for an unknown method. Never raw input.
-    pub method: Option<String>,
-    pub identity: AuditIdentity,
-    /// Explicit controller attribution for background work; no impersonated user.
-    pub actor: Option<crate::ActionActor>,
-    pub policy_revision: Option<u64>,
+    /// A recognized API method, never raw input.
+    pub method: String,
+    pub authenticated_principal: Option<Uuid>,
+    pub acting_principal: Option<Uuid>,
+    /// Non-secret credential reference: a key's display prefix.
+    pub credential: Option<String>,
     pub scope: Option<AccessScope>,
     /// Resource identifiers only, never arbitrary metadata or a request body.
     pub target: Option<serde_json::Value>,
-    pub stage: AuditStage,
+    /// Policy revision the decision was made under; joins the change log.
+    pub policy_revision: Option<u64>,
     pub outcome: AuditOutcome,
     /// Stable error category, never an error message or provider response.
     pub error_kind: Option<String>,
     pub occurred_at_ms: u64,
 }
 
+impl AuditEvent {
+    pub fn new(method: &str, outcome: AuditOutcome, occurred_at_ms: u64) -> Self {
+        Self {
+            method: method.to_owned(),
+            authenticated_principal: None,
+            acting_principal: None,
+            credential: None,
+            scope: None,
+            target: None,
+            policy_revision: None,
+            outcome,
+            error_kind: None,
+            occurred_at_ms,
+        }
+    }
+
+    pub fn with_context(mut self, context: &RequestContext) -> Self {
+        self.authenticated_principal = Some(context.authenticated_principal.id);
+        self.acting_principal = Some(context.acting_principal().id);
+        self.credential = credential_reference(&context.authentication);
+        self.scope = Some(context.target_scope());
+        self.policy_revision = Some(context.rights.policy_revision);
+        self
+    }
+}
+
+pub fn credential_reference(authentication: &AuthenticationReference) -> Option<String> {
+    match authentication {
+        AuthenticationReference::ApiKey { key_prefix } => Some(key_prefix.clone()),
+        AuthenticationReference::LocalDevelopment => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ResourceRef;
 
     #[test]
-    fn audit_references_omit_malformed_resource_strings() {
+    fn audit_identifiers_omit_malformed_strings() {
         for id in [String::new(), "x".repeat(257), "session\ncontent".into()] {
-            assert!(auditable_resource(&ResourceRef::Session(id)).is_none());
+            assert!(auditable_identifier(&id).is_none());
         }
-        let valid = ResourceRef::Session("bot:v1:example".into());
-        assert_eq!(auditable_resource(&valid), Some(&valid));
+        assert_eq!(
+            auditable_identifier("bot:v1:example"),
+            Some("bot:v1:example")
+        );
     }
 }

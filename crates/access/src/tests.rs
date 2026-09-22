@@ -264,3 +264,119 @@ fn universe_slugs_match_the_storage_boundary() {
         .is_ok()
     );
 }
+
+#[test]
+fn credential_scope_is_a_ceiling() {
+    let other = AccessScope::Universe {
+        universe_id: Uuid::from_u128(9),
+    };
+    assert!(AccessScope::Deployment.permits(universe()));
+    assert!(AccessScope::Deployment.permits(AccessScope::Deployment));
+    assert!(universe().permits(universe()));
+    assert!(!universe().permits(other));
+    assert!(!universe().permits(AccessScope::Deployment));
+}
+
+#[test]
+fn ownership_follows_the_owner_and_bot_management_only() {
+    let owned = |owner: u128, bot: Option<&str>| ResourceOwnership {
+        resource: ResourceRef::Session("s".into()),
+        created_by: ActionActor::Principal {
+            id: Uuid::from_u128(owner),
+        },
+        controller: ResourceController::Principal(Uuid::from_u128(owner)),
+        owner: Uuid::from_u128(owner),
+        bot: bot.map(str::to_owned),
+        created_at_ms: 0,
+    };
+    let contributor = access(Role::Contributor, universe());
+    let operator = access(Role::Operator, universe());
+    let admin = access(Role::Admin, universe());
+    // Personal work: the owner only; elevated roles never widen it.
+    assert!(owned(1, None).controlled_by(&contributor));
+    assert!(!owned(7, None).controlled_by(&contributor));
+    assert!(!owned(7, None).controlled_by(&operator));
+    assert!(!owned(7, None).controlled_by(&admin));
+    // Bot lineage: bot managers, plus the bot's owner.
+    assert!(owned(7, Some("b")).controlled_by(&operator));
+    assert!(owned(1, Some("b")).controlled_by(&contributor));
+    assert!(!owned(7, Some("b")).controlled_by(&contributor));
+}
+
+#[test]
+fn key_issuance_respects_ceiling_self_service_and_management_scope() {
+    let service = |scope| Principal {
+        id: Uuid::from_u128(5),
+        kind: PrincipalKind::Service,
+        status: PrincipalStatus::Active,
+        display_name: "svc".into(),
+        management_scope: scope,
+        created_at_ms: 0,
+    };
+    let contributor = access(Role::Contributor, universe());
+    let admin = access(Role::Admin, universe());
+    let none = EffectiveAccess {
+        roles: BTreeSet::new(),
+        ..access(Role::Viewer, AccessScope::Deployment)
+    };
+    // Members mint their own universe key; a roleless principal cannot.
+    assert!(may_issue_key(
+        universe(),
+        &contributor,
+        &none,
+        &contributor.principal
+    ));
+    let roleless = EffectiveAccess {
+        roles: BTreeSet::new(),
+        ..contributor.clone()
+    };
+    assert!(!may_issue_key(
+        universe(),
+        &roleless,
+        &none,
+        &roleless.principal
+    ));
+    // Only an Admin mints for a service, and only one its universe manages.
+    assert!(!may_issue_key(
+        universe(),
+        &contributor,
+        &none,
+        &service(universe())
+    ));
+    assert!(may_issue_key(
+        universe(),
+        &admin,
+        &none,
+        &service(universe())
+    ));
+    assert!(!may_issue_key(
+        universe(),
+        &admin,
+        &none,
+        &service(AccessScope::Deployment)
+    ));
+    // A universe credential never reaches another scope.
+    let elsewhere = AccessScope::Universe {
+        universe_id: Uuid::from_u128(9),
+    };
+    assert!(!may_issue_key(
+        elsewhere,
+        &admin,
+        &none,
+        &service(universe())
+    ));
+    // Deployment keys need a deployment credential and DeploymentAdmin.
+    let deployment_admin = access(Role::DeploymentAdmin, AccessScope::Deployment);
+    assert!(may_issue_key(
+        AccessScope::Deployment,
+        &deployment_admin,
+        &deployment_admin,
+        &service(AccessScope::Deployment)
+    ));
+    assert!(!may_issue_key(
+        universe(),
+        &deployment_admin,
+        &deployment_admin,
+        &service(AccessScope::Deployment)
+    ));
+}

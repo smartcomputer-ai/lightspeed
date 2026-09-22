@@ -31,8 +31,8 @@ fn success(value: Value) -> Value {
     assert!(value.get("error").is_none(), "{value}");
     value["result"]["result"].clone()
 }
-fn rejected(value: Value) {
-    assert_eq!(value["error"]["data"]["kind"], "rejected", "{value}");
+fn forbidden(value: Value) {
+    assert_eq!(value["error"]["data"]["kind"], "forbidden", "{value}");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -115,29 +115,29 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             // Every declared mutating/service route rejects a Viewer before decoding its body.
             for method in api::method_manifest() {
                 if !matches!(method.access, api::MethodAccess::Universe(UniverseAction::Read)) {
-                    rejected(rpc(&endpoint, viewer, method.method, json!({})).await);
+                    forbidden(rpc(&endpoint, viewer, method.method, json!({})).await);
                 }
             }
             let session = session_id.as_str();
             let start = json!({"sessionId":session});
-            rejected(rpc(&endpoint, viewer, "session/start", start.clone()).await);
+            forbidden(rpc(&endpoint, viewer, "session/start", start.clone()).await);
             success(rpc(&endpoint, alice, "session/start", start.clone()).await);
             success(rpc(&endpoint, alice, "session/start", start.clone()).await);
             for caller in [bob, operator, universe_admin] {
-                rejected(rpc(&endpoint, caller, "session/start", start.clone()).await);
-                rejected(rpc(&endpoint, caller, "session/rename", json!({"sessionId":session,"displayName":"takeover"})).await);
-                rejected(rpc(&endpoint, caller, "session/runs/start", json!({"sessionId":session,"source":{"type":"input","items":[{"type":"text","text":"takeover"}]}})).await);
-                rejected(rpc(&endpoint, caller, "session/context/append", json!({"sessionId":session,"entries":[]})).await);
+                forbidden(rpc(&endpoint, caller, "session/start", start.clone()).await);
+                forbidden(rpc(&endpoint, caller, "session/rename", json!({"sessionId":session,"displayName":"takeover"})).await);
+                forbidden(rpc(&endpoint, caller, "session/runs/start", json!({"sessionId":session,"source":{"type":"input","items":[{"type":"text","text":"takeover"}]}})).await);
+                forbidden(rpc(&endpoint, caller, "session/context/append", json!({"sessionId":session,"entries":[]})).await);
             }
             success(rpc(&endpoint, viewer, "session/read", json!({"sessionId":session})).await);
             success(rpc(&endpoint, viewer, "session/list", json!({})).await);
-            rejected(rpc(&endpoint, viewer, "blobs/put", json!({"blobs":[]})).await);
+            forbidden(rpc(&endpoint, viewer, "blobs/put", json!({"blobs":[]})).await);
             // A contributor can author templates but cannot edit another author's template.
             let profile = format!("profile-{}", Uuid::new_v4().simple());
             let document = json!({"profile":{"profileId":profile}});
             success(rpc(&endpoint, alice, "profiles/put", document.clone()).await);
-            rejected(rpc(&endpoint, bob, "profiles/put", document.clone()).await);
-            rejected(rpc(&endpoint, viewer, "profiles/put", document.clone()).await);
+            forbidden(rpc(&endpoint, bob, "profiles/put", document.clone()).await);
+            forbidden(rpc(&endpoint, viewer, "profiles/put", document.clone()).await);
             success(rpc(&endpoint, operator, "profiles/put", document.clone()).await);
             let owned = access.ownership(universe, &ResourceRef::Profile(profile.clone())).await?.unwrap();
             assert_eq!(owned.created_by, ActionActor::Principal { id: alice.record.principal_id });
@@ -159,34 +159,36 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
                 let list = success(rpc(&endpoint, caller, "bots/triggers/list", json!({"botId":bot})).await);
                 assert!(list["triggers"][0]["ingestPath"].is_null());
             }
-            rejected(rpc(&endpoint, bob, "bots/triggers/delete", trigger).await);
-            // Direct callers receive the same enforcement, including fresh revocation.
+            forbidden(rpc(&endpoint, bob, "bots/triggers/delete", trigger).await);
+            // Direct callers receive the same enforcement; without a context there is no caller.
             let unscoped_api = api.clone();
-            assert_eq!(tokio::spawn(async move { unscoped_api.list_profiles(api::ProfileListParams {}).await }).await?.unwrap_err().kind, AgentApiErrorKind::Rejected);
+            assert_eq!(tokio::spawn(async move { unscoped_api.list_profiles(api::ProfileListParams {}).await }).await?.unwrap_err().kind, AgentApiErrorKind::Unauthenticated);
             let headers = { let mut h = axum::http::HeaderMap::new(); h.insert("authorization", format!("Bearer {}", viewer.secret.expose()).parse()?); h };
             let context = temporal_server::gateway::authentication::authenticate(&keys, &access, &headers,
                 api::METHOD_SESSION_READ, 10).await?;
             let denied = with_request_context(context.clone(), api.rename_session(api::SessionRenameParams {
                 session_id: session.into(), display_name: None })).await.unwrap_err();
-            assert_eq!(denied.kind, AgentApiErrorKind::Rejected);
+            assert_eq!(denied.kind, AgentApiErrorKind::Forbidden);
             access.apply(admin.id, AccessChange::RevokeRole { assignment: RoleAssignment {
                 scope, subject: Subject::Principal(viewer.record.principal_id), role: Role::Viewer } }, 11).await?;
-            assert_eq!(with_request_context(context, api.list_profiles(api::ProfileListParams {})).await.unwrap_err().kind, AgentApiErrorKind::Rejected);
-            rejected(rpc(&endpoint, viewer, "profiles/list", json!({})).await);
+            // A context is one request's resolved snapshot: handlers decide from it, the
+            // next request is resolved afresh, and only parked requests revalidate.
+            assert!(with_request_context(context, api.list_profiles(api::ProfileListParams {})).await.is_ok());
+            forbidden(rpc(&endpoint, viewer, "profiles/list", json!({})).await);
             // A real run is accepted and completes through the worker's fake model.
             let run = success(rpc(&endpoint, alice, "session/runs/start", json!({"sessionId":session,"source":{"type":"input","items":[{"type":"text","text":"hello"}]}})).await);
             assert!(run["run"]["id"].is_string(), "{run}");
             // Elevated roles can stop, but still cannot delete someone else's personal session.
-            rejected(rpc(&endpoint, bob, "session/close", json!({"sessionId":session,"force":true})).await);
+            forbidden(rpc(&endpoint, bob, "session/close", json!({"sessionId":session,"force":true})).await);
             success(rpc(&endpoint, operator, "session/close", json!({"sessionId":session,"force":true})).await);
-            rejected(rpc(&endpoint, universe_admin, "session/delete", json!({"sessionId":session})).await);
+            forbidden(rpc(&endpoint, universe_admin, "session/delete", json!({"sessionId":session})).await);
             success(rpc(&endpoint, alice, "session/delete", json!({"sessionId":session})).await);
             // Deleting content does not erase attribution or allow identity takeover.
-            rejected(rpc(&endpoint, bob, "session/start", start).await);
+            forbidden(rpc(&endpoint, bob, "session/start", start).await);
             assert!(access.ownership(universe, &ResourceRef::Session(session.into())).await?.is_some());
-            let admissions: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events WHERE scope->>'universeId'=$1 AND actor->>'id'=$2 AND method='session/runs/start' AND outcome='allowed'")
-                .bind(universe.to_string()).bind(alice.record.principal_id.to_string()).fetch_one(&pool).await?;
-            assert_eq!(admissions, 1, "one admission per run, despite nested service calls");
+            let admissions: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events WHERE universe_id=$1 AND acting_principal_id=$2 AND method='session/runs/start' AND outcome='succeeded'")
+                .bind(universe).bind(alice.record.principal_id).fetch_one(&pool).await?;
+            assert_eq!(admissions, 1, "one record per run, despite nested service calls");
             anyhow::Ok(())
         };
         let result = tokio::time::timeout(Duration::from_secs(150), outcome).await;

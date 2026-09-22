@@ -217,7 +217,6 @@ export type AgentApiErrorKind =
       | "invalid_request"
       | "not_found"
       | "conflict"
-      | "rejected"
       | "unsupported_audio_mime"
       | "audio_blob_too_large"
       | "audio_duration_too_long"
@@ -226,6 +225,9 @@ export type AgentApiErrorKind =
       | "transcription_failure"
       | "internal"
     )
+  | "rejected"
+  | "unauthenticated"
+  | "forbidden"
   | "session_bootstrap_failed"
   | "environment_not_ready"
   | "response_too_large";

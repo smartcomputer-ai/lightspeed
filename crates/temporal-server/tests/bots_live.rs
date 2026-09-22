@@ -339,6 +339,123 @@ async fn bots_live_manual_event_runs_and_records_outcome() -> anyhow::Result<()>
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the local Temporal + PostgreSQL stack (source scripts/dev/env.sh)"]
+async fn bots_live_hmac_webhook_verifies_without_a_caller() -> anyhow::Result<()> {
+    run_bots_live(Llm::Fake, |api, _client| async move {
+        let profile_id = create_profile(&api, "You are a live-test bot.").await?;
+        let secret = format!("signing-{}", uuid::Uuid::new_v4().simple());
+        let grant_id = api
+            .import_auth_grant(api::AuthGrantImportParams {
+                grant_id: None,
+                provider_id: None,
+                exposure: api::AuthGrantExposure::Retrievable,
+                token: secret.clone(),
+                display_name: Some("Webhook signing secret".to_owned()),
+                subject_hint: None,
+                scopes: Vec::new(),
+                audience: None,
+                expires_at_ms: None,
+                metadata: None,
+            })
+            .await?
+            .result
+            .grant
+            .grant_id;
+        let trigger_id = BotTriggerId::new("signed");
+        let bot_id = create_bot(
+            &api,
+            &profile_id,
+            |_| {},
+            vec![BotTriggerInput {
+                trigger_id: trigger_id.clone(),
+                document: BotTriggerDocument {
+                    spec: BotTriggerSpec::Webhook {
+                        verification: WebhookVerification::HmacSha256 {
+                            grant_id,
+                            header: "x-signature".to_owned(),
+                            prefix: Some("sha256=".to_owned()),
+                            audience: None,
+                        },
+                        preset: None,
+                    },
+                    filter: None,
+                    route: None,
+                    coalesce: None,
+                    deliver: None,
+                    session_close_after_ms: None,
+                    enabled: true,
+                },
+                pairing_code: None,
+            }],
+        )
+        .await?;
+        let trigger = api
+            .read_bot_trigger(api::BotTriggerReadParams {
+                bot_id: bot_id.clone(),
+                trigger_id: trigger_id.clone(),
+            })
+            .await?
+            .result
+            .trigger;
+        let ingest_path = trigger.ingest_path.expect("webhook ingest path");
+        let token = ingest_path.rsplit('/').next().expect("token").to_owned();
+
+        // The public ingest route has no caller: run it outside the test's
+        // request context, exactly as the HTTP edge does. The stored trigger,
+        // not a caller, names the signing secret.
+        let deliver = |signature: String| {
+            let (api, bot_id, trigger_id, token) = (
+                api.clone(),
+                bot_id.clone(),
+                trigger_id.clone(),
+                token.clone(),
+            );
+            tokio::spawn(async move {
+                let headers = [("x-signature".to_owned(), signature)]
+                    .into_iter()
+                    .collect();
+                api.ingest_bot_webhook(
+                    bot_id.as_str(),
+                    trigger_id.as_str(),
+                    &token,
+                    headers,
+                    br#"{"kind":"deploy"}"#,
+                )
+                .await
+            })
+        };
+        let signed = format!(
+            "sha256={}",
+            bots::webhook::hmac_sha256_hex(&secret, br#"{"kind":"deploy"}"#)
+        );
+        let admitted = deliver(signed).await?;
+        assert!(
+            matches!(
+                admitted,
+                temporal_server::bots::hooks::WebhookIngestOutcome::Admitted { .. }
+            ),
+            "{admitted:?}"
+        );
+        let forged = deliver(format!(
+            "sha256={}",
+            bots::webhook::hmac_sha256_hex("not-the-secret", br#"{"kind":"deploy"}"#)
+        ))
+        .await?;
+        assert!(
+            !matches!(
+                forged,
+                temporal_server::bots::hooks::WebhookIngestOutcome::Admitted { .. }
+                    | temporal_server::bots::hooks::WebhookIngestOutcome::SecretUnavailable { .. }
+            ),
+            "{forged:?}"
+        );
+        wait_for_outcomes(&api, &bot_id, 1).await?;
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires the local Temporal + PostgreSQL stack (source scripts/dev/env.sh)"]
 async fn bots_live_webhook_trigger_coalesces_events() -> anyhow::Result<()> {
     run_bots_live(Llm::Fake, |api, _client| async move {
         let profile_id = create_profile(&api, "You are a live-test bot.").await?;

@@ -112,7 +112,9 @@ Illustrative shapes, not final wire signatures:
 Principal = id + kind(user | service) + effective_status
 RoleAssignment = scope(deployment | universe) + subject(principal | group) + role
 AuthenticationReference = credential_reference + authenticated_principal
-RequestContext = acting_principal + authentication_reference + target_scope
+RequestContext = rights(acting_principal, target_scope, roles, capabilities, policy_revision)
+               + authentication_reference + credential_scope
+ResourceOwnership = created_by + controller + owner + bot
 Actor = Principal(id) | Internal(component, cause)
 
 authorize(context, action, resource) -> decision + reason + policy_reference
@@ -122,22 +124,30 @@ The acting principal is the authenticated caller or a user asserted through an
 authorized service. Identity/access administration is itself privileged. Internal
 attribution is distinct from authenticated request context and future execution
 authority. Credential references identify a key or explicit local-development
-authentication, never secret values. The gateway installs a fallible task-local context around dispatch; spawned
-tasks do not inherit it implicitly.
+authentication, never secret values. The gateway resolves the context once per
+request, including the acting principal's rights, and installs it as a fallible
+task-local around dispatch; spawned tasks do not inherit it implicitly. Handlers
+decide roles and capabilities from that context and read storage only for
+ownership.
 
 ## Revocation boundary
 
-Start without authorization caches: key, status, membership, and permission
-checks read authoritative committed state. A committed local change is visible
-to subsequent access decisions. External directory changes still require delivery
-and reconciliation; moving local ownership into core does not remove that work.
-Transcript delivery uses bounded long polls. Shared services recheck current keys,
-principal status, assertion capabilities and effective membership while waiting
-(at most 250 ms between polls), and again after projecting forward/backward pages.
-Buffered universe reads receive a final HTTP-boundary check too. The interval
-excludes database/I/O latency; failed checks release no content. Already-sent
-responses cannot be recalled. There are no persistent user-content streams;
-environment daemon connections retain their separate authentication boundary.
+No authorization caches: every request resolves its key, principal status,
+assertion capability and effective rights from committed state (two or three
+statements), so a committed local change is visible to every subsequent request.
+External directory changes still require delivery and reconciliation; moving
+local ownership into core does not remove that work.
+
+Only a parked request can outlive a change. Transcript delivery uses bounded long
+polls, and a waiting poll revalidates at most every 250 ms. Every identity, role,
+capability and key change, and universe removal, advances the policy revision, so
+the recheck is one read of that revision; only a changed revision re-resolves the
+caller. A revoked reader ends without content (`unauthenticated` for a lost
+credential, `forbidden` for lost rights). A request that is already reading is not
+rechecked and already-sent responses cannot be recalled: the former closes only a
+millisecond race and cost three full re-resolutions per read. There are no
+persistent user-content streams; environment daemon connections retain their
+separate authentication boundary.
 
 This revokes access to the API and content. Stopping already admitted execution,
 revoking standing bot authority, and cancelling external processes belong to the
@@ -325,8 +335,8 @@ Validation for Platform integration (2026-09-21):
   separate action decisions. Bulk controls count only permitted targets. Bot and
   profile creation is available to Contributors; editing follows ownership or
   Operator/Admin rights. Resource configuration and use remain distinct.
-- Permission hints are isolated by signed-in account, refreshed after mutations,
-  on focus and periodically, and fail closed on lookup errors. Runtime enforcement
+- Permission hints are isolated by signed-in account, refreshed on mount, on focus
+  and after mutations (no background polling), and fail closed on lookup errors. Runtime enforcement
   remains authoritative; these hints do not add private/shared session semantics.
 - API-key controls expose members' own keys and eligible universe-managed service
   principals for admins instead of inviting arbitrary principal IDs.
@@ -400,6 +410,97 @@ Validation for UI action affordances (2026-09-21):
 - Final validation: 360 affected Rust library tests passed (one existing ignored),
   strict all-target Clippy passed for access/store/server, and documentation,
   release metadata, formatting and whitespace checks passed.
+
+## Simplification pass
+
+A review found the enforcement and audit layering to be where nearly all the
+complexity and cost sat: identity was re-resolved three to five times per request
+(about 67 statements for an ordinary read through Platform, 111 for an event read,
+22 every 250 ms per parked long poll). This pass keeps the model and removes the
+layering. It supersedes the earlier statements in this document about
+response-time rechecks of buffered reads, admission/completion audit pairs and
+fail-closed audit admission.
+
+- **Resolve once.** `effective_access` is one SQL statement (one snapshot, no
+  explicit transaction). Authentication is a read-only key-and-principal lookup,
+  an `assert_user` check when asserting, and that statement. `RequestContext`
+  carries the resolved rights; shared-service and deployment admission decide from
+  it without re-resolving, and only ownership reads storage. A context is one
+  request's snapshot. The HTTP-boundary and post-projection rechecks are gone;
+  parked long polls revalidate against the policy revision as described above.
+  Universe removal now advances that revision too.
+- **Key usage is coarse.** `last_used_at_ms` is refreshed at most once a minute,
+  so Platform's single service key is no longer rewritten on every request.
+- **Distinct refusals.** `unauthenticated` (no valid credential) and `forbidden`
+  (an authenticated caller lacks permission) are separate API error kinds;
+  `rejected` again means only a refusal for reasons of state. Platform maps them to
+  502/403/409 and the Configurator to 401/403/409.
+- **One audit record.** `audit: true|false` is a mandatory part of every method
+  declaration beside `access`. The gateway writes one best-effort row per audited
+  call after it completes, and one `denied` row per refused authenticated caller;
+  unauthenticated callers are only logged and cannot make the deployment write.
+  The per-attempt task-local, dedup set, four stages, admission/completion pairs
+  and the hand-maintained significant-method list are removed. Targets are taken
+  from a fixed list of identifier parameters, so a pasted key secret is never
+  retained. Permission and key changes keep their transactional change log. The
+  events table has plain columns and time, actor and universe indexes.
+- **Flat ownership.** A reservation stores the owning principal and managing bot,
+  copied from the admitted controller's row, so ownership is one lookup with no
+  lineage walk; a controller without ownership of its own cannot delegate. The
+  controller authority loses its read-only variant and its second lookup, and
+  reaches beyond itself only for a bot's own sessions. The permission preview
+  decides every action of a resource from one lookup.
+- **Removed.** Unaudited key revoke/list store methods without callers, the
+  uncalled single-instance gateway entry point, the duplicate service-capability
+  check, the repeated bot-activity authority preamble, the inlined credential
+  ceiling predicate (now `AccessScope::permits`), and `RequestContext`
+  deserialization.
+- **Fixed on the way.** HMAC-verified bot webhooks leased their signing secret
+  through the caller-authorized method and failed without a caller; ingest now
+  leases from the admitted trigger configuration, with a live regression test that
+  runs outside any request context. An unauthorized assertion no longer attributes
+  the claimed user in the denial record. Two live suites that called services
+  without a caller were given explicit callers.
+
+Not changed here, and still open from the review: Contributor-reachable credential
+use (bot poll triggers, the Configurator's Operator key), the `single` default auth
+mode, GitHub account linking, DeploymentAdmin minting keys for other people (kept:
+headless deployments onboard people this way), release of ownership reservations,
+and replacing the permission preview with role-derived affordances (it is now one
+lookup per resource and no longer polled, so it was kept). The action vocabulary and the
+`CredentialManagement`/`Identity` split were left alone because they are part of
+the exported contract and the UI.
+
+Validation for the simplification pass (2026-09-21):
+
+- Workspace/all-target compilation, formatting and strict all-target Clippy for
+  access/auth/API/store/server passed. Unit suites: access 11, API 89, auth 85,
+  store 10, server library 344 (one existing ignored). API contract, TypeScript
+  client and Configurator tools were regenerated; full `npm run check` passed
+  (590 consumer tests, type checks, live/demo builds). Release metadata is
+  unchanged at schema revision 11; `010` and `011` were edited in place, so this
+  remains a reset boundary for development databases.
+- Live suites ran serialized on disposable PostgreSQL 17.10, Temporal and MinIO
+  containers on separate ports; the developer's stack, databases and object store
+  were not used. Store: identity 2, ownership 1, keys 1, migrations, sessions and
+  bots. Server: authentication 1, authorization 1, revocation/audit 3, tenancy 2,
+  Platform identity 1 (62 HTTP checks through Better Auth), bots 7, channels 3,
+  sub-agents 7, profiles 2, sessions 12, runs 9, MCP 5, workflow-tool plugins 14,
+  environment providers 2. Provider-backed cases used the repository `.env` keys.
+- The revocation suite parks 16 long polls (HTTP and direct; role, group
+  membership, group role, user/service disablement, assertion, user/service key)
+  and requires each to end within three seconds with the right refusal kind and,
+  through HTTP, exactly one attributed denial. The audit suite checks that 20
+  bad-credential calls, an anonymous call and an unknown method add no rows, that
+  each audited deployment mutation adds exactly one attributed row, that a state
+  refusal is `failed` and never `denied`, that an unauthorized assertion does not
+  attribute the claimed user, that a pasted key secret is not retained, that 50
+  routine calls add no rows, and that an audit-table outage neither blocks an
+  operation nor loses its result.
+- Measured on the routine-traffic test with statement logging: 47 authenticated
+  requests resolved identity with one key read and one rights read each (plus one
+  assertion check when a service asserts a user), six ownership lookups and two
+  key-usage stamps in total.
 
 ## Greenfield migration baseline
 

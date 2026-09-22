@@ -41,18 +41,26 @@ children follow explicitly admitted controller lineage. Metadata and provenance
 do not grant control. Bot trigger secrets are visible only to managers.
 
 Ownership reservations preserve the creator/controller across retries and deletion.
-They are independent of execution credentials. There is no legacy ownership
+They are independent of execution credentials. Each reservation also records the
+owning principal and managing bot of its control lineage, copied from the admitted
+controller, so a permission check reads one row. There is no legacy ownership
 backfill: content without trusted ownership cannot be claimed by retrying creation.
-Mutating service admissions retain actor and credential-reference facts separately
-from session content; an admission record does not claim that an operation succeeded.
 
-Session content remains universe-visible. Committed status, membership, capability
-and key changes affect subsequent admission and in-flight transcript delivery.
-Event long polls recheck while waiting (at most 250 ms between polls), and forward
-and backward event pages recheck after projection before returning from the shared
-service. The HTTP gateway also rechecks buffered universe reads before sending
-them. The check interval excludes database/I/O latency; failed checks release no
-content. A response already handed to the transport cannot be recalled.
+Each request is resolved once at the API boundary: the presented key and its
+principal, an asserting service's `assert_user` capability, and the acting
+principal's roles and capabilities in the addressed scope. Handlers decide from
+that resolved context; nothing is cached across requests, so every new request
+sees committed status, membership, capability and key changes.
+
+Session content remains universe-visible. Only a parked request can outlive a
+change: an event long poll revalidates while it waits (at most 250 ms between
+polls). Every identity, role, capability and key change, and every universe
+removal, advances one policy revision, so an unchanged revision proves the
+resolved context still holds and the recheck is a single read; a changed revision
+re-resolves the caller. A reader that loses its credential gets `unauthenticated`,
+one that loses its rights gets `forbidden`, and the wait ends without content. A
+request that was admitted and is already reading is not rechecked, and a response
+handed to the transport cannot be recalled.
 
 Live transcripts use these bounded long polls, not persistent user-content
 sockets. Environment daemon connections retain their separate authentication
@@ -68,48 +76,56 @@ of the session event log.
 | Table | What is written |
 | --- | --- |
 | `access_audit_changes` | One committed identity, group, membership, role, capability or API-key change, in the same transaction as its policy revision. No-op changes, including repeated key revocation, add no change row. |
-| `access_audit_events` | Authentication/authorization failures, revoked delivery, significant universe action admissions, and consequential deployment operation admission/outcome. |
+| `access_audit_events` | One row per call of an audited API method, with its outcome, and one row per refusal of an authenticated caller. |
 
-Significant universe actions include run admission, cancellation, approvals,
-session configuration/closure/deletion/retention, bot and trigger configuration,
-MCP and integration configuration, credential import/revocation/binding,
-environment administration, channel configuration and workspace deletion.
-A run produces one compact admission record; it does not produce an audit event
-for every model iteration or tool call. Universe action admissions describe the
-permission decision, not completion; domain events describe execution.
+Every API method declares `audit: true` or `audit: false` next to its `access`
+requirement, so a new method cannot be added without deciding. Audited methods
+include run admission, cancellation, approvals, session
+configuration/closure/deletion/retention, bot and trigger configuration, MCP and
+integration configuration, credential import/revocation/binding, environment
+administration, channel configuration, workspace deletion, and deployment
+mutations (identity/key administration, universe creation/deletion,
+provider/binding configuration and environment adoption). A run produces one
+record; it does not produce an audit event for every model iteration or tool call.
 
-Consequential deployment mutations (identity/key administration, universe
-creation/deletion, provider/binding configuration and environment adoption) record
-admission before effects and completion with the same attempt ID. Thus a successful
-API permission change normally adds two event rows and one committed change row.
-Repeated checks and propagated failures within an RPC do not duplicate admissions
-or terminal denial records. Separate requests remain separate attempts.
+Each audited call writes exactly one row at the API boundary after it completes:
+`succeeded`, or `failed` with the error category. A refusal for reasons of state
+(`rejected`, `conflict`, `not_found`) is a failed operation, never a denial. A
+`denied` row is written whenever an authenticated caller is refused
+(`forbidden`), on any method, including a caller whose authority is revoked while
+its request is parked. A successful API permission change therefore adds one
+event row and one committed change row.
 
-Successful reads, inventories, self queries, permission previews, transcript
-polls, session creation/renaming/context edits, profile editing, blob/snapshot
-writes, workspace head updates, credential leasing, MCP discovery, and routine
-bot/channel ingress add no access-audit events. Ordinary missing read results
-are also quiet. Normal MCP tool execution uses session history, not access audit;
-a tool calling a significant Lightspeed administration API is audited as that
-API operation. Denials remain recorded even for otherwise quiet methods.
-The runtime's explicit policy lives in `gateway/audit.rs`.
+Callers without a valid credential (`unauthenticated`: missing, malformed,
+unknown or revoked keys, and keys of disabled principals) are logged but leave no
+row, so an anonymous caller cannot make the deployment write. Successful reads,
+inventories, self queries, permission previews, transcript polls, session
+creation/renaming/context edits, profile editing, blob/snapshot writes, workspace
+head updates, credential leasing, MCP discovery, and routine bot/channel ingress
+add no rows. Internal work (bot activities, delegated sessions, reapers) is not
+an API caller: it is attributed in domain events and logs, not in this table.
+Normal MCP tool execution uses session history; a tool calling an audited
+Lightspeed administration API is audited as that API operation.
 
-Event records retain verified identities (including both the authenticated
-service and acting user), explicit internal-controller attribution, a non-secret
-credential reference, method, selected target identifiers, available policy
-revision, stage and error category. Unverified assertions never become acting
-users. Events exclude bodies, credential values, display names, endpoint URLs,
-metadata and session content. Committed change records contain typed identity
-change metadata, such as group display names, but no credential values or session
-content. Both tables survive target deletion and offboarding. The baseline
-creates their final definitions directly, without transitional audit tables.
+Event rows hold the authenticated principal, the acting principal (an
+unauthorized assertion never attributes the claimed user), a non-secret
+credential reference (the key's display prefix), the method, the universe, the
+policy revision the decision was made under, selected target identifiers, the
+outcome and the error category. Target identifiers come from a fixed list of
+parameter names; a malformed identifier or a key prefix that is not a display
+prefix is dropped rather than stored. Events exclude bodies, credential values,
+display names, endpoint URLs, metadata and session content. Committed change
+records contain typed identity change metadata, such as group display names, but
+no credential values or session content. Both tables survive target deletion and
+offboarding, and events are indexed by time, acting principal and universe.
 
-A selected admission must persist before the operation proceeds. For deployment
-mutations, missing completion means an unknown outcome (for example cancellation
-or a crash), not success; failed operations can have partial effects. A failed outcome write
-returns an error without undoing effects already committed. Retention, pruning
-and export are deferred until this auditing policy has been exercised; no
-automatic audit cleanup is implemented.
+Event rows are best-effort by design: a failed write is logged as an error and
+never changes the response, so an audit outage cannot block stopping work or
+discard a committed result such as a newly minted key. Permission and key changes
+do not depend on it: their change row commits in the same transaction as the
+change, or not at all. Retention, pruning, export and a reader are deferred until
+this auditing policy has been exercised; no automatic audit cleanup is
+implemented.
 
 ## Issue a key for an API client
 

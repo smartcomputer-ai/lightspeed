@@ -1892,8 +1892,6 @@ impl AgentApiService for GatewayAgentApi {
     ) -> Result<AgentApiOutcome<ChannelInboundAdmitResponse>, AgentApiError> {
         self.authorize_method(METHOD_CHANNELS_INBOUND_ADMIT, None)
             .await?;
-        self.require_service_capability(access::ServiceCapability::AdmitChannelInbound)
-            .await?;
         self.admit_channel_inbound_message(params)
             .await
             .map(AgentApiOutcome::new)
@@ -2318,14 +2316,14 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionEventsReadParams,
     ) -> Result<AgentApiOutcome<SessionEventsReadResponse>, AgentApiError> {
-        let resource = Some(ResourceRef::Session(params.session_id.clone()));
-        self.authorize_method(METHOD_SESSION_EVENTS_READ, resource.clone())
-            .await?;
+        self.authorize_method(
+            METHOD_SESSION_EVENTS_READ,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
         if params.direction == SessionEventDirection::Backward {
             let response =
                 event_history::read(self.store.as_ref(), self.store.as_ref(), params).await?;
-            self.authorize_delivery(METHOD_SESSION_EVENTS_READ, resource)
-                .await?;
             return Ok(AgentApiOutcome::new(response));
         }
         if params.before.is_some() {
@@ -2348,11 +2346,12 @@ impl AgentApiService for GatewayAgentApi {
         // observe closes as a normal wakeup.
         let wait = Duration::from_millis(params.wait_ms.unwrap_or(0)).min(self.events_wait_cap);
         let deadline = Instant::now() + wait;
+        // A parked reader must not outlive its authority: a quiet transcript may
+        // not keep a revoked key, user, membership or assertion alive until the
+        // timeout. An unchanged policy revision makes each recheck one cheap read.
+        let mut revalidation = self.revalidation()?;
+        let read = MethodAccess::Universe(UniverseAction::Read);
         loop {
-            // Recheck parked readers too: a quiet transcript must not keep a
-            // revoked key, user, group membership or assertion alive until timeout.
-            self.authorize_delivery(METHOD_SESSION_EVENTS_READ, resource.clone())
-                .await?;
             let page = self
                 .store
                 .read_after(ReadSessionEvents {
@@ -2369,6 +2368,9 @@ impl AgentApiService for GatewayAgentApi {
                     .min(Duration::from_millis(250))
                     .min(remaining);
                 tokio::time::sleep(poll).await;
+                if let Some(revalidation) = revalidation.as_mut() {
+                    revalidation.check(self.store.pool(), read).await?;
+                }
                 continue;
             }
             let head_cursor = self
@@ -2384,10 +2386,6 @@ impl AgentApiService for GatewayAgentApi {
                 events.push(self.projector().project_entry(&session_id, &entry).await?);
             }
 
-            // Projection may itself wait on blob I/O. Check after materialization,
-            // not just after waking, before any events leave the shared service.
-            self.authorize_delivery(METHOD_SESSION_EVENTS_READ, resource.clone())
-                .await?;
             return Ok(AgentApiOutcome::new(SessionEventsReadResponse {
                 events,
                 next_cursor: page.next_after.map(event_cursor),
@@ -3930,8 +3928,6 @@ impl AgentApiService for GatewayAgentApi {
     ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {
         self.authorize_method(METHOD_AUTH_GRANTS_LEASE, None)
             .await?;
-        self.require_service_capability(access::ServiceCapability::LeaseCredentials)
-            .await?;
         self.lease_grant_token(params).await
     }
 
@@ -4621,31 +4617,10 @@ impl GatewayAgentApi {
 }
 
 impl GatewayAgentApi {
-    async fn require_service_capability(
-        &self,
-        capability: access::ServiceCapability,
-    ) -> Result<(), AgentApiError> {
-        use access::AccessStore as _;
-        let context = crate::gateway::principal::request_context()?;
-        let scope = access::AccessScope::Universe {
-            universe_id: self.universe_id(),
-        };
-        if context.target_scope != scope {
-            return Err(AgentApiError::rejected("request scope mismatch"));
-        }
-        let rights = store_pg::PgAccessStore::new(self.store.pool().clone())
-            .effective_access(context.acting_principal.id, scope)
-            .await
-            .map_err(|e| AgentApiError::rejected(e.to_string()))?;
-        if !rights.has_capability(capability) {
-            return Err(AgentApiError::rejected("service capability required"));
-        }
-        Ok(())
-    }
-}
-
-impl GatewayAgentApi {
-    async fn lease_grant_token(
+    /// Lease without caller authorization. Internal callers must take the
+    /// grant and audience from admitted configuration (a stored trigger),
+    /// never from request input.
+    pub(crate) async fn lease_grant_token(
         &self,
         params: AuthGrantLeaseParams,
     ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {

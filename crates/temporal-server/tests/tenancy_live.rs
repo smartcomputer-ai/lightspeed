@@ -63,20 +63,38 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
         let state_b = universes.state_for(universe_b, true).await?;
         let api_a = state_a.api.clone();
         let api_b = state_b.api.clone();
+        // Direct service calls carry an explicit caller, one per universe.
+        let access = store_pg::PgAccessStore::new(universes.stores().pool().clone());
+        let mut callers = Vec::new();
+        for universe_id in [universe_a, universe_b] {
+            let principal = access.initialize_local_development(universe_id, 1).await?;
+            callers.push(
+                temporal_server::gateway::authentication::local_context(
+                    &access,
+                    principal.id,
+                    access::AccessScope::Universe { universe_id },
+                )
+                .await?,
+            );
+        }
+        let [caller_a, caller_b] = [callers[0].clone(), callers[1].clone()];
+        use temporal_server::gateway::principal::with_request_context as calling;
 
         // The same client-chosen session id starts independently in both
         // universes on the same queue, served by the same worker.
-        for api in [api_a.as_ref(), api_b.as_ref()] {
-            let started = api
-                .start_session(SessionStartParams {
+        for (api, caller) in [(api_a.as_ref(), &caller_a), (api_b.as_ref(), &caller_b)] {
+            let started = calling(
+                caller.clone(),
+                api.start_session(SessionStartParams {
                     metadata: Default::default(),
                     session_id: Some(session_id.as_str().to_owned()),
                     display_name: None,
                     config: None,
                     profile: None,
                     delete_after_close_ms: None,
-                })
-                .await?;
+                }),
+            )
+            .await?;
             assert_eq!(started.result.session.status, SessionStatus::Idle);
         }
 
@@ -101,17 +119,19 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
             "tenant.isolation.{}",
             uuid::Uuid::new_v4().simple()
         ));
-        api_a
-            .create_profile(ProfileCreateParams {
+        calling(
+            caller_a.clone(),
+            api_a.create_profile(ProfileCreateParams {
                 profile: AgentProfileInput {
                     profile_id: profile_id.clone(),
                     display_name: Some("Tenant isolation".to_owned()),
                     description: None,
                     document: ProfileDocument::default(),
                 },
-            })
-            .await?;
-        let listed_b = api_b.list_profiles(ProfileListParams {}).await?;
+            }),
+        )
+        .await?;
+        let listed_b = calling(caller_b.clone(), api_b.list_profiles(ProfileListParams {})).await?;
         assert!(
             listed_b
                 .result
@@ -120,36 +140,44 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
                 .all(|profile| profile.profile_id != profile_id),
             "universe B must not list universe A's profile"
         );
-        let read_b = api_b
-            .read_profile(ProfileReadParams {
+        let read_b = calling(
+            caller_b.clone(),
+            api_b.read_profile(ProfileReadParams {
                 profile_id: profile_id.clone(),
-            })
-            .await;
+            }),
+        )
+        .await;
         match read_b {
             Err(error) => assert_eq!(error.kind, AgentApiErrorKind::NotFound),
             Ok(_) => anyhow::bail!("universe B must not read universe A's profile"),
         }
 
         // Closing A's session leaves B's session open.
-        api_a
-            .close_session(api::SessionCloseParams {
+        calling(
+            caller_a.clone(),
+            api_a.close_session(api::SessionCloseParams {
                 force: false,
                 session_id: session_id.as_str().to_owned(),
-            })
-            .await?;
-        let closed_a = api_a
-            .read_session(SessionReadParams {
+            }),
+        )
+        .await?;
+        let closed_a = calling(
+            caller_a.clone(),
+            api_a.read_session(SessionReadParams {
                 session_id: session_id.as_str().to_owned(),
                 run_limit: None,
-            })
-            .await?;
+            }),
+        )
+        .await?;
         assert_eq!(closed_a.result.session.status, SessionStatus::Closed);
-        let open_b = api_b
-            .read_session(SessionReadParams {
+        let open_b = calling(
+            caller_b.clone(),
+            api_b.read_session(SessionReadParams {
                 session_id: session_id.as_str().to_owned(),
                 run_limit: None,
-            })
-            .await?;
+            }),
+        )
+        .await?;
         assert_eq!(open_b.result.session.status, SessionStatus::Idle);
 
         // Cleanup: terminate both workflows.
@@ -313,12 +341,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
             ),
         )
         .await?;
-        assert!(
-            response["error"]["message"]
-                .as_str()
-                .expect("error message")
-                .contains("not authorized")
-        );
+        assert_eq!(response["error"]["data"]["kind"], "unauthenticated");
 
         // Fail closed: unknown key.
         let response = call(
@@ -329,12 +352,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
             ),
         )
         .await?;
-        assert_eq!(
-            response["error"]["message"]
-                .as_str()
-                .expect("error message"),
-            "request is not authorized"
-        );
+        assert_eq!(response["error"]["data"]["kind"], "unauthenticated");
 
         // A universe key cannot mint a deployment credential, even when its
         // principal is a deployment administrator.
@@ -356,12 +374,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
             .await?
             .json()
             .await?;
-        assert!(
-            response["error"]["message"]
-                .as_str()
-                .expect("error message")
-                .contains("not authorized")
-        );
+        assert_eq!(response["error"]["data"]["kind"], "forbidden");
 
         // Key A starts a session in universe A.
         let response = call(
@@ -441,8 +454,17 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
         // Revocation takes effect immediately.
         assert!(
             api_keys
-                .revoke_api_key(&minted_a.record.key_prefix, now_ms + 1)
+                .revoke_managed_key(
+                    actor,
+                    access::AccessScope::Deployment,
+                    access::AccessScope::Universe {
+                        universe_id: universe_a,
+                    },
+                    &minted_a.record.key_prefix,
+                    now_ms + 1,
+                )
                 .await?
+                .is_some()
         );
         let response = call(
             Some(secret_a.clone()),
@@ -452,12 +474,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
             ),
         )
         .await?;
-        assert_eq!(
-            response["error"]["message"]
-                .as_str()
-                .expect("error message"),
-            "request is not authorized"
-        );
+        assert_eq!(response["error"]["data"]["kind"], "unauthenticated");
 
         // Cleanup.
         let workflow_id = temporal_workflow::compose_workflow_id(

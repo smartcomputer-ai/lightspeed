@@ -26,6 +26,14 @@ pub enum AccessScope {
     Universe { universe_id: Uuid },
 }
 
+impl AccessScope {
+    /// A credential's scope is a ceiling: deployment credentials reach every
+    /// scope, universe credentials only their own universe.
+    pub fn permits(self, target: AccessScope) -> bool {
+        self == AccessScope::Deployment || self == target
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "IdentityPrincipalKind")]
@@ -216,13 +224,32 @@ pub enum ResourceController {
     Session(String),
 }
 
+/// Immutable control facts of one resource. `owner` and `bot` are copied from
+/// the admitted controller when the resource is reserved, so permission checks
+/// read one row instead of walking a lineage.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceOwnership {
     pub resource: ResourceRef,
     pub created_by: ActionActor,
+    /// The immediate, separately admitted controller.
     pub controller: ResourceController,
+    /// The principal at the root of the control lineage.
+    pub owner: Uuid,
+    /// The bot whose management rights extend to this resource, if any.
+    pub bot: Option<String>,
     pub created_at_ms: u64,
+}
+
+impl ResourceOwnership {
+    /// Whether `rights` satisfy an ownership-dependent action on this resource.
+    /// Bot lineages follow bot management; the operator role never widens a
+    /// personal owner.
+    pub fn controlled_by(&self, rights: &EffectiveAccess) -> bool {
+        (self.bot.is_some()
+            && rights.universe_action(UniverseAction::ManageBot) == RoleDecision::Allowed)
+            || self.owner == rights.principal.id
+    }
 }
 
 impl EffectiveAccess {
@@ -516,7 +543,7 @@ pub fn may_issue_key(
 ) -> bool {
     if !actor.active()
         || target.status != PrincipalStatus::Active
-        || (credential_scope != AccessScope::Deployment && credential_scope != actor.scope)
+        || !credential_scope.permits(actor.scope)
     {
         return false;
     }
@@ -543,15 +570,32 @@ pub enum AuthenticationReference {
     LocalDevelopment,
 }
 
-/// Trusted transport context. Assertions change the acting principal only;
+/// Trusted transport context, resolved once at the authenticated boundary and
+/// never deserialized from input. Assertions change the acting principal only;
 /// they never add the authenticated service's authority to the user's rights.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestContext {
-    pub acting_principal: Principal,
+    /// The acting principal's committed rights in the target scope. Handlers
+    /// decide from these; long-lived waits revalidate against `policy_revision`.
+    pub rights: EffectiveAccess,
     pub authenticated_principal: Principal,
     pub authentication: AuthenticationReference,
     pub credential_scope: AccessScope,
-    pub target_scope: AccessScope,
+}
+
+impl RequestContext {
+    pub fn acting_principal(&self) -> &Principal {
+        &self.rights.principal
+    }
+
+    pub fn target_scope(&self) -> AccessScope {
+        self.rights.scope
+    }
+
+    /// An authenticated service acting for a user it asserted.
+    pub fn asserted(&self) -> bool {
+        self.rights.principal.id != self.authenticated_principal.id
+    }
 }
 
 mod audit;

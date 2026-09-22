@@ -100,9 +100,9 @@ describe("Streamable HTTP configurator", () => {
       return jsonResponse({
         id: body.id,
         error: {
-          code: -32010,
+          code: -32001,
           message: "invalid api key",
-          data: { kind: "rejected", message: "invalid api key" },
+          data: { kind: "unauthenticated", message: "request is not authenticated" },
         },
       });
     });

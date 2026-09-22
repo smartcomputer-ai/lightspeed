@@ -11,10 +11,10 @@ tokio::task_local! {
 
 pub async fn with_request_context<F: Future>(context: RequestContext, future: F) -> F::Output {
     let span = tracing::info_span!("request_authority",
-        acting_principal = %context.acting_principal.id,
+        acting_principal = %context.acting_principal().id,
         authenticated_principal = %context.authenticated_principal.id,
         authentication = ?context.authentication,
-        target_scope = ?context.target_scope);
+        target_scope = ?context.target_scope());
     REQUEST_CONTEXT
         .scope(context, future)
         .instrument(span)
@@ -22,13 +22,17 @@ pub async fn with_request_context<F: Future>(context: RequestContext, future: F)
 }
 
 pub fn request_context() -> Result<RequestContext, AgentApiError> {
-    REQUEST_CONTEXT
-        .try_with(Clone::clone)
-        .map_err(|_| AgentApiError::rejected("missing trusted request context"))
+    REQUEST_CONTEXT.try_with(Clone::clone).map_err(|_| {
+        AgentApiError::new(
+            api::AgentApiErrorKind::Unauthenticated,
+            "missing trusted request context",
+        )
+    })
 }
 
 pub fn request_principal() -> Result<PrincipalRef, AgentApiError> {
-    let principal = request_context()?.acting_principal;
+    let context = request_context()?;
+    let principal = context.acting_principal();
     Ok(PrincipalRef {
         kind: match principal.kind {
             access::PrincipalKind::User => PrincipalKind::User,
@@ -61,13 +65,18 @@ mod isolation_tests {
             created_at_ms: 0,
         };
         RequestContext {
-            acting_principal: principal.clone(),
+            rights: access::EffectiveAccess {
+                principal: principal.clone(),
+                scope: access::AccessScope::Deployment,
+                roles: Default::default(),
+                capabilities: Default::default(),
+                policy_revision: 0,
+            },
             authenticated_principal: principal,
             authentication: access::AuthenticationReference::ApiKey {
                 key_prefix: format!("lsk_{id}"),
             },
             credential_scope: access::AccessScope::Deployment,
-            target_scope: access::AccessScope::Deployment,
         }
     }
     #[tokio::test(flavor = "current_thread")]
@@ -76,7 +85,7 @@ mod isolation_tests {
             with_request_context(context(id), async move {
                 tokio::task::yield_now().await;
                 assert_eq!(
-                    request_context().unwrap().acting_principal.id,
+                    request_context().unwrap().acting_principal().id,
                     uuid::Uuid::from_u128(id)
                 );
                 assert!(

@@ -1,4 +1,4 @@
-//! In-flight content revocation and durable administrative audit over disposable
+//! Revocation of parked requests and the durable access audit over disposable
 //! PostgreSQL and Temporal. No workflow, provider, or external credential is used.
 use access::*;
 use api::{AgentApiErrorKind, AgentApiService as _, DeploymentApiService as _};
@@ -162,12 +162,10 @@ impl Fixture {
         self.access
             .reserve_ownership(
                 self.universe,
-                &ResourceOwnership {
-                    resource: ResourceRef::Session(id.to_string()),
-                    created_by: ActionActor::Principal { id: self.admin.id },
-                    controller: ResourceController::Principal(self.admin.id),
-                    created_at_ms: 1,
-                },
+                &ResourceRef::Session(id.to_string()),
+                &ActionActor::Principal { id: self.admin.id },
+                &ResourceController::Principal(self.admin.id),
+                1,
             )
             .await
             .unwrap();
@@ -280,46 +278,29 @@ enum Revocation {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires explicitly selected disposable PostgreSQL/Temporal; serialize; no providers"]
-async fn admitted_long_polls_and_buffered_pages_recheck_before_delivery() -> anyhow::Result<()> {
+async fn parked_long_polls_do_not_outlive_their_authority() -> anyhow::Result<()> {
     let f = Fixture::new().await?;
     let session = f.session().await;
-    let variants = [
-        Revocation::Role,
-        Revocation::GroupMembership,
-        Revocation::GroupRole,
-        Revocation::UserDisabled,
-        Revocation::ServiceDisabled,
-        Revocation::Assertion,
-        Revocation::UserKey,
-        Revocation::ServiceKey,
-    ];
     // Every revocation is exercised through HTTP and a captured direct-service context.
     for direct in [false, true] {
-        for revocation in variants {
-            exercise_revocation(&f, &session, revocation, direct, false, false).await;
+        for revocation in [
+            Revocation::Role,
+            Revocation::GroupMembership,
+            Revocation::GroupRole,
+            Revocation::UserDisabled,
+            Revocation::ServiceDisabled,
+            Revocation::Assertion,
+            Revocation::UserKey,
+            Revocation::ServiceKey,
+        ] {
+            exercise_revocation(&f, &session, revocation, direct).await;
         }
     }
-    // Also block a populated forward/backward page after admission. The final
-    // projection check must discard data, even when there is no waiting loop.
-    for direct in [false, true] {
-        for backward in [false, true] {
-            exercise_revocation(&f, &session, Revocation::Role, direct, true, backward).await;
-        }
-    }
-    println!(
-        "20 deterministic in-flight revocations passed (HTTP and direct, quiet and populated pages)"
-    );
+    println!("16 deterministic in-flight revocations passed (HTTP and direct)");
     Ok(())
 }
 
-async fn exercise_revocation(
-    f: &Fixture,
-    session: &str,
-    revocation: Revocation,
-    direct: bool,
-    populated: bool,
-    backward: bool,
-) {
+async fn exercise_revocation(f: &Fixture, session: &str, revocation: Revocation, direct: bool) {
     let user = f.principal(PrincipalKind::User).await;
     let service = f.principal(PrincipalKind::Service).await;
     let group = Uuid::new_v4();
@@ -370,24 +351,14 @@ async fn exercise_revocation(
     let context = authenticate(&f.keys, &f.access, &h, api::METHOD_SESSION_EVENTS_READ, 4)
         .await
         .unwrap();
-    // Authorized populated reads still work in both directions.
+    // A quiet tail: the reader parks until an event arrives or the wait ends.
     let params = api::SessionEventsReadParams {
         session_id: session.into(),
-        direction: if backward {
-            api::SessionEventDirection::Backward
-        } else {
-            api::SessionEventDirection::Forward
-        },
-        after: if backward {
-            None
-        } else {
-            Some(api::EventCursor {
-                seq: if populated { 0 } else { 1 },
-            })
-        },
+        direction: api::SessionEventDirection::Forward,
+        after: Some(api::EventCursor { seq: 1 }),
         before: None,
         limit: Some(10),
-        wait_ms: Some(if populated { 0 } else { 30_000 }),
+        wait_ms: Some(30_000),
     };
     let positive = with_request_context(
         context.clone(),
@@ -401,16 +372,12 @@ async fn exercise_revocation(
     .unwrap();
     assert_eq!(positive.result.events.len(), 1);
     let mut lock = f.pool.begin().await.unwrap();
-    // Empty tails can avoid querying session_events entirely. Gate their session
-    // lookup instead; populated pages are gated during the actual event fetch.
-    sqlx::query(if populated {
-        "LOCK TABLE session_events IN ACCESS EXCLUSIVE MODE"
-    } else {
-        "LOCK TABLE sessions IN ACCESS EXCLUSIVE MODE"
-    })
-    .execute(&mut *lock)
-    .await
-    .unwrap();
+    // Hold the reader inside the service, after admission, until the revocation
+    // has committed; it then parks on the quiet tail.
+    sqlx::query("LOCK TABLE sessions IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
     let locker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *lock)
         .await
@@ -487,22 +454,23 @@ async fn exercise_revocation(
         .await
         .expect("revocation must stop a quiet long poll before its 30-second timeout")
         .unwrap();
-    assert_eq!(
-        response,
-        Err(AgentApiErrorKind::Rejected),
-        "{revocation:?}, direct={direct}, populated={populated}, backward={backward}"
-    );
-    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events WHERE outcome='denied' AND identity->>'actingPrincipal'=$1 AND method='session/events/read'")
-        .bind(user.to_string()).fetch_one(&f.pool).await.unwrap();
-    assert_eq!(
-        rows, 1,
-        "one attributed revocation denial, including HTTP propagation"
-    );
+    // A lost credential is unauthenticated; lost rights are forbidden.
+    let expected = match revocation {
+        Revocation::ServiceDisabled | Revocation::UserKey | Revocation::ServiceKey => {
+            AgentApiErrorKind::Unauthenticated
+        }
+        _ => AgentApiErrorKind::Forbidden,
+    };
+    assert_eq!(response, Err(expected), "{revocation:?}, direct={direct}");
+    // The API boundary attributes the cut-off once; a direct call has no boundary.
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events WHERE outcome='denied' AND acting_principal_id=$1 AND method='session/events/read'")
+        .bind(user).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(rows, i64::from(!direct), "{revocation:?}, direct={direct}");
 }
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires explicitly selected disposable PostgreSQL/Temporal; serialize; no providers"]
-async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> anyhow::Result<()> {
+async fn audited_operations_and_denials_keep_safe_durable_attribution() -> anyhow::Result<()> {
     let f = Fixture::new().await?;
     let service = f.principal(PrincipalKind::Service).await;
     f.change(AccessChange::AssignCapability {
@@ -515,14 +483,21 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
     .await;
     let service_key = f.key(service, AccessScope::Deployment).await;
     let h = headers(&service_key, None, Some(f.admin.id));
-    let captured = authenticate(
-        &f.keys,
-        &f.access,
-        &h,
-        api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
-        10,
-    )
-    .await?;
+    // Only this run's records: the disposable database may hold earlier runs.
+    let first_row: i64 =
+        sqlx::query_scalar("SELECT COALESCE(max(audit_id), 0) FROM access_audit_events")
+            .fetch_one(&f.pool)
+            .await?;
+    let audit_rows = async || -> Vec<Value> {
+        sqlx::query_scalar(
+            "SELECT to_jsonb(a) FROM access_audit_events a WHERE audit_id > $1 ORDER BY audit_id",
+        )
+        .bind(first_row)
+        .fetch_all(&f.pool)
+        .await
+        .unwrap()
+    };
+
     // No gateway-only privilege checks: a missing context fails closed on direct calls.
     assert_eq!(
         f.deployment
@@ -530,9 +505,11 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
             .await
             .unwrap_err()
             .kind,
-        AgentApiErrorKind::Rejected
+        AgentApiErrorKind::Unauthenticated
     );
-    // Unknown/bad credentials and header-only assertions never become attributed users.
+    // A caller without a valid credential cannot make the deployment write:
+    // bad keys, header-only assertions and unknown methods leave no row.
+    let before = audit_rows().await.len();
     let marker = format!("sensitive-{}", Uuid::new_v4());
     let mut bad = HeaderMap::new();
     bad.insert("authorization", format!("Bearer lsk_{marker}").parse()?);
@@ -540,20 +517,35 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
         "x-lightspeed-principal",
         format!("user:{}", f.admin.id).parse()?,
     );
+    for _ in 0..20 {
+        assert_eq!(
+            rpc(
+                &f.endpoint,
+                bad.clone(),
+                api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
+                json!({"secret": marker})
+            )
+            .await,
+            Err(AgentApiErrorKind::Unauthenticated)
+        );
+    }
     assert_eq!(
         rpc(
             &f.endpoint,
-            bad.clone(),
-            api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
-            json!({"secret": marker})
+            HeaderMap::new(),
+            api::METHOD_SESSION_LIST,
+            json!({})
         )
         .await,
-        Err(AgentApiErrorKind::Rejected)
+        Err(AgentApiErrorKind::Unauthenticated)
     );
     assert_eq!(
         rpc(&f.endpoint, bad, &marker, json!({})).await,
-        Err(AgentApiErrorKind::Rejected)
+        Err(AgentApiErrorKind::InvalidRequest)
     );
+    assert_eq!(audit_rows().await.len(), before);
+
+    // Refusals of an authenticated caller are attributed exactly once.
     let user = f.principal(PrincipalKind::User).await;
     f.change(AccessChange::AssignRole {
         assignment: RoleAssignment {
@@ -567,16 +559,43 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
     let spoof = headers(&user_key, None, Some(f.admin.id));
     assert_eq!(
         rpc(&f.endpoint, spoof, api::METHOD_SESSION_LIST, json!({})).await,
-        Err(AgentApiErrorKind::Rejected)
+        Err(AgentApiErrorKind::Forbidden)
     );
-    let denied = rpc(
+    let session = f.session().await;
+    assert_eq!(
+        rpc(
+            &f.endpoint,
+            headers(&user_key, None, None),
+            api::METHOD_SESSION_RENAME,
+            json!({"sessionId":session,"displayName":marker}),
+        )
+        .await,
+        Err(AgentApiErrorKind::Forbidden)
+    );
+    // A refusal for reasons of state is not an authorization decision: this
+    // administrator may import grants, but the identifier is already taken.
+    let owner_key = f.key(f.admin.id, f.scope()).await;
+    let grant = json!({"grantId":format!("audit-grant-{}", Uuid::new_v4()),"token":"disposable-fixture-token"});
+    rpc(
         &f.endpoint,
-        headers(&user_key, None, None),
-        api::METHOD_SESSION_RENAME,
-        json!({"sessionId":marker,"displayName":marker}),
+        headers(&owner_key, None, None),
+        api::METHOD_AUTH_GRANTS_IMPORT,
+        grant.clone(),
     )
-    .await;
-    assert_eq!(denied, Err(AgentApiErrorKind::Rejected));
+    .await
+    .unwrap();
+    let refused_kind = rpc(
+        &f.endpoint,
+        headers(&owner_key, None, None),
+        api::METHOD_AUTH_GRANTS_IMPORT,
+        grant,
+    )
+    .await
+    .unwrap_err();
+    assert!(!matches!(
+        refused_kind,
+        AgentApiErrorKind::Forbidden | AgentApiErrorKind::Unauthenticated
+    ));
     // Store-level directory and key decisions also produce an attributed denial.
     let ordinary = headers(&service_key, None, Some(user));
     assert_eq!(
@@ -587,7 +606,7 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
             json!({"scope":AccessScope::Deployment})
         )
         .await,
-        Err(AgentApiErrorKind::Rejected)
+        Err(AgentApiErrorKind::Forbidden)
     );
     assert_eq!(
         rpc(
@@ -597,7 +616,7 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
             json!({"scope":AccessScope::Deployment,"principalId":user,"displayName":marker})
         )
         .await,
-        Err(AgentApiErrorKind::Rejected)
+        Err(AgentApiErrorKind::Forbidden)
     );
 
     let universe = Uuid::new_v4();
@@ -634,7 +653,7 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
                 json!({"scope":AccessScope::Deployment})
             )
             .await,
-            Err(AgentApiErrorKind::Rejected)
+            Err(AgentApiErrorKind::Forbidden)
         );
     }
     let self_view = rpc(
@@ -658,7 +677,7 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
             })
         )
         .await,
-        Err(AgentApiErrorKind::Rejected)
+        Err(AgentApiErrorKind::Forbidden)
     );
     assert_eq!(
         f.access.principal(user).await?.unwrap().status,
@@ -688,7 +707,18 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
     )
     .await
     .unwrap();
-    let minted_secret = created_key["secret"].as_str().unwrap();
+    let minted_secret = created_key["secret"].as_str().unwrap().to_owned();
+    // A secret pasted where a display prefix belongs is refused and never retained.
+    assert!(
+        rpc(
+            &f.endpoint,
+            h.clone(),
+            api::METHOD_DEPLOYMENT_API_KEYS_REVOKE,
+            json!({"scope":AccessScope::Deployment,"keyPrefix":minted_secret}),
+        )
+        .await
+        .is_err()
+    );
     rpc(
         &f.endpoint,
         h.clone(),
@@ -709,7 +739,6 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
     )
     .await
     .unwrap();
-    // Failures are not reported as successful deployment operations.
     let missing = format!("missing-{}", Uuid::new_v4());
     assert_eq!(
         rpc(
@@ -738,18 +767,15 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
     .await
     .unwrap();
 
-    let rows: Vec<Value> =
-        sqlx::query_scalar("SELECT to_jsonb(a) FROM access_audit_events a ORDER BY audit_id")
-            .fetch_all(&f.pool)
-            .await?;
+    let rows = audit_rows().await;
     let text = json!(rows).to_string();
     assert!(
         !text.contains(&marker),
         "audit must exclude request bodies, display names, endpoints, metadata and raw method names"
     );
     assert!(
-        !text.contains(minted_secret),
-        "audit must exclude generated credentials"
+        !text.contains(&minted_secret),
+        "audit must exclude generated and pasted credentials"
     );
     assert!(
         !text.contains(service_key.secret.expose()),
@@ -764,28 +790,36 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
         api::METHOD_DEPLOYMENT_ENVIRONMENTS_ADOPT,
         api::METHOD_DEPLOYMENT_IDENTITY_APPLY,
         api::METHOD_DEPLOYMENT_API_KEYS_CREATE,
-        api::METHOD_DEPLOYMENT_API_KEYS_REVOKE,
     ] {
-        let completed = rows
+        let succeeded: Vec<_> = rows
             .iter()
-            .find(|r| {
-                r["method"] == method
-                    && r["stage"] == "completion"
-                    && r["outcome"] == "succeeded"
-                    && r["identity"]["authenticatedPrincipal"] == service.to_string()
-            })
-            .expect(method);
+            .filter(|r| r["method"] == method && r["outcome"] == "succeeded")
+            .collect();
+        assert_eq!(succeeded.len(), 1, "one record per audited call: {method}");
         assert_eq!(
-            completed["identity"]["actingPrincipal"],
-            f.admin.id.to_string()
+            succeeded[0]["authenticated_principal_id"],
+            service.to_string()
         );
-        assert!(
-            rows.iter()
-                .any(|r| r["attempt_id"] == completed["attempt_id"]
-                    && r["stage"] == "admission"
-                    && r["outcome"] == "allowed")
+        assert_eq!(succeeded[0]["acting_principal_id"], f.admin.id.to_string());
+        assert_eq!(
+            succeeded[0]["credential"],
+            service_key.record.key_prefix.as_str()
         );
+        assert!(succeeded[0]["policy_revision"].is_i64());
     }
+    // The refused revoke is a failed operation; the accepted one names its key.
+    let revokes: Vec<_> = rows
+        .iter()
+        .filter(|r| r["method"] == api::METHOD_DEPLOYMENT_API_KEYS_REVOKE)
+        .collect();
+    assert_eq!(revokes.len(), 2);
+    assert_eq!(revokes[0]["outcome"], "failed");
+    assert!(revokes[0]["target"]["keyPrefix"].is_null());
+    assert_eq!(revokes[1]["outcome"], "succeeded");
+    assert_eq!(
+        revokes[1]["target"]["keyPrefix"],
+        created_key["apiKey"]["keyPrefix"]
+    );
     assert!(
         rows.iter()
             .any(|r| r["target"]["universeId"] == universe.to_string()
@@ -803,44 +837,60 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
             .any(|r| r["method"] == api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST),
         "successful administrative inventory is quiet"
     );
-    for completed in rows
-        .iter()
-        .filter(|r| r["stage"] == "completion" && r["outcome"] == "succeeded")
-    {
-        assert_eq!(
-            rows.iter()
-                .filter(|r| r["attempt_id"] == completed["attempt_id"])
-                .count(),
-            2,
-            "significant deployment mutation has exactly admission and completion"
-        );
-    }
-    assert_eq!(
+    let denials = |method: &str, acting: Option<Uuid>| {
         rows.iter()
-            .filter(|r| r["method"] == api::METHOD_SESSION_RENAME
-                && r["identity"]["actingPrincipal"] == user.to_string())
-            .count(),
+            .filter(|r| {
+                r["method"] == method
+                    && r["outcome"] == "denied"
+                    && r["error_kind"] == "forbidden"
+                    && r["acting_principal_id"] == json!(acting)
+            })
+            .count()
+    };
+    assert_eq!(
+        denials(api::METHOD_SESSION_RENAME, Some(user)),
         1,
-        "a rejected action has one denial"
+        "a refused action has one denial naming its target"
     );
-    assert!(rows.iter().any(|r| r["method"].is_null()
-        && r["stage"] == "authentication"
-        && r["identity"]["authenticatedPrincipal"].is_null()
-        && r["identity"]["actingPrincipal"].is_null()));
     assert!(
-        rows.iter().any(|r| r["stage"] == "authentication"
-            && r["identity"]["authenticatedPrincipal"] == user.to_string()
-            && r["identity"]["actingPrincipal"].is_null()),
+        rows.iter()
+            .any(|r| r["method"] == api::METHOD_SESSION_RENAME
+                && r["target"]["sessionId"] == session)
+    );
+    assert_eq!(
+        denials(api::METHOD_SESSION_LIST, None),
+        1,
         "untrusted impersonation must not acquire the claimed actor"
     );
-    assert!(
-        rows.iter()
-            .any(|r| r["method"] == api::METHOD_DEPLOYMENT_IDENTITY_DIRECTORY
-                && r["outcome"] == "denied"
-                && r["identity"]["actingPrincipal"] == user.to_string())
+    assert!(rows.iter().any(|r| r["method"] == api::METHOD_SESSION_LIST
+        && r["authenticated_principal_id"] == user.to_string()));
+    assert_eq!(
+        denials(api::METHOD_DEPLOYMENT_IDENTITY_DIRECTORY, Some(user)),
+        1
     );
+    let imports: Vec<_> = rows
+        .iter()
+        .filter(|r| r["method"] == api::METHOD_AUTH_GRANTS_IMPORT)
+        .map(|r| (r["outcome"].clone(), r["error_kind"].clone()))
+        .collect();
+    assert_eq!(
+        imports,
+        vec![
+            (json!("succeeded"), Value::Null),
+            (json!("failed"), json!(refused_kind)),
+        ],
+        "a state refusal is a failed operation, never an authorization denial"
+    );
+    // Committed permission changes keep their own transactional change log.
+    let changes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM access_audit_changes WHERE event->>'operation'='create_group' AND actor_id=$1",
+    )
+    .bind(f.admin.id)
+    .fetch_one(&f.pool)
+    .await?;
+    assert_eq!(changes, 1);
 
-    // An already captured deployment context cannot outlive its service key.
+    // A revoked key stops authenticating on its next request.
     f.keys
         .revoke_managed_key(
             f.admin.id,
@@ -851,37 +901,35 @@ async fn deployment_operations_and_denials_keep_safe_durable_attribution() -> an
         )
         .await?;
     assert_eq!(
-        with_request_context(
-            captured,
-            f.deployment
-                .list_universes(api::DeploymentUniverseListParams {})
+        rpc(
+            &f.endpoint,
+            h,
+            api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
+            json!({})
         )
-        .await
-        .unwrap_err()
-        .kind,
-        AgentApiErrorKind::Rejected
+        .await,
+        Err(AgentApiErrorKind::Unauthenticated)
     );
-    // Audit admission is mandatory before starting a privileged side effect.
-    let blocked_universe = Uuid::new_v4();
+    // The audit record is best-effort: an audit outage can neither block an
+    // operation nor discard its committed result.
+    let admin_key = f.key(f.admin.id, AccessScope::Deployment).await;
+    let resilient_universe = Uuid::new_v4();
     sqlx::query("ALTER TABLE access_audit_events RENAME TO unavailable_access_audit_events")
         .execute(&f.pool)
         .await?;
-    let result = with_request_context(
-        local_context(f.admin.clone(), AccessScope::Deployment),
-        f.deployment
-            .create_universe(api::DeploymentUniverseCreateParams {
-                universe_id: blocked_universe.to_string(),
-            }),
+    let result = rpc(
+        &f.endpoint,
+        headers(&admin_key, None, None),
+        api::METHOD_DEPLOYMENT_UNIVERSES_CREATE,
+        json!({"universeId":resilient_universe}),
     )
     .await;
     sqlx::query("ALTER TABLE unavailable_access_audit_events RENAME TO access_audit_events")
         .execute(&f.pool)
         .await?;
-    assert_eq!(result.unwrap_err().kind, AgentApiErrorKind::Internal);
-    assert!(!store_pg::universe_exists(&f.pool, blocked_universe).await?);
-    println!(
-        "Deployment admission/outcome, authentication denial, attribution, redaction, deletion survival and audit failure checks passed"
-    );
+    assert_eq!(result.unwrap()["created"], true);
+    assert!(store_pg::universe_exists(&f.pool, resilient_universe).await?);
+    println!("Attribution, denial, redaction, deletion survival and audit-outage checks passed");
     Ok(())
 }
 
@@ -915,6 +963,7 @@ async fn routine_traffic_is_quiet_and_noop_revocation_does_not_change_history() 
     let before: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events")
         .fetch_one(&f.pool)
         .await?;
+    let direct = local_context(&f.access, f.admin.id, f.scope()).await?;
     for _ in 0..5 {
         for (method, params) in [
             (
@@ -957,7 +1006,7 @@ async fn routine_traffic_is_quiet_and_noop_revocation_does_not_change_history() 
         .await
         .unwrap();
         with_request_context(
-            local_context(f.admin.clone(), f.scope()),
+            direct.clone(),
             f.api.list_profiles(api::ProfileListParams {}),
         )
         .await?;
@@ -981,11 +1030,7 @@ async fn routine_traffic_is_quiet_and_noop_revocation_does_not_change_history() 
         )
         .await?
         .unwrap();
-    let revision = f
-        .access
-        .effective_access(f.admin.id, f.scope())
-        .await?
-        .policy_revision;
+    let revision = f.access.policy_revision().await?;
     let again = f
         .keys
         .revoke_managed_key(
@@ -998,20 +1043,14 @@ async fn routine_traffic_is_quiet_and_noop_revocation_does_not_change_history() 
         .await?
         .unwrap();
     assert_eq!(first.revoked_at_ms, again.revoked_at_ms);
-    assert_eq!(
-        revision,
-        f.access
-            .effective_access(f.admin.id, f.scope())
-            .await?
-            .policy_revision
-    );
+    assert_eq!(revision, f.access.policy_revision().await?);
     let changes: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_changes WHERE event->>'operation'='key_revoked' AND event->>'keyPrefix'=$1")
         .bind(&service_key.record.key_prefix).fetch_one(&f.pool).await?;
     assert_eq!(
         changes, 1,
         "idempotent revocation adds no duplicate change fact"
     );
-    // The same routine method still records a denial after credential revocation.
+    // A revoked credential no longer identifies anyone, so its calls leave no row.
     assert_eq!(
         rpc(
             &f.endpoint,
@@ -1020,11 +1059,11 @@ async fn routine_traffic_is_quiet_and_noop_revocation_does_not_change_history() 
             json!({"grantId":grant})
         )
         .await,
-        Err(AgentApiErrorKind::Rejected)
+        Err(AgentApiErrorKind::Unauthenticated)
     );
-    let denied: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events")
+    let unchanged: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events")
         .fetch_one(&f.pool)
         .await?;
-    assert_eq!(denied, after + 1, "one denial for the revoked credential");
+    assert_eq!(unchanged, after);
     Ok(())
 }

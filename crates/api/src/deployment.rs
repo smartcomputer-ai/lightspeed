@@ -503,10 +503,17 @@ pub trait DeploymentApiService: Send + Sync {
 
 macro_rules! deployment_api_methods {
     ($($method_const:ident => $service_fn:ident($params:ty) -> $response:ty =>
-        [$summary:expr, $description:expr], access: $access:expr),+ $(,)?) => {
+        [$summary:expr, $description:expr], access: $access:expr, audit: $audit:expr),+ $(,)?) => {
         pub(crate) fn deployment_method_access(method: &str) -> Option<MethodAccess> {
             match method {
                 $($method_const => Some($access),)+
+                _ => None,
+            }
+        }
+
+        pub(crate) fn deployment_method_audited(method: &str) -> Option<bool> {
+            match method {
+                $($method_const => Some($audit),)+
                 _ => None,
             }
         }
@@ -537,6 +544,7 @@ macro_rules! deployment_api_methods {
                         method: $method_const,
                         scope: ($access).scope(),
                         access: $access,
+                        audited: $audit,
                         summary: $summary,
                         description: $description,
                         params_type: stringify!($params),
@@ -554,43 +562,43 @@ macro_rules! deployment_api_methods {
 
 deployment_api_methods! {
     METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST => list_deployment_provider_bindings(DeploymentUniverseReadParams) -> EnvironmentProviderBindingListResponse =>
-        ["List a universe's deployment provider bindings", "Deployment configuration inventory; requires DeploymentAdmin without granting universe content access."], access: MethodAccess::DeploymentAdmin,
+        ["List a universe's deployment provider bindings", "Deployment configuration inventory; requires DeploymentAdmin without granting universe content access."], access: MethodAccess::DeploymentAdmin, audit: false,
 
     METHOD_DEPLOYMENT_IDENTITY_SELF => identity_self(IdentityScopeParams) -> IdentitySelfResponse =>
-        ["Read own access", "Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected."], access: MethodAccess::Identity,
+        ["Read own access", "Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected."], access: MethodAccess::Identity, audit: false,
     METHOD_DEPLOYMENT_IDENTITY_DIRECTORY => identity_directory(IdentityScopeParams) -> AccessDirectory =>
-        ["Read the access directory", "Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory."], access: MethodAccess::Identity,
+        ["Read the access directory", "Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory."], access: MethodAccess::Identity, audit: false,
 
     METHOD_DEPLOYMENT_UNIVERSES_CREATE => create_universe(DeploymentUniverseCreateParams) -> DeploymentUniverseCreateResponse =>
-        ["Create a universe", "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created."], access: MethodAccess::DeploymentAdmin,
+        ["Create a universe", "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created."], access: MethodAccess::DeploymentAdmin, audit: true,
     METHOD_DEPLOYMENT_UNIVERSES_LIST => list_universes(DeploymentUniverseListParams) -> DeploymentUniverseListResponse =>
-        ["List universes", "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity."], access: MethodAccess::DeploymentAdmin,
+        ["List universes", "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity."], access: MethodAccess::DeploymentAdmin, audit: false,
     METHOD_DEPLOYMENT_UNIVERSES_READ => read_universe(DeploymentUniverseReadParams) -> DeploymentUniverseReadResponse =>
-        ["Read a universe", "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage."], access: MethodAccess::DeploymentAdmin,
+        ["Read a universe", "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage."], access: MethodAccess::DeploymentAdmin, audit: false,
     METHOD_DEPLOYMENT_UNIVERSES_DELETE => delete_universe(DeploymentUniverseDeleteParams) -> DeploymentUniverseDeleteResponse =>
-        ["Purge a universe", "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure."], access: MethodAccess::DeploymentAdmin,
+        ["Purge a universe", "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure."], access: MethodAccess::DeploymentAdmin, audit: true,
     METHOD_DEPLOYMENT_IDENTITY_APPLY => apply_identity(AccessChange) -> AccessChangeResult =>
-        ["Apply identity and access changes", "Applies a canonical identity change with current actor permissions and durable access auditing."], access: MethodAccess::Identity,
+        ["Apply identity and access changes", "Applies a canonical identity change with current actor permissions and durable access auditing."], access: MethodAccess::Identity, audit: true,
     METHOD_DEPLOYMENT_API_KEYS_CREATE => create_api_key(DeploymentApiKeyCreateParams) -> DeploymentApiKeyCreateResponse =>
-        ["Create a scoped API key", "Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification."], access: MethodAccess::CredentialManagement,
+        ["Create a scoped API key", "Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification."], access: MethodAccess::CredentialManagement, audit: true,
     METHOD_DEPLOYMENT_API_KEYS_LIST => list_api_keys(DeploymentApiKeyListParams) -> DeploymentApiKeyListResponse =>
-        ["List scoped API keys", "Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned."], access: MethodAccess::CredentialManagement,
+        ["List scoped API keys", "Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned."], access: MethodAccess::CredentialManagement, audit: false,
     METHOD_DEPLOYMENT_API_KEYS_REVOKE => revoke_api_key(DeploymentApiKeyRevokeParams) -> DeploymentApiKeyRevokeResponse =>
-        ["Revoke a scoped API key", "Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found."], access: MethodAccess::CredentialManagement,
+        ["Revoke a scoped API key", "Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found."], access: MethodAccess::CredentialManagement, audit: true,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider(DeploymentEnvironmentProviderPutParams) -> DeploymentEnvironmentProviderPutResponse =>
-        ["Put an environment provider", "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed."], access: MethodAccess::DeploymentAdmin,
+        ["Put an environment provider", "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed."], access: MethodAccess::DeploymentAdmin, audit: true,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers(DeploymentEnvironmentProviderListParams) -> DeploymentEnvironmentProviderListResponse =>
-        ["List environment providers", "Returns every deployment-registered deployment provider and its controller connection."], access: MethodAccess::DeploymentAdmin,
+        ["List environment providers", "Returns every deployment-registered deployment provider and its controller connection."], access: MethodAccess::DeploymentAdmin, audit: false,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ => read_environment_provider(DeploymentEnvironmentProviderReadParams) -> DeploymentEnvironmentProviderReadResponse =>
-        ["Read an environment provider", "Returns one deployment-registered deployment provider and its controller connection."], access: MethodAccess::DeploymentAdmin,
+        ["Read an environment provider", "Returns one deployment-registered deployment provider and its controller connection."], access: MethodAccess::DeploymentAdmin, audit: false,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE => delete_environment_provider(DeploymentEnvironmentProviderDeleteParams) -> DeploymentEnvironmentProviderDeleteResponse =>
-        ["Delete an environment provider", "Deletes a deployment provider only when no universe binding references it."], access: MethodAccess::DeploymentAdmin,
+        ["Delete an environment provider", "Deletes a deployment provider only when no universe binding references it."], access: MethodAccess::DeploymentAdmin, audit: true,
     METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT => put_environment_provider_binding(DeploymentProviderBindingPutParams) -> DeploymentProviderBindingPutResponse =>
-        ["Put an environment provider binding", "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe."], access: MethodAccess::DeploymentAdmin,
+        ["Put an environment provider binding", "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe."], access: MethodAccess::DeploymentAdmin, audit: true,
     METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE => delete_environment_provider_binding(DeploymentProviderBindingDeleteParams) -> DeploymentProviderBindingDeleteResponse =>
-        ["Delete an environment provider binding", "Deletes a universe provider binding only after every referencing environment has reached Closed."], access: MethodAccess::DeploymentAdmin,
+        ["Delete an environment provider binding", "Deletes a universe provider binding only after every referencing environment has reached Closed."], access: MethodAccess::DeploymentAdmin, audit: true,
     METHOD_DEPLOYMENT_ENVIRONMENTS_ADOPT => adopt_environment(DeploymentEnvironmentAdoptParams) -> DeploymentEnvironmentAdoptResponse =>
-        ["Adopt a provider environment", "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer."], access: MethodAccess::DeploymentAdmin,
+        ["Adopt a provider environment", "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer."], access: MethodAccess::DeploymentAdmin, audit: true,
     METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST => list_deployment_channel_accounts(DeploymentChannelAccountListParams) -> DeploymentChannelAccountListResponse =>
-        ["List channel accounts across universes", "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since."], access: MethodAccess::DeploymentAdminOrCapability(ServiceCapability::DiscoverChannelAccounts),
+        ["List channel accounts across universes", "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since."], access: MethodAccess::DeploymentAdminOrCapability(ServiceCapability::DiscoverChannelAccounts), audit: false,
 }

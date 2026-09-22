@@ -45,6 +45,13 @@ pub fn method_access(method: &str) -> Option<MethodAccess> {
         .or_else(|| crate::deployment::deployment_method_access(method))
 }
 
+/// Whether the method declares a durable audit record for each call.
+pub fn method_audited(method: &str) -> bool {
+    crate::rpc::universe_method_audited(method)
+        .or_else(|| crate::deployment::deployment_method_audited(method))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,6 +75,35 @@ mod tests {
             assert_eq!(method_access(method), None);
             assert!(!is_service_method(method));
         }
+    }
+
+    #[test]
+    fn audit_policy_is_declared_per_method_and_reads_stay_quiet() {
+        let manifest = crate::schema_export::full_method_manifest();
+        for spec in &manifest {
+            assert_eq!(method_audited(spec.method), spec.audited);
+            // A read never leaves a record; neither does credential leasing,
+            // which workers perform continuously.
+            if matches!(
+                spec.access,
+                MethodAccess::Universe(UniverseAction::Read) | MethodAccess::Service(_)
+            ) {
+                assert!(!spec.audited, "{}", spec.method);
+            }
+        }
+        // Destructive and access-changing operations always do.
+        for method in [
+            METHOD_SESSION_DELETE,
+            METHOD_BOTS_DELETE,
+            METHOD_DEPLOYMENT_UNIVERSES_DELETE,
+            METHOD_DEPLOYMENT_IDENTITY_APPLY,
+            METHOD_DEPLOYMENT_API_KEYS_CREATE,
+            METHOD_DEPLOYMENT_API_KEYS_REVOKE,
+        ] {
+            assert!(method_audited(method), "{method}");
+        }
+        assert!(manifest.iter().any(|spec| spec.audited));
+        assert!(!method_audited("session/missing"));
     }
 
     #[test]

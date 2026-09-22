@@ -46,7 +46,7 @@ impl GatewayAgentApi {
     ) -> Result<AccessReadResponse, AgentApiError> {
         validate(&params)?;
         // Never accept a principal selector or internal-controller fallback.
-        let (_, rights) = self.current_rights().await?;
+        let rights = self.caller()?.rights;
         let store = self.access_store();
         let mut resources = Vec::with_capacity(params.resources.len());
         for resource in params.resources {

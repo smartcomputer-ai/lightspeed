@@ -45,8 +45,9 @@ export function useActionPermissions(
     },
     staleTime: 0,
     refetchOnMount: "always",
+    // Hints follow mounts, focus and mutations. They are never authority, so
+    // there is no background polling: a stale hint only means a refused action.
     refetchOnWindowFocus: true,
-    refetchInterval: 15_000,
     retry: false,
   });
   return {

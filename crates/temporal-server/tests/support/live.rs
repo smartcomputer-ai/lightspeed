@@ -34,13 +34,14 @@ pub async fn local_request_context() -> anyhow::Result<access::RequestContext> {
     let store = pg_store_from_env().await?;
     let universe_id = store.config().universe_id;
     store.ensure_universe().await?;
-    let principal = store_pg::PgAccessStore::new(store.pool().clone())
-        .initialize_local_development(universe_id, 1)
-        .await?;
+    let access = store_pg::PgAccessStore::new(store.pool().clone());
+    let principal = access.initialize_local_development(universe_id, 1).await?;
     Ok(temporal_server::gateway::authentication::local_context(
-        principal,
+        &access,
+        principal.id,
         access::AccessScope::Universe { universe_id },
-    ))
+    )
+    .await?)
 }
 
 pub async fn run_with_live_worker<F, Fut>(

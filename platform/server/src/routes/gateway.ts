@@ -2072,7 +2072,9 @@ export async function withGateway(
     if (code === "23505") return c.json({ error: "record already exists" }, 409);
     if (error instanceof LightspeedRpcError) {
       if (error.kind === "invalid_request") return c.json({ error: error.message }, 400);
-      if (error.kind === "rejected") return c.json({ error: error.message }, 403);
+      // Only an authorization decision is a 403; a refusal for reasons of state is a conflict.
+      if (error.kind === "forbidden") return c.json({ error: error.message }, 403);
+      if (error.kind === "rejected") return c.json({ error: error.message }, 409);
       if (error.kind === "not_found") {
         return c.json({ error: "not found in engine" }, 404);
       }

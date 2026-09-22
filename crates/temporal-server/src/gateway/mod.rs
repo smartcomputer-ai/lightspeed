@@ -13,7 +13,7 @@ pub use deployment::GatewayDeploymentApi;
 pub use http::{
     DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayRoutes, GatewayServerConfig,
     GatewayState, UNIVERSE_HEADER, gateway_router, prewarm_single_universe,
-    public_base_url_or_default, serve_gateway, serve_gateway_with_client_store,
+    public_base_url_or_default, serve_gateway,
 };
 pub use service::{
     DEFAULT_PUBLIC_BASE_URL, GatewayAgentApi, GatewayAgentApiBuilder, OAuthCallbackOutcome,

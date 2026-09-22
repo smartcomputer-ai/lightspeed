@@ -7,20 +7,22 @@ CREATE TABLE access_audit_changes (
     event jsonb NOT NULL
 );
 
--- Security decisions are independent of content and principal lifetimes.
+-- One row per audited operation or post-authentication denial, written once at
+-- the API boundary. `policy_revision` joins the change log above; a null
+-- universe is deployment scope.
 CREATE TABLE access_audit_events (
     audit_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    attempt_id uuid NOT NULL,
-    method text,
-    identity jsonb NOT NULL,
-    actor jsonb,
-    scope jsonb,
-    target jsonb,
-    policy_revision bigint,
-    stage text NOT NULL CHECK (stage IN ('authentication', 'admission', 'completion', 'delivery')),
-    outcome text NOT NULL CHECK (outcome IN ('allowed', 'denied', 'succeeded', 'failed')),
+    occurred_at_ms bigint NOT NULL CHECK (occurred_at_ms >= 0),
+    method text NOT NULL,
+    outcome text NOT NULL CHECK (outcome IN ('succeeded', 'failed', 'denied')),
     error_kind text,
-    occurred_at_ms bigint NOT NULL CHECK (occurred_at_ms >= 0)
+    authenticated_principal_id uuid,
+    acting_principal_id uuid,
+    credential text,
+    universe_id uuid,
+    target jsonb,
+    policy_revision bigint
 );
-CREATE INDEX access_audit_events_attempt ON access_audit_events(attempt_id);
-
+CREATE INDEX access_audit_events_time_idx ON access_audit_events (occurred_at_ms);
+CREATE INDEX access_audit_events_actor_idx ON access_audit_events (acting_principal_id, occurred_at_ms);
+CREATE INDEX access_audit_events_universe_idx ON access_audit_events (universe_id, occurred_at_ms);
