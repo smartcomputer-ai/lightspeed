@@ -286,7 +286,8 @@ Product surfaces should make this understandable: an **Access** panel,
 - For later personal event automation, how do we distinguish task inputs from
   another person's control requests?
 - Are access policies and groups sufficient initially, or is a project-level
-  collaboration scope needed?
+  collaboration scope needed? The second slice introduces a minimal project
+  root for systems and shared bodies of work.
 - How do external directory changes reach core, and when is offboarding
   considered complete?
 - How is the separate private-content access permission assigned and exercised,
