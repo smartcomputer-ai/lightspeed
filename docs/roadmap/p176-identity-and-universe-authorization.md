@@ -533,10 +533,11 @@ slice makes no private-session or resource-isolation promise, and its UI must no
 present one. The agreed separation of administration from private content is
 implemented when private sessions become available.
 
-The next slice combines private/shared session access with one complete authorized
-execution path: stable personal/service bindings, bounded run authority, and
-effect-time checks. It must cover associated transcripts, streams, files, and
-reachable execution paths together. Other follow-ups include individual resource
+The next slice, [session access and execution authority](p177-session-access-and-execution-authority.md),
+combines private/shared session access with one complete authorized execution
+path: stable personal/service bindings, bounded run authority, and turn-boundary
+checks. It must cover associated transcripts, streams, files, and reachable
+execution paths together. Other follow-ups include individual resource
 restrictions, full bot/delegation lifecycle enforcement, SSO/provisioning, and
 external credential delegation.
 

@@ -145,9 +145,10 @@ Run/control = universe access AND session action permission
 
 Personal/team experiences are policy presets over the same session model:
 
-- **Personal:** personal execution binding and private initial audience;
-  only that user may submit or steer work. Other people cannot control the
-  session under the user's authority, including through configuration changes.
+- **Personal:** personal execution binding and private initial audience; by
+  default only that user may submit or steer work. Nobody else controls the
+  session under the user's authority unless the owner explicitly adds them as a
+  writer; configuration changes never grant it.
 - **Team:** approved service binding, universe-visible by default, and explicitly
   authorized writers/controllers. Service-bound sessions may also be restricted.
   Requests remain attributable to individuals.
@@ -267,7 +268,8 @@ Important boundaries:
    core-owned local identity and roles, authenticated callers, consistent request
    authorization, ownership checks, access revocation, and attributable audit
    records.
-2. Implement private/shared sessions and their content together with one complete
+2. [Session access and execution authority](../p177-session-access-and-execution-authority.md):
+   private/shared sessions and their content together with one complete
    authorized execution path, including stable bindings and bounded run authority.
 3. Extend resource restrictions and execution/delegation enforcement across tools,
    environments, bots, and background work.
