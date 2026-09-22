@@ -8,6 +8,11 @@ export const METHODS = [
   "access/read",
   "access/policy/read",
   "access/policy/put",
+  "collection/create",
+  "collection/read",
+  "collection/list",
+  "collection/update",
+  "collection/delete",
   "initialize",
   "session/start",
   "session/managed/start",
@@ -159,6 +164,36 @@ export const METHOD_INFO = {
     access: {"kind":"universe","requirement":"share_resource"},
     summary: "Replace a resource's access policy",
     description: "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.",
+  },
+  "collection/create": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"create_collection"},
+    summary: "Create a collection",
+    description: "Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.",
+  },
+  "collection/read": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"read"},
+    summary: "Read a collection",
+    description: "Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.",
+  },
+  "collection/list": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"read"},
+    summary: "List collections",
+    description: "Returns the collections the caller may read.",
+  },
+  "collection/update": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"manage_collection"},
+    summary: "Rename a collection",
+    description: "Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.",
+  },
+  "collection/delete": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"delete_collection"},
+    summary: "Delete an empty collection",
+    description: "Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.",
   },
   "initialize": {
     scope: "universe",
@@ -987,6 +1022,51 @@ export interface MethodMap {
   "access/policy/put": {
     params: Api.AccessPolicyPutParams;
     result: Api.AgentApiOutcomeOfAccessPolicyPutResponse;
+  };
+  /**
+   * Create a collection
+   *
+   * Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.
+   */
+  "collection/create": {
+    params: Api.CollectionCreateParams;
+    result: Api.AgentApiOutcomeOfCollectionCreateResponse;
+  };
+  /**
+   * Read a collection
+   *
+   * Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.
+   */
+  "collection/read": {
+    params: Api.CollectionReadParams;
+    result: Api.AgentApiOutcomeOfCollectionReadResponse;
+  };
+  /**
+   * List collections
+   *
+   * Returns the collections the caller may read.
+   */
+  "collection/list": {
+    params: Api.CollectionListParams;
+    result: Api.AgentApiOutcomeOfCollectionListResponse;
+  };
+  /**
+   * Rename a collection
+   *
+   * Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.
+   */
+  "collection/update": {
+    params: Api.CollectionUpdateParams;
+    result: Api.AgentApiOutcomeOfCollectionUpdateResponse;
+  };
+  /**
+   * Delete an empty collection
+   *
+   * Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.
+   */
+  "collection/delete": {
+    params: Api.CollectionDeleteParams;
+    result: Api.AgentApiOutcomeOfCollectionDeleteResponse;
   };
   /**
    * Inspect the Lightspeed protocol
@@ -2200,6 +2280,46 @@ export const rpc = {
    */
   accessPolicyPut(client: RpcCaller, params: Api.AccessPolicyPutParams): Promise<Api.AgentApiOutcomeOfAccessPolicyPutResponse> {
     return client.call("access/policy/put", params);
+  },
+  /**
+   * Create a collection
+   *
+   * Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.
+   */
+  collectionCreate(client: RpcCaller, params: Api.CollectionCreateParams): Promise<Api.AgentApiOutcomeOfCollectionCreateResponse> {
+    return client.call("collection/create", params);
+  },
+  /**
+   * Read a collection
+   *
+   * Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.
+   */
+  collectionRead(client: RpcCaller, params: Api.CollectionReadParams): Promise<Api.AgentApiOutcomeOfCollectionReadResponse> {
+    return client.call("collection/read", params);
+  },
+  /**
+   * List collections
+   *
+   * Returns the collections the caller may read.
+   */
+  collectionList(client: RpcCaller, params: Api.CollectionListParams): Promise<Api.AgentApiOutcomeOfCollectionListResponse> {
+    return client.call("collection/list", params);
+  },
+  /**
+   * Rename a collection
+   *
+   * Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.
+   */
+  collectionUpdate(client: RpcCaller, params: Api.CollectionUpdateParams): Promise<Api.AgentApiOutcomeOfCollectionUpdateResponse> {
+    return client.call("collection/update", params);
+  },
+  /**
+   * Delete an empty collection
+   *
+   * Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.
+   */
+  collectionDelete(client: RpcCaller, params: Api.CollectionDeleteParams): Promise<Api.AgentApiOutcomeOfCollectionDeleteResponse> {
+    return client.call("collection/delete", params);
   },
   /**
    * Inspect the Lightspeed protocol

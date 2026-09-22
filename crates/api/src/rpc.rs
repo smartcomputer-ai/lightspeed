@@ -359,6 +359,16 @@ api_methods! {
         ["Read a resource's access policy", "Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
     METHOD_ACCESS_POLICY_PUT => put_access_policy(AccessPolicyPutParams) -> AccessPolicyPutResponse =>
         ["Replace a resource's access policy", "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally."], access: MethodAccess::Universe(UniverseAction::ShareResource), audit: true,
+    METHOD_COLLECTION_CREATE => create_collection(CollectionCreateParams) -> CollectionCreateResponse =>
+        ["Create a collection", "Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation."], access: MethodAccess::Universe(UniverseAction::CreateCollection), audit: true,
+    METHOD_COLLECTION_READ => read_collection(CollectionReadParams) -> CollectionReadResponse =>
+        ["Read a collection", "Returns the collection and the sessions and bots in it. A collection the caller may not read is not found."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
+    METHOD_COLLECTION_LIST => list_collections(CollectionListParams) -> CollectionListResponse =>
+        ["List collections", "Returns the collections the caller may read."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
+    METHOD_COLLECTION_UPDATE => update_collection(CollectionUpdateParams) -> CollectionUpdateResponse =>
+        ["Rename a collection", "Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates."], access: MethodAccess::Universe(UniverseAction::ManageCollection), audit: false,
+    METHOD_COLLECTION_DELETE => delete_collection(CollectionDeleteParams) -> CollectionDeleteResponse =>
+        ["Delete an empty collection", "Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any."], access: MethodAccess::Universe(UniverseAction::DeleteCollection), audit: true,
     METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse =>
         ["Inspect the Lightspeed protocol", "Returns protocol version, server identity, and supported capabilities without changing universe state."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
     METHOD_SESSION_START => start_session(SessionStartParams) -> SessionStartResponse =>

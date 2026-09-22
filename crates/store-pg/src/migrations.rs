@@ -44,6 +44,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "cas_session_roots",
     "channel_accounts",
     "channel_pairings",
+    "collections",
     "environment_credentials",
     "environment_incarnations",
     "environment_provider_bindings",

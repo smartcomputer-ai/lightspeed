@@ -4,6 +4,7 @@ mod access_policy;
 mod access_preview;
 mod api_config;
 pub(crate) mod authorization;
+mod collections;
 use access::ResourceRef;
 pub(crate) mod auth_api;
 mod blobs;
@@ -1571,6 +1572,69 @@ impl AgentApiService for GatewayAgentApi {
         self.authorize_method(METHOD_ACCESS_POLICY_PUT, Some(params.resource.clone()))
             .await?;
         self.put_access_policy_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn create_collection(
+        &self,
+        params: CollectionCreateParams,
+    ) -> Result<AgentApiOutcome<CollectionCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_COLLECTION_CREATE, None)
+            .await?;
+        self.create_collection_response(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_collection(
+        &self,
+        params: CollectionReadParams,
+    ) -> Result<AgentApiOutcome<CollectionReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_COLLECTION_READ,
+            Some(ResourceRef::Collection(params.collection_id.clone())),
+        )
+        .await?;
+        self.read_collection_response(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_collections(
+        &self,
+        _params: CollectionListParams,
+    ) -> Result<AgentApiOutcome<CollectionListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_COLLECTION_LIST, None).await?;
+        self.list_collections_response()
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn update_collection(
+        &self,
+        params: CollectionUpdateParams,
+    ) -> Result<AgentApiOutcome<CollectionUpdateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_COLLECTION_UPDATE,
+            Some(ResourceRef::Collection(params.collection_id.clone())),
+        )
+        .await?;
+        self.update_collection_response(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn delete_collection(
+        &self,
+        params: CollectionDeleteParams,
+    ) -> Result<AgentApiOutcome<CollectionDeleteResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_COLLECTION_DELETE,
+            Some(ResourceRef::Collection(params.collection_id.clone())),
+        )
+        .await?;
+        self.delete_collection_response(params)
             .await
             .map(AgentApiOutcome::new)
     }

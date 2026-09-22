@@ -199,7 +199,9 @@ Manage bot        = owner, OR ManageBot allowed when the collection is universe-
 Manage collection = owner, OR ConfigureResource allowed when universe-visible
 Stop              = StopSession allowed (Operator/Admin) OR owner OR write grant
 Delete / close    = owner OR Admin OR (managing bot AND ManageBot allowed)
+Delete collection = owner OR Admin, once empty
 Hand off owner    = owner, only under service execution; moves the whole tree
+Governance        = Stop by role and Delete by Admin need no read; all else hidden
 ```
 
 - **One evaluator.** `authorize(caller, action, resource)` replaces
@@ -441,7 +443,8 @@ Edited in place; schema revision advances once and the release metadata with it.
   updated_by, updated_at_ms)` and `access_resource_grants (key, subject_kind, subject_id,
   permission, granted_by, granted_at_ms)` with an index on the subject, both
   referencing the root's anchor and cascading with it; `collections
-  (universe_id, collection_id, display_name, created_at_ms)`.
+  (universe_id, collection_id, display_name, revision, created_at_ms,
+  updated_at_ms)`.
 - `001_core.sql`: `execution_principal_id` and `personal_execution_enabled` on
   `universes` (or a follow-on file, if the principal foreign key needs
   `007_identity_access.sql` first); `origin` on `cas_session_roots`;
@@ -502,9 +505,28 @@ Each step ships on its own; the order is by dependency.
        through a group, Viewer, Operator, Admin against read, list, events,
        control, stop, delete, share and revocation on a restricted session
        and a restricted bot.
-       Open in this step: forks and clones as new roots, collections and bots
-       joining them, hand-off, `access` on summaries (with "Running as" in
-       step 4). Live matrix through HTTP:
+       Collections done 2026-09-22: `ResourceRef::Collection`, actions
+       `CreateCollection` / `ManageCollection` / `DeleteCollection`,
+       `collection/create|read|list|update|delete` (`update` replaces the
+       name with the usual optional `expectedRevision`; `delete` refuses a
+       collection that still holds members, so members go under their own
+       rules first — a deliberate narrowing of "with everything in it"),
+       `access.root` on `session/start`, `session/managed/start` and
+       `bots/create` places a member in a collection the caller may write to
+       (`ControlSession` on the collection), members take no visibility or
+       grants of their own; a bot created without `access.root` gets a
+       collection named after it carrying the requested audience, and
+       deleting a bot removes its collection once nothing else is left in it
+       (no marker for how the collection came to be); `owner` on
+       `access/policy/put` hands a root over (owner only, new owner must
+       hold a role, previous owner keeps nothing); governance without
+       content: Operator/Admin stop and Admin deletes a resource they cannot
+       read (the delete is admitted, then refused by state while the session
+       is open), everything else stays hidden. There is no fork or clone
+       API today, so "forks and clones as new roots" is moot until one
+       exists; it will reserve with the caller as controller and so be a new
+       root by construction. Open: `access` on summaries (with "Running as"
+       in step 4). Live matrix through HTTP:
        owner, reader, writer, group member, Viewer, Operator, Admin against
        read, list, events, control, stop, delete and share, for a standalone
        session, a universe-visible collection holding a bot, and a restricted
@@ -539,7 +561,10 @@ Each step ships on its own; the order is by dependency.
 7. [ ] Web: Access panel, share dialog, restricted markers, execution choice,
        collection pages, workspace visibility note; Platform mapping of the new
        methods; docs (`multi-tenancy.md`, `authentication-and-tenancy.md`, API
-       reference).
+       reference). User documentation is deferred to this step: steps 2–6
+       change no `docs/documentation` page beyond the generated API reference,
+       and the sharing paragraphs already there describe the state after
+       step 2's sharing part.
 
 ## Validation
 

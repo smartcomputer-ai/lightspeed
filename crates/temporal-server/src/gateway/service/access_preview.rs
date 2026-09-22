@@ -15,6 +15,7 @@ fn validate(params: &AccessReadParams) -> Result<(), AgentApiError> {
             ResourceRef::Session(id) => api::validate_session_id(id).is_ok(),
             ResourceRef::Bot(id) => api::BotId::try_new(id.clone()).is_ok(),
             ResourceRef::Profile(id) => api::ProfileId::try_new(id.clone()).is_ok(),
+            ResourceRef::Collection(id) => api::validate_session_id(id).is_ok(),
         };
         if !valid {
             return Err(AgentApiError::invalid_request("invalid resource id"));

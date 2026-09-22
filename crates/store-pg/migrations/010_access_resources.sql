@@ -1,10 +1,23 @@
+-- A collection is a root with a name and nothing else: sessions and bots in
+-- it share its policy. Deleting a bot removes its collection when nothing
+-- else is left in it.
+CREATE TABLE collections (
+    universe_id uuid NOT NULL REFERENCES universes(universe_id) ON DELETE CASCADE,
+    collection_id text NOT NULL CHECK (collection_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
+    display_name text NOT NULL CHECK (length(display_name) BETWEEN 1 AND 200),
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_at_ms bigint NOT NULL CHECK (created_at_ms >= 0),
+    updated_at_ms bigint NOT NULL CHECK (updated_at_ms >= 0),
+    PRIMARY KEY (universe_id, collection_id)
+);
+
 -- Anchor of every governed resource: immutable facts reserved before the
 -- resource exists, so a creation race can never transfer it. The anchor is
 -- released with the resource, so an id belongs to the universe, not to
 -- whoever used it first.
 CREATE TABLE access_resources (
     universe_id uuid NOT NULL REFERENCES universes(universe_id) ON DELETE CASCADE,
-    resource_kind text NOT NULL CHECK (resource_kind IN ('session', 'bot', 'profile')),
+    resource_kind text NOT NULL CHECK (resource_kind IN ('session', 'bot', 'profile', 'collection')),
     resource_id text NOT NULL,
     -- Creation attribution and the immediate admitted controller.
     created_by jsonb NOT NULL,
@@ -12,7 +25,7 @@ CREATE TABLE access_resources (
     -- The root whose policy governs this resource: itself for a root, the
     -- parent's root for a delegated child, the bot's root for a bot's session.
     -- Copied at reservation so a decision reads one row and never walks a chain.
-    audience_root_kind text NOT NULL CHECK (audience_root_kind IN ('session', 'bot', 'profile')),
+    audience_root_kind text NOT NULL CHECK (audience_root_kind IN ('session', 'bot', 'profile', 'collection')),
     audience_root_id text NOT NULL,
     -- The bot whose worker controls this resource, if any.
     bot_id text,

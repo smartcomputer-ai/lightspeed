@@ -11,11 +11,12 @@ use crate::PgAccessStore;
 fn error(error: impl std::fmt::Display) -> AccessError {
     AccessError::Store(error.to_string())
 }
-fn key(resource: &ResourceRef) -> (&'static str, &str) {
+pub(crate) fn key(resource: &ResourceRef) -> (&'static str, &str) {
     match resource {
         ResourceRef::Session(id) => ("session", id),
         ResourceRef::Bot(id) => ("bot", id),
         ResourceRef::Profile(id) => ("profile", id),
+        ResourceRef::Collection(id) => ("collection", id),
     }
 }
 fn resource_ref(kind: &str, id: String) -> Result<ResourceRef, AccessError> {
@@ -23,6 +24,7 @@ fn resource_ref(kind: &str, id: String) -> Result<ResourceRef, AccessError> {
         "session" => ResourceRef::Session(id),
         "bot" => ResourceRef::Bot(id),
         "profile" => ResourceRef::Profile(id),
+        "collection" => ResourceRef::Collection(id),
         other => return Err(error(format!("unknown resource kind {other}"))),
     })
 }
@@ -202,6 +204,13 @@ impl PgAccessStore {
             ],
             ResourceRef::Bot(_) => &[Read, ManageBot, InvokeBot, ShareResource],
             ResourceRef::Profile(_) => &[Read, ManageProfile],
+            ResourceRef::Collection(_) => &[
+                Read,
+                ControlSession,
+                ManageCollection,
+                DeleteCollection,
+                ShareResource,
+            ],
         };
         let caller = Caller::Request(rights);
         let mut actions = Vec::new();
@@ -248,6 +257,7 @@ impl PgAccessStore {
             ResourceRef::Session(_) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE universe_id=$1 AND session_id=$2)"),
             ResourceRef::Bot(_) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM bots WHERE universe_id=$1 AND bot_id=$2)"),
             ResourceRef::Profile(_) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_profiles WHERE universe_id=$1 AND profile_id=$2)"),
+            ResourceRef::Collection(_) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM collections WHERE universe_id=$1 AND collection_id=$2)"),
         }.bind(universe).bind(id).fetch_one(&self.pool).await.map_err(error)
     }
 
@@ -273,7 +283,8 @@ impl PgAccessStore {
     }
 
     /// Reserve before creating content or starting a workflow. A principal
-    /// creates a root and owns it; a bot's session and a delegated child join
+    /// creates a root and owns it, or, naming a collection as `root`, creates
+    /// a member of that collection; a bot's session and a delegated child join
     /// their controller's root, so a missing controller fails closed. Retries
     /// return the original facts; failed starts retain their reservation.
     pub async fn reserve_resource(
@@ -282,6 +293,7 @@ impl PgAccessStore {
         resource: &ResourceRef,
         created_by: &ActionActor,
         controller: &ResourceController,
+        root: Option<&ResourceRef>,
         now_ms: u64,
     ) -> Result<ResourceAnchor, AccessError> {
         let (kind, id) = key(resource);
@@ -294,16 +306,28 @@ impl PgAccessStore {
         {
             return Err(AccessError::Denied);
         }
-        let (root, bot, owner) = match controller {
-            ResourceController::Principal(id) => (resource.clone(), None, Some(*id)),
-            ResourceController::Bot(bot) => {
+        let (root, bot, owner) = match (controller, root) {
+            (ResourceController::Principal(_), Some(collection @ ResourceRef::Collection(_))) => {
+                // A member joins an existing collection and takes no policy.
+                self.anchor(universe, collection)
+                    .await?
+                    .ok_or(AccessError::Denied)?;
+                (collection.clone(), None, None)
+            }
+            (_, Some(_)) => {
+                return Err(AccessError::Invalid(
+                    "only a principal creates in a collection".into(),
+                ));
+            }
+            (ResourceController::Principal(id), None) => (resource.clone(), None, Some(*id)),
+            (ResourceController::Bot(bot), None) => {
                 let parent = self
                     .anchor(universe, &ResourceRef::Bot(bot.clone()))
                     .await?
                     .ok_or(AccessError::Denied)?;
                 (parent.audience_root, Some(bot.clone()), None)
             }
-            ResourceController::Session(session) => {
+            (ResourceController::Session(session), None) => {
                 let parent = self
                     .anchor(universe, &ResourceRef::Session(session.clone()))
                     .await?
@@ -343,6 +367,8 @@ pub struct PolicyReplacement {
     pub visibility: Visibility,
     pub grants: Vec<(Subject, ResourcePermission)>,
     pub expected_revision: Option<u64>,
+    /// Hand the root to this principal; the previous owner keeps nothing.
+    pub owner: Option<Uuid>,
 }
 
 /// A root's policy and grants as one view.
@@ -411,12 +437,13 @@ impl PgAccessStore {
         }))
     }
 
-    /// Replace a root's visibility and grant set in one transaction, guarded
-    /// by the policy revision when the caller supplies one. Every subject must
-    /// currently hold a role in the universe, directly or through a group;
-    /// unchanged grants keep their attribution. The change is recorded and
-    /// advances the deployment policy revision, so parked readers whose grant
-    /// is gone revalidate and stop.
+    /// Replace a root's visibility and grant set, and hand it to a new owner
+    /// when the replacement names one, in one transaction guarded by the
+    /// policy revision when the caller supplies one. Every subject and a new
+    /// owner must currently hold a role in the universe, directly or through
+    /// a group; unchanged grants keep their attribution. The change is
+    /// recorded and advances the deployment policy revision, so parked
+    /// readers whose grant is gone revalidate and stop.
     pub async fn put_policy(
         &self,
         universe: Uuid,
@@ -429,6 +456,7 @@ impl PgAccessStore {
             visibility,
             grants,
             expected_revision,
+            owner,
         } = replacement;
         let (visibility, expected_revision) = (*visibility, *expected_revision);
         let (root_kind, root_id) = key(root);
@@ -446,13 +474,17 @@ impl PgAccessStore {
             });
         }
         let mut seen = std::collections::BTreeSet::new();
-        for (subject, _) in grants {
-            if !seen.insert(*subject) {
+        let subjects = grants
+            .iter()
+            .map(|(subject, _)| *subject)
+            .chain(owner.map(Subject::Principal));
+        for subject in subjects {
+            if !seen.insert(subject) {
                 return Err(AccessError::Invalid(format!(
                     "subject {subject:?} appears more than once"
                 )));
             }
-            let (subject_kind, subject_id) = subject_key(subject);
+            let (subject_kind, subject_id) = subject_key(&subject);
             let member: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM access_role_assignments r WHERE r.universe_id=$1
                     AND (($2='principal' AND r.principal_id=$3) OR ($2='group' AND r.group_id=$3)))
@@ -471,9 +503,9 @@ impl PgAccessStore {
                 )));
             }
         }
-        sqlx::query("UPDATE access_resource_policies SET visibility=$4, revision=revision+1, updated_by=$5, updated_at_ms=$6 WHERE universe_id=$1 AND resource_kind=$2 AND resource_id=$3")
+        sqlx::query("UPDATE access_resource_policies SET visibility=$4, owner_principal_id=COALESCE($7, owner_principal_id), revision=revision+1, updated_by=$5, updated_at_ms=$6 WHERE universe_id=$1 AND resource_kind=$2 AND resource_id=$3")
             .bind(universe).bind(root_kind).bind(root_id).bind(visibility_name(visibility))
-            .bind(json!(ActionActor::Principal { id: actor })).bind(now)
+            .bind(json!(ActionActor::Principal { id: actor })).bind(now).bind(owner)
             .execute(&mut *tx).await.map_err(error)?;
         let keep: Vec<String> = grants
             .iter()
@@ -503,6 +535,7 @@ impl PgAccessStore {
                 "universeId": universe,
                 "resource": root,
                 "visibility": visibility,
+                "owner": owner,
                 "grants": grants.iter().map(|(subject, permission)| json!({"subject": subject, "permission": permission})).collect::<Vec<_>>(),
             }),
             now,
@@ -576,4 +609,167 @@ pub(crate) fn readable_predicate(
                       OR (rg.subject_kind='group' AND rg.subject_id IN
                           (SELECT rm.group_id FROM access_memberships rm WHERE rm.principal_id=${p}))))))"
     )
+}
+
+/// Collections: a root with a name. Members are whatever anchors point at
+/// it; deleting a bot removes its collection once nothing else is left.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectionRecord {
+    pub collection_id: String,
+    pub display_name: String,
+    pub revision: u64,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+fn collection_row(row: &sqlx::postgres::PgRow) -> Result<CollectionRecord, AccessError> {
+    Ok(CollectionRecord {
+        collection_id: row.try_get("collection_id").map_err(error)?,
+        display_name: row.try_get("display_name").map_err(error)?,
+        revision: u64::try_from(row.try_get::<i64, _>("revision").map_err(error)?)
+            .map_err(error)?,
+        created_at_ms: u64::try_from(row.try_get::<i64, _>("created_at_ms").map_err(error)?)
+            .map_err(error)?,
+        updated_at_ms: u64::try_from(row.try_get::<i64, _>("updated_at_ms").map_err(error)?)
+            .map_err(error)?,
+    })
+}
+
+impl PgAccessStore {
+    /// Create the collection row; the anchor and policy were reserved first.
+    pub async fn create_collection(
+        &self,
+        universe: Uuid,
+        collection_id: &str,
+        display_name: &str,
+        now_ms: u64,
+    ) -> Result<CollectionRecord, AccessError> {
+        let now = i64::try_from(now_ms).map_err(error)?;
+        sqlx::query("INSERT INTO collections(universe_id,collection_id,display_name,created_at_ms,updated_at_ms) VALUES($1,$2,$3,$4,$4)")
+            .bind(universe).bind(collection_id).bind(display_name).bind(now)
+            .execute(&self.pool).await.map_err(error)?;
+        self.read_collection(universe, collection_id)
+            .await?
+            .ok_or(AccessError::NotFound)
+    }
+
+    pub async fn read_collection(
+        &self,
+        universe: Uuid,
+        collection_id: &str,
+    ) -> Result<Option<CollectionRecord>, AccessError> {
+        sqlx::query("SELECT * FROM collections WHERE universe_id=$1 AND collection_id=$2")
+            .bind(universe)
+            .bind(collection_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(error)?
+            .as_ref()
+            .map(collection_row)
+            .transpose()
+    }
+
+    /// Collections the reader may read, by id.
+    pub async fn list_collections(
+        &self,
+        universe: Uuid,
+        reader: &Reader,
+    ) -> Result<Vec<CollectionRecord>, AccessError> {
+        let readable = readable_predicate(reader, "collection", "c", "collection_id", 2);
+        let (principal, root_kind, root_id) = reader.binds();
+        sqlx::query(&format!(
+            "SELECT c.* FROM collections c WHERE c.universe_id=$1 AND {readable} ORDER BY c.collection_id"
+        ))
+        .bind(universe)
+        .bind(principal)
+        .bind(root_kind)
+        .bind(root_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(error)?
+        .iter()
+        .map(collection_row)
+        .collect()
+    }
+
+    /// Replace the name, guarded by the revision when given.
+    pub async fn update_collection(
+        &self,
+        universe: Uuid,
+        collection_id: &str,
+        display_name: &str,
+        expected_revision: Option<u64>,
+        now_ms: u64,
+    ) -> Result<CollectionRecord, AccessError> {
+        let now = i64::try_from(now_ms).map_err(error)?;
+        let mut tx = self.pool.begin().await.map_err(error)?;
+        let current: i64 = sqlx::query_scalar(
+            "SELECT revision FROM collections WHERE universe_id=$1 AND collection_id=$2 FOR UPDATE",
+        )
+        .bind(universe)
+        .bind(collection_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(error)?
+        .ok_or(AccessError::NotFound)?;
+        let current = u64::try_from(current).map_err(error)?;
+        if let Some(expected) = expected_revision
+            && expected != current
+        {
+            return Err(AccessError::RevisionMismatch {
+                expected,
+                actual: current,
+            });
+        }
+        sqlx::query("UPDATE collections SET display_name=$3, revision=revision+1, updated_at_ms=$4 WHERE universe_id=$1 AND collection_id=$2")
+            .bind(universe).bind(collection_id).bind(display_name).bind(now)
+            .execute(&mut *tx).await.map_err(error)?;
+        tx.commit().await.map_err(error)?;
+        self.read_collection(universe, collection_id)
+            .await?
+            .ok_or(AccessError::NotFound)
+    }
+
+    /// Resources whose audience root is this collection, other than itself.
+    pub async fn collection_members(
+        &self,
+        universe: Uuid,
+        collection_id: &str,
+    ) -> Result<Vec<ResourceRef>, AccessError> {
+        sqlx::query("SELECT resource_kind, resource_id FROM access_resources WHERE universe_id=$1 AND audience_root_kind='collection' AND audience_root_id=$2 AND NOT (resource_kind='collection' AND resource_id=$2) ORDER BY resource_kind, resource_id")
+            .bind(universe).bind(collection_id).fetch_all(&self.pool).await.map_err(error)?
+            .iter()
+            .map(|row| resource_ref(row.try_get("resource_kind").map_err(error)?, row.try_get("resource_id").map_err(error)?))
+            .collect()
+    }
+
+    /// Delete an empty collection with its anchor, policy and grants. A
+    /// collection with members is refused: they are deleted first, so their
+    /// own rules apply.
+    pub async fn delete_collection(
+        &self,
+        universe: Uuid,
+        collection_id: &str,
+    ) -> Result<CollectionRecord, AccessError> {
+        let record = self
+            .read_collection(universe, collection_id)
+            .await?
+            .ok_or(AccessError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(error)?;
+        let members: i64 = sqlx::query_scalar("SELECT count(*) FROM access_resources WHERE universe_id=$1 AND audience_root_kind='collection' AND audience_root_id=$2 AND NOT (resource_kind='collection' AND resource_id=$2)")
+            .bind(universe).bind(collection_id).fetch_one(&mut *tx).await.map_err(error)?;
+        if members > 0 {
+            return Err(AccessError::Conflict);
+        }
+        sqlx::query("DELETE FROM collections WHERE universe_id=$1 AND collection_id=$2")
+            .bind(universe)
+            .bind(collection_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(error)?;
+        sqlx::query("DELETE FROM access_resources WHERE universe_id=$1 AND resource_kind='collection' AND resource_id=$2")
+            .bind(universe).bind(collection_id).execute(&mut *tx).await.map_err(error)?;
+        tx.commit().await.map_err(error)?;
+        Ok(record)
+    }
 }

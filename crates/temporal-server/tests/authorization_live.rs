@@ -154,10 +154,13 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
                 not_found(rpc(&endpoint, caller, "access/policy/read", json!({"resource":resource})).await);
                 assert!(!lists(&success(rpc(&endpoint, caller, "session/list", json!({})).await), &private));
             }
-            // Those whose role could delete learn nothing either; the Viewer's role refuses first.
-            for caller in [bob, operator, universe_admin] {
+            // Those whose role could delete learn nothing either; the Viewer's role
+            // refuses first. Admin governs without reading: the delete is admitted and
+            // then refused by state, since the session is still open.
+            for caller in [bob, operator] {
                 not_found(rpc(&endpoint, caller, "session/delete", read.clone()).await);
             }
+            assert_eq!(rpc(&endpoint, universe_admin, "session/delete", read.clone()).await["error"]["data"]["kind"], "rejected");
             assert!(lists(&success(rpc(&endpoint, alice, "session/list", json!({})).await), &private));
             let policy = success(rpc(&endpoint, alice, "access/policy/read", json!({"resource":resource})).await)["policy"].clone();
             assert_eq!(policy["visibility"], "restricted");
@@ -221,6 +224,68 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             assert!(!success(rpc(&endpoint, operator, "bots/list", json!({})).await)["bots"].as_array().unwrap().iter().any(|b| b["bot"]["botId"] == private_bot));
             success(rpc(&endpoint, alice, "bots/read", json!({"botId":private_bot})).await);
             assert_eq!(rpc(&endpoint, alice, "session/start", json!({"sessionId":session,"access":{"visibility":"restricted"}})).await["error"]["data"]["kind"], "invalid_request");
+            // Collections. A restricted collection is one audience for the bots and
+            // sessions created in it; members carry no policy of their own.
+            let collection = success(rpc(&endpoint, alice, "collection/create", json!({"displayName":"Investigation","access":{"visibility":"restricted"}})).await)["collection"].clone();
+            let collection_id = collection["collectionId"].as_str().unwrap().to_owned();
+            let collection_ref = json!({"kind":"collection","id":collection_id});
+            let team_bot = format!("bot-{}", Uuid::new_v4().simple());
+            success(rpc(&endpoint, alice, "bots/create", json!({"bot":{"botId":team_bot,"profileId":profile_for_bot},"access":{"root":collection_ref}})).await);
+            let team_session = success(rpc(&endpoint, alice, "session/start", json!({"access":{"root":collection_ref}})).await)["session"]["id"].as_str().unwrap().to_owned();
+            assert_eq!(rpc(&endpoint, alice, "session/start", json!({"access":{"root":collection_ref,"visibility":"restricted"}})).await["error"]["data"]["kind"], "invalid_request");
+            forbidden(rpc(&endpoint, bob, "session/start", json!({"access":{"root":collection_ref}})).await);
+            for caller in [viewer, bob, operator, universe_admin] {
+                not_found(rpc(&endpoint, caller, "collection/read", json!({"collectionId":collection_id})).await);
+                not_found(rpc(&endpoint, caller, "bots/read", json!({"botId":team_bot})).await);
+                not_found(rpc(&endpoint, caller, "session/read", json!({"sessionId":team_session})).await);
+                assert!(success(rpc(&endpoint, caller, "collection/list", json!({})).await)["collections"].as_array().unwrap().is_empty() || caller.record.principal_id == alice.record.principal_id);
+            }
+            let member_policy = success(rpc(&endpoint, alice, "access/policy/read", json!({"resource":{"kind":"session","id":team_session}})).await)["policy"].clone();
+            assert_eq!(member_policy["root"], collection_ref);
+            assert_eq!(member_policy["visibility"], "restricted");
+            // Members: the bot, its own session, and the session created in the collection.
+            let members = success(rpc(&endpoint, alice, "collection/read", json!({"collectionId":collection_id})).await)["members"].clone();
+            let members = members.as_array().unwrap();
+            assert!(members.contains(&json!({"kind":"bot","id":team_bot})), "{members:?}");
+            assert!(members.contains(&json!({"kind":"session","id":team_session})), "{members:?}");
+            assert!(members.iter().all(|m| m["kind"] == "bot" || m["kind"] == "session"), "{members:?}");
+            // Sharing the collection shares everything in it; write lets a member create in it.
+            success(rpc(&endpoint, alice, "access/policy/put", json!({"resource":collection_ref,"visibility":"restricted","grants":[
+                {"subject":{"kind":"principal","id":bob.record.principal_id},"permission":"write"},
+                {"subject":{"kind":"principal","id":viewer.record.principal_id},"permission":"read"}]})).await);
+            for caller in [viewer, bob] {
+                success(rpc(&endpoint, caller, "collection/read", json!({"collectionId":collection_id})).await);
+                success(rpc(&endpoint, caller, "bots/read", json!({"botId":team_bot})).await);
+                success(rpc(&endpoint, caller, "session/read", json!({"sessionId":team_session})).await);
+                assert!(lists(&success(rpc(&endpoint, caller, "session/list", json!({})).await), &team_session));
+            }
+            let bobs_session = success(rpc(&endpoint, bob, "session/start", json!({"access":{"root":collection_ref}})).await)["session"]["id"].as_str().unwrap().to_owned();
+            success(rpc(&endpoint, viewer, "session/read", json!({"sessionId":bobs_session})).await);
+            // Governance needs no content: an Operator stops and an Admin deletes a
+            // restricted session they cannot read; neither reads it afterwards.
+            success(rpc(&endpoint, operator, "session/close", json!({"sessionId":bobs_session,"force":true})).await);
+            not_found(rpc(&endpoint, operator, "session/read", json!({"sessionId":bobs_session})).await);
+            success(rpc(&endpoint, universe_admin, "session/delete", json!({"sessionId":bobs_session})).await);
+            // The collection cannot go while it holds members; renaming follows ownership.
+            assert_eq!(rpc(&endpoint, alice, "collection/delete", json!({"collectionId":collection_id})).await["error"]["data"]["kind"], "conflict");
+            forbidden(rpc(&endpoint, bob, "collection/update", json!({"collectionId":collection_id,"displayName":"Theirs"})).await);
+            let renamed = success(rpc(&endpoint, alice, "collection/update", json!({"collectionId":collection_id,"displayName":"Ours","expectedRevision":1})).await)["collection"].clone();
+            assert_eq!(renamed["revision"], 2);
+            // Hand-off moves the whole tree in one step; the previous owner keeps nothing.
+            forbidden(rpc(&endpoint, bob, "access/policy/put", json!({"resource":collection_ref,"visibility":"restricted","owner":bob.record.principal_id,"grants":[]})).await);
+            success(rpc(&endpoint, alice, "access/policy/put", json!({"resource":collection_ref,"visibility":"restricted","owner":bob.record.principal_id,"grants":[]})).await);
+            not_found(rpc(&endpoint, alice, "session/read", json!({"sessionId":team_session})).await);
+            not_found(rpc(&endpoint, alice, "collection/read", json!({"collectionId":collection_id})).await);
+            assert_eq!(success(rpc(&endpoint, bob, "access/policy/read", json!({"resource":{"kind":"bot","id":team_bot}})).await)["policy"]["owner"], json!(bob.record.principal_id));
+            success(rpc(&endpoint, bob, "collection/update", json!({"collectionId":collection_id,"displayName":"Bob's"})).await);
+            // A bot created without a root gets a collection of its own, which goes with the bot.
+            let own = success(rpc(&endpoint, alice, "access/policy/read", json!({"resource":{"kind":"bot","id":private_bot}})).await)["policy"].clone();
+            assert_eq!(own["root"]["kind"], "collection");
+            let own_collection = own["root"]["id"].as_str().unwrap().to_owned();
+            assert_eq!(own["visibility"], "restricted");
+            success(rpc(&endpoint, alice, "collection/read", json!({"collectionId":own_collection})).await);
+            not_found(rpc(&endpoint, operator, "collection/read", json!({"collectionId":own_collection})).await);
+            // Removal of that collection with the bot needs the bots worker; the bots suite covers it.
             // The group's role served the sharing scenario only; the revocation checks below assume the Viewer's own role.
             access.apply(admin.id, AccessChange::RevokeRole { assignment: RoleAssignment { scope, subject: Subject::Group(readers), role: Role::Viewer } }, 24).await?;
             // A contributor can author templates but cannot edit another author's template.

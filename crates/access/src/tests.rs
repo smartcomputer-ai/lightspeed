@@ -41,13 +41,16 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
         ConfigureResource,
         ManageAccess,
         ShareResource,
+        CreateCollection,
+        ManageCollection,
+        DeleteCollection,
     ];
     let cases = [
         (
             Role::Viewer,
             vec![
                 Allowed, Denied, Denied, Denied, Denied, Denied, Denied, Denied, Denied, Denied,
-                Denied, Denied, Denied, Denied,
+                Denied, Denied, Denied, Denied, Denied, Denied, Denied,
             ],
         ),
         (
@@ -66,6 +69,9 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
                 Allowed,
                 Denied,
                 Denied,
+                RequiresOwnership,
+                Allowed,
+                RequiresOwnership,
                 RequiresOwnership,
             ],
         ),
@@ -86,6 +92,9 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
                 Allowed,
                 Denied,
                 RequiresOwnership,
+                Allowed,
+                Allowed,
+                RequiresOwnership,
             ],
         ),
         (
@@ -102,6 +111,9 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
                 Allowed,
                 Allowed,
                 Allowed,
+                Allowed,
+                Allowed,
+                RequiresOwnership,
                 Allowed,
                 Allowed,
                 RequiresOwnership,
@@ -354,8 +366,15 @@ fn resource_decisions_follow_owner_visibility_grant_and_role() {
     let private = session(7, Restricted, None);
     for rights in [&viewer, &contributor, &operator, &admin] {
         assert_eq!(decide(rights, Read, &private), Hidden, "{:?}", rights.roles);
-        assert_eq!(decide(rights, StopSession, &private), Hidden);
+        assert_eq!(decide(rights, ControlSession, &private), Hidden);
+        assert_eq!(decide(rights, ShareResource, &private), Hidden);
     }
+    // Governance needs no content: Operator/Admin stop, Admin deletes.
+    assert_eq!(decide(&contributor, StopSession, &private), Hidden);
+    assert_eq!(decide(&operator, StopSession, &private), Allowed);
+    assert_eq!(decide(&operator, DeleteSession, &private), Hidden);
+    assert_eq!(decide(&admin, StopSession, &private), Allowed);
+    assert_eq!(decide(&admin, DeleteSession, &private), Allowed);
     assert_eq!(
         decide(&contributor, Read, &session(1, Restricted, None)),
         Allowed
@@ -425,6 +444,44 @@ fn resource_decisions_follow_owner_visibility_grant_and_role() {
     };
     assert_eq!(decide(&operator, ManageBot, &private_bot), Forbidden);
     assert_eq!(decide(&contributor, InvokeBot, &private_bot), Allowed);
+    // Collections: writers create in them (control), owner or Operator on a
+    // visible one manages, owner or Admin deletes, Admin even when hidden.
+    let collection = |owner, visibility, grant| ResourceAccess {
+        anchor: anchor(
+            ResourceRef::Collection("c".into()),
+            ResourceRef::Collection("c".into()),
+            None,
+        ),
+        policy: Some(policy(owner, visibility)),
+        grant,
+    };
+    let shared = collection(7, Universe, None);
+    assert_eq!(decide(&contributor, ControlSession, &shared), Forbidden);
+    assert_eq!(decide(&operator, ControlSession, &shared), Forbidden);
+    assert_eq!(decide(&operator, ManageCollection, &shared), Allowed);
+    assert_eq!(decide(&operator, DeleteCollection, &shared), Forbidden);
+    assert_eq!(decide(&admin, DeleteCollection, &shared), Allowed);
+    let team = collection(7, Restricted, Some(ResourcePermission::Write));
+    assert_eq!(decide(&contributor, ControlSession, &team), Allowed);
+    assert_eq!(decide(&contributor, ManageCollection, &team), Forbidden);
+    assert_eq!(decide(&operator, ManageCollection, &team), Forbidden);
+    let hidden_collection = collection(7, Restricted, None);
+    assert_eq!(
+        decide(&operator, ManageCollection, &hidden_collection),
+        Hidden
+    );
+    assert_eq!(
+        decide(&admin, DeleteCollection, &hidden_collection),
+        Allowed
+    );
+    assert_eq!(
+        decide(
+            &contributor,
+            DeleteCollection,
+            &collection(1, Restricted, None)
+        ),
+        Allowed
+    );
     // Without a target, only the role decides.
     assert_eq!(
         authorize(Caller::Request(&contributor), CreateSession, None),

@@ -299,7 +299,11 @@ impl GatewayAgentApi {
             self.authorize_method(METHOD_SESSION_CONFIG_PUT, Some(resource))
                 .await?;
         } else {
-            self.reserve_resource(resource.clone()).await?;
+            self.reserve_resource(
+                resource.clone(),
+                access.as_ref().and_then(|a| a.root.as_ref()),
+            )
+            .await?;
             self.apply_creation_access(&resource, access).await?;
         }
         let admitted = workflow_tools

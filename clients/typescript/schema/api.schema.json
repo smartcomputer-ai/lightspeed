@@ -367,6 +367,17 @@
           },
           "type": "array"
         },
+        "root": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ResourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Create the resource as a member of this collection, which the caller\nmust be able to write to. A member shares the collection's audience\nand takes no `visibility` or `grants` of its own."
+        },
         "visibility": {
           "anyOf": [
             {
@@ -399,6 +410,14 @@
             "$ref": "#/definitions/AccessGrantInput"
           },
           "type": "array"
+        },
+        "owner": {
+          "description": "Hand the root to another member of the universe. Only the current\nowner may set it; the previous owner keeps no permission of its own.",
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "resource": {
           "$ref": "#/definitions/ResourceRef"
@@ -1563,6 +1582,91 @@
         },
         "result": {
           "$ref": "#/definitions/ChannelPairingListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCollectionCreateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CollectionCreateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCollectionDeleteResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CollectionDeleteResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCollectionListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CollectionListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCollectionReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CollectionReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCollectionUpdateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CollectionUpdateResponse"
         }
       },
       "required": [
@@ -7708,6 +7812,190 @@
       ],
       "type": "object"
     },
+    "CollectionCreateParams": {
+      "additionalProperties": false,
+      "properties": {
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AccessInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Audience of the collection; `root` is not accepted here."
+        },
+        "collectionId": {
+          "description": "Client-chosen id (same form as a session id); absent allocates one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayName"
+      ],
+      "type": "object"
+    },
+    "CollectionCreateResponse": {
+      "properties": {
+        "collection": {
+          "$ref": "#/definitions/CollectionView"
+        }
+      },
+      "required": [
+        "collection"
+      ],
+      "type": "object"
+    },
+    "CollectionDeleteParams": {
+      "additionalProperties": false,
+      "properties": {
+        "collectionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "collectionId"
+      ],
+      "type": "object"
+    },
+    "CollectionDeleteResponse": {
+      "properties": {
+        "collection": {
+          "$ref": "#/definitions/CollectionView"
+        }
+      },
+      "required": [
+        "collection"
+      ],
+      "type": "object"
+    },
+    "CollectionListParams": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "CollectionListResponse": {
+      "properties": {
+        "collections": {
+          "items": {
+            "$ref": "#/definitions/CollectionView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "collections"
+      ],
+      "type": "object"
+    },
+    "CollectionReadParams": {
+      "additionalProperties": false,
+      "properties": {
+        "collectionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "collectionId"
+      ],
+      "type": "object"
+    },
+    "CollectionReadResponse": {
+      "properties": {
+        "collection": {
+          "$ref": "#/definitions/CollectionView"
+        },
+        "members": {
+          "description": "Sessions and bots whose audience this collection is.",
+          "items": {
+            "$ref": "#/definitions/ResourceRef"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "collection",
+        "members"
+      ],
+      "type": "object"
+    },
+    "CollectionUpdateParams": {
+      "additionalProperties": false,
+      "properties": {
+        "collectionId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "expectedRevision": {
+          "description": "The revision from `collection/read`; absent replaces unconditionally.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "collectionId",
+        "displayName"
+      ],
+      "type": "object"
+    },
+    "CollectionUpdateResponse": {
+      "properties": {
+        "collection": {
+          "$ref": "#/definitions/CollectionView"
+        }
+      },
+      "required": [
+        "collection"
+      ],
+      "type": "object"
+    },
+    "CollectionView": {
+      "description": "A collection: a root with a name that gives the sessions and bots in it\none audience. It routes nothing and runs nothing.",
+      "properties": {
+        "collectionId": {
+          "type": "string"
+        },
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "revision": {
+          "description": "Advances with every update; pass it as `expectedRevision`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "updatedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "collectionId",
+        "displayName",
+        "revision",
+        "createdAtMs",
+        "updatedAtMs"
+      ],
+      "type": "object"
+    },
     "CompactionPolicy": {
       "oneOf": [
         {
@@ -13419,6 +13707,23 @@
             "id"
           ],
           "type": "object"
+        },
+        {
+          "description": "A root that gives sessions and bots one audience and, later, one\nexecution identity. It routes nothing and runs nothing.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "collection",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -17625,7 +17930,10 @@
             "invoke_bot",
             "use_resource",
             "configure_resource",
-            "manage_access"
+            "manage_access",
+            "create_collection",
+            "manage_collection",
+            "delete_collection"
           ],
           "type": "string"
         },

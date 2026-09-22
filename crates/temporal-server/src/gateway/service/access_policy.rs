@@ -86,7 +86,16 @@ impl GatewayAgentApi {
             .await
             .map_err(map_policy_error)?
             .ok_or_else(|| AgentApiError::not_found("resource not found"))?;
-        let grants = grants_from_input(current.policy.owner, &params.grants)?;
+        let grants =
+            grants_from_input(params.owner.unwrap_or(current.policy.owner), &params.grants)?;
+        if params
+            .owner
+            .is_some_and(|owner| owner != current.policy.owner)
+            && current.policy.owner != actor
+        {
+            // Only the owner hands a root over.
+            return Err(AgentApiError::forbidden());
+        }
         if current.policy.owner != actor {
             let widened = grants.iter().any(|(subject, permission)| {
                 *permission == ResourcePermission::Write
@@ -115,6 +124,7 @@ impl GatewayAgentApi {
                     visibility: params.visibility,
                     grants,
                     expected_revision: params.expected_revision,
+                    owner: params.owner.filter(|owner| *owner != current.policy.owner),
                 },
                 now_ms()? as u64,
             )
@@ -128,7 +138,8 @@ impl GatewayAgentApi {
     /// Apply a creation-time audience to a freshly reserved root. The
     /// reservation made it universe-visible with no grants; this replaces
     /// that before the resource is usable. A resource that is not a root
-    /// refuses an audience of its own.
+    /// refuses an audience of its own; a member created in a collection
+    /// (`root`) was placed there at reservation and takes nothing else.
     pub(super) async fn apply_creation_access(
         &self,
         resource: &ResourceRef,
@@ -137,6 +148,14 @@ impl GatewayAgentApi {
         let Some(access) = access else {
             return Ok(());
         };
+        if access.root.is_some() {
+            if access.visibility.is_some() || !access.grants.is_empty() {
+                return Err(AgentApiError::invalid_request(
+                    "a member of a collection shares its audience and takes no visibility or grants of its own",
+                ));
+            }
+            return Ok(());
+        }
         let store = self.access_store();
         let current = store
             .read_policy(self.universe_id(), resource)
@@ -162,6 +181,7 @@ impl GatewayAgentApi {
                     visibility: access.visibility.unwrap_or(Visibility::Universe),
                     grants,
                     expected_revision: None,
+                    owner: None,
                 },
                 now_ms()? as u64,
             )

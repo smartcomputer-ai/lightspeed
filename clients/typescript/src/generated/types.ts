@@ -128,13 +128,6 @@ export type ServiceCapability =
  */
 export type ResourcePermission = "read" | "write";
 /**
- * Who may see a root's tree without a grant.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "Visibility".
- */
-export type Visibility = "universe" | "restricted";
-/**
  * Durable control facts, distinct from an agent's execution credentials.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -152,7 +145,18 @@ export type ResourceRef =
   | {
       id: string;
       kind: "profile";
+    }
+  | {
+      id: string;
+      kind: "collection";
     };
+/**
+ * Who may see a root's tree without a grant.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "Visibility".
+ */
+export type Visibility = "universe" | "restricted";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ActionActor".
@@ -189,6 +193,9 @@ export type UniverseAction =
       | "use_resource"
       | "configure_resource"
       | "manage_access"
+      | "create_collection"
+      | "manage_collection"
+      | "delete_collection"
     )
   | "share_resource";
 /**
@@ -1985,6 +1992,12 @@ export interface AccessInput {
    */
   grants?: AccessGrantInput[];
   /**
+   * Create the resource as a member of this collection, which the caller
+   * must be able to write to. A member shares the collection's audience
+   * and takes no `visibility` or `grants` of its own.
+   */
+  root?: ResourceRef | null;
+  /**
    * `universe` lets every member read; `restricted` limits reading to the
    * owner and the grants below. Absent means `universe`.
    */
@@ -2004,6 +2017,11 @@ export interface AccessPolicyPutParams {
    */
   expectedRevision?: number | null;
   grants?: AccessGrantInput[];
+  /**
+   * Hand the root to another member of the universe. Only the current
+   * owner may set it; the previous owner keeps no permission of its own.
+   */
+  owner?: string | null;
   resource: ResourceRef;
   visibility: Visibility;
 }
@@ -4512,6 +4530,102 @@ export interface AgentApiOutcomeOfChannelPairingListResponse {
  */
 export interface ChannelPairingListResponse {
   pairings?: ChannelPairingView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfCollectionCreateResponse".
+ */
+export interface AgentApiOutcomeOfCollectionCreateResponse {
+  notifications?: AgentNotification[];
+  result: CollectionCreateResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CollectionCreateResponse".
+ */
+export interface CollectionCreateResponse {
+  collection: CollectionView;
+}
+/**
+ * A collection: a root with a name that gives the sessions and bots in it
+ * one audience. It routes nothing and runs nothing.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CollectionView".
+ */
+export interface CollectionView {
+  collectionId: string;
+  createdAtMs: number;
+  displayName: string;
+  /**
+   * Advances with every update; pass it as `expectedRevision`.
+   */
+  revision: number;
+  updatedAtMs: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfCollectionDeleteResponse".
+ */
+export interface AgentApiOutcomeOfCollectionDeleteResponse {
+  notifications?: AgentNotification[];
+  result: CollectionDeleteResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CollectionDeleteResponse".
+ */
+export interface CollectionDeleteResponse {
+  collection: CollectionView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfCollectionListResponse".
+ */
+export interface AgentApiOutcomeOfCollectionListResponse {
+  notifications?: AgentNotification[];
+  result: CollectionListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CollectionListResponse".
+ */
+export interface CollectionListResponse {
+  collections: CollectionView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfCollectionReadResponse".
+ */
+export interface AgentApiOutcomeOfCollectionReadResponse {
+  notifications?: AgentNotification[];
+  result: CollectionReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CollectionReadResponse".
+ */
+export interface CollectionReadResponse {
+  collection: CollectionView;
+  /**
+   * Sessions and bots whose audience this collection is.
+   */
+  members: ResourceRef[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfCollectionUpdateResponse".
+ */
+export interface AgentApiOutcomeOfCollectionUpdateResponse {
+  notifications?: AgentNotification[];
+  result: CollectionUpdateResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CollectionUpdateResponse".
+ */
+export interface CollectionUpdateResponse {
+  collection: CollectionView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -7158,6 +7272,52 @@ export interface ClientCapabilities {
 export interface ClientInfo {
   name: string;
   version?: string | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CollectionCreateParams".
+ */
+export interface CollectionCreateParams {
+  /**
+   * Audience of the collection; `root` is not accepted here.
+   */
+  access?: AccessInput | null;
+  /**
+   * Client-chosen id (same form as a session id); absent allocates one.
+   */
+  collectionId?: string | null;
+  displayName: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CollectionDeleteParams".
+ */
+export interface CollectionDeleteParams {
+  collectionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CollectionListParams".
+ */
+export interface CollectionListParams {}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CollectionReadParams".
+ */
+export interface CollectionReadParams {
+  collectionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CollectionUpdateParams".
+ */
+export interface CollectionUpdateParams {
+  collectionId: string;
+  displayName: string;
+  /**
+   * The revision from `collection/read`; absent replaces unconditionally.
+   */
+  expectedRevision?: number | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

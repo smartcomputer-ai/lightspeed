@@ -176,6 +176,9 @@ pub enum UniverseAction {
     ManageAccess,
     /// Change who may see or control a root: its visibility and grants.
     ShareResource,
+    CreateCollection,
+    ManageCollection,
+    DeleteCollection,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -206,6 +209,9 @@ pub enum ResourceRef {
     Session(String),
     Bot(String),
     Profile(String),
+    /// A root that gives sessions and bots one audience and, later, one
+    /// execution identity. It routes nothing and runs nothing.
+    Collection(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -365,29 +371,43 @@ fn authorize_request(
     let universe_visible = policy.visibility == Visibility::Universe;
     let readable = rights.universe_action(Read) == RoleDecision::Allowed
         && (universe_visible || owner || access.grant.is_some());
+    let by_role = role == RoleDecision::Allowed;
     if !readable {
-        return Decision::Hidden;
+        // Governance without content: Operator/Admin stop, Admin deletes,
+        // restricted work included. Everything else looks absent.
+        let governs = match action {
+            StopSession => by_role,
+            DeleteSession | DeleteCollection => rights.has_role(Role::Admin),
+            _ => false,
+        };
+        return if governs {
+            Decision::Allowed
+        } else {
+            Decision::Hidden
+        };
     }
     if role == RoleDecision::Denied {
         return Decision::Forbidden;
     }
-    let by_role = role == RoleDecision::Allowed;
     let writer = owner || access.grant == Some(ResourcePermission::Write);
     // A bot's sessions follow the bot's managers.
     let manages_bot =
         access.anchor.bot.is_some() && rights.universe_action(ManageBot) == RoleDecision::Allowed;
     let allowed = match action {
         Read => true,
+        // Control of a collection is creating in it.
         ControlSession => writer || manages_bot,
         StopSession => by_role || writer,
         DeleteSession => owner || manages_bot || rights.has_role(Role::Admin),
+        ManageCollection => owner || (by_role && universe_visible),
+        DeleteCollection => owner || rights.has_role(Role::Admin),
         InvokeBot => (by_role && universe_visible) || writer,
         ManageBot => owner || (by_role && universe_visible),
         ManageProfile => owner || by_role,
         // Profiles stay on role rules and have no audience to share.
         ShareResource => writer && !matches!(access.anchor.resource, ResourceRef::Profile(_)),
-        CreateSession | CreateProfile | CreateBot | UseResource | ConfigureResource
-        | ManageAccess => by_role,
+        CreateSession | CreateProfile | CreateBot | CreateCollection | UseResource
+        | ConfigureResource | ManageAccess => by_role,
     };
     if allowed {
         Decision::Allowed
@@ -461,14 +481,17 @@ impl EffectiveAccess {
         let viewer = contributor || self.has_role(Role::Viewer);
         match action {
             Read if viewer => Allowed,
-            CreateSession | CreateProfile | CreateBot | InvokeBot | UseResource if contributor => {
+            CreateSession | CreateProfile | CreateBot | CreateCollection | InvokeBot
+            | UseResource
+                if contributor =>
+            {
                 Allowed
             }
-            ControlSession | ShareResource if contributor => RequiresOwnership,
+            ControlSession | ShareResource | DeleteCollection if contributor => RequiresOwnership,
             StopSession if operator => Allowed,
             StopSession | DeleteSession if contributor => RequiresOwnership,
-            ManageProfile | ManageBot if operator => Allowed,
-            ManageProfile | ManageBot if contributor => RequiresOwnership,
+            ManageProfile | ManageBot | ManageCollection if operator => Allowed,
+            ManageProfile | ManageBot | ManageCollection if contributor => RequiresOwnership,
             ConfigureResource if operator => Allowed,
             ManageAccess if admin => Allowed,
             _ => Denied,

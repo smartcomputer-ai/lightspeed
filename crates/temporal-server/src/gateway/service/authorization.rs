@@ -223,6 +223,7 @@ impl GatewayAgentApi {
                     cause: cause.to_owned(),
                 },
                 &ResourceController::Session(parent.as_str().to_owned()),
+                None,
                 now_ms()? as u64,
             )
             .await
@@ -306,6 +307,7 @@ impl GatewayAgentApi {
                     ResourceRef::Session(id) => ("session", id),
                     ResourceRef::Bot(id) => ("bot", id),
                     ResourceRef::Profile(id) => ("profile", id),
+                    ResourceRef::Collection(id) => ("collection", id),
                 };
                 return Err(AgentApiError::not_found(format!("{kind} not found: {id}")));
             }
@@ -384,11 +386,29 @@ impl GatewayAgentApi {
     }
 
     /// Record who controls a new resource before it exists. Callers own what
-    /// they create; a bot's sessions belong to the bot.
+    /// they create, or create it as a member of a collection they may write
+    /// to; a bot's sessions belong to the bot.
     pub(crate) async fn reserve_resource(
         &self,
         resource: ResourceRef,
+        root: Option<&ResourceRef>,
     ) -> Result<(), AgentApiError> {
+        if let Some(root) = root {
+            if !matches!(root, ResourceRef::Collection(_)) {
+                return Err(AgentApiError::invalid_request(
+                    "only a collection can be the root of a new resource",
+                ));
+            }
+            if !self
+                .permitted(
+                    MethodAccess::Universe(UniverseAction::ControlSession),
+                    Some(root),
+                )
+                .await?
+            {
+                return Err(AgentApiError::forbidden());
+            }
+        }
         let (created_by, controller) = if let Ok(authority) = CONTROLLER.try_with(Clone::clone) {
             let (ResourceRef::Bot(bot), ResourceRef::Session(_), true) = (
                 authority.actor,
@@ -421,6 +441,7 @@ impl GatewayAgentApi {
                 &resource,
                 &created_by,
                 &controller,
+                root,
                 now_ms()? as u64,
             )
             .await

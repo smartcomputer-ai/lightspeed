@@ -140,7 +140,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         // Retries are idempotent and return the original facts.
         for _ in 0..2 {
             let stored = store
-                .reserve_resource(universe, &record.0, &alice_actor, &record.1, 5)
+                .reserve_resource(universe, &record.0, &alice_actor, &record.1, None, 5)
                 .await
                 .unwrap();
             assert_eq!(stored.created_by, alice_actor);
@@ -239,8 +239,8 @@ async fn exercise(pool: &sqlx::PgPool) {
     };
     let bob_controller = ResourceController::Principal(bob.principal.id);
     let (a, b) = tokio::join!(
-        store.reserve_resource(universe, &race, &alice_actor, &principal, 5),
-        store.reserve_resource(universe, &race, &bob_actor, &bob_controller, 5)
+        store.reserve_resource(universe, &race, &alice_actor, &principal, None, 5),
+        store.reserve_resource(universe, &race, &bob_actor, &bob_controller, None, 5)
     );
     assert_ne!(a.is_ok(), b.is_ok());
     assert!(matches!(
@@ -265,6 +265,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                 &missing,
                 &alice_actor,
                 &ResourceController::Session("missing".into()),
+                None,
                 5,
             )
             .await
@@ -275,7 +276,7 @@ async fn exercise(pool: &sqlx::PgPool) {
     // A history fork carries provenance but has its own explicit controller.
     let fork = ResourceRef::Session("fork".into());
     store
-        .reserve_resource(universe, &fork, &bob_actor, &bob_controller, 5)
+        .reserve_resource(universe, &fork, &bob_actor, &bob_controller, None, 5)
         .await
         .unwrap();
     assert!(!permitted(alice, UniverseAction::ControlSession, &fork).await);
@@ -417,12 +418,22 @@ async fn exercise(pool: &sqlx::PgPool) {
                 "{:?} {resource:?}",
                 caller.roles
             );
-            assert!(
+            // Governance shows through without content: Operator stops, Admin deletes.
+            let governance: Vec<UniverseAction> = if caller.has_role(Role::Admin) {
+                vec![StopSession, DeleteSession]
+            } else if caller.has_role(Role::Operator) {
+                vec![StopSession]
+            } else {
+                vec![]
+            };
+            assert_eq!(
                 store
                     .resource_actions(caller, resource, false)
                     .await
-                    .unwrap()
-                    .is_empty()
+                    .unwrap(),
+                governance,
+                "{:?}",
+                caller.roles
             );
         }
     }
@@ -469,7 +480,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         );
         assert_eq!(
             store
-                .decide(Caller::Request(operator), StopSession, resource)
+                .decide(Caller::Request(operator), ControlSession, resource)
                 .await
                 .unwrap(),
             Some(Decision::Hidden)
@@ -505,6 +516,74 @@ async fn exercise(pool: &sqlx::PgPool) {
     );
     assert_eq!(controller(Read, &personal).await, Some(Decision::Hidden));
 
+    // A collection is a root; a member created in it resolves to its policy
+    // and takes none of its own; it cannot go while members remain.
+    let collection = ResourceRef::Collection("team".into());
+    store
+        .reserve_resource(universe, &collection, &alice_actor, &principal, None, 11)
+        .await
+        .unwrap();
+    store
+        .create_collection(universe, "team", "Team", 11)
+        .await
+        .unwrap();
+    let member = ResourceRef::Session("team-session".into());
+    let stored = store
+        .reserve_resource(
+            universe,
+            &member,
+            &bob_actor,
+            &bob_controller,
+            Some(&collection),
+            12,
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.audience_root, collection);
+    let member_access = store
+        .resource_access(universe, Some(alice.principal.id), &member)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(member_access.policy.unwrap().owner, alice.principal.id);
+    assert_eq!(
+        store.collection_members(universe, "team").await.unwrap(),
+        vec![member.clone()]
+    );
+    assert_eq!(
+        store.delete_collection(universe, "team").await.unwrap_err(),
+        AccessError::Conflict
+    );
+    // Only a collection can be a root, and a bot's session never names one.
+    assert!(matches!(
+        store
+            .reserve_resource(
+                universe,
+                &ResourceRef::Session("x".into()),
+                &bob_actor,
+                &bob_controller,
+                Some(&personal),
+                12
+            )
+            .await
+            .unwrap_err(),
+        AccessError::Invalid(_)
+    ));
+    assert!(matches!(
+        store
+            .reserve_resource(
+                universe,
+                &ResourceRef::Session("y".into()),
+                &alice_actor,
+                &ResourceController::Bot("assistant".into()),
+                Some(&collection),
+                12
+            )
+            .await
+            .unwrap_err(),
+        AccessError::Invalid(_)
+    ));
+
     // Deleting content releases its anchor, policy and grants: the id is free
     // for anyone, and the reservation of a never-created id is not adopted.
     sqlx::query("DELETE FROM sessions WHERE universe_id=$1 AND session_id='fork'")
@@ -528,7 +607,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         .bind(universe).fetch_one(pool).await.unwrap();
     assert_eq!(leftovers, 0);
     let reused = store
-        .reserve_resource(universe, &personal, &bob_actor, &bob_controller, 10)
+        .reserve_resource(universe, &personal, &bob_actor, &bob_controller, None, 10)
         .await
         .unwrap();
     assert_eq!(reused.created_by, bob_actor);

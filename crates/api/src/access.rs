@@ -201,6 +201,11 @@ pub struct AccessInput {
     /// role in the universe.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<AccessGrantInput>,
+    /// Create the resource as a member of this collection, which the caller
+    /// must be able to write to. A member shares the collection's audience
+    /// and takes no `visibility` or `grants` of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<ResourceRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -250,6 +255,10 @@ pub struct AccessPolicyPutParams {
     pub visibility: Visibility,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<AccessGrantInput>,
+    /// Hand the root to another member of the universe. Only the current
+    /// owner may set it; the previous owner keeps no permission of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<Uuid>,
     /// The revision from `access/policy/read`; absent replaces unconditionally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
@@ -259,4 +268,87 @@ pub struct AccessPolicyPutParams {
 #[serde(rename_all = "camelCase")]
 pub struct AccessPolicyPutResponse {
     pub policy: AccessPolicyView,
+}
+
+/// A collection: a root with a name that gives the sessions and bots in it
+/// one audience. It routes nothing and runs nothing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionView {
+    pub collection_id: String,
+    pub display_name: String,
+    /// Advances with every update; pass it as `expectedRevision`.
+    pub revision: u64,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CollectionCreateParams {
+    /// Client-chosen id (same form as a session id); absent allocates one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_id: Option<String>,
+    pub display_name: String,
+    /// Audience of the collection; `root` is not accepted here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<AccessInput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionCreateResponse {
+    pub collection: CollectionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CollectionReadParams {
+    pub collection_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionReadResponse {
+    pub collection: CollectionView,
+    /// Sessions and bots whose audience this collection is.
+    pub members: Vec<ResourceRef>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CollectionListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionListResponse {
+    pub collections: Vec<CollectionView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CollectionUpdateParams {
+    pub collection_id: String,
+    pub display_name: String,
+    /// The revision from `collection/read`; absent replaces unconditionally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionUpdateResponse {
+    pub collection: CollectionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CollectionDeleteParams {
+    pub collection_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionDeleteResponse {
+    pub collection: CollectionView,
 }

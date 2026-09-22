@@ -19,13 +19,13 @@ use std::{
 };
 
 use api::{
-    AgentApiService, AgentProfileInput, BotBreaker, BotCloseParams, BotCoalescePolicy,
-    BotControllerStatus, BotCreateParams, BotDeleteParams, BotDocument, BotEventAdmitParams,
-    BotEventInput, BotEventListParams, BotEventOutcome, BotEventView, BotId, BotInput,
-    BotPutParams, BotReadParams, BotStateReadParams, BotTriggerDeleteParams, BotTriggerDocument,
-    BotTriggerId, BotTriggerInput, BotTriggerPutParams, BotTriggerSpec, ProfileCreateParams,
-    ProfileDocument, ProfileId, ProfileInstructions, SessionReadParams, SessionStatus,
-    WebhookVerification,
+    AccessPolicyReadParams, AgentApiErrorKind, AgentApiService, AgentProfileInput, BotBreaker,
+    BotCloseParams, BotCoalescePolicy, BotControllerStatus, BotCreateParams, BotDeleteParams,
+    BotDocument, BotEventAdmitParams, BotEventInput, BotEventListParams, BotEventOutcome,
+    BotEventView, BotId, BotInput, BotPutParams, BotReadParams, BotStateReadParams,
+    BotTriggerDeleteParams, BotTriggerDocument, BotTriggerId, BotTriggerInput, BotTriggerPutParams,
+    BotTriggerSpec, CollectionReadParams, ProfileCreateParams, ProfileDocument, ProfileId,
+    ProfileInstructions, SessionReadParams, SessionStatus, WebhookVerification,
 };
 use bots::ids::{bot_main_session_id, bot_schedule_id};
 use engine::{CoreAgentLlm, CoreAgentTools, storage::BlobStore};
@@ -768,6 +768,21 @@ async fn bots_live_close_and_delete_tear_down() -> anyhow::Result<()> {
             .await;
         assert!(refused.is_err(), "closed bots refuse events");
 
+        // The bot lives in a collection of its own, which goes with it.
+        let policy = api
+            .read_access_policy(AccessPolicyReadParams {
+                resource: access::ResourceRef::Bot(bot_id.as_str().to_owned()),
+            })
+            .await?
+            .result
+            .policy;
+        let access::ResourceRef::Collection(collection_id) = policy.root.clone() else {
+            panic!("a bot's audience root is its collection: {policy:?}");
+        };
+        api.read_collection(CollectionReadParams {
+            collection_id: collection_id.clone(),
+        })
+        .await?;
         let deleted = api
             .delete_bot(BotDeleteParams {
                 bot_id: bot_id.clone(),
@@ -775,6 +790,14 @@ async fn bots_live_close_and_delete_tear_down() -> anyhow::Result<()> {
             .await?
             .result;
         assert!(deleted.deleted_sessions.contains(&main_session));
+        assert_eq!(
+            api.read_collection(CollectionReadParams { collection_id })
+                .await
+                .unwrap_err()
+                .kind,
+            AgentApiErrorKind::NotFound,
+            "an emptied bot collection is removed with the bot"
+        );
         assert!(
             api.read_bot(BotReadParams {
                 bot_id: bot_id.clone()

@@ -367,6 +367,17 @@
             },
             "type": "array"
           },
+          "root": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Create the resource as a member of this collection, which the caller\nmust be able to write to. A member shares the collection's audience\nand takes no `visibility` or `grants` of its own."
+          },
           "visibility": {
             "anyOf": [
               {
@@ -399,6 +410,14 @@
               "$ref": "#/components/schemas/AccessGrantInput"
             },
             "type": "array"
+          },
+          "owner": {
+            "description": "Hand the root to another member of the universe. Only the current\nowner may set it; the previous owner keeps no permission of its own.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "resource": {
             "$ref": "#/components/schemas/ResourceRef"
@@ -1563,6 +1582,91 @@
           },
           "result": {
             "$ref": "#/components/schemas/ChannelPairingListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfCollectionCreateResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/CollectionCreateResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfCollectionDeleteResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/CollectionDeleteResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfCollectionListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/CollectionListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfCollectionReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/CollectionReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfCollectionUpdateResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/CollectionUpdateResponse"
           }
         },
         "required": [
@@ -7708,6 +7812,190 @@
         ],
         "type": "object"
       },
+      "CollectionCreateParams": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Audience of the collection; `root` is not accepted here."
+          },
+          "collectionId": {
+            "description": "Client-chosen id (same form as a session id); absent allocates one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "displayName"
+        ],
+        "type": "object"
+      },
+      "CollectionCreateResponse": {
+        "properties": {
+          "collection": {
+            "$ref": "#/components/schemas/CollectionView"
+          }
+        },
+        "required": [
+          "collection"
+        ],
+        "type": "object"
+      },
+      "CollectionDeleteParams": {
+        "additionalProperties": false,
+        "properties": {
+          "collectionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "collectionId"
+        ],
+        "type": "object"
+      },
+      "CollectionDeleteResponse": {
+        "properties": {
+          "collection": {
+            "$ref": "#/components/schemas/CollectionView"
+          }
+        },
+        "required": [
+          "collection"
+        ],
+        "type": "object"
+      },
+      "CollectionListParams": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "CollectionListResponse": {
+        "properties": {
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "collections"
+        ],
+        "type": "object"
+      },
+      "CollectionReadParams": {
+        "additionalProperties": false,
+        "properties": {
+          "collectionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "collectionId"
+        ],
+        "type": "object"
+      },
+      "CollectionReadResponse": {
+        "properties": {
+          "collection": {
+            "$ref": "#/components/schemas/CollectionView"
+          },
+          "members": {
+            "description": "Sessions and bots whose audience this collection is.",
+            "items": {
+              "$ref": "#/components/schemas/ResourceRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "collection",
+          "members"
+        ],
+        "type": "object"
+      },
+      "CollectionUpdateParams": {
+        "additionalProperties": false,
+        "properties": {
+          "collectionId": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "expectedRevision": {
+            "description": "The revision from `collection/read`; absent replaces unconditionally.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "collectionId",
+          "displayName"
+        ],
+        "type": "object"
+      },
+      "CollectionUpdateResponse": {
+        "properties": {
+          "collection": {
+            "$ref": "#/components/schemas/CollectionView"
+          }
+        },
+        "required": [
+          "collection"
+        ],
+        "type": "object"
+      },
+      "CollectionView": {
+        "description": "A collection: a root with a name that gives the sessions and bots in it\none audience. It routes nothing and runs nothing.",
+        "properties": {
+          "collectionId": {
+            "type": "string"
+          },
+          "createdAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "revision": {
+            "description": "Advances with every update; pass it as `expectedRevision`.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "updatedAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "collectionId",
+          "displayName",
+          "revision",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "type": "object"
+      },
       "CompactionPolicy": {
         "oneOf": [
           {
@@ -13419,6 +13707,23 @@
               "id"
             ],
             "type": "object"
+          },
+          {
+            "description": "A root that gives sessions and bots one audience and, later, one\nexecution identity. It routes nothing and runs nothing.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "collection",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -17625,7 +17930,10 @@
               "invoke_bot",
               "use_resource",
               "configure_resource",
-              "manage_access"
+              "manage_access",
+              "create_collection",
+              "manage_collection",
+              "delete_collection"
             ],
             "type": "string"
           },
@@ -18582,6 +18890,131 @@
       "x-lightspeed-access": {
         "kind": "universe",
         "requirement": "share_resource"
+      }
+    },
+    {
+      "description": "Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.",
+      "name": "collection/create",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/CollectionCreateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfCollectionCreateResponse"
+        }
+      },
+      "summary": "Create a collection",
+      "x-lightspeed-access": {
+        "kind": "universe",
+        "requirement": "create_collection"
+      }
+    },
+    {
+      "description": "Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.",
+      "name": "collection/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/CollectionReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfCollectionReadResponse"
+        }
+      },
+      "summary": "Read a collection",
+      "x-lightspeed-access": {
+        "kind": "universe",
+        "requirement": "read"
+      }
+    },
+    {
+      "description": "Returns the collections the caller may read.",
+      "name": "collection/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/CollectionListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfCollectionListResponse"
+        }
+      },
+      "summary": "List collections",
+      "x-lightspeed-access": {
+        "kind": "universe",
+        "requirement": "read"
+      }
+    },
+    {
+      "description": "Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.",
+      "name": "collection/update",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/CollectionUpdateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfCollectionUpdateResponse"
+        }
+      },
+      "summary": "Rename a collection",
+      "x-lightspeed-access": {
+        "kind": "universe",
+        "requirement": "manage_collection"
+      }
+    },
+    {
+      "description": "Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.",
+      "name": "collection/delete",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/CollectionDeleteParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfCollectionDeleteResponse"
+        }
+      },
+      "summary": "Delete an empty collection",
+      "x-lightspeed-access": {
+        "kind": "universe",
+        "requirement": "delete_collection"
       }
     },
     {

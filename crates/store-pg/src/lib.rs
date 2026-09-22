@@ -37,7 +37,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub use access::{LOCAL_DEVELOPMENT_PRINCIPAL, PgAccessStore};
-pub use resources::{PolicyReplacement, Reader, ResourcePolicyRecord};
+pub use resources::{CollectionRecord, PolicyReplacement, Reader, ResourcePolicyRecord};
 
 pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");
 pub const VFS_SCHEMA_SQL: &str = include_str!("../migrations/002_vfs.sql");

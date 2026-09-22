@@ -165,6 +165,7 @@ impl Fixture {
                 &ResourceRef::Session(id.to_string()),
                 &ActionActor::Principal { id: self.admin.id },
                 &ResourceController::Principal(self.admin.id),
+                None,
                 1,
             )
             .await

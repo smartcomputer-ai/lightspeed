@@ -15,6 +15,11 @@ pub const METHOD_INITIALIZE: &str = "initialize";
 pub const METHOD_ACCESS_READ: &str = "access/read";
 pub const METHOD_ACCESS_POLICY_READ: &str = "access/policy/read";
 pub const METHOD_ACCESS_POLICY_PUT: &str = "access/policy/put";
+pub const METHOD_COLLECTION_CREATE: &str = "collection/create";
+pub const METHOD_COLLECTION_READ: &str = "collection/read";
+pub const METHOD_COLLECTION_LIST: &str = "collection/list";
+pub const METHOD_COLLECTION_UPDATE: &str = "collection/update";
+pub const METHOD_COLLECTION_DELETE: &str = "collection/delete";
 
 // ── Sessions: lifecycle ─────────────────────────────────────────────────────
 

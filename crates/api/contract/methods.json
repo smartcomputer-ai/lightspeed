@@ -69,6 +69,116 @@
     {
       "access": {
         "kind": "universe",
+        "requirement": "create_collection"
+      },
+      "description": "Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.",
+      "method": "collection/create",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/CollectionCreateParams"
+        },
+        "type": "CollectionCreateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfCollectionCreateResponse"
+        },
+        "type": "AgentApiOutcome<CollectionCreateResponse>"
+      },
+      "scope": "universe",
+      "summary": "Create a collection"
+    },
+    {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
+      "description": "Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.",
+      "method": "collection/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/CollectionReadParams"
+        },
+        "type": "CollectionReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfCollectionReadResponse"
+        },
+        "type": "AgentApiOutcome<CollectionReadResponse>"
+      },
+      "scope": "universe",
+      "summary": "Read a collection"
+    },
+    {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
+      "description": "Returns the collections the caller may read.",
+      "method": "collection/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/CollectionListParams"
+        },
+        "type": "CollectionListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfCollectionListResponse"
+        },
+        "type": "AgentApiOutcome<CollectionListResponse>"
+      },
+      "scope": "universe",
+      "summary": "List collections"
+    },
+    {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_collection"
+      },
+      "description": "Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.",
+      "method": "collection/update",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/CollectionUpdateParams"
+        },
+        "type": "CollectionUpdateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfCollectionUpdateResponse"
+        },
+        "type": "AgentApiOutcome<CollectionUpdateResponse>"
+      },
+      "scope": "universe",
+      "summary": "Rename a collection"
+    },
+    {
+      "access": {
+        "kind": "universe",
+        "requirement": "delete_collection"
+      },
+      "description": "Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.",
+      "method": "collection/delete",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/CollectionDeleteParams"
+        },
+        "type": "CollectionDeleteParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfCollectionDeleteResponse"
+        },
+        "type": "AgentApiOutcome<CollectionDeleteResponse>"
+      },
+      "scope": "universe",
+      "summary": "Delete an empty collection"
+    },
+    {
+      "access": {
+        "kind": "universe",
         "requirement": "read"
       },
       "description": "Returns protocol version, server identity, and supported capabilities without changing universe state.",

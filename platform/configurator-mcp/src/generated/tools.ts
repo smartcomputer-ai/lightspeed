@@ -85,6 +85,23 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "id"
               ],
               "type": "object"
+            },
+            {
+              "description": "A root that gives sessions and bots one audience and, later, one\nexecution identity. It routes nothing and runs nothing.",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "collection",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
             }
           ]
         }
@@ -163,6 +180,23 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "id"
               ],
               "type": "object"
+            },
+            {
+              "description": "A root that gives sessions and bots one audience and, later, one\nexecution identity. It routes nothing and runs nothing.",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "collection",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
             }
           ]
         }
@@ -197,6 +231,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "$ref": "#/definitions/AccessGrantInput"
           },
           "type": "array"
+        },
+        "owner": {
+          "description": "Hand the root to another member of the universe. Only the current\nowner may set it; the previous owner keeps no permission of its own.",
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "resource": {
           "$ref": "#/definitions/ResourceRef"
@@ -287,6 +329,23 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "id"
               ],
               "type": "object"
+            },
+            {
+              "description": "A root that gives sessions and bots one audience and, later, one\nexecution identity. It routes nothing and runs nothing.",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "collection",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -343,6 +402,332 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "type": "string"
         }
       }
+    }
+  },
+  {
+    "name": "lightspeed_collection_create",
+    "method": "collection/create",
+    "summary": "Create a collection",
+    "description": "Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.",
+    "paramsType": "CollectionCreateParams",
+    "resultType": "AgentApiOutcome<CollectionCreateResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "properties": {
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AccessInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Audience of the collection; `root` is not accepted here."
+        },
+        "collectionId": {
+          "description": "Client-chosen id (same form as a session id); absent allocates one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayName"
+      ],
+      "type": "object",
+      "definitions": {
+        "AccessGrantInput": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "properties": {
+            "permission": {
+              "$ref": "#/definitions/ResourcePermission"
+            },
+            "subject": {
+              "$ref": "#/definitions/Subject"
+            }
+          },
+          "required": [
+            "subject",
+            "permission"
+          ],
+          "type": "object"
+        },
+        "AccessInput": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
+          "properties": {
+            "grants": {
+              "description": "Readers and writers of the root. Each subject must currently hold a\nrole in the universe.",
+              "items": {
+                "$ref": "#/definitions/AccessGrantInput"
+              },
+              "type": "array"
+            },
+            "root": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResourceRef"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Create the resource as a member of this collection, which the caller\nmust be able to write to. A member shares the collection's audience\nand takes no `visibility` or `grants` of its own."
+            },
+            "visibility": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Visibility"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
+            }
+          },
+          "type": "object"
+        },
+        "ResourcePermission": {
+          "description": "One permission a grant confers on a root. `Read` sees the tree; `Write`\nalso controls it.",
+          "enum": [
+            "read",
+            "write"
+          ],
+          "type": "string"
+        },
+        "ResourceRef": {
+          "description": "Durable control facts, distinct from an agent's execution credentials.",
+          "oneOf": [
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "session",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "bot",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "profile",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A root that gives sessions and bots one audience and, later, one\nexecution identity. It routes nothing and runs nothing.",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "collection",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Subject": {
+          "oneOf": [
+            {
+              "additionalProperties": {
+                "not": {}
+              },
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "principal",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": {
+                "not": {}
+              },
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "group",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Visibility": {
+          "description": "Who may see a root's tree without a grant.",
+          "enum": [
+            "universe",
+            "restricted"
+          ],
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "lightspeed_collection_read",
+    "method": "collection/read",
+    "summary": "Read a collection",
+    "description": "Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.",
+    "paramsType": "CollectionReadParams",
+    "resultType": "AgentApiOutcome<CollectionReadResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "properties": {
+        "collectionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "collectionId"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_collection_list",
+    "method": "collection/list",
+    "summary": "List collections",
+    "description": "Returns the collections the caller may read.",
+    "paramsType": "CollectionListParams",
+    "resultType": "AgentApiOutcome<CollectionListResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_collection_update",
+    "method": "collection/update",
+    "summary": "Rename a collection",
+    "description": "Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.",
+    "paramsType": "CollectionUpdateParams",
+    "resultType": "AgentApiOutcome<CollectionUpdateResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "properties": {
+        "collectionId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "expectedRevision": {
+          "description": "The revision from `collection/read`; absent replaces unconditionally.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "collectionId",
+        "displayName"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_collection_delete",
+    "method": "collection/delete",
+    "summary": "Delete an empty collection",
+    "description": "Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.",
+    "paramsType": "CollectionDeleteParams",
+    "resultType": "AgentApiOutcome<CollectionDeleteResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "properties": {
+        "collectionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "collectionId"
+      ],
+      "type": "object"
     }
   },
   {
@@ -451,6 +836,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "$ref": "#/definitions/AccessGrantInput"
               },
               "type": "array"
+            },
+            "root": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResourceRef"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Create the resource as a member of this collection, which the caller\nmust be able to write to. A member shares the collection's audience\nand takes no `visibility` or `grants` of its own."
             },
             "visibility": {
               "anyOf": [
@@ -1060,6 +1456,76 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "write"
           ],
           "type": "string"
+        },
+        "ResourceRef": {
+          "description": "Durable control facts, distinct from an agent's execution credentials.",
+          "oneOf": [
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "session",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "bot",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "profile",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A root that gives sessions and bots one audience and, later, one\nexecution identity. It routes nothing and runs nothing.",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "collection",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "SessionConfig": {
           "additionalProperties": {
@@ -8778,6 +9244,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               },
               "type": "array"
             },
+            "root": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResourceRef"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Create the resource as a member of this collection, which the caller\nmust be able to write to. A member shares the collection's audience\nand takes no `visibility` or `grants` of its own."
+            },
             "visibility": {
               "anyOf": [
                 {
@@ -9547,6 +10024,76 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "write"
           ],
           "type": "string"
+        },
+        "ResourceRef": {
+          "description": "Durable control facts, distinct from an agent's execution credentials.",
+          "oneOf": [
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "session",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "bot",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "profile",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A root that gives sessions and bots one audience and, later, one\nexecution identity. It routes nothing and runs nothing.",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "collection",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "Subject": {
           "oneOf": [

@@ -34,6 +34,56 @@ Replaces the visibility and the complete grant set of the root governing the res
 - Params: `AccessPolicyPutParams`
 - Result: `AgentApiOutcome<AccessPolicyPutResponse>`
 
+### `collection/create`
+
+**Create a collection**
+
+Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.
+
+- Access: `{"kind":"universe","requirement":"create_collection"}`
+- Params: `CollectionCreateParams`
+- Result: `AgentApiOutcome<CollectionCreateResponse>`
+
+### `collection/read`
+
+**Read a collection**
+
+Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.
+
+- Access: `{"kind":"universe","requirement":"read"}`
+- Params: `CollectionReadParams`
+- Result: `AgentApiOutcome<CollectionReadResponse>`
+
+### `collection/list`
+
+**List collections**
+
+Returns the collections the caller may read.
+
+- Access: `{"kind":"universe","requirement":"read"}`
+- Params: `CollectionListParams`
+- Result: `AgentApiOutcome<CollectionListResponse>`
+
+### `collection/update`
+
+**Rename a collection**
+
+Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.
+
+- Access: `{"kind":"universe","requirement":"manage_collection"}`
+- Params: `CollectionUpdateParams`
+- Result: `AgentApiOutcome<CollectionUpdateResponse>`
+
+### `collection/delete`
+
+**Delete an empty collection**
+
+Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.
+
+- Access: `{"kind":"universe","requirement":"delete_collection"}`
+- Params: `CollectionDeleteParams`
+- Result: `AgentApiOutcome<CollectionDeleteResponse>`
+
 ### `initialize`
 
 **Inspect the Lightspeed protocol**
