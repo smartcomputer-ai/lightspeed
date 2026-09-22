@@ -1,5 +1,6 @@
 use api::BlobPutItem;
 
+use super::blobs::has_blobs;
 use super::*;
 use tools::prompts::active_prompt_instruction_entries as active_prompt_context_entries;
 use tools::skills::SkillLocation;
@@ -2017,6 +2018,7 @@ async fn blob_api_helpers_put_get_and_check_many() {
     let has = has_blobs(
         &store,
         BlobHasParams {
+            resource: None,
             blob_refs: vec![
                 put.blobs[0].blob_ref.clone(),
                 BlobRef::from_bytes(b"missing").as_str().to_owned(),
@@ -2033,6 +2035,7 @@ async fn blob_api_helpers_put_get_and_check_many() {
     let read = read_blob(
         &store,
         BlobReadParams {
+            resource: None,
             blob_ref: put.blobs[1].blob_ref.clone(),
         },
     )

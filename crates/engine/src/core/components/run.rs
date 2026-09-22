@@ -279,6 +279,7 @@ pub struct RunRequestCommand {
     pub submission_id: Option<SubmissionId>,
     pub source: RunRequestSource,
     pub run_config: RunConfig,
+    /// Recorded on the accepted-run event; the runtime resolves it.
     /// Cross-session notify-intents recorded at admission: on this run's
     /// terminal event, signal each holder workflow with its token (the
     /// holder-side promise id). The edge event is the subscription.
@@ -351,6 +352,9 @@ pub enum RunFailureKind {
     LimitExceeded,
     Cancelled,
     Internal,
+    /// The run's execution authority no longer holds; checked before every
+    /// model call, so the turn that was authorized completed.
+    AuthorityRevoked,
 }
 
 pub type RunEvent = Event;
@@ -442,11 +446,11 @@ fn terminal_run_proposal(
                 output: output.clone(),
             }))
         }
-        (TurnStatus::Failed, Some(TurnOutcome::Failed { failure_ref })) => {
+        (TurnStatus::Failed, Some(TurnOutcome::Failed { failure_ref, kind })) => {
             Some(CoreAgentEvent::Run(Event::Failed {
                 run_id: active_run.run_id,
                 failure: RunFailure {
-                    kind: RunFailureKind::ModelFailure,
+                    kind: kind.clone(),
                     message_ref: failure_ref.clone(),
                 },
             }))

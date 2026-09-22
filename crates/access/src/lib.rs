@@ -361,6 +361,9 @@ pub struct ControllerContext {
     pub actor: ResourceRef,
     /// The actor's audience root, resolved when the context is built.
     pub root: ResourceRef,
+    /// The principal the actor's work runs as; resource use is its rights,
+    /// checked at admission and at every model call.
+    pub execution_principal: Option<Uuid>,
     pub cause: String,
 }
 
@@ -465,11 +468,11 @@ fn authorize_controller(
     resource: Option<&ResourceAccess>,
 ) -> Decision {
     use UniverseAction::*;
-    let is_bot = matches!(context.actor, ResourceRef::Bot(_));
+    let executes = context.execution_principal.is_some();
     let Some(access) = resource else {
         return match action {
             Read | CreateSession => Decision::Allowed,
-            UseResource if is_bot => Decision::Allowed,
+            UseResource if executes => Decision::Allowed,
             _ => Decision::Forbidden,
         };
     };
@@ -485,7 +488,7 @@ fn authorize_controller(
         || matches!((&context.actor, &anchor.controller), (ResourceRef::Session(actor), ResourceController::Session(parent)) if actor == parent);
     let allowed = match action {
         Read | CreateSession => true,
-        UseResource => is_bot,
+        UseResource => executes,
         ControlSession | StopSession | DeleteSession | ManageBot => controls,
         _ => false,
     };

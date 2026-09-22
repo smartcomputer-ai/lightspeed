@@ -80,11 +80,15 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
         Some(base_url.clone()),
         stores,
     )?);
-    GatewayDeploymentApi::new(runtime.clone())
-        .create_universe(api::DeploymentUniverseCreateParams {
-            universe_id: universe_id.to_string(),
-        })
-        .await?;
+    temporal_server::gateway::principal::with_request_context(
+        support::live::local_request_context_for(access::AccessScope::Deployment).await?,
+        GatewayDeploymentApi::new(runtime.clone()).create_universe(
+            api::DeploymentUniverseCreateParams {
+                universe_id: universe_id.to_string(),
+            },
+        ),
+    )
+    .await?;
     // The sourced development URL names the normal gateway. This fixture
     // binds an ephemeral port, while retaining the deployment's route token.
     let gateway_config =
@@ -107,7 +111,11 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
     let mut tasks = Tasks(vec![gateway.abort_handle()]);
     let sandbox = tempfile::tempdir()?;
     let root = sandbox.path().canonicalize()?;
-    let result = async {
+    let context =
+        support::live::local_request_context_for(access::AccessScope::Universe { universe_id })
+            .await?;
+    // Keep the large transfer scenario off the current-thread test stack.
+    let result = temporal_server::gateway::principal::with_request_context(context, Box::pin(async {
         let state = runtime.state_for(universe_id, false).await?;
         let key = state.api.create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
             display_name: "VFS transfer live".into(),
@@ -156,7 +164,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
                 (ProviderApiKind::OpenAiResponses, "noenv"),
             ].into_iter().enumerate() {
                 let session = SessionId::new(format!("{base_session}_{index}_{mode}"));
-                let case = run_case(&api, store.as_ref(), &session, provider, mode, index, &root, &environment.environment_id).await;
+                let case = Box::pin(run_case(&api, store.as_ref(), &session, provider, mode, index, &root, &environment.environment_id)).await;
                 let handle = client.get_workflow_handle::<temporal_workflow::AgentSessionWorkflow>(
                     temporal_workflow::compose_workflow_id(universe_id, &session));
                 let _ = handle.terminate(WorkflowTerminateOptions::builder().reason("transfer live cleanup").build()).await;
@@ -189,7 +197,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
             remote.close().await?;
             anyhow::Ok(())
         }).await
-    }.await;
+    })).await;
     drop(tasks);
     let store = runtime.state_for(universe_id, false).await?.store.clone();
     runtime.evict(universe_id).await;
@@ -269,12 +277,7 @@ async fn run_case(
             b"page\n".to_vec(),
         )?);
     }
-    let snapshot = vfs::create_inline_snapshot(
-        store,
-        Some(store),
-        vfs::CreateInlineSnapshotRequest::new(files),
-    )
-    .await?;
+    let snapshot = support::live::upload_snapshot(api, files).await?;
     let workspace = api
         .create_vfs_workspace(api::VfsWorkspaceCreateParams {
             snapshot_ref: Some(snapshot.snapshot_ref.to_string()),

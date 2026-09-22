@@ -4,7 +4,7 @@
 //! go through `access::authorize`; storage supplies the resource facts.
 use super::*;
 pub(crate) use access::ControllerContext;
-use access::{ActionActor, Caller, Decision, ResourceController, ResourceRef};
+use access::{AccessStore as _, ActionActor, Caller, Decision, ResourceController, ResourceRef};
 
 tokio::task_local! {
     static CONTROLLER: ControllerContext;
@@ -146,6 +146,7 @@ impl GatewayAgentApi {
             universe_id: self.universe_id(),
             actor,
             root: anchor.audience_root,
+            execution_principal: anchor.execution.map(|execution| execution.run_as),
             cause,
         })
     }
@@ -201,6 +202,7 @@ impl GatewayAgentApi {
             universe_id: self.universe_id(),
             actor: resource,
             root: anchor.audience_root,
+            execution_principal: anchor.execution.map(|execution| execution.run_as),
             cause,
         })
     }
@@ -301,6 +303,34 @@ impl GatewayAgentApi {
         }
     }
 
+    /// Admit a run: the session's execution principal must be active with
+    /// resource use in the universe. The requester's own control check is
+    /// separate and already done. The admission itself is the record: an
+    /// API start writes an audit row, and the session's execution identity
+    /// is immutable, so nothing further is stored on the run.
+    pub(super) async fn admit_run(&self, session: &SessionId) -> Result<(), AgentApiError> {
+        let store = self.access_store();
+        let anchor = store
+            .anchor(
+                self.universe_id(),
+                &ResourceRef::Session(session.as_str().to_owned()),
+            )
+            .await
+            .map_err(access_error)?
+            .ok_or_else(denied)?;
+        let Some(execution) = anchor.execution else {
+            return Err(denied());
+        };
+        let rights = store
+            .effective_access(execution.run_as, self.scope())
+            .await
+            .map_err(access_error)?;
+        if rights.universe_action(UniverseAction::UseResource) != RoleDecision::Allowed {
+            return Err(denied());
+        }
+        Ok(())
+    }
+
     /// The access summary a view carries; a resource without one was never
     /// admitted, which is an internal inconsistency, not a caller error.
     pub(super) async fn access_summary(
@@ -312,6 +342,11 @@ impl GatewayAgentApi {
             .await
             .map_err(access_error)?
             .ok_or_else(|| AgentApiError::internal(format!("{resource:?} has no access policy")))
+    }
+
+    /// The internal controller this request runs as, if any.
+    pub(super) fn current_controller(&self) -> Option<ControllerContext> {
+        CONTROLLER.try_with(Clone::clone).ok()
     }
 
     /// Who a list is for: the request's principal, or internal work's root.

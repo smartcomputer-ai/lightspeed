@@ -949,12 +949,15 @@ export type ApprovalDecisionKind = "approve" | "reject";
  * via the `definition` "RunFailureKindView".
  */
 export type RunFailureKindView =
-  | "model_failure"
-  | "tool_failure"
-  | "context_failure"
-  | "limit_exceeded"
-  | "cancelled"
-  | "internal";
+  | (
+      | "model_failure"
+      | "tool_failure"
+      | "context_failure"
+      | "limit_exceeded"
+      | "cancelled"
+      | "internal"
+    )
+  | "authority_revoked";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunViewSource".
@@ -6957,6 +6960,11 @@ export interface AuthProviderReadParams {
  */
 export interface BlobHasParams {
   blobRefs?: string[];
+  /**
+   * As for `blobs/read`; a blob the caller may not read through the
+   * resource reports as absent.
+   */
+  resource?: ResourceRef | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6983,6 +6991,14 @@ export interface BlobPutParams {
  */
 export interface BlobReadParams {
   blobRef: string;
+  /**
+   * The session, bot or collection the blob is read through: the caller
+   * must be able to read it and the blob must be admitted content of it.
+   * Without a resource only a blob the caller uploaded is readable. A
+   * resource that does not authorize the read is a refusal, not a prompt
+   * to try another.
+   */
+  resource?: ResourceRef | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

@@ -11,7 +11,7 @@ use engine::{
         SessionCheckpoint, SessionLifecycleStatus, SessionListCursor, SessionListPage,
         SessionOrigin, SessionOriginCounts, SessionPage, SessionRecord, SessionStore,
         SessionStoreError, apply_lifecycle_projection, check_origin_limits, collect_blob_refs,
-        largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
+        collect_content_refs, largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
     },
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -1752,15 +1752,19 @@ async fn append_events_in_tx(
 }
 
 /// Distinct refs in an append. The store derives FK-backed roots inside the
-/// append transaction; callers never register roots separately.
+/// append transaction; callers never register roots separately. Refs the
+/// runtime placed in content positions become `content` roots, readable
+/// through the session; every other ref is retained as `scan`.
 #[derive(Default)]
 struct EmbeddedBlobRefs {
     refs: BTreeSet<BlobRef>,
+    content: BTreeSet<BlobRef>,
 }
 
 impl EmbeddedBlobRefs {
     fn observe(&mut self, entry_json: &serde_json::Value) {
         self.refs.extend(collect_blob_refs(entry_json));
+        self.content.extend(collect_content_refs(entry_json));
     }
 
     async fn record_roots(
@@ -1774,6 +1778,11 @@ impl EmbeddedBlobRefs {
         }
         let candidates = self
             .refs
+            .iter()
+            .map(|blob_ref| blob_ref.as_str()[7..].to_owned())
+            .collect::<Vec<_>>();
+        let content = self
+            .content
             .iter()
             .map(|blob_ref| blob_ref.as_str()[7..].to_owned())
             .collect::<Vec<_>>();
@@ -1793,9 +1802,10 @@ impl EmbeddedBlobRefs {
                 ORDER BY b.digest
                 FOR KEY SHARE OF b
             ), inserted AS (
-                INSERT INTO cas_session_roots (universe_id, session_id, digest)
-                SELECT $1, $2, digest FROM held
-                ON CONFLICT DO NOTHING
+                INSERT INTO cas_session_roots (universe_id, session_id, digest, origin)
+                SELECT $1, $2, digest, CASE WHEN digest = ANY($4::text[]) THEN 'content' ELSE 'scan' END FROM held
+                ON CONFLICT (universe_id, session_id, digest) DO UPDATE SET origin = 'content'
+                WHERE EXCLUDED.origin = 'content' AND cas_session_roots.origin <> 'content'
             )
             SELECT 'sha256:' || digest FROM requested
             WHERE digest NOT IN (SELECT digest FROM held)
@@ -1805,6 +1815,7 @@ impl EmbeddedBlobRefs {
         .bind(universe_id)
         .bind(session_id.as_str())
         .bind(&candidates)
+        .bind(&content)
         .fetch_all(&mut **tx)
         .await
         .map_err(|error| session_sql_error("record event blob roots", error))?;

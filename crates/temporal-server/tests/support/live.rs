@@ -29,19 +29,40 @@ use temporalio_client::{Client, WorkflowQueryOptions, WorkflowTerminateOptions};
 
 pub static LIVE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Bound the entire client body, including API calls inside polling loops.
+/// Keep worker polling outside this future so teardown still runs on timeout.
+pub async fn bounded_live_test<T>(
+    label: &str,
+    budget: Duration,
+    body: impl Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    tokio::time::timeout(budget, body)
+        .await
+        .map_err(|_| anyhow::anyhow!("{label} exceeded its {budget:?} live-test budget"))?
+}
+
+pub const LIVE_TEST_BUDGET: Duration = Duration::from_secs(180);
+
 /// Explicit test identity for direct in-process clients; never inherited by workers.
 pub async fn local_request_context() -> anyhow::Result<access::RequestContext> {
+    local_request_context_for(access::AccessScope::Universe {
+        universe_id: live_universe_id()?,
+    })
+    .await
+}
+
+pub async fn local_request_context_for(
+    scope: access::AccessScope,
+) -> anyhow::Result<access::RequestContext> {
     let store = pg_store_from_env().await?;
     let universe_id = store.config().universe_id;
     store.ensure_universe().await?;
     let access = store_pg::PgAccessStore::new(store.pool().clone());
     let principal = access.initialize_local_development(universe_id, 1).await?;
-    Ok(temporal_server::gateway::authentication::local_context(
-        &access,
-        principal.id,
-        access::AccessScope::Universe { universe_id },
+    Ok(
+        temporal_server::gateway::authentication::local_context(&access, principal.id, scope)
+            .await?,
     )
-    .await?)
 }
 
 pub async fn run_with_live_worker<F, Fut>(
@@ -56,6 +77,37 @@ where
 }
 
 pub async fn run_with_live_worker_builder<B, BuildFut, F, Fut>(
+    build_activities: B,
+    run_client: F,
+) -> anyhow::Result<()>
+where
+    B: FnOnce(Client, String) -> BuildFut,
+    BuildFut: Future<Output = anyhow::Result<WorkerActivities>>,
+    F: FnOnce(Client, String, SessionId) -> Fut,
+    Fut: Future<Output = anyhow::Result<()>>,
+{
+    run_with_live_worker_builder_timeout(LIVE_TEST_BUDGET, build_activities, run_client).await
+}
+
+pub async fn run_with_live_worker_timeout<F, Fut>(
+    budget: Duration,
+    activities: WorkerActivities,
+    run_client: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(Client, String, SessionId) -> Fut,
+    Fut: Future<Output = anyhow::Result<()>>,
+{
+    run_with_live_worker_builder_timeout(
+        budget,
+        move |_, _| async move { Ok(activities) },
+        run_client,
+    )
+    .await
+}
+
+async fn run_with_live_worker_builder_timeout<B, BuildFut, F, Fut>(
+    budget: Duration,
     build_activities: B,
     run_client: F,
 ) -> anyhow::Result<()>
@@ -81,9 +133,16 @@ where
     let worker_future = worker.run();
     tokio::pin!(worker_future);
 
+    // A fixture may explicitly target a fresh universe. Preserve its request
+    // authority on the client only; workers must install controller contexts.
+    let context = match temporal_server::gateway::principal::request_context() {
+        Ok(context) => context,
+        Err(_) => local_request_context().await?,
+    };
+    // Large client futures must not inflate the stack used to poll the worker.
     let client_future = temporal_server::gateway::principal::with_request_context(
-        local_request_context().await?,
-        run_client(client, task_queue, session_id),
+        context,
+        Box::pin(run_client(client, task_queue, session_id)),
     );
     tokio::pin!(client_future);
 
@@ -94,14 +153,64 @@ where
                 Err(error) => Err(error.context("Temporal worker failed")),
             };
         }
-        client_result = client_future.as_mut() => client_result,
+        client_result = bounded_live_test("session client", budget, client_future.as_mut()) => client_result,
     };
 
     shutdown_worker();
-    tokio::time::timeout(Duration::from_secs(10), worker_future.as_mut())
-        .await
-        .map_err(|_| anyhow::anyhow!("Temporal worker did not shut down within 10 seconds"))??;
-    client_result
+    let shutdown_result = bounded_live_test(
+        "Temporal worker shutdown",
+        Duration::from_secs(10),
+        worker_future.as_mut(),
+    )
+    .await;
+    client_result.and(shutdown_result)
+}
+
+/// Build caller-owned fixtures through the same upload and manifest admission
+/// paths as public clients; writing straight to CAS does not grant access.
+pub async fn upload_snapshot(
+    api: &impl AgentApiService,
+    files: Vec<vfs::InlineFile>,
+) -> anyhow::Result<api::VfsSnapshotCommitResponse> {
+    use base64::Engine as _;
+    let uploaded = api
+        .put_blobs(api::BlobPutParams {
+            blobs: files
+                .iter()
+                .map(|file| api::BlobPutItem {
+                    bytes_base64: base64::engine::general_purpose::STANDARD.encode(&file.bytes),
+                })
+                .collect(),
+        })
+        .await?
+        .result
+        .blobs;
+    anyhow::ensure!(
+        uploaded.len() == files.len(),
+        "upload result count differs from file count"
+    );
+    let mut manifest = vfs::VfsSnapshotManifest::empty();
+    for (file, uploaded) in files.into_iter().zip(uploaded) {
+        if let Some((parent, _)) = file.path.as_str().rsplit_once('/')
+            && !parent.is_empty()
+        {
+            vfs::create_manifest_directory(&mut manifest, &vfs::VfsPath::parse(parent)?, true)?;
+        }
+        vfs::write_manifest_file_ref(
+            &mut manifest,
+            &file.path,
+            engine::BlobRef::parse(&uploaded.blob_ref)?,
+            uploaded.bytes,
+            file.media_type,
+            file.executable,
+        )?;
+    }
+    Ok(api
+        .commit_vfs_snapshot(api::VfsSnapshotCommitParams {
+            manifest: serde_json::to_value(manifest)?,
+        })
+        .await?
+        .result)
 }
 
 /// Universe used by live tests: the one bound by `LIGHTSPEED_PG_UNIVERSE_ID`.
@@ -272,39 +381,51 @@ pub async fn wait_for_terminal_run(
     session_id: &SessionId,
     run_id: &str,
 ) -> anyhow::Result<api::RunView> {
-    let started = Instant::now();
-    loop {
-        if started.elapsed() > Duration::from_secs(30) {
-            anyhow::bail!("timed out waiting for run {run_id} to finish");
-        }
-        let session = api
-            .read_session(SessionReadParams {
-                session_id: session_id.as_str().to_owned(),
-                run_limit: None,
-            })
-            .await?;
-        if let Some(run) = session
-            .result
-            .session
-            .runs
-            .into_iter()
-            .find(|run| run.id == run_id)
-            && matches!(
-                run.status,
-                RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled
-            )
-        {
-            return Ok(api
-                .read_run(api::RunReadParams {
-                    session_id: session_id.as_str().to_owned(),
-                    run_id: run.id,
-                })
-                .await?
-                .result
-                .run);
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    wait_for_terminal_run_with_timeout(api, session_id, run_id, Duration::from_secs(30)).await
+}
+
+pub async fn wait_for_terminal_run_with_timeout(
+    api: &temporal_server::gateway::GatewayAgentApi,
+    session_id: &SessionId,
+    run_id: &str,
+    budget: Duration,
+) -> anyhow::Result<api::RunView> {
+    bounded_live_test(
+        &format!("run {run_id} in session {session_id}"),
+        budget,
+        async {
+            loop {
+                let session = api
+                    .read_session(SessionReadParams {
+                        session_id: session_id.as_str().to_owned(),
+                        run_limit: None,
+                    })
+                    .await?;
+                if let Some(run) = session
+                    .result
+                    .session
+                    .runs
+                    .into_iter()
+                    .find(|run| run.id == run_id)
+                    && matches!(
+                        run.status,
+                        RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled
+                    )
+                {
+                    return Ok(api
+                        .read_run(api::RunReadParams {
+                            session_id: session_id.as_str().to_owned(),
+                            run_id: run.id,
+                        })
+                        .await?
+                        .result
+                        .run);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        },
+    )
+    .await
 }
 
 pub async fn start_text_run(
@@ -510,5 +631,22 @@ pub fn openai_completions_live_model() -> ModelSelection {
             .or_else(|_| env::var("OPENAI_LIVE_MODEL"))
             .or_else(|_| env::var("LIGHTSPEED_CHAT_MODEL"))
             .unwrap_or_else(|_| "gpt-5.5".to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn live_test_deadline_covers_a_stuck_request() {
+        let error = bounded_live_test(
+            "stuck request",
+            Duration::from_millis(10),
+            std::future::pending::<anyhow::Result<()>>(),
+        )
+        .await
+        .expect_err("a pending API request must not bypass the deadline");
+        assert!(error.to_string().contains("stuck request"));
     }
 }

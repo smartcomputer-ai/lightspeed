@@ -118,12 +118,17 @@ where
     tokio::pin!(body);
     let result = tokio::select! {
         workers_result = workers.as_mut() => Err(anyhow::anyhow!("workers stopped early: {workers_result:?}")),
-        body_result = body.as_mut() => body_result,
+        body_result = support::live::bounded_live_test("bots_live", support::live::LIVE_TEST_BUDGET, body.as_mut()) => body_result,
     };
     shutdown_sessions();
     shutdown_bots();
-    let _ = tokio::time::timeout(Duration::from_secs(10), workers.as_mut()).await;
-    result
+    let shutdown_result = support::live::bounded_live_test(
+        "worker shutdown",
+        Duration::from_secs(10),
+        workers.as_mut(),
+    )
+    .await;
+    result.and(shutdown_result)
 }
 
 fn unique(prefix: &str) -> String {

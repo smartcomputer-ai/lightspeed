@@ -1547,6 +1547,9 @@ pub enum RunFailureKindView {
     LimitExceeded,
     Cancelled,
     Internal,
+    /// The run's execution authority was revoked; the turn in progress
+    /// completed and the next model call refused.
+    AuthorityRevoked,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

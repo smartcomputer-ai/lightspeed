@@ -546,6 +546,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         universe_id: universe,
         actor: bot.clone(),
         root: bot.clone(),
+        execution_principal: Some(alice.principal.id),
         cause: "test".into(),
     };
     let controller = |action, resource: &ResourceRef| {

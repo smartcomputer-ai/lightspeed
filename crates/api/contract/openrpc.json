@@ -4645,6 +4645,17 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "As for `blobs/read`; a blob the caller may not read through the\nresource reports as absent."
           }
         },
         "type": "object"
@@ -4718,6 +4729,17 @@
         "properties": {
           "blobRef": {
             "type": "string"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The session, bot or collection the blob is read through: the caller\nmust be able to read it and the blob must be admitted content of it.\nWithout a resource only a blob the caller uploaded is readable. A\nresource that does not authorize the read is a refusal, not a prompt\nto try another."
           }
         },
         "required": [
@@ -14050,15 +14072,24 @@
       },
       "RunFailureKindView": {
         "description": "Why a run failed, as the engine classified it.",
-        "enum": [
-          "model_failure",
-          "tool_failure",
-          "context_failure",
-          "limit_exceeded",
-          "cancelled",
-          "internal"
-        ],
-        "type": "string"
+        "oneOf": [
+          {
+            "enum": [
+              "model_failure",
+              "tool_failure",
+              "context_failure",
+              "limit_exceeded",
+              "cancelled",
+              "internal"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "authority_revoked",
+            "description": "The run's execution authority was revoked; the turn in progress\ncompleted and the next model call refused.",
+            "type": "string"
+          }
+        ]
       },
       "RunLimitsConfig": {
         "properties": {

@@ -1498,6 +1498,7 @@ fn openai_annotated_span(text: &str, annotation: &Value) -> Option<String> {
 fn run_failure_kind_to_api(kind: RunFailureKind) -> RunFailureKindView {
     match kind {
         RunFailureKind::ModelFailure => RunFailureKindView::ModelFailure,
+        RunFailureKind::AuthorityRevoked => RunFailureKindView::AuthorityRevoked,
         RunFailureKind::ToolFailure => RunFailureKindView::ToolFailure,
         RunFailureKind::ContextFailure => RunFailureKindView::ContextFailure,
         RunFailureKind::LimitExceeded => RunFailureKindView::LimitExceeded,
@@ -2543,6 +2544,7 @@ fn llm_generation_status_to_api(status: &LlmGenerationStatus) -> &'static str {
         LlmGenerationStatus::Succeeded => "succeeded",
         LlmGenerationStatus::Failed => "failed",
         LlmGenerationStatus::Cancelled => "cancelled",
+        LlmGenerationStatus::AuthorityRevoked => "authority_revoked",
     }
 }
 

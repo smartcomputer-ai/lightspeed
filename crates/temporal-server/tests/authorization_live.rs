@@ -5,6 +5,7 @@ mod support;
 use access::*;
 use api::{AgentApiErrorKind, AgentApiService as _};
 use auth::{ApiKeyStore as _, CreateApiKey, MintedApiKey};
+use base64::Engine as _;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 use store_pg::{PgAccessStore, PgApiKeyStore, PgStore};
@@ -310,6 +311,53 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             assert!(roster["bots"].as_array().unwrap().iter().all(|b| b["access"]["execution"]["runAs"] == json!(service_principal)), "{roster}");
             success(rpc(&endpoint, universe_admin, "access/execution/update", json!({"personalExecutionEnabled":false})).await);
             forbidden(rpc(&endpoint, alice, "session/start", json!({"execution":{"kind":"personal"}})).await);
+            // Run admission: the execution service must hold authority. Disabling
+            // it refuses every new run in the universe; a run records who it ran as.
+            let service_uuid = Uuid::parse_str(&service_principal)?;
+            let run_input = json!({"sessionId":session,"source":{"type":"input","items":[{"type":"text","text":"hello"}]}});
+            access.apply(admin.id, AccessChange::SetPrincipalStatus { id: service_uuid, status: PrincipalStatus::Disabled }, 30).await?;
+            forbidden(rpc(&endpoint, alice, "session/runs/start", run_input.clone()).await);
+            access.apply(admin.id, AccessChange::SetPrincipalStatus { id: service_uuid, status: PrincipalStatus::Active }, 31).await?;
+            success(rpc(&endpoint, alice, "session/runs/start", run_input).await);
+            let bobs_root = success(rpc(&endpoint, bob, "session/start", json!({})).await)["session"]["id"].as_str().unwrap().to_owned();
+            // Content. A hash is never access: a blob is read through a resource the
+            // caller may read and that admitted it, or, without one, only by its uploader.
+            let secret = json!({"blobs":[{"bytesBase64": base64::engine::general_purpose::STANDARD.encode(b"alice's private notes")}]});
+            let uploaded = success(rpc(&endpoint, alice, "blobs/put", secret.clone()).await)["blobs"][0]["blobRef"].as_str().unwrap().to_owned();
+            success(rpc(&endpoint, alice, "blobs/read", json!({"blobRef":uploaded})).await);
+            forbidden(rpc(&endpoint, bob, "blobs/read", json!({"blobRef":uploaded})).await);
+            assert_eq!(success(rpc(&endpoint, bob, "blobs/has", json!({"blobRefs":[uploaded]})).await)["blobs"][0]["exists"], false);
+            // Attaching makes it content of the session, readable through it by its readers.
+            let attach = |session: &str, blob_ref: &str| json!({"sessionId":session,"source":{"type":"input","items":[{"type":"textRef","blobRef":blob_ref}]}});
+            let through = |session: &str| json!({"blobRef":uploaded,"resource":{"kind":"session","id":session}});
+            success(rpc(&endpoint, alice, "session/runs/start", attach(&mine_id, &uploaded)).await);
+            success(rpc(&endpoint, alice, "blobs/read", through(&mine_id)).await);
+            not_found(rpc(&endpoint, bob, "blobs/read", through(&mine_id)).await);
+            // Neither attaching the reference nor writing the digest into text makes it
+            // content of Bob's session: the first is refused, the second is retained
+            // for the sweeper only.
+            forbidden(rpc(&endpoint, bob, "session/runs/start", attach(&bobs_root, &uploaded)).await);
+            success(rpc(&endpoint, bob, "session/runs/start", json!({"sessionId":bobs_root,"source":{"type":"input","items":[{"type":"text","text":uploaded}]}})).await);
+            forbidden(rpc(&endpoint, bob, "blobs/read", through(&bobs_root)).await);
+            assert_eq!(success(rpc(&endpoint, bob, "blobs/has", json!({"blobRefs":[uploaded],"resource":{"kind":"session","id":bobs_root}})).await)["blobs"][0]["exists"], false);
+            // A reader of Alice's session reads its content through it, and nowhere else.
+            success(rpc(&endpoint, alice, "access/policy/put", json!({"resource":{"kind":"session","id":mine_id},"visibility":"restricted","grants":[{"subject":{"kind":"principal","id":bob.record.principal_id},"permission":"read"}]})).await);
+            success(rpc(&endpoint, bob, "blobs/read", through(&mine_id)).await);
+            forbidden(rpc(&endpoint, bob, "blobs/read", through(&bobs_root)).await);
+            forbidden(rpc(&endpoint, bob, "blobs/read", json!({"blobRef":uploaded})).await);
+            // Uploading the same bytes grants exactly those bytes; content addressing makes it free.
+            success(rpc(&endpoint, bob, "blobs/put", secret).await);
+            success(rpc(&endpoint, bob, "blobs/read", json!({"blobRef":uploaded})).await);
+            success(rpc(&endpoint, bob, "session/runs/start", attach(&bobs_root, &uploaded)).await);
+            success(rpc(&endpoint, bob, "blobs/read", through(&bobs_root)).await);
+            // A snapshot admits only children the committer may supply; the committed
+            // manifest is the committer's own upload and usable by nobody else.
+            let manifest = |blob_ref: &str| json!({"manifest":{"schema_version":"lightspeed.vfs.snapshot.v1",
+                "root":{"entries":{"notes.txt":{"kind":"file","blob_ref":blob_ref,"size_bytes":21,"executable":false}}},
+                "totals":{"files":1,"bytes":21}}});
+            forbidden(rpc(&endpoint, operator, "vfs/snapshots/commit", manifest(&uploaded)).await);
+            let snapshot = success(rpc(&endpoint, alice, "vfs/snapshots/commit", manifest(&uploaded)).await)["snapshotRef"].as_str().unwrap().to_owned();
+            forbidden(rpc(&endpoint, viewer, "vfs/workspaces/create", json!({"snapshotRef":snapshot})).await);
             // The group's role served the sharing scenario only; the revocation checks below assume the Viewer's own role.
             access.apply(admin.id, AccessChange::RevokeRole { assignment: RoleAssignment { scope, subject: Subject::Group(readers), role: Role::Viewer } }, 24).await?;
             // A contributor can author templates but cannot edit another author's template.
@@ -371,7 +419,7 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             assert_eq!(reused.created_by, ActionActor::Principal { id: bob.record.principal_id });
             let admissions: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events WHERE universe_id=$1 AND acting_principal_id=$2 AND method='session/runs/start' AND outcome='succeeded'")
                 .bind(universe).bind(alice.record.principal_id).fetch_one(&pool).await?;
-            assert_eq!(admissions, 1, "one record per run, despite nested service calls");
+            assert_eq!(admissions, 3, "one record per admitted run (three by Alice), despite nested service calls");
             anyhow::Ok(())
         };
         let result = tokio::time::timeout(Duration::from_secs(150), outcome).await;

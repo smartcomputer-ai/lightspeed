@@ -406,6 +406,8 @@ CREATE TABLE IF NOT EXISTS cas_bot_event_roots (
     bot_id text NOT NULL,
     event_id text NOT NULL,
     digest text NOT NULL,
+    -- Every bot event reference is placed by the runtime, so it is content.
+    origin text NOT NULL DEFAULT 'content' CHECK (origin IN ('content', 'scan')),
     PRIMARY KEY (universe_id, bot_id, event_id, digest),
     FOREIGN KEY (universe_id, bot_id, event_id)
         REFERENCES bot_events (universe_id, bot_id, event_id) ON DELETE CASCADE,

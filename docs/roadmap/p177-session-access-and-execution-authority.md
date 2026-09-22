@@ -134,8 +134,9 @@ These settle what the parent document leaves open.
     cannot steer a sibling and a delegated child cannot control its root.
     Resource use is the execution principal's rights, nothing else, so two
     sessions that run as the same universe execution service cannot read each
-    other. Run provenance (`RunAuthority`) is recorded on the run; it is not a
-    caller.
+    other. Run provenance is the admission's audit row and the session's
+    immutable execution identity; nothing is recorded on the run itself, and
+    a run record is never a caller.
 
 ## Scope
 
@@ -413,12 +414,11 @@ ResourceAccess    = anchor + root policy + caller's best grant (one statement)
 
 Caller            = Request(RequestContext) | Controller(ControllerContext)
 ControllerContext = universe + actor(kind, id) + execution_principal + cause
-RunAuthority      = run_as + authorized_by(Principal | Internal | ParentRun) + parent   (provenance)
 UniverseExecutionPolicy = execution_principal + personal_execution_enabled
 
 authorize(caller, action, resource)      -> allowed | forbidden | not_found (+ privileged marker)
-admit_run(caller, session)               -> RunAuthority | forbidden
-check_turn(RunAuthority)                 -> ok | authority_revoked
+admit_run(caller, session)               -> ok | forbidden
+check_turn(session)                      -> ok | authority_revoked
 may_read_blob(caller, resource, blob)    = authorize(caller, Read, resource)
                                            AND admitted_content(resource, blob)
 ```
@@ -455,9 +455,8 @@ Edited in place; schema revision advances once and the release metadata with it.
 - `011_access_audit.sql`: `privileged boolean NOT NULL DEFAULT false` on
   `access_audit_events`; new typed change rows for sharing, hand-off and
   execution policy.
-- Engine: `authority` on the accepted-run event and run record;
-  `AuthorityRevoked` failure kind; typed content-reference extraction beside
-  `collect_blob_refs`.
+- Engine: `AuthorityRevoked` failure kind; typed content-reference extraction
+  beside `collect_blob_refs`.
 
 ## Implementation order
 
@@ -540,13 +539,63 @@ Each step ships on its own; the order is by dependency.
        `blob_uploads`, `resource` on `blobs/read` and `blobs/has`, attachment
        authorization on every path that accepts an existing reference, the
        receiver principal on declarations with invocation-scoped reads and
-       reply admission. Live: a private blob's exact reference placed in the
+       reply admission.
+       Mostly done 2026-09-22. `collect_content_refs` beside the generic
+       collector: a ref counts as content only under a reference-bearing
+       field name (`CONTENT_REF_FIELDS`: `content_ref`, `provenance_ref`,
+       `arguments_ref`, `result_ref`, `blob_ref`, …), so a digest written
+       into text, a preview or metadata is retained but confers nothing; a
+       fixture test flags any ref outside those fields. `cas_session_roots`
+       and `cas_bot_event_roots` gained `origin` (`content` | `scan`), written
+       at append in the same statement as the retention roots, upgrading to
+       `content` when a scanned ref is later placed as content; bot event
+       refs are always content. `blob_uploads` records the API uploader;
+       `vfs/snapshots/commit` records the committer as the manifest's
+       uploader after admitting each child. `blobs/read` and `blobs/has` take
+       `resource`: read allowed on it (hidden → `not_found`) and the blob
+       admitted content of it (session roots, bot event roots, or any member
+       of a collection); without a resource only engine blobs and the
+       caller's uploads. Every caller-supplied reference (run input, context
+       append, session start arguments, prepared-session requests, snapshot
+       manifests, workspace creation from a snapshot) is admitted only if it
+       is an engine blob, the caller's upload, already content of the target
+       session, or, for internal work, content under the actor's root; else
+       `forbidden`. Deliberate narrowings: no source naming on attachments —
+       to attach what one may read elsewhere, upload it (content addressing
+       makes the second put free); the receiver principal on workflow-tool
+       declarations, invocation-scoped reads and reply admission are not
+       implemented, since a reply reaches the workflow as a Temporal signal
+       with no API boundary to check at — plugins read arguments through
+       `resource: { kind: session }` as readers of the session for now, and
+       the invocation resource stays open in this step. Live: a private blob's exact reference placed in the
        attacker's own session through input text, a scripted tool argument and
        a webhook payload stays unreadable through that session; an uploaded
        wrapper whose children are another session's content gives its uploader
        the wrapper only; an upload is readable by its uploader only; attaching
        a foreign reference is refused; a receiver replying with a reference it
        did not upload is refused.
+       Live-test repair: runtime-authored controller documents bypass the
+       caller-upload admission check so bot tool declarations can bootstrap;
+       request admission and controller blob reads retain their checks.
+       Context and snapshot fixtures upload through the public API. Live
+       worker harnesses bound each client body to three minutes, including
+       in-flight API calls, then bound worker shutdown separately and retain
+       the original failure. Workflow-plugin polling propagates API failures
+       immediately; rejection tests wait for signal processing, and the
+       cancellation fixture finishes only on cancellation instead of racing
+       a fixed sleep. Channel teardown cancels typing heartbeats and drains
+       admitted bot work before stopping session workers. Sub-agent cleanup
+       waits for the supervisor's terminal state before terminating child
+       workflows, so close activities can receive their acknowledgements.
+       Large transfer futures are heap-pinned to fit the current-thread test
+       stack. Verified 49 live tests across sessions, bots, sub-agents, VFS
+       transfers, workflow plugins, channels, Platform identity, revocation
+       and authorization, including provider-backed cases; suite runtimes
+       ranged from 5 to 154 seconds, excluding compilation. The final
+       sub-agent rerun used an isolated snapshot to preserve concurrent
+       engine/API edits in the working tree. The
+       production activity-timeout proof retains an explicit larger budget
+       in `runs_live_slow`.
 4. [x] Universe execution service, execution policy methods, execution
        resolution at creation and inheritance under roots, "Running as" in
        summaries and web.
@@ -572,9 +621,30 @@ Each step ships on its own; the order is by dependency.
        roster queries so a list costs no extra lookups; `execution` on
        `access/policy/read`. A profile requesting an execution default is
        not implemented; profiles confer nothing either way.
-5. [ ] `admit_run`, `RunAuthority` on the run record, the `llm_generate` turn
+5. [x] `admit_run`, `RunAuthority` on the run record, the `llm_generate` turn
        check, `AuthorityRevoked`, the controller context with its execution
-       principal, and bot/sub-agent migration onto it. Live: disable an owner
+       principal, and bot/sub-agent migration onto it.
+       Done 2026-09-22: every run start (API, bot, sub-agent, workflow tool)
+       goes through `start_run_internal`, which after the requester's own
+       control check calls `admit_run`: the session's execution principal
+       must be active with `UseResource`, else `forbidden`; a bot records
+       that refusal on the fire like any other. `RunAuthority` on the run
+       record was implemented and then removed (2026-09-22): nothing
+       decides on it, `runAs` never varies within a session (it is the
+       anchor's execution, on every view as `access.execution`), and "who
+       asked" for an API start is the audit row `session/runs/start` writes;
+       an audit row for controller-initiated runs is the cheaper place
+       should that ever be wanted. The turn check lives in the
+       `llm_generate` activity: before each model call it reads the session's
+       anchor and the run-as principal's effective rights; when they no
+       longer hold it returns `LlmGenerationStatus::AuthorityRevoked`, which
+       the engine turns into `TurnOutcome::Failed { kind: AuthorityRevoked }`
+       and `RunFailureKind::AuthorityRevoked` (`authority_revoked` on the
+       wire); the session stays open. `ControllerContext` carries the actor's
+       execution principal and resource use follows it rather than the
+       actor's kind. Not done here: the mid-run live scenarios below, which
+       need a multi-turn fake model; admission refusal and recorded authority
+       are covered in `authorization_live`. Live: disable an owner
        mid-run and require the current turn to complete and the next to fail
        with the kind; a sub-agent child failing after its parent's principal is
        disabled; a personal bot refusing admission after its owner is disabled;

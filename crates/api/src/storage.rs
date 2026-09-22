@@ -35,6 +35,13 @@ pub struct BlobPutResponse {
 #[serde(rename_all = "camelCase")]
 pub struct BlobReadParams {
     pub blob_ref: String,
+    /// The session, bot or collection the blob is read through: the caller
+    /// must be able to read it and the blob must be admitted content of it.
+    /// Without a resource only a blob the caller uploaded is readable. A
+    /// resource that does not authorize the read is a refusal, not a prompt
+    /// to try another.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource: Option<ResourceRef>,
 }
 
 /// Immutable content and its encoding. A reference can name plain text,
@@ -67,6 +74,10 @@ pub struct BlobReadResponse {
 pub struct BlobHasParams {
     #[serde(default)]
     pub blob_refs: Vec<String>,
+    /// As for `blobs/read`; a blob the caller may not read through the
+    /// resource reports as absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource: Option<ResourceRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

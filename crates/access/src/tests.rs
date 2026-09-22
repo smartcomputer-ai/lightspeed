@@ -502,6 +502,7 @@ fn controller_contexts_control_themselves_their_bots_sessions_and_admitted_child
         universe_id: Uuid::from_u128(2),
         actor: ResourceRef::Bot("b".into()),
         root: ResourceRef::Bot("b".into()),
+        execution_principal: Some(Uuid::from_u128(9)),
         cause: "test".into(),
     };
     let parent = ControllerContext {
@@ -570,12 +571,21 @@ fn controller_contexts_control_themselves_their_bots_sessions_and_admitted_child
     );
     assert_eq!(decide(&parent, Read, &sibling), Allowed);
     assert_eq!(decide(&parent, ControlSession, &sibling), Forbidden);
+    // Resource use follows the execution principal, not the actor's kind.
     assert_eq!(
         authorize(Caller::Controller(&bot), UseResource, None),
         Allowed
     );
     assert_eq!(
         authorize(Caller::Controller(&parent), UseResource, None),
+        Allowed
+    );
+    let unexecuted = ControllerContext {
+        execution_principal: None,
+        ..parent.clone()
+    };
+    assert_eq!(
+        authorize(Caller::Controller(&unexecuted), UseResource, None),
         Forbidden
     );
     assert_eq!(

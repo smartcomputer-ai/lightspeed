@@ -66,13 +66,73 @@ pub async fn ensure_engine_blobs(blobs: &dyn BlobStore) -> Result<(), BlobStoreE
 /// exactly a canonical `sha256:<64 lowercase hex>` ref, at any depth.
 ///
 /// This is the one definition of "a stored document references a blob" that
-/// the session store uses to derive collection roots from appended entries,
+/// the session store uses to derive retention roots from appended entries,
 /// and that format tests use to check a writer recorded every nested edge.
 /// Refs inside longer strings (previews, prose) are deliberately not refs.
+/// Retention only: a scanned ref confers no right to read the blob; see
+/// [`collect_content_refs`].
 pub fn collect_blob_refs(value: &serde_json::Value) -> BTreeSet<BlobRef> {
     let mut refs = BTreeSet::new();
     collect_blob_refs_into(value, &mut refs);
     refs
+}
+
+/// Field names under which the runtime places a blob reference as content
+/// of an entry: the stored bytes the entry is about, its provenance, or a
+/// document it carries. A ref that appears elsewhere (a preview, a text
+/// value, free-form metadata) is never content, so a caller cannot make a
+/// blob readable through a session by writing its digest into text.
+pub const CONTENT_REF_FIELDS: &[&str] = &[
+    "content_ref",
+    "provenance_ref",
+    "failure_ref",
+    "message_ref",
+    "output_ref",
+    "arguments_ref",
+    "result_ref",
+    "description_ref",
+    "input_schema_ref",
+    "output_schema_ref",
+    "provider_options_ref",
+    "recipe_ref",
+    "document_ref",
+    "prompt_ref",
+    "tools_ref",
+    "snapshot_ref",
+    "manifest_ref",
+    "blob_ref",
+];
+
+/// The refs the runtime placed in content positions of a JSON document:
+/// string values that are canonical refs under a [`CONTENT_REF_FIELDS`] key,
+/// at any depth. Always a subset of [`collect_blob_refs`].
+pub fn collect_content_refs(value: &serde_json::Value) -> BTreeSet<BlobRef> {
+    let mut refs = BTreeSet::new();
+    collect_content_refs_into(value, &mut refs);
+    refs
+}
+
+fn collect_content_refs_into(value: &serde_json::Value, refs: &mut BTreeSet<BlobRef>) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_content_refs_into(value, refs);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for (key, value) in object {
+                if CONTENT_REF_FIELDS.contains(&key.as_str())
+                    && let serde_json::Value::String(text) = value
+                    && let Ok(blob_ref) = BlobRef::parse(text.as_str())
+                {
+                    refs.insert(blob_ref);
+                } else {
+                    collect_content_refs_into(value, refs);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn collect_blob_refs_into(value: &serde_json::Value, refs: &mut BTreeSet<BlobRef>) {
@@ -1189,6 +1249,51 @@ mod tests {
         async fn stat_blob(&self, blob_ref: &BlobRef) -> Result<BlobInfo, BlobStoreError> {
             self.counts.stats.fetch_add(1, Ordering::SeqCst);
             self.inner.stat_blob(blob_ref).await
+        }
+    }
+}
+
+#[cfg(test)]
+mod content_ref_tests {
+    use super::*;
+
+    #[test]
+    fn content_refs_come_only_from_reference_fields() {
+        let content = BlobRef::from_bytes(b"content");
+        let smuggled = BlobRef::from_bytes(b"smuggled");
+        let document = serde_json::json!({
+            "content": {"content_ref": content.as_str(), "media_type": "text/plain"},
+            "preview": smuggled.as_str(),
+            "text": smuggled.as_str(),
+            "metadata": {"note": smuggled.as_str()},
+            "nested": [{"blob_ref": content.as_str()}],
+        });
+        let scanned = collect_blob_refs(&document);
+        let admitted = collect_content_refs(&document);
+        assert_eq!(scanned, [content.clone(), smuggled].into_iter().collect());
+        assert_eq!(admitted, [content].into_iter().collect());
+    }
+
+    /// Every ref a fixture carries sits under a reference field: a new
+    /// reference-bearing field must be added to `CONTENT_REF_FIELDS`, or
+    /// its refs would be retained without ever being readable.
+    #[test]
+    fn fixtures_carry_refs_only_in_reference_fields() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+        for entry in std::fs::read_dir(dir).expect("fixtures") {
+            let path = entry.expect("fixture").path();
+            if path.extension().is_none_or(|ext| ext != "json") {
+                continue;
+            }
+            let value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).expect("read fixture"))
+                    .expect("fixture json");
+            assert_eq!(
+                collect_blob_refs(&value),
+                collect_content_refs(&value),
+                "{}: a blob ref outside a reference field",
+                path.display()
+            );
         }
     }
 }

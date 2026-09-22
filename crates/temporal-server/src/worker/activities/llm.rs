@@ -3,6 +3,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
+use access::AccessStore as _;
 use engine::{CoreAgentIoError, LlmGenerationResult, LlmUsage, SessionId};
 use temporalio_sdk::activities::ActivityError;
 
@@ -20,6 +21,14 @@ pub(super) async fn generate(
 ) -> Result<LlmGenerationResult, ActivityError> {
     let request = request.request;
     let session_id = request.session_id.clone();
+    // The turn boundary: the run's execution authority must still hold
+    // before the model is called. The turn that was authorized completes;
+    // this one does not begin.
+    if let Some((access, universe_id)) = &deps.access
+        && !authority_holds(access, *universe_id, &session_id).await?
+    {
+        return revoked_generation_result(deps.blobs.as_ref(), request).await;
+    }
     let started = std::time::Instant::now();
     match deps.llm.generate(request.clone()).await {
         Ok(mut result) => {
@@ -116,4 +125,78 @@ fn observe_prompt_cache(session_id: &SessionId, usage: &LlmUsage) {
              compaction, or a catalog rewritten in place)"
         );
     }
+}
+
+/// Whether the session's execution principal is still active with resource
+/// use in the universe. A personal root runs as its owner, so one statement
+/// covers both the identity and the universe membership.
+async fn authority_holds(
+    access: &store_pg::PgAccessStore,
+    universe_id: uuid::Uuid,
+    session_id: &engine::SessionId,
+) -> Result<bool, ActivityError> {
+    let anchor = access
+        .anchor(
+            universe_id,
+            &access::ResourceRef::Session(session_id.as_str().to_owned()),
+        )
+        .await
+        .map_err(|error| {
+            activity_error(anyhow::Error::new(error).context("read session authority"))
+        })?;
+    let Some(execution) = anchor.and_then(|anchor| anchor.execution) else {
+        return Ok(false);
+    };
+    let rights = match access
+        .effective_access(
+            execution.run_as,
+            access::AccessScope::Universe { universe_id },
+        )
+        .await
+    {
+        Ok(rights) => rights,
+        Err(access::AccessError::NotFound) => return Ok(false),
+        Err(error) => {
+            return Err(activity_error(
+                anyhow::Error::new(error).context("resolve run authority"),
+            ));
+        }
+    };
+    Ok(
+        rights.universe_action(access::UniverseAction::UseResource)
+            == access::RoleDecision::Allowed,
+    )
+}
+
+async fn revoked_generation_result(
+    blobs: &dyn engine::storage::BlobStore,
+    request: engine::LlmGenerationRequest,
+) -> Result<LlmGenerationResult, ActivityError> {
+    let failure_ref = super::common::write_error_blob(
+        blobs,
+        format!(
+            "run authority revoked before the model call\nrun_id={}\nturn_id={}\n",
+            request.run_id, request.turn_id
+        ),
+    )
+    .await
+    .map_err(|error| {
+        activity_error(anyhow::Error::new(error).context("record revoked authority"))
+    })?;
+    Ok(LlmGenerationResult {
+        run_id: request.run_id,
+        turn_id: request.turn_id,
+        status: engine::LlmGenerationStatus::AuthorityRevoked,
+        failure_ref: Some(failure_ref),
+        context_entries: Vec::new(),
+        facts: engine::LlmGenerationFacts {
+            duration_ms: None,
+            provider_response_id: None,
+            finish: engine::LlmFinish::Failed,
+            usage: None,
+            context_token_estimate: None,
+            tool_calls: Vec::new(),
+            approval_requests: Vec::new(),
+        },
+    })
 }

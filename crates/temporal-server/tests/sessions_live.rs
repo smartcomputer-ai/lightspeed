@@ -12,6 +12,7 @@ use api::{
     SessionListParams, SessionReadParams, SessionStartParams, SessionStatus, TimersFeature,
 };
 use api_projection::model_to_api;
+use base64::Engine as _;
 use engine::{
     CoreAgentCommand, SessionId,
     storage::{BlobStore, SessionStore},
@@ -909,7 +910,14 @@ async fn run_context_append_live_client(
 
     let first_text = "[telegram:group Engineering] Alice (12:01): the deploy looks stuck";
     let second_text = "[telegram:group Engineering] Bob (12:02): restarting the worker now";
-    let borrowed = store.put_bytes(first_text.as_bytes().to_vec()).await?;
+    let uploaded = api
+        .put_blobs(api::BlobPutParams {
+            blobs: vec![api::BlobPutItem {
+                bytes_base64: base64::engine::general_purpose::STANDARD.encode(first_text),
+            }],
+        })
+        .await?;
+    let borrowed = engine::BlobRef::parse(&uploaded.result.blobs[0].blob_ref)?;
     sqlx::query("UPDATE cas_blobs SET created_at_ms = 1, touched_at_ms = 1 WHERE universe_id = $1 AND digest = $2")
         .bind(store.config().universe_id)
         .bind(borrowed.as_str().trim_start_matches("sha256:"))

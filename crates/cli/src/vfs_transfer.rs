@@ -138,10 +138,16 @@ pub(crate) trait CasVfsApi {
 #[async_trait]
 impl CasVfsApi for HttpAgentApi {
     async fn has_blobs(&self, blob_refs: Vec<String>) -> Result<Vec<BlobHasItem>, AgentApiError> {
-        Ok(HttpAgentApi::has_blobs(self, BlobHasParams { blob_refs })
-            .await?
-            .result
-            .blobs)
+        Ok(HttpAgentApi::has_blobs(
+            self,
+            BlobHasParams {
+                blob_refs,
+                resource: None,
+            },
+        )
+        .await?
+        .result
+        .blobs)
     }
 
     async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobPutResult>, AgentApiError> {
@@ -158,9 +164,15 @@ impl CasVfsApi for HttpAgentApi {
     }
 
     async fn get_blob(&self, blob_ref: String) -> Result<BlobReadResponse, AgentApiError> {
-        Ok(HttpAgentApi::read_blob(self, BlobReadParams { blob_ref })
-            .await?
-            .result)
+        Ok(HttpAgentApi::read_blob(
+            self,
+            BlobReadParams {
+                blob_ref,
+                resource: None,
+            },
+        )
+        .await?
+        .result)
     }
 
     async fn commit_vfs_snapshot(

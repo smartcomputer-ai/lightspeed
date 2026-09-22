@@ -35,6 +35,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "auth_grants",
     "auth_providers",
     "auth_secrets",
+    "blob_uploads",
     "bot_events",
     "bot_triggers",
     "bots",

@@ -113,6 +113,8 @@ impl GatewayAgentApi {
 
     /// Refresh externally admitted refs in one database statement before the
     /// workflow can queue them. Reads alone do not renew an upload's grace.
+    /// Authorization of caller-supplied references happens where the caller's
+    /// own document is parsed, before the runtime derives the admission.
     pub(super) async fn refresh_input_blob_grace(
         &self,
         input: &impl serde::Serialize,

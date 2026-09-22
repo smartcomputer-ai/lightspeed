@@ -207,6 +207,9 @@ where
         &runtime,
         client.clone(),
         WorkerOptions::new(connector_queue)
+            // Typing heartbeats intentionally run until cancelled. Ask the
+            // SDK to cancel them on shutdown instead of draining forever.
+            .graceful_shutdown_period(Duration::from_millis(100))
             .register_activities(connector.clone())
             .task_types(WorkerTaskTypes {
                 enable_workflows: false,
@@ -246,13 +249,18 @@ where
     tokio::pin!(body);
     let result = tokio::select! {
         workers_result = workers.as_mut() => Err(anyhow::anyhow!("workers stopped early: {workers_result:?}")),
-        body_result = body.as_mut() => body_result,
+        body_result = support::live::bounded_live_test("channels_live", support::live::LIVE_TEST_BUDGET, body.as_mut()) => body_result,
     };
     for shutdown in shutdowns {
         shutdown();
     }
-    let _ = tokio::time::timeout(Duration::from_secs(10), workers.as_mut()).await;
-    result
+    let shutdown_result = support::live::bounded_live_test(
+        "worker shutdown",
+        Duration::from_secs(10),
+        workers.as_mut(),
+    )
+    .await;
+    result.and(shutdown_result)
 }
 
 fn unique(prefix: &str) -> String {
@@ -617,6 +625,11 @@ async fn temporal_live_chat_rebuilds_collected_declarations_and_retains_assets()
             .bind(held.iter().map(|r| r.as_str().trim_start_matches("sha256:")).collect::<Vec<_>>())
             .execute(store.pool()).await?;
         assert!(store.delete_dead_blobs(&held, 2, &[]).await?.is_empty());
+        // Admission has started bot work. Drain that event while the sessions
+        // worker is still polling, before the harness shuts every role down.
+        support::live::wait_until("GC recovery event processed", Duration::from_secs(30), async || {
+            Ok(store.read_bot_event(&bot_id, &event_id).await?.outcome.is_some())
+        }).await?;
         Ok(())
     }).await
 }

@@ -90,7 +90,11 @@ impl Fixture {
                 .await?;
         }
         let admin = access.principal(admin_id).await?.unwrap();
-        let client = connect_temporal(&std::env::var("TEMPORAL_ADDRESS")?, "default").await?;
+        let target = std::env::var("TEMPORAL_ADDRESS")
+            .unwrap_or_else(|_| temporal_workflow::DEFAULT_TEMPORAL_TARGET.to_owned());
+        let namespace = std::env::var("TEMPORAL_NAMESPACE")
+            .unwrap_or_else(|_| temporal_workflow::DEFAULT_TEMPORAL_NAMESPACE.to_owned());
+        let client = connect_temporal(&target, &namespace).await?;
         let runtime = Arc::new(UniverseRuntime::new(
             client,
             format!("audit-{}", Uuid::new_v4()),

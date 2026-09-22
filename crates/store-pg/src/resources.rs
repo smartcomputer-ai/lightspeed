@@ -1019,3 +1019,87 @@ impl PgAccessStore {
             .ok_or(AccessError::NotFound)
     }
 }
+
+/// Content authorization: a blob is read through a resource the caller may
+/// read, and only when it is admitted content of that resource. Admission
+/// writes these rows; nothing here follows edges.
+impl PgAccessStore {
+    pub async fn record_blob_uploads(
+        &self,
+        universe: Uuid,
+        principal: Uuid,
+        digests: &[String],
+        now_ms: u64,
+    ) -> Result<(), AccessError> {
+        let now = i64::try_from(now_ms).map_err(error)?;
+        sqlx::query("INSERT INTO blob_uploads(universe_id, digest, principal_id, uploaded_at_ms) SELECT $1, digest, $2, $3 FROM unnest($4::text[]) AS u(digest) ON CONFLICT DO NOTHING")
+            .bind(universe).bind(principal).bind(now).bind(digests)
+            .execute(&self.pool).await.map_err(error)?;
+        Ok(())
+    }
+
+    pub async fn uploaded_by(
+        &self,
+        universe: Uuid,
+        principal: Uuid,
+        digest: &str,
+    ) -> Result<bool, AccessError> {
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM blob_uploads WHERE universe_id=$1 AND principal_id=$2 AND digest=$3)")
+            .bind(universe).bind(principal).bind(digest)
+            .fetch_one(&self.pool).await.map_err(error)
+    }
+
+    /// Whether the blob is admitted content of the resource: a session's
+    /// content roots, a bot's event roots, or those of any member of a
+    /// collection.
+    pub async fn admitted_content(
+        &self,
+        universe: Uuid,
+        resource: &ResourceRef,
+        digest: &str,
+    ) -> Result<bool, AccessError> {
+        let (kind, id) = key(resource);
+        let sql = match resource {
+            ResourceRef::Session(_) => "SELECT EXISTS (SELECT 1 FROM cas_session_roots WHERE universe_id=$1 AND session_id=$2 AND digest=$3 AND origin='content')",
+            ResourceRef::Bot(_) => "SELECT EXISTS (SELECT 1 FROM cas_bot_event_roots WHERE universe_id=$1 AND bot_id=$2 AND digest=$3 AND origin='content')",
+            ResourceRef::Collection(_) => "SELECT EXISTS (
+                SELECT 1 FROM cas_session_roots r JOIN access_resources a
+                  ON a.universe_id=r.universe_id AND a.resource_kind='session' AND a.resource_id=r.session_id
+                WHERE r.universe_id=$1 AND r.digest=$3 AND r.origin='content' AND a.audience_root_kind='collection' AND a.audience_root_id=$2
+                UNION ALL
+                SELECT 1 FROM cas_bot_event_roots r JOIN access_resources a
+                  ON a.universe_id=r.universe_id AND a.resource_kind='bot' AND a.resource_id=r.bot_id
+                WHERE r.universe_id=$1 AND r.digest=$3 AND r.origin='content' AND a.audience_root_kind='collection' AND a.audience_root_id=$2)",
+            ResourceRef::Profile(_) => return Ok(false),
+        };
+        let _ = kind;
+        sqlx::query_scalar(sql)
+            .bind(universe)
+            .bind(id)
+            .bind(digest)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(error)
+    }
+
+    /// Whether the blob is admitted content anywhere under a root: what
+    /// internal work for that root may attach and read.
+    pub async fn content_under_root(
+        &self,
+        universe: Uuid,
+        root: &ResourceRef,
+        digest: &str,
+    ) -> Result<bool, AccessError> {
+        let (root_kind, root_id) = key(root);
+        sqlx::query_scalar("SELECT EXISTS (
+                SELECT 1 FROM cas_session_roots r JOIN access_resources a
+                  ON a.universe_id=r.universe_id AND a.resource_kind='session' AND a.resource_id=r.session_id
+                WHERE r.universe_id=$1 AND r.digest=$4 AND r.origin='content' AND a.audience_root_kind=$2 AND a.audience_root_id=$3
+                UNION ALL
+                SELECT 1 FROM cas_bot_event_roots r JOIN access_resources a
+                  ON a.universe_id=r.universe_id AND a.resource_kind='bot' AND a.resource_id=r.bot_id
+                WHERE r.universe_id=$1 AND r.digest=$4 AND r.origin='content' AND a.audience_root_kind=$2 AND a.audience_root_id=$3)")
+            .bind(universe).bind(root_kind).bind(root_id).bind(digest)
+            .fetch_one(&self.pool).await.map_err(error)
+    }
+}

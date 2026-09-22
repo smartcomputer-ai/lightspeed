@@ -7982,12 +7982,95 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "properties": {
         "blobRef": {
           "type": "string"
+        },
+        "resource": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ResourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The session, bot or collection the blob is read through: the caller\nmust be able to read it and the blob must be admitted content of it.\nWithout a resource only a blob the caller uploaded is readable. A\nresource that does not authorize the read is a refusal, not a prompt\nto try another."
         }
       },
       "required": [
         "blobRef"
       ],
-      "type": "object"
+      "type": "object",
+      "definitions": {
+        "ResourceRef": {
+          "description": "Durable control facts, distinct from an agent's execution credentials.",
+          "oneOf": [
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "session",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "bot",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "profile",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A root that gives sessions and bots one audience and, later, one\nexecution identity. It routes nothing and runs nothing.",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "collection",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      }
     }
   },
   {
@@ -8006,9 +8089,92 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "type": "string"
           },
           "type": "array"
+        },
+        "resource": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ResourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "As for `blobs/read`; a blob the caller may not read through the\nresource reports as absent."
         }
       },
-      "type": "object"
+      "type": "object",
+      "definitions": {
+        "ResourceRef": {
+          "description": "Durable control facts, distinct from an agent's execution credentials.",
+          "oneOf": [
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "session",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "bot",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "profile",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A root that gives sessions and bots one audience and, later, one\nexecution identity. It routes nothing and runs nothing.",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "collection",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      }
     }
   },
   {

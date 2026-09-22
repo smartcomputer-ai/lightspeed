@@ -661,6 +661,11 @@ fn turn_outcome_for_generation_result(result: &LlmGenerationResult) -> TurnOutco
         LlmGenerationStatus::Cancelled => TurnOutcome::Cancelled,
         LlmGenerationStatus::Failed => TurnOutcome::Failed {
             failure_ref: result.failure_ref.clone(),
+            kind: crate::RunFailureKind::ModelFailure,
+        },
+        LlmGenerationStatus::AuthorityRevoked => TurnOutcome::Failed {
+            failure_ref: result.failure_ref.clone(),
+            kind: crate::RunFailureKind::AuthorityRevoked,
         },
         LlmGenerationStatus::Succeeded => match result.facts.finish {
             LlmFinish::ToolCalls => TurnOutcome::ToolCallsQueued,
@@ -675,6 +680,7 @@ fn turn_outcome_for_generation_result(result: &LlmGenerationResult) -> TurnOutco
             LlmFinish::Failed | LlmFinish::ContentFilter | LlmFinish::Length => {
                 TurnOutcome::Failed {
                     failure_ref: result.failure_ref.clone(),
+                    kind: crate::RunFailureKind::ModelFailure,
                 }
             }
             LlmFinish::Stop | LlmFinish::Unknown if !result.facts.approval_requests.is_empty() => {

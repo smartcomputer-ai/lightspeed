@@ -46,6 +46,9 @@ pub(super) async fn read_blob(
     })
 }
 
+/// Existence of stored bytes, without authorization; the service decides
+/// what a caller may learn.
+#[cfg(test)]
 pub(super) async fn has_blobs(
     store: &dyn BlobStore,
     params: BlobHasParams,
@@ -64,6 +67,7 @@ pub(super) async fn has_blobs(
     }
     Ok(BlobHasResponse { blobs })
 }
+
 pub(super) fn decode_base64(value: &str, field: impl AsRef<str>) -> Result<Vec<u8>, AgentApiError> {
     BASE64.decode(value).map_err(|error| {
         AgentApiError::invalid_request(format!("invalid base64 in {}: {error}", field.as_ref()))

@@ -2390,7 +2390,8 @@ mod tests {
                 &entry.event,
                 CoreAgentEvent::Turn(TurnEvent::Completed {
                     outcome: engine::TurnOutcome::Failed {
-                        failure_ref: Some(_)
+                        failure_ref: Some(_),
+                        ..
                     },
                     ..
                 })

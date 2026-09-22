@@ -612,10 +612,14 @@ pub async fn start_run(
         Ok(response) => Ok(BotStartRunResult::Started {
             run_id: response.result.run.id,
         }),
+        // A refused admission (the bot's execution authority no longer holds)
+        // is recorded on the fire like any refusal, not retried as a fault.
         Err(error)
             if matches!(
                 error.kind,
-                AgentApiErrorKind::Rejected | AgentApiErrorKind::Conflict
+                AgentApiErrorKind::Rejected
+                    | AgentApiErrorKind::Conflict
+                    | AgentApiErrorKind::Forbidden
             ) =>
         {
             Ok(BotStartRunResult::Rejected {

@@ -542,16 +542,19 @@ where
                 Err(error) => Err(error.context("Temporal worker failed")),
             };
         }
-        client_result = client_future.as_mut() => client_result,
+        client_result = support::live::bounded_live_test("subagents_live", support::live::LIVE_TEST_BUDGET, client_future.as_mut()) => client_result,
     };
 
     shutdown_worker();
     // A cancelled slow child may still be inside its scripted 12 s LLM
     // sleep; the worker drains that activity before it stops.
-    tokio::time::timeout(Duration::from_secs(30), worker_future.as_mut())
-        .await
-        .map_err(|_| anyhow::anyhow!("Temporal worker did not shut down within 30 seconds"))??;
-    client_result
+    let shutdown_result = support::live::bounded_live_test(
+        "sub-agent worker shutdown",
+        Duration::from_secs(30),
+        worker_future.as_mut(),
+    )
+    .await;
+    client_result.and(shutdown_result)
 }
 
 fn io_error(error: impl std::fmt::Display) -> CoreAgentIoError {
@@ -728,7 +731,7 @@ async fn run_agent_run_media_live_client(
     client: Client,
     session_id: SessionId,
     api: Arc<GatewayAgentApi>,
-    blobs: Arc<dyn BlobStore>,
+    _blobs: Arc<dyn BlobStore>,
     _sessions: Arc<dyn SessionStore>,
     model: ModelSelection,
 ) -> anyhow::Result<()> {
@@ -736,10 +739,9 @@ async fn run_agent_run_media_live_client(
     let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
     png.extend_from_slice(b"live-subagent-render");
     let handle = engine::media::media_handle(&engine::BlobRef::from_bytes(&png));
-    let snapshot = vfs::create_inline_snapshot(
-        blobs.as_ref(),
-        None,
-        vfs::CreateInlineSnapshotRequest::new(vec![vfs::InlineFile::new("/render.png", png)?]),
+    let snapshot = support::live::upload_snapshot(
+        api.as_ref(),
+        vec![vfs::InlineFile::new("/render.png", png)?],
     )
     .await?;
     let workspace = api
@@ -1441,6 +1443,49 @@ async fn run_agent_spawn_cancel_live_client(
     // child closed by the execution, well before its 12 s script finishes.
     let children = wait_for_children_closed(&sessions, &session_id, 1).await?;
     assert_eq!(children[0].session_id, child_id);
+
+    // The database close precedes the close operation's acknowledgement.
+    // Let the supervisor finish its activity before terminating the child's
+    // workflow, otherwise that activity can wait forever for its receipt.
+    let events = api
+        .read_session_events(SessionEventsReadParams {
+            session_id: session_id.to_string(),
+            limit: Some(500),
+            direction: Default::default(),
+            before: None,
+            after: None,
+            wait_ms: None,
+        })
+        .await?
+        .result
+        .events;
+    let execution_id = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            api::SessionEventKindView::WorkflowToolStartRequested { execution_id, .. } => {
+                Some(execution_id.clone())
+            }
+            _ => None,
+        })
+        .expect("spawned child execution");
+    let execution = client.get_workflow_handle::<temporalio_client::UntypedWorkflow>(execution_id);
+    wait_until(
+        "cancelled child supervisor to finish",
+        Duration::from_secs(30),
+        async || {
+            use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
+            let status = execution
+                .describe(temporalio_client::WorkflowDescribeOptions::default())
+                .await?
+                .status();
+            match status {
+                WorkflowExecutionStatus::Running => Ok(false),
+                WorkflowExecutionStatus::Completed | WorkflowExecutionStatus::Canceled => Ok(true),
+                status => anyhow::bail!("child supervisor ended unexpectedly: {status:?}"),
+            }
+        },
+    )
+    .await?;
 
     cleanup_subagent_test(&client, api.as_ref(), profile_id, &[session_id, child_id]).await;
     Ok(())

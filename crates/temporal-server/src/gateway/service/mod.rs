@@ -5,6 +5,7 @@ mod access_preview;
 mod api_config;
 pub(crate) mod authorization;
 mod collections;
+mod content_access;
 use access::ResourceRef;
 pub(crate) mod auth_api;
 mod blobs;
@@ -42,7 +43,7 @@ use auth_api::{
     map_auth_error, parse_auth_grant_id, registry_auth_grant_exposure,
     registry_auth_grant_status_for_filter, require_retrievable_grant,
 };
-use blobs::{has_blobs, put_blobs, read_blob};
+use blobs::{put_blobs, read_blob};
 use catalogs::parse_client_context_key;
 use common::now_ms;
 pub use environment_lifecycle::ReconcileFailureLog;
@@ -939,6 +940,10 @@ impl GatewayAgentApi {
             Some(ResourceRef::Session(params.session_id.clone())),
         )
         .await?;
+        let admitted_session = SessionId::try_new(params.session_id.clone()).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        self.admit_run(&admitted_session).await?;
         let RunStartParams {
             session_id,
             source,
@@ -970,9 +975,11 @@ impl GatewayAgentApi {
         })?;
         let run_config = api_config::run_config_for_start(session_config, config)?;
         let RunStartSource::Input { items } = source;
-        let source = engine::RunRequestSource::Input {
-            input: run_input_from_api(self.store.as_ref(), &items).await?,
-        };
+        self.authorize_supplied_document(Some(&admitted_session), &items)
+            .await?;
+        let input = run_input_from_api(self.store.as_ref(), &items).await?;
+        self.record_derived_uploads(&items, &input).await?;
+        let source = engine::RunRequestSource::Input { input };
         if let Some(existing) = existing_run_submission(
             &loaded.state,
             &submission_id,
@@ -2178,6 +2185,9 @@ impl AgentApiService for GatewayAgentApi {
             execution,
             workflow_tools,
         } = params;
+        // Declarations reference schemas and recipes the caller must own.
+        self.authorize_supplied_document(None, &workflow_tools)
+            .await?;
         let workflow_tools = managed_workflow_tools_from_api(workflow_tools)?;
         // The runtime signals these endpoints on the caller's behalf, so an
         // endpoint inside the runtime's own `{universe}/…` namespace must be
@@ -2751,6 +2761,15 @@ impl AgentApiService for GatewayAgentApi {
             Some(ResourceRef::Session(params.session_id.clone())),
         )
         .await?;
+        self.authorize_supplied_document(
+            Some(
+                &SessionId::try_new(params.session_id.clone()).map_err(|error| {
+                    AgentApiError::invalid_request(format!("invalid session id: {error}"))
+                })?,
+            ),
+            &params.entries,
+        )
+        .await?;
         const MAX_CONTEXT_APPEND_ENTRIES: usize = 64;
 
         enum PreparedAppend {
@@ -2790,6 +2809,7 @@ impl AgentApiService for GatewayAgentApi {
             }
             match context_entry_input_from_api(self.store.as_ref(), &entry.item).await {
                 Ok(input) => {
+                    self.record_derived_uploads(&entry.item, &input).await?;
                     let text = match &entry.item {
                         InputItem::Text { text, .. } => Some(text.trim().to_owned()),
                         _ => None,
@@ -3407,7 +3427,10 @@ impl AgentApiService for GatewayAgentApi {
                 )));
             }
         };
+        self.authorize_supplied_document(Some(&session_id), &params.items)
+            .await?;
         let input = run_input_from_api(self.store.as_ref(), &params.items).await?;
+        self.record_derived_uploads(&params.items, &input).await?;
         let correlation_token = format!("steer_{}", uuid::Uuid::new_v4().simple());
         self.signal_submit_admissions(
             &session_id,
@@ -3775,9 +3798,15 @@ impl AgentApiService for GatewayAgentApi {
         params: BlobPutParams,
     ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
         self.authorize_method(METHOD_BLOBS_PUT, None).await?;
-        put_blobs(self.store.as_ref(), params)
-            .await
-            .map(AgentApiOutcome::new)
+        // Uploading authorizes exactly these bytes for the uploader.
+        let response = put_blobs(self.store.as_ref(), params).await?;
+        let refs = response
+            .blobs
+            .iter()
+            .map(|blob| parse_blob_ref(&blob.blob_ref))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.record_uploads(&refs).await?;
+        Ok(AgentApiOutcome::new(response))
     }
 
     async fn read_blob(
@@ -3785,6 +3814,9 @@ impl AgentApiService for GatewayAgentApi {
         params: BlobReadParams,
     ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
         self.authorize_method(METHOD_BLOBS_READ, None).await?;
+        let blob_ref = parse_blob_ref(&params.blob_ref)?;
+        self.authorize_blob_read(params.resource.as_ref(), &blob_ref)
+            .await?;
         read_blob(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
@@ -3795,9 +3827,25 @@ impl AgentApiService for GatewayAgentApi {
         params: BlobHasParams,
     ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError> {
         self.authorize_method(METHOD_BLOBS_HAS, None).await?;
-        has_blobs(self.store.as_ref(), params)
-            .await
-            .map(AgentApiOutcome::new)
+        // A blob the caller may not read through the resource is absent to it.
+        let mut blobs = Vec::with_capacity(params.blob_refs.len());
+        for blob_ref in params.blob_refs {
+            let blob_ref = parse_blob_ref(&blob_ref)?;
+            let exists = self
+                .blob_read_decision(params.resource.as_ref(), &blob_ref)
+                .await?
+                == access::Decision::Allowed
+                && self
+                    .store
+                    .has_blob(&blob_ref)
+                    .await
+                    .map_err(map_blob_store_error)?;
+            blobs.push(BlobHasItem {
+                blob_ref: blob_ref.as_str().to_owned(),
+                exists,
+            });
+        }
+        Ok(AgentApiOutcome::new(BlobHasResponse { blobs }))
     }
 
     async fn commit_vfs_snapshot(
@@ -3806,9 +3854,16 @@ impl AgentApiService for GatewayAgentApi {
     ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
         self.authorize_method(METHOD_VFS_SNAPSHOTS_COMMIT, None)
             .await?;
+        // A manifest is admitted only when each child passes the same test as
+        // any supplied reference; the committed manifest is then the
+        // committer's own upload.
+        self.authorize_supplied_document(None, &params.manifest)
+            .await?;
         let response =
             commit_vfs_snapshot(self.store.as_ref(), Some(self.store.as_ref()), params).await?;
         let snapshot_ref = parse_blob_ref(&response.snapshot_ref)?;
+        self.record_uploads(std::slice::from_ref(&snapshot_ref))
+            .await?;
         self.record_vfs_snapshot(
             snapshot_ref,
             VfsSnapshotSource::new("api_commit").with_subject("vfs/snapshots/commit"),
@@ -3835,6 +3890,10 @@ impl AgentApiService for GatewayAgentApi {
     ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
         self.authorize_method(METHOD_VFS_WORKSPACES_CREATE, None)
             .await?;
+        if let Some(snapshot_ref) = params.snapshot_ref.as_deref() {
+            self.authorize_supplied_refs(None, [parse_blob_ref(snapshot_ref)?])
+                .await?;
+        }
         let workspace = self.create_vfs_workspace_record(params).await?;
         Ok(AgentApiOutcome::new(VfsWorkspaceCreateResponse {
             workspace: vfs_workspace_view(workspace),

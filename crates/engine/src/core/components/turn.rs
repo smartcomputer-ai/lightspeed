@@ -211,12 +211,24 @@ pub enum TurnStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnOutcome {
-    FinalOutput { output: Option<crate::ContentRef> },
+    FinalOutput {
+        output: Option<crate::ContentRef>,
+    },
     ToolCallsQueued,
     ContextUpdateRequired,
     ApprovalsRequested,
-    Failed { failure_ref: Option<BlobRef> },
+    Failed {
+        failure_ref: Option<BlobRef>,
+        /// What the failure means for the run; a model failure unless the
+        /// runtime says otherwise.
+        #[serde(default = "model_failure")]
+        kind: crate::RunFailureKind,
+    },
     Cancelled,
+}
+
+fn model_failure() -> crate::RunFailureKind {
+    crate::RunFailureKind::ModelFailure
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,6 +253,9 @@ pub enum LlmGenerationStatus {
     Succeeded,
     Failed,
     Cancelled,
+    /// The run's execution authority no longer held when the model call
+    /// began; the turn produced nothing and the run fails as revoked.
+    AuthorityRevoked,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -538,7 +553,20 @@ fn validate_outcome_for_generation(
 ) -> Result<(), DomainError> {
     let valid = match status {
         LlmGenerationStatus::Cancelled => matches!(outcome, TurnOutcome::Cancelled),
-        LlmGenerationStatus::Failed => matches!(outcome, TurnOutcome::Failed { .. }),
+        LlmGenerationStatus::Failed => matches!(
+            outcome,
+            TurnOutcome::Failed {
+                kind: crate::RunFailureKind::ModelFailure,
+                ..
+            }
+        ),
+        LlmGenerationStatus::AuthorityRevoked => matches!(
+            outcome,
+            TurnOutcome::Failed {
+                kind: crate::RunFailureKind::AuthorityRevoked,
+                ..
+            }
+        ),
         LlmGenerationStatus::Succeeded => match facts.finish {
             LlmFinish::ToolCalls => matches!(outcome, TurnOutcome::ToolCallsQueued),
             LlmFinish::ContextLimit => matches!(outcome, TurnOutcome::ContextUpdateRequired),
