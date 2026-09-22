@@ -18,17 +18,17 @@ coexist in one universe. SSO/provisioning connects identities to this model.
 
 | Concept | Responsibility |
 | --- | --- |
-| Principal | Deployment-wide user or service identity, granted authority through bindings. |
+| Principal | Deployment-wide user or service identity; roles and resource grants give it authority. |
 | Group | Deployment-wide membership managed locally or through an enterprise directory. |
 | Universe | Tenant/resource boundary with role assignments, policy, and defaults. |
 | Access policy | Determines who may read, use, control, share, or administer a resource. Roles bundle these permissions. |
-| Execution binding | Stable session execution identity, distinct from its audience and individual requesters. |
+| Execution identity | The principal a session runs as, fixed at creation: the person who created it, or a keyless service principal the requester may run as. Distinct from its audience and individual requesters. |
 | Execution authority | Bounded, revocable authorization for a run and its delegated work. |
 | Approval | An additional condition on an authorized operation, with a separately entitled reviewer. |
 
-Use qualified binding names for attachments and execution identities, and role
-assignment for assigning roles. Credential grants refer to `auth/grants/*`;
-authorization uses access policies and resource permissions.
+Use qualified names for attachments, and role assignment for assigning roles.
+Credential grants refer to `auth/grants/*`; authorization uses access policies
+and resource permissions.
 
 Every principal has a stable Lightspeed identity, either local or linked to an
 enterprise directory. Directory linkage does not supply downstream credentials:
@@ -68,7 +68,7 @@ provenance identifies a component and cause; it is not an authorization bypass.
 | Viewer | Read universe-visible sessions and permitted resource information. |
 | Contributor | Use available resources and interact with bots; create sessions, and profiles within granted authority, and manage their own work. |
 | Operator | Make the universe usable: configure shared MCP connections and their secrets, model providers, workspaces, environments, profiles, and bots; provision through assigned environment providers. |
-| Admin | Set up the universe, assign roles and approved deployment resources/provider bindings, govern access and high-level policy, and authorize administrative operations such as future bulk deletion. |
+| Admin | Set up the universe, assign roles, decide who may run as which service principal, govern access and high-level policy, and authorize administrative operations such as future bulk deletion. |
 
 Operators usually maintain shared bots; contributors usually interact with them.
 This does not prohibit contributors from creating their own bots using permitted
@@ -90,49 +90,67 @@ raw secret access and configuration are separate permissions. Operators manage
 shared resources within assigned scope; configuration changes cannot bypass
 resource access policies. The role does not grant access to restricted personal
 resources, authority to widen their audience, or permission to change universe
-membership, execution eligibility, deployment bindings, or its own access-management
+membership, who may run as a service principal, or its own access-management
 limits.
 Managing a shared template does not grant control of personal sessions created
 from it. Owners retain the sharing rights below; administrative content access is
 separately authorized.
 
-## Decided: universe execution defaults
+## Decided: execution identity
 
-Start with one default service binding per universe. Bind its principal, directly
-or through a group, to the universe's default resource-use permissions; individual
-resource policies are exceptions, not mandatory setup. Sharing group membership
-does not itself grant permission to act as another principal.
+There is no execution-binding object. A session runs as a principal, and that
+principal's effective rights (roles, group memberships, resource grants) are
+what its resource use is checked against. Everything an "execution binding"
+would say decomposes into facts the authorization model already holds:
 
-Allow additional named service bindings with different resource scopes. Session
-configuration or a profile may request an allowed binding; resolve and persist
-the concrete binding when creating a session or bot. Changing the universe
-default does not rebind existing sessions/bots. Profiles confer no authority, and
-denied/unavailable bindings must not silently fall back to another identity.
+```text
+runs as              = a principal recorded on the session at creation
+who may run as it    = a `run_as` grant on that service principal (Admin, ManageAccess)
+what it may use      = the principal's roles and `use` grants on resources
+narrower scope       = a different, narrower service principal
+```
 
-Contributors and operators may start sessions under universe service bindings by
-default. A binding can instead restrict use to specified users/groups; this
-replaces the role default. Personal execution requires explicit admin enablement
-for the universe and retains the owner-only control rules below.
+Execution principals hold no credentials. A service principal that holds or
+may hold an API key is a login identity and never a `run_as` target; a `run_as`
+grant is refused for it structurally, not by convention. This keeps "run as"
+from becoming "act as": key-level rights and capabilities never reach a session.
+Creating a narrower persona therefore costs one row, not a new concept, and
+"why may this session use X" is always one lookup: which principal, which
+grants.
+
+Start with one universe execution service per universe, a keyless service
+principal holding Contributor, which every Contributor and Operator may run as
+by default. Individual resource policies are exceptions, not mandatory setup.
+Sharing group membership does not itself grant permission to act as another
+principal. Further service principals are created when distinct authority
+boundaries are needed (research versus release, development versus production
+operations); who may run as each is a grant, replacing the role default.
+
+Session, bot and collection creation record the concrete execution identity;
+changing the universe default does not rebind existing work. Profiles confer no
+authority, and a denied or unavailable identity must not silently fall back to
+another. Personal execution (running as oneself) requires explicit admin
+enablement for the universe and retains the owner-only control rules below.
 
 Keep three permissions distinct:
 
-- **Use a service binding:** create/control sessions within its approved scope.
-  This intentionally delegates the binding's approved capabilities. Resource
-  checks use that service authority; callers need not duplicate those permissions
-  on their personal principal. Session control permissions still apply.
+- **Run as a service principal:** create sessions, bots and collections that
+  execute under it. This intentionally delegates that principal's resource-use
+  authority; callers need not duplicate those permissions on their personal
+  principal. Session control permissions still apply.
 - **Invoke a bot:** use its configured service capability without automatically
   gaining permission to configure the bot or create arbitrary sessions as its
-  service identity. Invocation-only bindings are possible.
-- **Assign resources:** admins govern scope and eligible callers; operators may
-  assign resources within delegated access-management scope. Granting a binding
-  another resource also delegates its use to that binding's permitted callers,
-  so the assignment must be authorized for that audience. Resource configuration
-  or personal use permission alone does not grant this authority.
+  execution identity.
+- **Grant resource use:** a resource's owner or an administrator grants `use` to
+  a principal or group. Granting a service principal another resource also
+  delegates its use to everyone who may run as it, so the grant must be
+  authorized for that audience. Configuring a resource or holding personal use
+  permission alone does not grant this authority.
 
 ## Decided: session access and personal authority
 
 A session has three separate properties: its universe, its audience/controllers,
-and its execution binding. Universe members can read universe-visible sessions.
+and its execution identity. Universe members can read universe-visible sessions.
 Restricted sessions are readable only by their owner and explicitly granted
 readers/groups, all of whom must also have current universe access. A private
 session starts with only its owner in that audience.
@@ -140,16 +158,16 @@ session starts with only its owner in that audience.
 ```text
 Read session = universe access AND (universe-visible OR explicit read access)
 Run/control = universe access AND session action permission
-              AND permission to invoke its execution binding
+              AND permission to run as its execution identity
 ```
 
 Personal/team experiences are policy presets over the same session model:
 
-- **Personal:** personal execution binding and private initial audience; by
+- **Personal:** runs as its owner, with a private initial audience; by
   default only that user may submit or steer work. Nobody else controls the
   session under the user's authority unless the owner explicitly adds them as a
   writer; configuration changes never grant it.
-- **Team:** approved service binding, universe-visible by default, and explicitly
+- **Team:** runs as a service principal, universe-visible by default, and explicitly
   authorized writers/controllers. Service-bound sessions may also be restricted.
   Requests remain attributable to individuals.
 
@@ -160,9 +178,9 @@ a separate management action. Removing universe access also blocks previously
 shared sessions.
 
 Session permissions govern retained content and session-owned outputs, including
-results acquired through restricted connections or service bindings. An authorized
-writer sharing a session authorizes disclosure of those results; readers need no
-access to the original source or execution binding. References to other resources
+results acquired through restricted connections or service principals. An
+authorized writer sharing a session authorizes disclosure of those results;
+readers need no access to the original source or execution identity. References to other resources
 do not grant access to them. Revoking source access prevents future use but does
 not retract retained results. Source-imposed audience limits are deferred.
 
@@ -194,8 +212,8 @@ subject to the execution limits below.
 Shared bots and bots accepting other people's requests use service
 identities and organizational authorization. Offboarding their creator/configuring
 operator removes that person's access but does not revoke the bot's authority.
-Revoking the service binding, required resource permissions, or credential grants
-blocks further affected work; creator attribution is distinct from the ongoing
+Revoking the `run_as` grant, the service principal's resource permissions, or
+its credential grants blocks further affected work; creator attribution is distinct from the ongoing
 source of authority.
 
 A trigger's source never selects the execution identity. Instructions, profiles,
@@ -204,8 +222,8 @@ subject to the same authority rules as session messages.
 
 Personal event-driven automation is deferred. Supporting it later requires a
 constrained trigger contract that distinguishes task inputs from another person's
-control requests. Bot-created sessions inherit the bot's binding and visibility
-defaults; activity/event views must respect restricted session content.
+control requests. Bot-created sessions inherit the bot's execution identity and
+visibility defaults; activity/event views must respect restricted session content.
 
 ## Contract sketch
 
@@ -214,10 +232,9 @@ Illustrative operations, not proposed public API signatures:
 ```text
 RequestContext = target_scope + acting_principal + authentication_reference
 AuthenticationReference = credential_reference + authenticated_principal
-UniverseExecutionPolicy = default_service_binding + allowed_bindings
-                        + personal_execution_enabled
-ServiceBinding = principal + universe + permitted_callers + resource_scope
-Session = universe + access policy + execution binding + capability limits
+UniverseExecutionPolicy = execution_principal + personal_execution_enabled
+RunAsGrant = service principal + subject(principal | group) + granted_by
+Session = universe + access policy + execution identity + capability limits
 
 authorize(context, action, resource) -> decision + reason + policy reference
 
@@ -230,8 +247,8 @@ ExecutionAuthority = run_as + authorized_by + admitted scope
 authorize_effect(authority, action, resource) -> decision
 ```
 
-Derive run identity from the session binding and actor identity from trusted
-authentication or an authorized service assertion. Persist admitted scope and
+Derive run identity from the session's execution identity and actor identity
+from trusted authentication or an authorized service assertion. Persist admitted scope and
 provenance; live policy can narrow or revoke authority. The authorizing actor is
 distinct from the personal/service authorization whose continued validity the run
 depends on. Adapters check policy and record facts needed for replay.
@@ -270,7 +287,8 @@ Important boundaries:
    records.
 2. [Session access and execution authority](../p177-session-access-and-execution-authority.md):
    private/shared sessions and their content together with one complete
-   authorized execution path, including stable bindings and bounded run authority.
+   authorized execution path: a stable execution identity per session and
+   bounded run authority.
 3. Extend resource restrictions and execution/delegation enforcement across tools,
    environments, bots, and background work.
 4. Connect SSO and provisioning to the same identity and membership lifecycle;

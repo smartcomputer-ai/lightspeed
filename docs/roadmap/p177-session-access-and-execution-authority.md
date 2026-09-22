@@ -322,8 +322,16 @@ Hand off owner    = owner, only under service execution; moves the whole tree
   a collection, and every delegated child, inherits the root's execution and
   accepts no `execution` of its own. Execution stays on the anchor because it
   is immutable, reserved in the same transaction and copied through the same
-  mechanism as the audience root; a named-binding reference can join it there
-  in a later slice.
+  mechanism as the audience root.
+- **No binding layer.** The execution identity is the principal itself, and a
+  run's resource use is that principal's effective rights, nothing more. The
+  next slice generalizes `execution` to `{ runAs }` with `run_as` grants on
+  further keyless service principals; the anchor does not change. An execution
+  principal never holds a credential: a `run_as` grant on a principal that
+  holds or may hold an API key is refused, so key-level rights never reach a
+  session, and a person's identity is never a `run_as` target. The only path by
+  which someone else's work runs under a person's authority is the explicit
+  writer on a personal root (decision 8), attributed on every run.
 - **Visible.** Session, bot and collection summaries and `access/policy/read`
   expose owner, visibility, run-as and the audience root, so a viewer can show
   "shared through collection X" without a second request; the web UI shows
@@ -528,13 +536,13 @@ Each step ships on its own; the order is by dependency.
 
 ## Boundary and follow-up
 
-Not in this slice: named execution bindings with resource scopes, policy rows
-and permission vocabularies for workspaces, environments, MCP servers and
+Not in this slice: further execution principals with `run_as` grants, policy
+rows and permission vocabularies for workspaces, environments, MCP servers and
 grants (next slice, on the same anchor; `vfs/snapshots/read` then takes a
 workspace context), invoke-only bot grants and conversations private to their
 invoker, collection surfaces beyond creation and the Access panel, a plugin
 acting under the invoker's authority or holding an internal execution context
-of its own (named bindings), requester propagation to first-party MCP servers
+of its own, requester propagation to first-party MCP servers
 such as the Configurator, SSO and provisioning, personal event-driven
 automation, source-imposed audience limits, audit retention and export, a
 two-person rule or UI flow for privileged access, and effect-time checks inside
