@@ -23,13 +23,15 @@ CREATE INDEX access_resources_root_idx ON access_resources (universe_id, audienc
 
 -- What can change about a root: its current owner and visibility. Resources
 -- below a root have no policy of their own; a resource whose root has no
--- policy row is unreadable by everyone.
+-- policy row is unreadable by everyone. The revision advances with every
+-- replacement of the policy or its grants.
 CREATE TABLE access_resource_policies (
     universe_id uuid NOT NULL,
     resource_kind text NOT NULL,
     resource_id text NOT NULL,
     owner_principal_id uuid NOT NULL REFERENCES access_principals(principal_id),
     visibility text NOT NULL CHECK (visibility IN ('universe', 'restricted')),
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
     updated_by jsonb NOT NULL,
     updated_at_ms bigint NOT NULL CHECK (updated_at_ms >= 0),
     PRIMARY KEY (universe_id, resource_kind, resource_id),

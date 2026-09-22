@@ -79,7 +79,9 @@ pub struct Membership {
     pub principal_id: Uuid,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(
     tag = "kind",
     content = "id",
@@ -172,6 +174,8 @@ pub enum UniverseAction {
     UseResource,
     ConfigureResource,
     ManageAccess,
+    /// Change who may see or control a root: its visibility and grants.
+    ShareResource,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -266,14 +270,26 @@ impl ResourceAnchor {
     }
 }
 
-/// What can change about a root: its current owner and visibility.
+/// What can change about a root: its current owner and visibility. The
+/// revision guards replacement of the policy and its grants.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcePolicy {
     pub owner: Uuid,
     pub visibility: Visibility,
+    pub revision: u64,
     pub updated_by: ActionActor,
     pub updated_at_ms: u64,
+}
+
+/// One grant on a root as stored.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceGrant {
+    pub subject: Subject,
+    pub permission: ResourcePermission,
+    pub granted_by: Uuid,
+    pub granted_at_ms: u64,
 }
 
 /// Everything one decision about one resource needs, loaded in one statement:
@@ -368,6 +384,8 @@ fn authorize_request(
         InvokeBot => (by_role && universe_visible) || writer,
         ManageBot => owner || (by_role && universe_visible),
         ManageProfile => owner || by_role,
+        // Profiles stay on role rules and have no audience to share.
+        ShareResource => writer && !matches!(access.anchor.resource, ResourceRef::Profile(_)),
         CreateSession | CreateProfile | CreateBot | UseResource | ConfigureResource
         | ManageAccess => by_role,
     };
@@ -446,7 +464,7 @@ impl EffectiveAccess {
             CreateSession | CreateProfile | CreateBot | InvokeBot | UseResource if contributor => {
                 Allowed
             }
-            ControlSession if contributor => RequiresOwnership,
+            ControlSession | ShareResource if contributor => RequiresOwnership,
             StopSession if operator => Allowed,
             StopSession | DeleteSession if contributor => RequiresOwnership,
             ManageProfile | ManageBot if operator => Allowed,
@@ -645,6 +663,8 @@ pub enum AccessError {
     Denied,
     #[error("identity or assignment conflicts with existing state")]
     Conflict,
+    #[error("policy revision {actual} does not match expected {expected}")]
+    RevisionMismatch { expected: u64, actual: u64 },
     #[error("cannot remove the last active administrator of {scope:?}")]
     LastAdministrator { scope: AccessScope },
     #[error("identity bootstrap has already completed")]

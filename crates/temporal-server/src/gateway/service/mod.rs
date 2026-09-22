@@ -1,5 +1,6 @@
 //! `api` gateway for the Temporal-backed agent workflow.
 
+mod access_policy;
 mod access_preview;
 mod api_config;
 pub(crate) mod authorization;
@@ -1552,6 +1553,28 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
+    async fn read_access_policy(
+        &self,
+        params: AccessPolicyReadParams,
+    ) -> Result<AgentApiOutcome<AccessPolicyReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ACCESS_POLICY_READ, Some(params.resource.clone()))
+            .await?;
+        self.read_access_policy_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_access_policy(
+        &self,
+        params: AccessPolicyPutParams,
+    ) -> Result<AgentApiOutcome<AccessPolicyPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ACCESS_POLICY_PUT, Some(params.resource.clone()))
+            .await?;
+        self.put_access_policy_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
     // ── Bots ────────────────────────────────────────────────────────────
 
     async fn create_bot(
@@ -2003,6 +2026,7 @@ impl AgentApiService for GatewayAgentApi {
             config,
             profile,
             delete_after_close_ms,
+            access,
             workflow_tools,
         } = params;
         let workflow_tools = managed_workflow_tools_from_api(workflow_tools)?;
@@ -2034,6 +2058,7 @@ impl AgentApiService for GatewayAgentApi {
                 config,
                 profile,
                 delete_after_close_ms,
+                access,
             },
             false,
             false,
@@ -2244,16 +2269,20 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(|error| {
                 AgentApiError::invalid_request(format!("invalid parentSessionId: {error}"))
             })?;
+        let reader = self.reader()?;
         let page = self
             .store
-            .list_sessions(engine::storage::ListSessions {
-                cursor,
-                limit,
-                root_session_id,
-                parent_session_id,
-                exclude_closed: params.exclude_closed,
-                metadata: params.metadata,
-            })
+            .list_sessions_for(
+                engine::storage::ListSessions {
+                    cursor,
+                    limit,
+                    root_session_id,
+                    parent_session_id,
+                    exclude_closed: params.exclude_closed,
+                    metadata: params.metadata,
+                },
+                &reader,
+            )
             .await
             .map_err(map_session_store_error)?;
         let mut sessions = Vec::with_capacity(page.sessions.len());
@@ -2395,7 +2424,13 @@ impl AgentApiService for GatewayAgentApi {
                     .min(remaining);
                 tokio::time::sleep(poll).await;
                 if let Some(revalidation) = revalidation.as_mut() {
-                    revalidation.check(self.store.pool(), read).await?;
+                    revalidation
+                        .check(
+                            self.store.pool(),
+                            read,
+                            Some(&ResourceRef::Session(session_id.as_str().to_owned())),
+                        )
+                        .await?;
                 }
                 continue;
             }

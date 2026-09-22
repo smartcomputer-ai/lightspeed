@@ -14,6 +14,26 @@ Returns the current caller's universe actions and ownership-aware permissions fo
 - Params: `AccessReadParams`
 - Result: `AgentApiOutcome<AccessReadResponse>`
 
+### `access/policy/read`
+
+**Read a resource's access policy**
+
+Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.
+
+- Access: `{"kind":"universe","requirement":"read"}`
+- Params: `AccessPolicyReadParams`
+- Result: `AgentApiOutcome<AccessPolicyReadResponse>`
+
+### `access/policy/put`
+
+**Replace a resource's access policy**
+
+Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.
+
+- Access: `{"kind":"universe","requirement":"share_resource"}`
+- Params: `AccessPolicyPutParams`
+- Result: `AgentApiOutcome<AccessPolicyPutResponse>`
+
 ### `initialize`
 
 **Inspect the Lightspeed protocol**

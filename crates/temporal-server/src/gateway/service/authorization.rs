@@ -263,6 +263,16 @@ impl GatewayAgentApi {
             .map(Some)
     }
 
+    /// Who a list is for: the request's principal, or internal work's root.
+    pub(super) fn reader(&self) -> Result<store_pg::Reader, AgentApiError> {
+        if let Ok(controller) = CONTROLLER.try_with(Clone::clone) {
+            return Ok(store_pg::Reader::Root(controller.root));
+        }
+        Ok(store_pg::Reader::Principal(
+            self.caller()?.acting_principal().id,
+        ))
+    }
+
     pub(crate) async fn authorize_method(
         &self,
         method: &str,

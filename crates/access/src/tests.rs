@@ -40,13 +40,14 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
         UseResource,
         ConfigureResource,
         ManageAccess,
+        ShareResource,
     ];
     let cases = [
         (
             Role::Viewer,
             vec![
                 Allowed, Denied, Denied, Denied, Denied, Denied, Denied, Denied, Denied, Denied,
-                Denied, Denied, Denied,
+                Denied, Denied, Denied, Denied,
             ],
         ),
         (
@@ -65,6 +66,7 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
                 Allowed,
                 Denied,
                 Denied,
+                RequiresOwnership,
             ],
         ),
         (
@@ -83,6 +85,7 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
                 Allowed,
                 Allowed,
                 Denied,
+                RequiresOwnership,
             ],
         ),
         (
@@ -101,6 +104,7 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
                 Allowed,
                 Allowed,
                 Allowed,
+                RequiresOwnership,
             ],
         ),
     ];
@@ -294,6 +298,7 @@ fn policy(owner: u128, visibility: Visibility) -> ResourcePolicy {
     ResourcePolicy {
         owner: Uuid::from_u128(owner),
         visibility,
+        revision: 1,
         updated_by: ActionActor::Principal {
             id: Uuid::from_u128(owner),
         },
@@ -370,6 +375,12 @@ fn resource_decisions_follow_owner_visibility_grant_and_role() {
     );
     // A grant never widens a role: a viewer with write still cannot control.
     assert_eq!(decide(&viewer, ControlSession, &shared_write), Forbidden);
+    // Sharing follows control: owner or writer, never a reader or a role.
+    assert_eq!(decide(&contributor, ShareResource, &mine), Allowed);
+    assert_eq!(decide(&contributor, ShareResource, &shared_write), Allowed);
+    assert_eq!(decide(&contributor, ShareResource, &shared_read), Forbidden);
+    assert_eq!(decide(&admin, ShareResource, &theirs), Forbidden);
+    assert_eq!(decide(&viewer, ShareResource, &shared_write), Forbidden);
     // A missing policy row denies outright.
     let orphan = ResourceAccess {
         policy: None,

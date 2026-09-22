@@ -53,6 +53,12 @@ pub(super) fn target(params: Option<&Value>) -> Option<Value> {
     {
         target.insert("scope".into(), scope.clone());
     }
+    // A typed resource reference names the governed resource.
+    if let Some(resource) = params.get("resource")
+        && serde_json::from_value::<access::ResourceRef>(resource.clone()).is_ok()
+    {
+        target.insert("resource".into(), resource.clone());
+    }
     // The typed change itself is in the transactional change log.
     if let Some(operation) = params.get("operation").and_then(Value::as_str)
         && operation.len() <= 64
@@ -207,6 +213,7 @@ mod tests {
             "scope": {"kind": "deployment"},
             "operation": "assign_role",
             "botId": "x".repeat(300),
+            "resource": {"kind": "session", "id": "session_1"},
         })))
         .unwrap();
         assert_eq!(
@@ -216,7 +223,12 @@ mod tests {
                 "serverId": "mcp_1",
                 "scope": {"kind": "deployment"},
                 "operation": "assign_role",
+                "resource": {"kind": "session", "id": "session_1"},
             })
+        );
+        assert_eq!(
+            super::target(Some(&json!({"resource": {"kind": "planet", "id": "x"}}))),
+            None
         );
         assert_eq!(super::target(None), None);
         assert_eq!(super::target(Some(&json!({"input": "only content"}))), None);

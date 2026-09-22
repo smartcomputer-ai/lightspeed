@@ -214,8 +214,9 @@ Hand off owner    = owner, only under service execution; moves the whole tree
   and the collection list apply the same predicate in SQL, so lists return
   readable resources only, including children listed by origin.
 - **Sharing.** One method pair for every kind: `access/policy/read { resource }`
-  returns owner, visibility, run-as, the audience root and grants;
-  `access/policy/update { resource }` replaces visibility and the grant set.
+  returns owner, visibility, run-as, the audience root, grants and a revision;
+  `access/policy/put { resource }` replaces visibility and the grant set, with
+  the usual optional `expectedRevision` guard.
   Write members share read access or make the root universe-visible; only the
   owner adds writers or, under service execution, hands ownership to another
   member; readers change nothing. On a personal root only the owner may add a
@@ -419,7 +420,7 @@ may_read_blob(caller, resource, blob)    = authorize(caller, Read, resource)
                                            AND admitted_content(resource, blob)
 ```
 
-`access/policy/read|update`, `access/execution/read|update`, `collection/create|
+`access/policy/read|put`, `access/execution/read|update`, `collection/create|
 read|list|update|delete`, `execution` and `access` (with `access.root`) on
 session, bot and collection creation, `access` on their summaries, `read`/`share`
 in the access preview, `resource` on `blobs/read` and `blobs/has` (including
@@ -436,8 +437,8 @@ Edited in place; schema revision advances once and the release metadata with it.
   `audience_root_kind`, `audience_root_id` and `bot_id`, `owner_principal_id`
   moved to the policy row; `run_as_principal_id` and `execution_kind` join it
   in step 4, optional under a per-kind check;
-  `access_resource_policies (key, owner_principal_id, visibility, updated_by,
-  updated_at_ms)` and `access_resource_grants (key, subject_kind, subject_id,
+  `access_resource_policies (key, owner_principal_id, visibility, revision,
+  updated_by, updated_at_ms)` and `access_resource_grants (key, subject_kind, subject_id,
   permission, granted_by, granted_at_ms)` with an index on the subject, both
   referencing the root's anchor and cascading with it; `collections
   (universe_id, collection_id, display_name, created_at_ms)`.
@@ -485,9 +486,25 @@ Each step ships on its own; the order is by dependency.
        profiles, Admin delete, bot managers delete bot sessions. Every root
        today is a session, bot or profile with `universe` visibility; the
        live suites pass unchanged except for the two intended changes.
-       Open in this step: sharing methods, list predicates in SQL, forks and
-       clones as new roots, collections and bots joining them, hand-off,
-       execution on the anchor (step 4). Live matrix through HTTP:
+       Sharing done 2026-09-22: `ShareResource` action (owner or writer,
+       never a role; profiles have no audience), `access/policy/read` and
+       `access/policy/put` (whole visibility + grant set, optional
+       `expectedRevision` against `access_resource_policies.revision`; a
+       writer may not add or remove `write`; every subject must hold a role
+       in the universe; the change row advances the deployment policy
+       revision so a parked reader whose grant is gone revalidates against
+       the session and stops), `access` on `session/start`,
+       `session/managed/start` and `bots/create` applied atomically after
+       reservation, `session/list` and `bots/list` filtered in SQL by the
+       same rule (`store_pg::Reader`: the request's principal, or internal
+       work's root), `share` in the access preview, `resource` in audit
+       targets. Live matrix in `authorization_live`: owner, reader, writer
+       through a group, Viewer, Operator, Admin against read, list, events,
+       control, stop, delete, share and revocation on a restricted session
+       and a restricted bot.
+       Open in this step: forks and clones as new roots, collections and bots
+       joining them, hand-off, `access` on summaries (with "Running as" in
+       step 4). Live matrix through HTTP:
        owner, reader, writer, group member, Viewer, Operator, Admin against
        read, list, events, control, stop, delete and share, for a standalone
        session, a universe-visible collection holding a bot, and a restricted

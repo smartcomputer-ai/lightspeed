@@ -1018,6 +1018,10 @@ pub struct BotCreateParams {
     /// back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<BotTriggerInput>,
+    /// Audience of the bot, its events and every session it creates, set
+    /// atomically with its creation. Absent means universe-visible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<AccessInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

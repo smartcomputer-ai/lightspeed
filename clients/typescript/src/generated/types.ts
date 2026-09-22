@@ -120,6 +120,21 @@ export type ServiceCapability =
   | "discover_channel_accounts"
   | "manage_identity";
 /**
+ * One permission a grant confers on a root. `Read` sees the tree; `Write`
+ * also controls it.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ResourcePermission".
+ */
+export type ResourcePermission = "read" | "write";
+/**
+ * Who may see a root's tree without a grant.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "Visibility".
+ */
+export type Visibility = "universe" | "restricted";
+/**
  * Durable control facts, distinct from an agent's execution credentials.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -139,6 +154,20 @@ export type ResourceRef =
       kind: "profile";
     };
 /**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ActionActor".
+ */
+export type ActionActor =
+  | {
+      id: string;
+      kind: "principal";
+    }
+  | {
+      cause: string;
+      component: string;
+      kind: "internal";
+    };
+/**
  * Actions are independent of RPC spelling. Ownership and resource policy are
  * evaluated by the service that resolves the target, not from client claims.
  *
@@ -146,19 +175,22 @@ export type ResourceRef =
  * via the `definition` "UniverseAction".
  */
 export type UniverseAction =
-  | "read"
-  | "create_session"
-  | "control_session"
-  | "stop_session"
-  | "delete_session"
-  | "create_profile"
-  | "manage_profile"
-  | "create_bot"
-  | "manage_bot"
-  | "invoke_bot"
-  | "use_resource"
-  | "configure_resource"
-  | "manage_access";
+  | (
+      | "read"
+      | "create_session"
+      | "control_session"
+      | "stop_session"
+      | "delete_session"
+      | "create_profile"
+      | "manage_profile"
+      | "create_bot"
+      | "manage_bot"
+      | "invoke_bot"
+      | "use_resource"
+      | "configure_resource"
+      | "manage_access"
+    )
+  | "share_resource";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolKindView".
@@ -1931,6 +1963,108 @@ export interface IdentityPrincipal {
   status: PrincipalStatus;
 }
 /**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessGrantInput".
+ */
+export interface AccessGrantInput {
+  permission: ResourcePermission;
+  subject: Subject;
+}
+/**
+ * Audience of a root, requested at creation. A session or bot created under
+ * another root (a bot's session, a delegated child) has no audience of its
+ * own and refuses this.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessInput".
+ */
+export interface AccessInput {
+  /**
+   * Readers and writers of the root. Each subject must currently hold a
+   * role in the universe.
+   */
+  grants?: AccessGrantInput[];
+  /**
+   * `universe` lets every member read; `restricted` limits reading to the
+   * owner and the grants below. Absent means `universe`.
+   */
+  visibility?: Visibility | null;
+}
+/**
+ * Replace a root's visibility and grant set. Only the owner may grant
+ * `write`; writers may share `read` and change visibility; readers change
+ * nothing.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessPolicyPutParams".
+ */
+export interface AccessPolicyPutParams {
+  /**
+   * The revision from `access/policy/read`; absent replaces unconditionally.
+   */
+  expectedRevision?: number | null;
+  grants?: AccessGrantInput[];
+  resource: ResourceRef;
+  visibility: Visibility;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessPolicyPutResponse".
+ */
+export interface AccessPolicyPutResponse {
+  policy: AccessPolicyView;
+}
+/**
+ * The policy governing a resource: its root's owner, visibility and grants.
+ * A resource below a root (a bot's session, a delegated child) shows its
+ * root's policy; sharing it means sharing the root.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessPolicyView".
+ */
+export interface AccessPolicyView {
+  grants: ResourceGrant[];
+  owner: string;
+  resource: ResourceRef;
+  /**
+   * Advances with every replacement; pass it as `expectedRevision`.
+   */
+  revision: number;
+  /**
+   * The root whose policy this is; equal to `resource` for a root.
+   */
+  root: ResourceRef;
+  updatedAtMs: number;
+  updatedBy: ActionActor;
+  visibility: Visibility;
+}
+/**
+ * One grant on a root as stored.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ResourceGrant".
+ */
+export interface ResourceGrant {
+  grantedAtMs: number;
+  grantedBy: string;
+  permission: ResourcePermission;
+  subject: Subject;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessPolicyReadParams".
+ */
+export interface AccessPolicyReadParams {
+  resource: ResourceRef;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessPolicyReadResponse".
+ */
+export interface AccessPolicyReadResponse {
+  policy: AccessPolicyView;
+}
+/**
  * Current caller's action permissions. This is an advisory snapshot: mutations
  * always authorize again, and runtime prerequisites still apply.
  *
@@ -2924,6 +3058,22 @@ export interface ToolCallMediaView {
 export interface AgentApiOutcomeOfAccessDirectory {
   notifications?: AgentNotification[];
   result: AccessDirectory;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfAccessPolicyPutResponse".
+ */
+export interface AgentApiOutcomeOfAccessPolicyPutResponse {
+  notifications?: AgentNotification[];
+  result: AccessPolicyPutResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfAccessPolicyReadResponse".
+ */
+export interface AgentApiOutcomeOfAccessPolicyReadResponse {
+  notifications?: AgentNotification[];
+  result: AccessPolicyReadResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6626,6 +6776,11 @@ export interface BotCloseParams {
  * via the `definition` "BotCreateParams".
  */
 export interface BotCreateParams {
+  /**
+   * Audience of the bot, its events and every session it creates, set
+   * atomically with its creation. Absent means universe-visible.
+   */
+  access?: AccessInput | null;
   bot: BotInput;
   /**
    * Triggers created with the bot in one go; a failure rolls the bot
@@ -7507,6 +7662,13 @@ export interface JsonRpcError {
  * via the `definition` "ManagedSessionStartParams".
  */
 export interface ManagedSessionStartParams {
+  /**
+   * Immutable workflow tools admitted only when the session is first
+   * created. This document is not part of `SessionConfig` and cannot be
+   * changed through `session/config/put`.
+   * Audience of the new session, as for `session/start`.
+   */
+  access?: AccessInput | null;
   config?: SessionConfig | null;
   /**
    * Root-owned automatic deletion measured from close. Absent inherits a
@@ -7524,11 +7686,6 @@ export interface ManagedSessionStartParams {
   };
   profile?: ProfileSource | null;
   sessionId?: string | null;
-  /**
-   * Immutable workflow tools admitted only when the session is first
-   * created. This document is not part of `SessionConfig` and cannot be
-   * changed through `session/config/put`.
-   */
   workflowTools: ManagedSessionWorkflowToolsInput;
 }
 /**
@@ -7952,6 +8109,11 @@ export interface SessionRetentionPutParams {
  * via the `definition` "SessionStartParams".
  */
 export interface SessionStartParams {
+  /**
+   * Audience of the new session, set atomically with its creation. Absent
+   * means universe-visible.
+   */
+  access?: AccessInput | null;
   config?: SessionConfig | null;
   /**
    * Root-owned automatic deletion measured from close. Absent inherits a

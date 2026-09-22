@@ -192,6 +192,7 @@ async fn start(args: StartArgs) -> Result<()> {
         .map_err(|error| anyhow::anyhow!("invalid profile id: {error}"))?;
     let response = HttpAgentApi::new(args.common.api_url)
         .start_session(api::SessionStartParams {
+            access: None,
             session_id: args.session_id,
             display_name: args.display_name,
             metadata: args.metadata.map(),

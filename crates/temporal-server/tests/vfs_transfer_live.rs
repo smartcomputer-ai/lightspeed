@@ -340,6 +340,7 @@ async fn run_case(
         },
     }}).await?.result.profile;
     api.start_session(api::SessionStartParams {
+        access: None,
         session_id: Some(session.to_string()),
         profile: Some(api::ProfileSource::Named {
             profile_id: profile.profile_id,

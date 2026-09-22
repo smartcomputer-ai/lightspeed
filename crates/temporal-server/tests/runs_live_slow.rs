@@ -68,6 +68,7 @@ async fn run_llm_timeout_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,

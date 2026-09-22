@@ -340,6 +340,167 @@
       ],
       "type": "object"
     },
+    "AccessGrantInput": {
+      "additionalProperties": false,
+      "properties": {
+        "permission": {
+          "$ref": "#/definitions/ResourcePermission"
+        },
+        "subject": {
+          "$ref": "#/definitions/Subject"
+        }
+      },
+      "required": [
+        "subject",
+        "permission"
+      ],
+      "type": "object"
+    },
+    "AccessInput": {
+      "additionalProperties": false,
+      "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
+      "properties": {
+        "grants": {
+          "description": "Readers and writers of the root. Each subject must currently hold a\nrole in the universe.",
+          "items": {
+            "$ref": "#/definitions/AccessGrantInput"
+          },
+          "type": "array"
+        },
+        "visibility": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Visibility"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
+        }
+      },
+      "type": "object"
+    },
+    "AccessPolicyPutParams": {
+      "additionalProperties": false,
+      "description": "Replace a root's visibility and grant set. Only the owner may grant\n`write`; writers may share `read` and change visibility; readers change\nnothing.",
+      "properties": {
+        "expectedRevision": {
+          "description": "The revision from `access/policy/read`; absent replaces unconditionally.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "grants": {
+          "items": {
+            "$ref": "#/definitions/AccessGrantInput"
+          },
+          "type": "array"
+        },
+        "resource": {
+          "$ref": "#/definitions/ResourceRef"
+        },
+        "visibility": {
+          "$ref": "#/definitions/Visibility"
+        }
+      },
+      "required": [
+        "resource",
+        "visibility"
+      ],
+      "type": "object"
+    },
+    "AccessPolicyPutResponse": {
+      "properties": {
+        "policy": {
+          "$ref": "#/definitions/AccessPolicyView"
+        }
+      },
+      "required": [
+        "policy"
+      ],
+      "type": "object"
+    },
+    "AccessPolicyReadParams": {
+      "additionalProperties": false,
+      "properties": {
+        "resource": {
+          "$ref": "#/definitions/ResourceRef"
+        }
+      },
+      "required": [
+        "resource"
+      ],
+      "type": "object"
+    },
+    "AccessPolicyReadResponse": {
+      "properties": {
+        "policy": {
+          "$ref": "#/definitions/AccessPolicyView"
+        }
+      },
+      "required": [
+        "policy"
+      ],
+      "type": "object"
+    },
+    "AccessPolicyView": {
+      "description": "The policy governing a resource: its root's owner, visibility and grants.\nA resource below a root (a bot's session, a delegated child) shows its\nroot's policy; sharing it means sharing the root.",
+      "properties": {
+        "grants": {
+          "items": {
+            "$ref": "#/definitions/ResourceGrant"
+          },
+          "type": "array"
+        },
+        "owner": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resource": {
+          "$ref": "#/definitions/ResourceRef"
+        },
+        "revision": {
+          "description": "Advances with every replacement; pass it as `expectedRevision`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "root": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ResourceRef"
+            }
+          ],
+          "description": "The root whose policy this is; equal to `resource` for a root."
+        },
+        "updatedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "updatedBy": {
+          "$ref": "#/definitions/ActionActor"
+        },
+        "visibility": {
+          "$ref": "#/definitions/Visibility"
+        }
+      },
+      "required": [
+        "resource",
+        "root",
+        "owner",
+        "visibility",
+        "grants",
+        "revision",
+        "updatedBy",
+        "updatedAtMs"
+      ],
+      "type": "object"
+    },
     "AccessReadParams": {
       "additionalProperties": false,
       "description": "Current caller's action permissions. This is an advisory snapshot: mutations\nalways authorize again, and runtime prerequisites still apply.",
@@ -412,6 +573,47 @@
           "required": [
             "kind",
             "universeId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ActionActor": {
+      "oneOf": [
+        {
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "kind": {
+              "const": "principal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cause": {
+              "type": "string"
+            },
+            "component": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "component",
+            "cause"
           ],
           "type": "object"
         }
@@ -528,6 +730,40 @@
         },
         "result": {
           "$ref": "#/definitions/AccessDirectory"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfAccessPolicyPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/AccessPolicyPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfAccessPolicyReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/AccessPolicyReadResponse"
         }
       },
       "required": [
@@ -4582,6 +4818,17 @@
     },
     "BotCreateParams": {
       "properties": {
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AccessInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Audience of the bot, its events and every session it creates, set\natomically with its creation. Absent means universe-visible."
+        },
         "bot": {
           "$ref": "#/definitions/BotInput"
         },
@@ -11209,6 +11456,17 @@
       "additionalProperties": false,
       "description": "Creation request for a session with immutable workflow ownership and\nworkflow-backed tools.",
       "properties": {
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AccessInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Immutable workflow tools admitted only when the session is first\ncreated. This document is not part of `SessionConfig` and cannot be\nchanged through `session/config/put`.\nAudience of the new session, as for `session/start`."
+        },
         "config": {
           "anyOf": [
             {
@@ -11259,12 +11517,7 @@
           ]
         },
         "workflowTools": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ManagedSessionWorkflowToolsInput"
-            }
-          ],
-          "description": "Immutable workflow tools admitted only when the session is first\ncreated. This document is not part of `SessionConfig` and cannot be\nchanged through `session/config/put`."
+          "$ref": "#/definitions/ManagedSessionWorkflowToolsInput"
         }
       },
       "required": [
@@ -13080,6 +13333,41 @@
         "actions"
       ],
       "type": "object"
+    },
+    "ResourceGrant": {
+      "description": "One grant on a root as stored.",
+      "properties": {
+        "grantedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "grantedBy": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "permission": {
+          "$ref": "#/definitions/ResourcePermission"
+        },
+        "subject": {
+          "$ref": "#/definitions/Subject"
+        }
+      },
+      "required": [
+        "subject",
+        "permission",
+        "grantedBy",
+        "grantedAtMs"
+      ],
+      "type": "object"
+    },
+    "ResourcePermission": {
+      "description": "One permission a grant confers on a root. `Read` sees the tree; `Write`\nalso controls it.",
+      "enum": [
+        "read",
+        "write"
+      ],
+      "type": "string"
     },
     "ResourceRef": {
       "description": "Durable control facts, distinct from an agent's execution credentials.",
@@ -16157,6 +16445,17 @@
     "SessionStartParams": {
       "additionalProperties": false,
       "properties": {
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AccessInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Audience of the new session, set atomically with its creation. Absent\nmeans universe-visible."
+        },
         "config": {
           "anyOf": [
             {
@@ -17311,22 +17610,31 @@
     },
     "UniverseAction": {
       "description": "Actions are independent of RPC spelling. Ownership and resource policy are\nevaluated by the service that resolves the target, not from client claims.",
-      "enum": [
-        "read",
-        "create_session",
-        "control_session",
-        "stop_session",
-        "delete_session",
-        "create_profile",
-        "manage_profile",
-        "create_bot",
-        "manage_bot",
-        "invoke_bot",
-        "use_resource",
-        "configure_resource",
-        "manage_access"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "read",
+            "create_session",
+            "control_session",
+            "stop_session",
+            "delete_session",
+            "create_profile",
+            "manage_profile",
+            "create_bot",
+            "manage_bot",
+            "invoke_bot",
+            "use_resource",
+            "configure_resource",
+            "manage_access"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "share_resource",
+          "description": "Change who may see or control a root: its visibility and grants.",
+          "type": "string"
+        }
+      ]
     },
     "VfsFeature": {
       "additionalProperties": false,
@@ -17668,6 +17976,14 @@
         "updatedAtMs"
       ],
       "type": "object"
+    },
+    "Visibility": {
+      "description": "Who may see a root's tree without a grant.",
+      "enum": [
+        "universe",
+        "restricted"
+      ],
+      "type": "string"
     },
     "WebFeature": {
       "additionalProperties": false,

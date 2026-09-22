@@ -239,6 +239,7 @@ async fn run_control_api(
         }
     };
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -739,6 +740,7 @@ async fn run_parallel_tool_batch_live_client(
         .result
         .workspace;
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -858,6 +860,7 @@ async fn run_transient_llm_retry_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -938,6 +941,7 @@ async fn run_llm_retry_exhaustion_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1045,6 +1049,7 @@ async fn run_unbounded_hosted_run_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,

@@ -284,6 +284,7 @@ async fn create_bot_with_chat(
     let trigger_id = BotTriggerId::new("telegram");
     let created = api
         .create_bot(BotCreateParams {
+            access: None,
             bot: BotInput {
                 bot_id: bot_id.clone(),
                 document: BotDocument {

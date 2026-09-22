@@ -71,6 +71,82 @@ fn prefixed_event_columns(table: &str, prefix: &str) -> String {
 
 // ── Bots ────────────────────────────────────────────────────────────────────
 
+impl PgStore {
+    /// The roster for one reader: only bots the reader may read.
+    pub async fn list_bot_roster_for(
+        &self,
+        reader: &crate::Reader,
+    ) -> Result<Vec<BotRosterRow>, BotError> {
+        let last_event_columns = prefixed_event_columns("le", ROSTER_EVENT_PREFIX);
+        let readable = crate::resources::readable_predicate(reader, "bot", "b", "bot_id", 2);
+        let event_columns = event_columns();
+        let query = format!(
+            r#"
+            SELECT
+                b.bot_id, b.revision, b.document_json, b.event_seq, b.closed_at_ms,
+                b.closed_sessions_json, b.created_at_ms, b.updated_at_ms,
+                tc.trigger_count,
+                pc.pending_count,
+                {last_event_columns}
+            FROM bots b
+            LEFT JOIN LATERAL (
+                SELECT count(*) AS trigger_count
+                FROM bot_triggers t
+                WHERE t.universe_id = b.universe_id AND t.bot_id = b.bot_id
+            ) tc ON true
+            LEFT JOIN LATERAL (
+                SELECT count(*) AS pending_count
+                FROM bot_events p
+                WHERE p.universe_id = b.universe_id AND p.bot_id = b.bot_id
+                  AND p.outcome IS NULL
+            ) pc ON true
+            LEFT JOIN LATERAL (
+                SELECT {event_columns}
+                FROM bot_events e
+                WHERE e.universe_id = b.universe_id AND e.bot_id = b.bot_id
+                ORDER BY e.received_at_ms DESC, e.seq DESC
+                LIMIT 1
+            ) le ON true
+            WHERE b.universe_id = $1 AND {readable}
+            ORDER BY b.bot_id
+            "#
+        );
+        let (reader_principal, reader_root_kind, reader_root_id) = reader.binds();
+        let rows = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(reader_principal)
+            .bind(reader_root_kind)
+            .bind(reader_root_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| bot_sql_error("list bot roster", error))?;
+        rows.iter()
+            .map(|row| {
+                let bot = bot_from_row(row)?;
+                let trigger_count: i64 = row
+                    .try_get("trigger_count")
+                    .map_err(|error| bot_sql_error("decode trigger count", error))?;
+                let pending_count: i64 = row
+                    .try_get("pending_count")
+                    .map_err(|error| bot_sql_error("decode pending count", error))?;
+                let last_event_id: Option<String> = row
+                    .try_get(format!("{ROSTER_EVENT_PREFIX}event_id").as_str())
+                    .map_err(|error| bot_sql_error("decode last event id", error))?;
+                let last_event = match last_event_id {
+                    Some(_) => Some(event_from_row(row, ROSTER_EVENT_PREFIX)?),
+                    None => None,
+                };
+                Ok(BotRosterRow {
+                    bot,
+                    trigger_count: u32::try_from(trigger_count).unwrap_or(u32::MAX),
+                    pending_count: u64::try_from(pending_count).unwrap_or(0),
+                    last_event,
+                })
+            })
+            .collect()
+    }
+}
+
 #[async_trait]
 impl BotStore for PgStore {
     async fn create_bot(
@@ -210,68 +286,7 @@ impl BotStore for PgStore {
     }
 
     async fn list_bot_roster(&self) -> Result<Vec<BotRosterRow>, BotError> {
-        let last_event_columns = prefixed_event_columns("le", ROSTER_EVENT_PREFIX);
-        let event_columns = event_columns();
-        let query = format!(
-            r#"
-            SELECT
-                b.bot_id, b.revision, b.document_json, b.event_seq, b.closed_at_ms,
-                b.closed_sessions_json, b.created_at_ms, b.updated_at_ms,
-                tc.trigger_count,
-                pc.pending_count,
-                {last_event_columns}
-            FROM bots b
-            LEFT JOIN LATERAL (
-                SELECT count(*) AS trigger_count
-                FROM bot_triggers t
-                WHERE t.universe_id = b.universe_id AND t.bot_id = b.bot_id
-            ) tc ON true
-            LEFT JOIN LATERAL (
-                SELECT count(*) AS pending_count
-                FROM bot_events p
-                WHERE p.universe_id = b.universe_id AND p.bot_id = b.bot_id
-                  AND p.outcome IS NULL
-            ) pc ON true
-            LEFT JOIN LATERAL (
-                SELECT {event_columns}
-                FROM bot_events e
-                WHERE e.universe_id = b.universe_id AND e.bot_id = b.bot_id
-                ORDER BY e.received_at_ms DESC, e.seq DESC
-                LIMIT 1
-            ) le ON true
-            WHERE b.universe_id = $1
-            ORDER BY b.bot_id
-            "#
-        );
-        let rows = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| bot_sql_error("list bot roster", error))?;
-        rows.iter()
-            .map(|row| {
-                let bot = bot_from_row(row)?;
-                let trigger_count: i64 = row
-                    .try_get("trigger_count")
-                    .map_err(|error| bot_sql_error("decode trigger count", error))?;
-                let pending_count: i64 = row
-                    .try_get("pending_count")
-                    .map_err(|error| bot_sql_error("decode pending count", error))?;
-                let last_event_id: Option<String> = row
-                    .try_get(format!("{ROSTER_EVENT_PREFIX}event_id").as_str())
-                    .map_err(|error| bot_sql_error("decode last event id", error))?;
-                let last_event = match last_event_id {
-                    Some(_) => Some(event_from_row(row, ROSTER_EVENT_PREFIX)?),
-                    None => None,
-                };
-                Ok(BotRosterRow {
-                    bot,
-                    trigger_count: u32::try_from(trigger_count).unwrap_or(u32::MAX),
-                    pending_count: u64::try_from(pending_count).unwrap_or(0),
-                    last_event,
-                })
-            })
-            .collect()
+        self.list_bot_roster_for(&crate::Reader::Everything).await
     }
 
     async fn list_bots_for_profile(

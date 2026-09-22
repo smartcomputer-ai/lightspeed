@@ -175,6 +175,7 @@ async fn create_bot(
     let mut document = bot_document(profile_id);
     edit(&mut document);
     api.create_bot(BotCreateParams {
+        access: None,
         bot: BotInput {
             bot_id: bot_id.clone(),
             document,

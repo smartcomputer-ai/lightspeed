@@ -245,11 +245,14 @@ impl Revalidation {
         Self { context }
     }
 
-    /// `Ok` while the caller may still perform `requirement`.
+    /// `Ok` while the caller may still perform `requirement`, on `resource`
+    /// when one is parked on: a share revoked while a reader waits ends the
+    /// wait, because every policy change advances the revision too.
     pub(crate) async fn check(
         &mut self,
         pool: &sqlx::PgPool,
         requirement: MethodAccess,
+        resource: Option<&access::ResourceRef>,
     ) -> Result<(), AgentApiError> {
         let store_error =
             |error: &dyn std::fmt::Display| AgentApiError::internal(error.to_string());
@@ -294,6 +297,15 @@ impl Revalidation {
                 error => store_error(&error),
             })?;
         if !method_permitted(&rights, requirement) {
+            return Err(AgentApiError::forbidden());
+        }
+        if let (Some(resource), MethodAccess::Universe(action)) = (resource, requirement)
+            && access
+                .decide(access::Caller::Request(&rights), action, resource)
+                .await
+                .map_err(|e| store_error(&e))?
+                != Some(access::Decision::Allowed)
+        {
             return Err(AgentApiError::forbidden());
         }
         // Baseline on the revision read first, so a change that committed while

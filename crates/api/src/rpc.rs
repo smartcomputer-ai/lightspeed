@@ -355,6 +355,10 @@ macro_rules! api_methods {
 api_methods! {
     METHOD_ACCESS_READ => read_access(AccessReadParams) -> AccessReadResponse =>
         ["Read current action permissions", "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
+    METHOD_ACCESS_POLICY_READ => read_access_policy(AccessPolicyReadParams) -> AccessPolicyReadResponse =>
+        ["Read a resource's access policy", "Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
+    METHOD_ACCESS_POLICY_PUT => put_access_policy(AccessPolicyPutParams) -> AccessPolicyPutResponse =>
+        ["Replace a resource's access policy", "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally."], access: MethodAccess::Universe(UniverseAction::ShareResource), audit: true,
     METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse =>
         ["Inspect the Lightspeed protocol", "Returns protocol version, server identity, and supported capabilities without changing universe state."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
     METHOD_SESSION_START => start_session(SessionStartParams) -> SessionStartResponse =>

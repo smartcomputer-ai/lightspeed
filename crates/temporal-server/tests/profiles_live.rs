@@ -143,6 +143,7 @@ async fn run_profile_environment_selection_live_client(
     .await?;
     let start = || {
         api.start_session(SessionStartParams {
+            access: None,
             session_id: Some(session_id.to_string()),
             display_name: None,
             metadata: Default::default(),
@@ -341,6 +342,7 @@ async fn run_profiles_live_client(
     );
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,

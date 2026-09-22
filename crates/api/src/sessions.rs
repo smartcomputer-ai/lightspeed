@@ -50,6 +50,10 @@ pub struct SessionStartParams {
     )]
     #[schemars(schema_with = "optional_nullable_delete_after_close_ms_schema")]
     pub delete_after_close_ms: Option<Option<u64>>,
+    /// Audience of the new session, set atomically with its creation. Absent
+    /// means universe-visible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<AccessInput>,
 }
 
 /// Creation request for a session with immutable workflow ownership and
@@ -81,6 +85,9 @@ pub struct ManagedSessionStartParams {
     /// Immutable workflow tools admitted only when the session is first
     /// created. This document is not part of `SessionConfig` and cannot be
     /// changed through `session/config/put`.
+    /// Audience of the new session, as for `session/start`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<AccessInput>,
     pub workflow_tools: ManagedSessionWorkflowToolsInput,
 }
 

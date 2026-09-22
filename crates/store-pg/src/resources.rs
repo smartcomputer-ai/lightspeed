@@ -41,7 +41,7 @@ fn permission_from_rank(rank: Option<i32>) -> Option<ResourcePermission> {
 }
 
 const ACCESS_COLUMNS: &str = "a.resource_kind, a.resource_id, a.created_by, a.controller, a.audience_root_kind, a.audience_root_id, a.bot_id, a.created_at_ms,
-    p.owner_principal_id, p.visibility, p.updated_by, p.updated_at_ms";
+    p.owner_principal_id, p.visibility, p.revision, p.updated_by, p.updated_at_ms";
 const ACCESS_JOIN: &str = "FROM access_resources a LEFT JOIN access_resource_policies p
     ON p.universe_id=a.universe_id AND p.resource_kind=a.audience_root_kind AND p.resource_id=a.audience_root_id";
 
@@ -84,6 +84,8 @@ fn policy_row(row: &sqlx::postgres::PgRow) -> Result<Option<ResourcePolicy>, Acc
     Ok(Some(ResourcePolicy {
         owner,
         visibility,
+        revision: u64::try_from(row.try_get::<i64, _>("revision").map_err(error)?)
+            .map_err(error)?,
         updated_by: serde_json::from_value(row.try_get("updated_by").map_err(error)?)
             .map_err(error)?,
         updated_at_ms: u64::try_from(row.try_get::<i64, _>("updated_at_ms").map_err(error)?)
@@ -191,8 +193,14 @@ impl PgAccessStore {
         };
         use UniverseAction::*;
         let candidates: &[UniverseAction] = match resource {
-            ResourceRef::Session(_) => &[Read, ControlSession, StopSession, DeleteSession],
-            ResourceRef::Bot(_) => &[Read, ManageBot, InvokeBot],
+            ResourceRef::Session(_) => &[
+                Read,
+                ControlSession,
+                StopSession,
+                DeleteSession,
+                ShareResource,
+            ],
+            ResourceRef::Bot(_) => &[Read, ManageBot, InvokeBot, ShareResource],
             ResourceRef::Profile(_) => &[Read, ManageProfile],
         };
         let caller = Caller::Request(rights);
@@ -326,4 +334,246 @@ impl PgAccessStore {
         }
         Ok(stored)
     }
+}
+
+/// What a replacement of a root's policy says: the whole visibility and
+/// grant set, guarded by the revision when given.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PolicyReplacement {
+    pub visibility: Visibility,
+    pub grants: Vec<(Subject, ResourcePermission)>,
+    pub expected_revision: Option<u64>,
+}
+
+/// A root's policy and grants as one view.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResourcePolicyRecord {
+    pub anchor: ResourceAnchor,
+    pub policy: ResourcePolicy,
+    pub grants: Vec<ResourceGrant>,
+}
+
+fn subject_key(subject: &Subject) -> (&'static str, Uuid) {
+    match subject {
+        Subject::Principal(id) => ("principal", *id),
+        Subject::Group(id) => ("group", *id),
+    }
+}
+fn permission_name(permission: ResourcePermission) -> &'static str {
+    match permission {
+        ResourcePermission::Read => "read",
+        ResourcePermission::Write => "write",
+    }
+}
+
+impl PgAccessStore {
+    /// The policy of a resource's root with its grants; `None` when the
+    /// resource has no anchor or its root no policy.
+    pub async fn read_policy(
+        &self,
+        universe: Uuid,
+        resource: &ResourceRef,
+    ) -> Result<Option<ResourcePolicyRecord>, AccessError> {
+        let Some(anchor) = self.anchor(universe, resource).await? else {
+            return Ok(None);
+        };
+        let (root_kind, root_id) = key(&anchor.audience_root);
+        let row = sqlx::query("SELECT owner_principal_id, visibility, revision, updated_by, updated_at_ms FROM access_resource_policies WHERE universe_id=$1 AND resource_kind=$2 AND resource_id=$3")
+            .bind(universe).bind(root_kind).bind(root_id).fetch_optional(&self.pool).await.map_err(error)?;
+        let Some(policy) = row.as_ref().map(policy_row).transpose()?.flatten() else {
+            return Ok(None);
+        };
+        let grants = sqlx::query("SELECT subject_kind, subject_id, permission, granted_by, granted_at_ms FROM access_resource_grants WHERE universe_id=$1 AND resource_kind=$2 AND resource_id=$3 ORDER BY subject_kind, subject_id")
+            .bind(universe).bind(root_kind).bind(root_id).fetch_all(&self.pool).await.map_err(error)?
+            .iter().map(|row| {
+                let id: Uuid = row.try_get("subject_id").map_err(error)?;
+                let subject = match row.try_get::<String, _>("subject_kind").map_err(error)?.as_str() {
+                    "principal" => Subject::Principal(id),
+                    "group" => Subject::Group(id),
+                    other => return Err(error(format!("unknown subject kind {other}"))),
+                };
+                let permission = match row.try_get::<String, _>("permission").map_err(error)?.as_str() {
+                    "read" => ResourcePermission::Read,
+                    "write" => ResourcePermission::Write,
+                    other => return Err(error(format!("unknown permission {other}"))),
+                };
+                Ok(ResourceGrant {
+                    subject,
+                    permission,
+                    granted_by: row.try_get("granted_by").map_err(error)?,
+                    granted_at_ms: u64::try_from(row.try_get::<i64, _>("granted_at_ms").map_err(error)?).map_err(error)?,
+                })
+            }).collect::<Result<Vec<_>, AccessError>>()?;
+        Ok(Some(ResourcePolicyRecord {
+            anchor,
+            policy,
+            grants,
+        }))
+    }
+
+    /// Replace a root's visibility and grant set in one transaction, guarded
+    /// by the policy revision when the caller supplies one. Every subject must
+    /// currently hold a role in the universe, directly or through a group;
+    /// unchanged grants keep their attribution. The change is recorded and
+    /// advances the deployment policy revision, so parked readers whose grant
+    /// is gone revalidate and stop.
+    pub async fn put_policy(
+        &self,
+        universe: Uuid,
+        actor: Uuid,
+        root: &ResourceRef,
+        replacement: &PolicyReplacement,
+        now_ms: u64,
+    ) -> Result<ResourcePolicyRecord, AccessError> {
+        let PolicyReplacement {
+            visibility,
+            grants,
+            expected_revision,
+        } = replacement;
+        let (visibility, expected_revision) = (*visibility, *expected_revision);
+        let (root_kind, root_id) = key(root);
+        let now = i64::try_from(now_ms).map_err(error)?;
+        let mut tx = self.pool.begin().await.map_err(error)?;
+        let current: Option<i64> = sqlx::query_scalar("SELECT revision FROM access_resource_policies WHERE universe_id=$1 AND resource_kind=$2 AND resource_id=$3 FOR UPDATE")
+            .bind(universe).bind(root_kind).bind(root_id).fetch_optional(&mut *tx).await.map_err(error)?;
+        let current = u64::try_from(current.ok_or(AccessError::NotFound)?).map_err(error)?;
+        if let Some(expected) = expected_revision
+            && expected != current
+        {
+            return Err(AccessError::RevisionMismatch {
+                expected,
+                actual: current,
+            });
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for (subject, _) in grants {
+            if !seen.insert(*subject) {
+                return Err(AccessError::Invalid(format!(
+                    "subject {subject:?} appears more than once"
+                )));
+            }
+            let (subject_kind, subject_id) = subject_key(subject);
+            let member: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM access_role_assignments r WHERE r.universe_id=$1
+                    AND (($2='principal' AND r.principal_id=$3) OR ($2='group' AND r.group_id=$3)))
+                 OR EXISTS (SELECT 1 FROM access_memberships m JOIN access_role_assignments r ON r.group_id=m.group_id
+                    WHERE $2='principal' AND m.principal_id=$3 AND r.universe_id=$1)",
+            )
+            .bind(universe)
+            .bind(subject_kind)
+            .bind(subject_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(error)?;
+            if !member {
+                return Err(AccessError::Invalid(format!(
+                    "subject {subject:?} holds no role in this universe"
+                )));
+            }
+        }
+        sqlx::query("UPDATE access_resource_policies SET visibility=$4, revision=revision+1, updated_by=$5, updated_at_ms=$6 WHERE universe_id=$1 AND resource_kind=$2 AND resource_id=$3")
+            .bind(universe).bind(root_kind).bind(root_id).bind(visibility_name(visibility))
+            .bind(json!(ActionActor::Principal { id: actor })).bind(now)
+            .execute(&mut *tx).await.map_err(error)?;
+        let keep: Vec<String> = grants
+            .iter()
+            .map(|(subject, _)| {
+                let (kind, id) = subject_key(subject);
+                format!("{kind}:{id}")
+            })
+            .collect();
+        sqlx::query("DELETE FROM access_resource_grants WHERE universe_id=$1 AND resource_kind=$2 AND resource_id=$3 AND NOT (subject_kind || ':' || subject_id::text = ANY($4))")
+            .bind(universe).bind(root_kind).bind(root_id).bind(&keep)
+            .execute(&mut *tx).await.map_err(error)?;
+        for (subject, permission) in grants {
+            let (subject_kind, subject_id) = subject_key(subject);
+            sqlx::query("INSERT INTO access_resource_grants(universe_id,resource_kind,resource_id,subject_kind,subject_id,permission,granted_by,granted_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+                ON CONFLICT (universe_id,resource_kind,resource_id,subject_kind,subject_id) DO UPDATE
+                SET permission=EXCLUDED.permission, granted_by=EXCLUDED.granted_by, granted_at_ms=EXCLUDED.granted_at_ms
+                WHERE access_resource_grants.permission <> EXCLUDED.permission")
+                .bind(universe).bind(root_kind).bind(root_id).bind(subject_kind).bind(subject_id)
+                .bind(permission_name(*permission)).bind(actor).bind(now)
+                .execute(&mut *tx).await.map_err(error)?;
+        }
+        crate::access::audit(
+            &mut tx,
+            Some(actor),
+            json!({
+                "operation": "put_resource_policy",
+                "universeId": universe,
+                "resource": root,
+                "visibility": visibility,
+                "grants": grants.iter().map(|(subject, permission)| json!({"subject": subject, "permission": permission})).collect::<Vec<_>>(),
+            }),
+            now,
+        )
+        .await?;
+        tx.commit().await.map_err(error)?;
+        self.read_policy(universe, root)
+            .await?
+            .ok_or(AccessError::NotFound)
+    }
+}
+
+/// Who a list is for. Lists return only what the reader may read, decided in
+/// SQL by the same rule as a single read: universe-visible roots, the
+/// reader's own roots, roots it holds a grant on, and, for internal work,
+/// its own root.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reader {
+    /// Internal maintenance that sees everything; never a caller.
+    Everything,
+    Principal(Uuid),
+    Root(ResourceRef),
+}
+
+impl Reader {
+    pub fn from_caller(caller: Caller<'_>) -> Self {
+        match caller {
+            Caller::Request(rights) => Reader::Principal(rights.principal.id),
+            Caller::Controller(context) => Reader::Root(context.root.clone()),
+        }
+    }
+
+    /// The three bind values the predicate expects, in order.
+    pub(crate) fn binds(&self) -> (Option<Uuid>, Option<&'static str>, Option<&str>) {
+        match self {
+            Reader::Everything => (None, None, None),
+            Reader::Principal(id) => (Some(*id), None, None),
+            Reader::Root(root) => {
+                let (kind, id) = key(root);
+                (None, Some(kind), Some(id))
+            }
+        }
+    }
+}
+
+/// SQL predicate over a content row: `alias.id_column` names a resource of
+/// `kind`; `$p` is the reader's principal, `$p+1`/`$p+2` its root. A row
+/// without an anchored, policied root is never listed.
+pub(crate) fn readable_predicate(
+    reader: &Reader,
+    kind: &str,
+    alias: &str,
+    id_column: &str,
+    p: usize,
+) -> String {
+    if *reader == Reader::Everything {
+        return "TRUE".to_owned();
+    }
+    let root_kind = p + 1;
+    let root_id = p + 2;
+    format!(
+        "EXISTS (SELECT 1 FROM access_resources ra JOIN access_resource_policies rp
+            ON rp.universe_id=ra.universe_id AND rp.resource_kind=ra.audience_root_kind AND rp.resource_id=ra.audience_root_id
+          WHERE ra.universe_id={alias}.universe_id AND ra.resource_kind='{kind}' AND ra.resource_id={alias}.{id_column}
+            AND (rp.visibility='universe'
+              OR rp.owner_principal_id=${p}
+              OR (ra.audience_root_kind=${root_kind} AND ra.audience_root_id=${root_id})
+              OR EXISTS (SELECT 1 FROM access_resource_grants rg
+                  WHERE rg.universe_id=ra.universe_id AND rg.resource_kind=ra.audience_root_kind AND rg.resource_id=ra.audience_root_id
+                    AND ((rg.subject_kind='principal' AND rg.subject_id=${p})
+                      OR (rg.subject_kind='group' AND rg.subject_id IN
+                          (SELECT rm.group_id FROM access_memberships rm WHERE rm.principal_id=${p}))))))"
+    )
 }

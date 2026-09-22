@@ -27,6 +27,50 @@
         "kind": "universe",
         "requirement": "read"
       },
+      "description": "Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.",
+      "method": "access/policy/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AccessPolicyReadParams"
+        },
+        "type": "AccessPolicyReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAccessPolicyReadResponse"
+        },
+        "type": "AgentApiOutcome<AccessPolicyReadResponse>"
+      },
+      "scope": "universe",
+      "summary": "Read a resource's access policy"
+    },
+    {
+      "access": {
+        "kind": "universe",
+        "requirement": "share_resource"
+      },
+      "description": "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.",
+      "method": "access/policy/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AccessPolicyPutParams"
+        },
+        "type": "AccessPolicyPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAccessPolicyPutResponse"
+        },
+        "type": "AgentApiOutcome<AccessPolicyPutResponse>"
+      },
+      "scope": "universe",
+      "summary": "Replace a resource's access policy"
+    },
+    {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
       "description": "Returns protocol version, server identity, and supported capabilities without changing universe state.",
       "method": "initialize",
       "params": {

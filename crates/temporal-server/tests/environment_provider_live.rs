@@ -547,6 +547,7 @@ async fn run_environment_power_live_client(
     // Selection only records the environment. A paused machine stays paused
     // until an operation actually needs to use it.
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,

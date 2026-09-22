@@ -10,6 +10,18 @@ pub trait AgentApiService: Send + Sync {
             "action permissions are unavailable",
         ))
     }
+    async fn read_access_policy(
+        &self,
+        _params: AccessPolicyReadParams,
+    ) -> Result<AgentApiOutcome<AccessPolicyReadResponse>, AgentApiError> {
+        Err(AgentApiError::internal("access policies are unavailable"))
+    }
+    async fn put_access_policy(
+        &self,
+        _params: AccessPolicyPutParams,
+    ) -> Result<AgentApiOutcome<AccessPolicyPutResponse>, AgentApiError> {
+        Err(AgentApiError::internal("access policies are unavailable"))
+    }
 
     async fn initialize(
         &self,

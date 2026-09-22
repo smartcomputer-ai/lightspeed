@@ -92,6 +92,260 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
+    "name": "lightspeed_access_policy_read",
+    "method": "access/policy/read",
+    "summary": "Read a resource's access policy",
+    "description": "Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.",
+    "paramsType": "AccessPolicyReadParams",
+    "resultType": "AgentApiOutcome<AccessPolicyReadResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "properties": {
+        "resource": {
+          "$ref": "#/definitions/ResourceRef"
+        }
+      },
+      "required": [
+        "resource"
+      ],
+      "type": "object",
+      "definitions": {
+        "ResourceRef": {
+          "description": "Durable control facts, distinct from an agent's execution credentials.",
+          "oneOf": [
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "session",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "bot",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "profile",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "lightspeed_access_policy_put",
+    "method": "access/policy/put",
+    "summary": "Replace a resource's access policy",
+    "description": "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.",
+    "paramsType": "AccessPolicyPutParams",
+    "resultType": "AgentApiOutcome<AccessPolicyPutResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "description": "Replace a root's visibility and grant set. Only the owner may grant\n`write`; writers may share `read` and change visibility; readers change\nnothing.",
+      "properties": {
+        "expectedRevision": {
+          "description": "The revision from `access/policy/read`; absent replaces unconditionally.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "grants": {
+          "items": {
+            "$ref": "#/definitions/AccessGrantInput"
+          },
+          "type": "array"
+        },
+        "resource": {
+          "$ref": "#/definitions/ResourceRef"
+        },
+        "visibility": {
+          "$ref": "#/definitions/Visibility"
+        }
+      },
+      "required": [
+        "resource",
+        "visibility"
+      ],
+      "type": "object",
+      "definitions": {
+        "AccessGrantInput": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "properties": {
+            "permission": {
+              "$ref": "#/definitions/ResourcePermission"
+            },
+            "subject": {
+              "$ref": "#/definitions/Subject"
+            }
+          },
+          "required": [
+            "subject",
+            "permission"
+          ],
+          "type": "object"
+        },
+        "ResourcePermission": {
+          "description": "One permission a grant confers on a root. `Read` sees the tree; `Write`\nalso controls it.",
+          "enum": [
+            "read",
+            "write"
+          ],
+          "type": "string"
+        },
+        "ResourceRef": {
+          "description": "Durable control facts, distinct from an agent's execution credentials.",
+          "oneOf": [
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "session",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "bot",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "profile",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Subject": {
+          "oneOf": [
+            {
+              "additionalProperties": {
+                "not": {}
+              },
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "principal",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": {
+                "not": {}
+              },
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "group",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Visibility": {
+          "description": "Who may see a root's tree without a grant.",
+          "enum": [
+            "universe",
+            "restricted"
+          ],
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
     "name": "lightspeed_session_start",
     "method": "session/start",
     "summary": "Create or reopen a session",
@@ -104,6 +358,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "not": {}
       },
       "properties": {
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AccessInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Audience of the new session, set atomically with its creation. Absent\nmeans universe-visible."
+        },
         "config": {
           "anyOf": [
             {
@@ -156,6 +421,51 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       },
       "type": "object",
       "definitions": {
+        "AccessGrantInput": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "properties": {
+            "permission": {
+              "$ref": "#/definitions/ResourcePermission"
+            },
+            "subject": {
+              "$ref": "#/definitions/Subject"
+            }
+          },
+          "required": [
+            "subject",
+            "permission"
+          ],
+          "type": "object"
+        },
+        "AccessInput": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
+          "properties": {
+            "grants": {
+              "description": "Readers and writers of the root. Each subject must currently hold a\nrole in the universe.",
+              "items": {
+                "$ref": "#/definitions/AccessGrantInput"
+              },
+              "type": "array"
+            },
+            "visibility": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Visibility"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
+            }
+          },
+          "type": "object"
+        },
         "CompactionPolicy": {
           "oneOf": [
             {
@@ -743,6 +1053,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           ]
         },
+        "ResourcePermission": {
+          "description": "One permission a grant confers on a root. `Read` sees the tree; `Write`\nalso controls it.",
+          "enum": [
+            "read",
+            "write"
+          ],
+          "type": "string"
+        },
         "SessionConfig": {
           "additionalProperties": {
             "not": {}
@@ -869,6 +1187,50 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "agents"
           ],
           "type": "object"
+        },
+        "Subject": {
+          "oneOf": [
+            {
+              "additionalProperties": {
+                "not": {}
+              },
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "principal",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": {
+                "not": {}
+              },
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "group",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "TimersFeature": {
           "additionalProperties": {
@@ -1028,6 +1390,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           },
           "type": "object"
+        },
+        "Visibility": {
+          "description": "Who may see a root's tree without a grant.",
+          "enum": [
+            "universe",
+            "restricted"
+          ],
+          "type": "string"
         },
         "WebFeature": {
           "additionalProperties": {
@@ -8350,6 +8720,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AccessInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Audience of the bot, its events and every session it creates, set\natomically with its creation. Absent means universe-visible."
+        },
         "bot": {
           "$ref": "#/definitions/BotInput"
         },
@@ -8366,6 +8747,51 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
+        "AccessGrantInput": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "properties": {
+            "permission": {
+              "$ref": "#/definitions/ResourcePermission"
+            },
+            "subject": {
+              "$ref": "#/definitions/Subject"
+            }
+          },
+          "required": [
+            "subject",
+            "permission"
+          ],
+          "type": "object"
+        },
+        "AccessInput": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
+          "properties": {
+            "grants": {
+              "description": "Readers and writers of the root. Each subject must currently hold a\nrole in the universe.",
+              "items": {
+                "$ref": "#/definitions/AccessGrantInput"
+              },
+              "type": "array"
+            },
+            "visibility": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Visibility"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
+            }
+          },
+          "type": "object"
+        },
         "BotBreaker": {
           "description": "Per-trigger flood breaker: a trigger that admits more than `fires`\nevents inside `window_ms` is disabled until a human re-enables it.",
           "properties": {
@@ -9112,6 +9538,66 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         },
         "ProfileId": {
+          "type": "string"
+        },
+        "ResourcePermission": {
+          "description": "One permission a grant confers on a root. `Read` sees the tree; `Write`\nalso controls it.",
+          "enum": [
+            "read",
+            "write"
+          ],
+          "type": "string"
+        },
+        "Subject": {
+          "oneOf": [
+            {
+              "additionalProperties": {
+                "not": {}
+              },
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "principal",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": {
+                "not": {}
+              },
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "group",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Visibility": {
+          "description": "Who may see a root's tree without a grant.",
+          "enum": [
+            "universe",
+            "restricted"
+          ],
           "type": "string"
         },
         "WebhookPreset": {

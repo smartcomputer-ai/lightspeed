@@ -458,6 +458,7 @@ pub async fn ensure_session(
     // its label (renames are a separate, label-only operation).
     if let Err(error) = api
         .start_managed_session(ManagedSessionStartParams {
+            access: None,
             session_id: Some(request.session_id.clone()),
             display_name: request.display_name.clone(),
             metadata: bot_session_metadata(&request.bot_id),

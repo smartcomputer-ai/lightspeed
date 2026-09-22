@@ -185,6 +185,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: Some("Checkpoint and bounded reads live test".to_owned()),
@@ -383,6 +384,7 @@ async fn run_fake_live_client(
 
     let started = api
         .start_session(SessionStartParams {
+            access: None,
             metadata: Default::default(),
             session_id: Some(session_id.as_str().to_owned()),
             display_name: None,
@@ -593,6 +595,7 @@ async fn run_fake_live_client(
     // Retried session/start with the same session id returns the session.
     let restarted = api
         .start_session(SessionStartParams {
+            access: None,
             metadata: Default::default(),
             session_id: Some(session_id.as_str().to_owned()),
             display_name: None,
@@ -665,6 +668,7 @@ async fn run_lifecycle_delete_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: Some("Lifecycle delete live test".to_owned()),
@@ -754,6 +758,7 @@ async fn run_continue_as_new_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -883,6 +888,7 @@ async fn run_context_append_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1094,6 +1100,7 @@ async fn run_admission_failure_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1207,6 +1214,7 @@ async fn run_openai_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1280,6 +1288,7 @@ async fn run_builtin_tool_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1435,6 +1444,7 @@ async fn run_session_metadata_live_client(
 
     let started = api
         .start_session(SessionStartParams {
+            access: None,
             session_id: Some(session_id.as_str().to_owned()),
             display_name: Some("Metadata live test".to_owned()),
             metadata: job.clone(),
@@ -1503,6 +1513,7 @@ async fn run_session_metadata_live_client(
     // The registration bounds apply at start and at put.
     let reserved = api
         .start_session(SessionStartParams {
+            access: None,
             session_id: Some(format!("{}-reserved", session_id.as_str())),
             display_name: None,
             metadata: BTreeMap::from([pair("lightspeed.owner", "x")]),

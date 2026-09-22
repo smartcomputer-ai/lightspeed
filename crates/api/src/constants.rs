@@ -13,6 +13,8 @@ pub const PROTOCOL_VERSION: &str = "lightspeed.agent.api.v1";
 
 pub const METHOD_INITIALIZE: &str = "initialize";
 pub const METHOD_ACCESS_READ: &str = "access/read";
+pub const METHOD_ACCESS_POLICY_READ: &str = "access/policy/read";
+pub const METHOD_ACCESS_POLICY_PUT: &str = "access/policy/put";
 
 // ── Sessions: lifecycle ─────────────────────────────────────────────────────
 

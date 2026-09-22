@@ -49,7 +49,11 @@ row with its current owner and visibility; a bot's sessions and delegated
 children resolve to their root's policy and have no owner of their own. Every
 decision loads the anchor, the root's policy and the caller's grant on the root
 in one statement and then decides; a root without a policy row is unreadable by
-everyone. Anchors are independent of execution credentials. Deleting content
+everyone. `access/policy/read` shows a resource's governing policy and
+`access/policy/put` replaces its visibility and grants: writers share read
+access or change visibility, only the owner grants write, every subject must
+hold a role in the universe, and a share revoked while a reader waits on the
+transcript ends that wait. Anchors are independent of execution credentials. Deleting content
 releases its anchor, so the id belongs to the universe again; content without a
 trusted anchor cannot be claimed by retrying creation.
 

@@ -86,6 +86,7 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
             let started = calling(
                 caller.clone(),
                 api.start_session(SessionStartParams {
+                    access: None,
                     metadata: Default::default(),
                     session_id: Some(session_id.as_str().to_owned()),
                     display_name: None,

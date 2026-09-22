@@ -4,11 +4,13 @@
 
 use super::*;
 pub use ::access::{
-    AccessChange, AccessChangeResult, AccessDirectory, AccessScope, CapabilityAssignment,
-    EffectiveAccess, Group as IdentityGroup, Membership, Principal as IdentityPrincipal,
-    PrincipalKind as IdentityPrincipalKind, PrincipalStatus, ResourceRef, Role as AccessRole,
-    RoleAssignment, RoleDecision, ServiceCapability, Subject, UniverseAction,
+    AccessChange, AccessChangeResult, AccessDirectory, AccessScope, ActionActor,
+    CapabilityAssignment, EffectiveAccess, Group as IdentityGroup, Membership,
+    Principal as IdentityPrincipal, PrincipalKind as IdentityPrincipalKind, PrincipalStatus,
+    ResourceGrant, ResourcePermission, ResourceRef, Role as AccessRole, RoleAssignment,
+    RoleDecision, ServiceCapability, Subject, UniverseAction, Visibility,
 };
+use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "requirement", rename_all = "snake_case")]
@@ -183,4 +185,78 @@ pub struct AccessReadResponse {
     /// returned only under `resources`, even when the caller has a broad role.
     pub actions: Vec<UniverseAction>,
     pub resources: Vec<ResourceAccessView>,
+}
+
+/// Audience of a root, requested at creation. A session or bot created under
+/// another root (a bot's session, a delegated child) has no audience of its
+/// own and refuses this.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessInput {
+    /// `universe` lets every member read; `restricted` limits reading to the
+    /// owner and the grants below. Absent means `universe`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<Visibility>,
+    /// Readers and writers of the root. Each subject must currently hold a
+    /// role in the universe.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<AccessGrantInput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessGrantInput {
+    pub subject: Subject,
+    pub permission: ResourcePermission,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessPolicyReadParams {
+    pub resource: ResourceRef,
+}
+
+/// The policy governing a resource: its root's owner, visibility and grants.
+/// A resource below a root (a bot's session, a delegated child) shows its
+/// root's policy; sharing it means sharing the root.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessPolicyView {
+    pub resource: ResourceRef,
+    /// The root whose policy this is; equal to `resource` for a root.
+    pub root: ResourceRef,
+    pub owner: Uuid,
+    pub visibility: Visibility,
+    pub grants: Vec<ResourceGrant>,
+    /// Advances with every replacement; pass it as `expectedRevision`.
+    pub revision: u64,
+    pub updated_by: ActionActor,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessPolicyReadResponse {
+    pub policy: AccessPolicyView,
+}
+
+/// Replace a root's visibility and grant set. Only the owner may grant
+/// `write`; writers may share `read` and change visibility; readers change
+/// nothing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessPolicyPutParams {
+    pub resource: ResourceRef,
+    pub visibility: Visibility,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<AccessGrantInput>,
+    /// The revision from `access/policy/read`; absent replaces unconditionally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessPolicyPutResponse {
+    pub policy: AccessPolicyView,
 }

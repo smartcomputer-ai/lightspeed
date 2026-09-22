@@ -137,11 +137,12 @@ inside each universe.
 Gateway and shared-service enforcement evaluates current roles, explicit service
 capabilities and each resource's anchor and root policy. Contributor control
 requires ownership or a write grant on the root; Operator/Admin may stop another
-person's session but cannot steer it; Admin may delete any session. Every root
-is currently universe-visible, so existing content is readable by universe
-members. The sharing methods that restrict a root and grant readers and writers,
-and individual resource isolation, remain follow-ups, so principal attribution
-alone is not yet a privacy boundary. Lists and subsequent requests see committed revocations, and
+person's session but cannot steer it; Admin may delete any session. A root is
+universe-visible unless its creator restricts it, at creation or later through
+`access/policy/put`; a restricted session or bot is absent, in reads and lists
+alike, to everyone but its owner and the principals and groups granted `read`
+or `write` on it, administrators included. Individual resource isolation
+(workspaces, environments, MCP servers) remains a follow-up. Lists and subsequent requests see committed revocations, and
 parked transcript long polls end when their caller's authority is revoked.
 
 ## Keep Platform and runtime records aligned

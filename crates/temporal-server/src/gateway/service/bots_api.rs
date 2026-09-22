@@ -832,8 +832,9 @@ impl GatewayAgentApi {
         let store = self.store();
         let BotInput { bot_id, document } = params.bot;
         self.require_profile(&document.profile_id).await?;
-        self.reserve_resource(ResourceRef::Bot(bot_id.as_str().to_owned()))
-            .await?;
+        let resource = ResourceRef::Bot(bot_id.as_str().to_owned());
+        self.reserve_resource(resource.clone()).await?;
+        self.apply_creation_access(&resource, params.access).await?;
         let bot = store
             .create_bot(bot_id.clone(), document, bot_now_ms())
             .await
@@ -877,9 +878,10 @@ impl GatewayAgentApi {
     }
 
     pub(super) async fn list_bot_roster(&self) -> Result<BotListResponse, AgentApiError> {
+        let reader = self.reader()?;
         let rows = self
             .store()
-            .list_bot_roster()
+            .list_bot_roster_for(&reader)
             .await
             .map_err(map_bot_error)?;
         Ok(BotListResponse {

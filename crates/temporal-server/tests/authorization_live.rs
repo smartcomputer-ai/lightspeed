@@ -34,6 +34,16 @@ fn success(value: Value) -> Value {
 fn forbidden(value: Value) {
     assert_eq!(value["error"]["data"]["kind"], "forbidden", "{value}");
 }
+fn not_found(value: Value) {
+    assert_eq!(value["error"]["data"]["kind"], "not_found", "{value}");
+}
+fn lists(value: &Value, session: &str) -> bool {
+    value["sessions"]
+        .as_array()
+        .expect("session list")
+        .iter()
+        .any(|s| s["id"] == session)
+}
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires disposable Postgres and Temporal; fake model; serialized"]
@@ -132,6 +142,87 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             success(rpc(&endpoint, viewer, "session/read", json!({"sessionId":session})).await);
             success(rpc(&endpoint, viewer, "session/list", json!({})).await);
             forbidden(rpc(&endpoint, viewer, "blobs/put", json!({"blobs":[]})).await);
+
+            // Sharing. A restricted session is absent to everyone but its owner,
+            // Admin included, in reads and lists alike.
+            let private = success(rpc(&endpoint, alice, "session/start", json!({"access":{"visibility":"restricted"}})).await)["session"]["id"].as_str().unwrap().to_owned();
+            let resource = json!({"kind":"session","id":private});
+            let read = json!({"sessionId":private});
+            for caller in [viewer, bob, operator, universe_admin] {
+                not_found(rpc(&endpoint, caller, "session/read", read.clone()).await);
+                not_found(rpc(&endpoint, caller, "session/events/read", read.clone()).await);
+                not_found(rpc(&endpoint, caller, "access/policy/read", json!({"resource":resource})).await);
+                assert!(!lists(&success(rpc(&endpoint, caller, "session/list", json!({})).await), &private));
+            }
+            // Those whose role could delete learn nothing either; the Viewer's role refuses first.
+            for caller in [bob, operator, universe_admin] {
+                not_found(rpc(&endpoint, caller, "session/delete", read.clone()).await);
+            }
+            assert!(lists(&success(rpc(&endpoint, alice, "session/list", json!({})).await), &private));
+            let policy = success(rpc(&endpoint, alice, "access/policy/read", json!({"resource":resource})).await)["policy"].clone();
+            assert_eq!(policy["visibility"], "restricted");
+            assert_eq!(policy["owner"], json!(alice.record.principal_id));
+            let revision = policy["revision"].as_u64().unwrap();
+            // The owner grants read to Bob and write to a group holding the Viewer.
+            let readers = Uuid::new_v4();
+            access.apply(admin.id, AccessChange::CreateGroup { id: readers, display_name: "Writers".into() }, 20).await?;
+            access.apply(admin.id, AccessChange::PutMembership { membership: access::Membership { group_id: readers, principal_id: viewer.record.principal_id } }, 21).await?;
+            // A subject must hold a role in the universe before it can be granted anything.
+            let put_without_role = rpc(&endpoint, alice, "access/policy/put", json!({"resource":resource,"visibility":"restricted",
+                "grants":[{"subject":{"kind":"group","id":readers},"permission":"read"}]})).await;
+            assert_eq!(put_without_role["error"]["data"]["kind"], "invalid_request", "{put_without_role}");
+            access.apply(admin.id, AccessChange::AssignRole { assignment: RoleAssignment { scope, subject: Subject::Group(readers), role: Role::Viewer } }, 23).await?;
+            let grants = json!([
+                {"subject":{"kind":"principal","id":bob.record.principal_id},"permission":"read"},
+                {"subject":{"kind":"group","id":readers},"permission":"write"},
+            ]);
+            let put = json!({"resource":resource,"visibility":"restricted","grants":grants,"expectedRevision":revision});
+            let put_result = rpc(&endpoint, alice, "access/policy/put", put.clone()).await;
+            assert_eq!(put_result["result"]["result"]["policy"]["revision"], json!(revision + 1), "{put_result}");
+            // A stale revision is a conflict; a subject outside the universe is invalid.
+            assert_eq!(rpc(&endpoint, alice, "access/policy/put", put).await["error"]["data"]["kind"], "conflict");
+            assert_eq!(rpc(&endpoint, alice, "access/policy/put", json!({"resource":resource,"visibility":"restricted",
+                "grants":[{"subject":{"kind":"principal","id":Uuid::new_v4()},"permission":"read"}]})).await["error"]["data"]["kind"], "invalid_request");
+            // A reader reads and is listed to, but neither controls nor shares.
+            success(rpc(&endpoint, bob, "session/read", read.clone()).await);
+            assert!(lists(&success(rpc(&endpoint, bob, "session/list", json!({})).await), &private));
+            forbidden(rpc(&endpoint, bob, "session/rename", json!({"sessionId":private,"displayName":"mine"})).await);
+            forbidden(rpc(&endpoint, bob, "access/policy/put", json!({"resource":resource,"visibility":"universe"})).await);
+            // A writer through a group controls, but the role still bounds it: the
+            // Viewer cannot steer. A writer shares read and visibility, never write.
+            success(rpc(&endpoint, viewer, "session/read", read.clone()).await);
+            forbidden(rpc(&endpoint, viewer, "session/rename", json!({"sessionId":private,"displayName":"mine"})).await);
+            forbidden(rpc(&endpoint, viewer, "access/policy/put", json!({"resource":resource,"visibility":"restricted","grants":[
+                {"subject":{"kind":"principal","id":bob.record.principal_id},"permission":"write"},
+                {"subject":{"kind":"group","id":readers},"permission":"write"}]})).await);
+            forbidden(rpc(&endpoint, viewer, "access/policy/put", json!({"resource":resource,"visibility":"restricted","grants":[
+                {"subject":{"kind":"principal","id":bob.record.principal_id},"permission":"read"}]})).await);
+            access.apply(admin.id, AccessChange::PutMembership { membership: access::Membership { group_id: readers, principal_id: bob.record.principal_id } }, 22).await?;
+            success(rpc(&endpoint, bob, "session/rename", json!({"sessionId":private,"displayName":"ours"})).await);
+            success(rpc(&endpoint, bob, "access/policy/put", json!({"resource":resource,"visibility":"restricted","grants":[
+                {"subject":{"kind":"principal","id":operator.record.principal_id},"permission":"read"},
+                {"subject":{"kind":"group","id":readers},"permission":"write"}]})).await);
+            // Elevated roles act only on what they can see: a reading Operator stops, an Admin without a grant still sees nothing.
+            success(rpc(&endpoint, operator, "session/read", read.clone()).await);
+            not_found(rpc(&endpoint, universe_admin, "session/read", read.clone()).await);
+            // Revocation by replacement: the whole set is what the owner says.
+            success(rpc(&endpoint, alice, "access/policy/put", json!({"resource":resource,"visibility":"restricted"})).await);
+            for caller in [viewer, bob, operator] {
+                not_found(rpc(&endpoint, caller, "session/read", read.clone()).await);
+            }
+            // Universe visibility restores role rules; a bot's audience is set the same way.
+            success(rpc(&endpoint, alice, "access/policy/put", json!({"resource":resource,"visibility":"universe"})).await);
+            success(rpc(&endpoint, viewer, "session/read", read.clone()).await);
+            let private_bot = format!("bot-{}", Uuid::new_v4().simple());
+            let profile_for_bot = format!("profile-{}", Uuid::new_v4().simple());
+            success(rpc(&endpoint, alice, "profiles/put", json!({"profile":{"profileId":profile_for_bot}})).await);
+            success(rpc(&endpoint, alice, "bots/create", json!({"bot":{"botId":private_bot,"profileId":profile_for_bot},"access":{"visibility":"restricted"}})).await);
+            not_found(rpc(&endpoint, operator, "bots/read", json!({"botId":private_bot})).await);
+            assert!(!success(rpc(&endpoint, operator, "bots/list", json!({})).await)["bots"].as_array().unwrap().iter().any(|b| b["bot"]["botId"] == private_bot));
+            success(rpc(&endpoint, alice, "bots/read", json!({"botId":private_bot})).await);
+            assert_eq!(rpc(&endpoint, alice, "session/start", json!({"sessionId":session,"access":{"visibility":"restricted"}})).await["error"]["data"]["kind"], "invalid_request");
+            // The group's role served the sharing scenario only; the revocation checks below assume the Viewer's own role.
+            access.apply(admin.id, AccessChange::RevokeRole { assignment: RoleAssignment { scope, subject: Subject::Group(readers), role: Role::Viewer } }, 24).await?;
             // A contributor can author templates but cannot edit another author's template.
             let profile = format!("profile-{}", Uuid::new_v4().simple());
             let document = json!({"profile":{"profileId":profile}});

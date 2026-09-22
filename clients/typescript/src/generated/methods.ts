@@ -6,6 +6,8 @@ import type * as Api from "./types.js";
 
 export const METHODS = [
   "access/read",
+  "access/policy/read",
+  "access/policy/put",
   "initialize",
   "session/start",
   "session/managed/start",
@@ -145,6 +147,18 @@ export const METHOD_INFO = {
     access: {"kind":"universe","requirement":"read"},
     summary: "Read current action permissions",
     description: "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
+  },
+  "access/policy/read": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"read"},
+    summary: "Read a resource's access policy",
+    description: "Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.",
+  },
+  "access/policy/put": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"share_resource"},
+    summary: "Replace a resource's access policy",
+    description: "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.",
   },
   "initialize": {
     scope: "universe",
@@ -955,6 +969,24 @@ export interface MethodMap {
   "access/read": {
     params: Api.AccessReadParams;
     result: Api.AgentApiOutcomeOfAccessReadResponse;
+  };
+  /**
+   * Read a resource's access policy
+   *
+   * Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.
+   */
+  "access/policy/read": {
+    params: Api.AccessPolicyReadParams;
+    result: Api.AgentApiOutcomeOfAccessPolicyReadResponse;
+  };
+  /**
+   * Replace a resource's access policy
+   *
+   * Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.
+   */
+  "access/policy/put": {
+    params: Api.AccessPolicyPutParams;
+    result: Api.AgentApiOutcomeOfAccessPolicyPutResponse;
   };
   /**
    * Inspect the Lightspeed protocol
@@ -2152,6 +2184,22 @@ export const rpc = {
    */
   accessRead(client: RpcCaller, params: Api.AccessReadParams): Promise<Api.AgentApiOutcomeOfAccessReadResponse> {
     return client.call("access/read", params);
+  },
+  /**
+   * Read a resource's access policy
+   *
+   * Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.
+   */
+  accessPolicyRead(client: RpcCaller, params: Api.AccessPolicyReadParams): Promise<Api.AgentApiOutcomeOfAccessPolicyReadResponse> {
+    return client.call("access/policy/read", params);
+  },
+  /**
+   * Replace a resource's access policy
+   *
+   * Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.
+   */
+  accessPolicyPut(client: RpcCaller, params: Api.AccessPolicyPutParams): Promise<Api.AgentApiOutcomeOfAccessPolicyPutResponse> {
+    return client.call("access/policy/put", params);
   },
   /**
    * Inspect the Lightspeed protocol

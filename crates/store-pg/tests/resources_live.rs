@@ -318,7 +318,13 @@ async fn exercise(pool: &sqlx::PgPool) {
             .resource_actions(alice, &personal, false)
             .await
             .unwrap(),
-        vec![Read, ControlSession, StopSession, DeleteSession]
+        vec![
+            Read,
+            ControlSession,
+            StopSession,
+            DeleteSession,
+            ShareResource
+        ]
     );
     assert_eq!(
         store
@@ -362,11 +368,17 @@ async fn exercise(pool: &sqlx::PgPool) {
             .resource_actions(alice, &personal, true)
             .await
             .unwrap(),
-        vec![Read, ControlSession, StopSession]
+        vec![Read, ControlSession, StopSession, ShareResource]
     );
     assert_eq!(
         store.resource_actions(bob, &fork, true).await.unwrap(),
-        vec![Read, ControlSession, StopSession, DeleteSession]
+        vec![
+            Read,
+            ControlSession,
+            StopSession,
+            DeleteSession,
+            ShareResource
+        ]
     );
     let mut foreign_scope = alice.clone();
     foreign_scope.scope = AccessScope::Universe {
@@ -453,7 +465,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         );
         assert_eq!(
             store.resource_actions(bob, resource, false).await.unwrap(),
-            vec![Read, ControlSession, StopSession]
+            vec![Read, ControlSession, StopSession, ShareResource]
         );
         assert_eq!(
             store

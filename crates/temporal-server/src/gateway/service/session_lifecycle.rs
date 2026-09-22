@@ -208,6 +208,7 @@ impl GatewayAgentApi {
                 // Delegated children inherit their retention root and never
                 // apply a profile's root-session default.
                 delete_after_close_ms: Some(None),
+                access: None,
             },
             false,
             true,
@@ -234,6 +235,7 @@ impl GatewayAgentApi {
                 config: None,
                 profile,
                 delete_after_close_ms: None,
+                access: None,
             },
             close_on_terminal,
             false,
@@ -258,6 +260,7 @@ impl GatewayAgentApi {
             config,
             profile,
             delete_after_close_ms,
+            access,
         } = params;
         validate_caller_metadata(&metadata)?;
         let workflow_tools = trusted_workflow_tools;
@@ -288,10 +291,16 @@ impl GatewayAgentApi {
             .map_err(|e| AgentApiError::internal(e.to_string()))?
             .is_some()
         {
+            if access.is_some() {
+                return Err(AgentApiError::invalid_request(
+                    "access is set at creation; use access/policy/put for an existing session",
+                ));
+            }
             self.authorize_method(METHOD_SESSION_CONFIG_PUT, Some(resource))
                 .await?;
         } else {
-            self.reserve_resource(resource).await?;
+            self.reserve_resource(resource.clone()).await?;
+            self.apply_creation_access(&resource, access).await?;
         }
         let admitted = workflow_tools
             .as_ref()

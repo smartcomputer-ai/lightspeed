@@ -383,6 +383,123 @@ struct SessionSegment {
     through: u64,
 }
 
+impl PgStore {
+    /// `list_sessions` for one reader: the page holds only sessions the
+    /// reader may read, decided in SQL by the resource policy.
+    pub async fn list_sessions_for(
+        &self,
+        request: ListSessions,
+        reader: &crate::Reader,
+    ) -> Result<SessionListPage, SessionStoreError> {
+        if request.limit == 0 {
+            return Err(SessionStoreError::InvalidLimit { limit: 0 });
+        }
+        let fetch_limit = usize_to_session_i64(request.limit.saturating_add(1), "limit")?;
+        let (cursor_updated_at_ms, cursor_session_id) = match &request.cursor {
+            Some(cursor) => (
+                Some(u64_to_i64(cursor.updated_at_ms, "cursor updated_at_ms")?),
+                Some(cursor.session_id.as_str().to_owned()),
+            ),
+            None => (None, None),
+        };
+        // Metadata predicates are appended only when their filter form is
+        // present. Exact containment can use the GIN index; presence matching
+        // uses PostgreSQL's native all-keys operator. A `$n IS NULL OR` form
+        // would force weaker generic plans.
+        let metadata_exact = request
+            .metadata
+            .iter()
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let metadata_keys = request
+            .metadata
+            .iter()
+            .filter(|(_, value)| value.is_empty())
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        let metadata_filter = (!metadata_exact.is_empty())
+            .then(|| metadata_json(&metadata_exact))
+            .transpose()?;
+        let metadata_predicate = match (metadata_filter.is_some(), metadata_keys.is_empty()) {
+            (true, false) => "AND metadata_json @> $10 AND metadata_json ?& $11",
+            (true, true) => "AND metadata_json @> $10",
+            (false, false) => "AND metadata_json ?& $10",
+            (false, true) => "",
+        };
+        let lifecycle_predicate = if request.exclude_closed {
+            "AND lifecycle_status <> 'closed'"
+        } else {
+            ""
+        };
+        let readable =
+            crate::resources::readable_predicate(reader, "session", "sessions", "session_id", 7);
+        let (reader_principal, reader_root_kind, reader_root_id) = reader.binds();
+        let query = format!(
+            r#"
+            SELECT {SESSION_COLUMNS}
+            FROM sessions
+            WHERE universe_id = $1
+              AND ($2::bigint IS NULL OR (updated_at_ms, session_id) < ($2, $3))
+              AND ($4::text IS NULL OR origin_root_session_id = $4)
+              AND ($5::text IS NULL OR origin_parent_session_id = $5)
+              {lifecycle_predicate}
+              AND {readable}
+              {metadata_predicate}
+            ORDER BY updated_at_ms DESC, session_id DESC
+            LIMIT $6
+            "#,
+        );
+        let mut sql = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(cursor_updated_at_ms)
+            .bind(cursor_session_id)
+            .bind(
+                request
+                    .root_session_id
+                    .as_ref()
+                    .map(|id| id.as_str().to_owned()),
+            )
+            .bind(
+                request
+                    .parent_session_id
+                    .as_ref()
+                    .map(|id| id.as_str().to_owned()),
+            )
+            .bind(fetch_limit)
+            .bind(reader_principal)
+            .bind(reader_root_kind)
+            .bind(reader_root_id);
+        if let Some(filter) = metadata_filter {
+            sql = sql.bind(filter);
+        }
+        if !metadata_keys.is_empty() {
+            sql = sql.bind(metadata_keys);
+        }
+        let rows = sql
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| session_sql_error("list sessions", error))?;
+
+        let mut sessions = rows
+            .iter()
+            .map(session_record_from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        let next_cursor = (sessions.len() > request.limit).then(|| {
+            sessions.truncate(request.limit);
+            let last = sessions.last().expect("non-empty page");
+            SessionListCursor {
+                updated_at_ms: last.updated_at_ms,
+                session_id: last.session_id.clone(),
+            }
+        });
+        Ok(SessionListPage {
+            sessions,
+            next_cursor,
+        })
+    }
+}
+
 #[async_trait]
 impl SessionStore for PgStore {
     async fn create_session(
@@ -535,105 +652,8 @@ impl SessionStore for PgStore {
         &self,
         request: ListSessions,
     ) -> Result<SessionListPage, SessionStoreError> {
-        if request.limit == 0 {
-            return Err(SessionStoreError::InvalidLimit { limit: 0 });
-        }
-        let fetch_limit = usize_to_session_i64(request.limit.saturating_add(1), "limit")?;
-        let (cursor_updated_at_ms, cursor_session_id) = match &request.cursor {
-            Some(cursor) => (
-                Some(u64_to_i64(cursor.updated_at_ms, "cursor updated_at_ms")?),
-                Some(cursor.session_id.as_str().to_owned()),
-            ),
-            None => (None, None),
-        };
-        // Metadata predicates are appended only when their filter form is
-        // present. Exact containment can use the GIN index; presence matching
-        // uses PostgreSQL's native all-keys operator. A `$n IS NULL OR` form
-        // would force weaker generic plans.
-        let metadata_exact = request
-            .metadata
-            .iter()
-            .filter(|(_, value)| !value.is_empty())
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let metadata_keys = request
-            .metadata
-            .iter()
-            .filter(|(_, value)| value.is_empty())
-            .map(|(key, _)| key.clone())
-            .collect::<Vec<_>>();
-        let metadata_filter = (!metadata_exact.is_empty())
-            .then(|| metadata_json(&metadata_exact))
-            .transpose()?;
-        let metadata_predicate = match (metadata_filter.is_some(), metadata_keys.is_empty()) {
-            (true, false) => "AND metadata_json @> $7 AND metadata_json ?& $8",
-            (true, true) => "AND metadata_json @> $7",
-            (false, false) => "AND metadata_json ?& $7",
-            (false, true) => "",
-        };
-        let lifecycle_predicate = if request.exclude_closed {
-            "AND lifecycle_status <> 'closed'"
-        } else {
-            ""
-        };
-        let query = format!(
-            r#"
-            SELECT {SESSION_COLUMNS}
-            FROM sessions
-            WHERE universe_id = $1
-              AND ($2::bigint IS NULL OR (updated_at_ms, session_id) < ($2, $3))
-              AND ($4::text IS NULL OR origin_root_session_id = $4)
-              AND ($5::text IS NULL OR origin_parent_session_id = $5)
-              {lifecycle_predicate}
-              {metadata_predicate}
-            ORDER BY updated_at_ms DESC, session_id DESC
-            LIMIT $6
-            "#,
-        );
-        let mut sql = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(cursor_updated_at_ms)
-            .bind(cursor_session_id)
-            .bind(
-                request
-                    .root_session_id
-                    .as_ref()
-                    .map(|id| id.as_str().to_owned()),
-            )
-            .bind(
-                request
-                    .parent_session_id
-                    .as_ref()
-                    .map(|id| id.as_str().to_owned()),
-            )
-            .bind(fetch_limit);
-        if let Some(filter) = metadata_filter {
-            sql = sql.bind(filter);
-        }
-        if !metadata_keys.is_empty() {
-            sql = sql.bind(metadata_keys);
-        }
-        let rows = sql
-            .fetch_all(&self.pool)
+        self.list_sessions_for(request, &crate::Reader::Everything)
             .await
-            .map_err(|error| session_sql_error("list sessions", error))?;
-
-        let mut sessions = rows
-            .iter()
-            .map(session_record_from_row)
-            .collect::<Result<Vec<_>, _>>()?;
-        let next_cursor = (sessions.len() > request.limit).then(|| {
-            sessions.truncate(request.limit);
-            let last = sessions.last().expect("non-empty page");
-            SessionListCursor {
-                updated_at_ms: last.updated_at_ms,
-                session_id: last.session_id.clone(),
-            }
-        });
-        Ok(SessionListPage {
-            sessions,
-            next_cursor,
-        })
     }
 
     async fn set_session_display_name(
