@@ -61,6 +61,7 @@ import {
   type EventLog,
   type ScriptedEvent,
   mcpDisplay,
+  demoAccess,
 } from "./builders";
 import { INCUS_PROVIDER_ID } from "./platform";
 
@@ -292,6 +293,7 @@ function subagentSession(store: DemoStore, universe: UniverseState, init: Subage
 function lineageChild(session: SessionRecord): SessionSummaryView {
   const view = session.view;
   return {
+    access: demoAccess("session", view.id),
     id: view.id,
     displayName: view.displayName ?? null,
     createdAtMs: view.createdAtMs,

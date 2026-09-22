@@ -55,6 +55,7 @@ pub struct ProjectSession<'a> {
     pub state: &'a CoreAgentState,
     pub record: &'a SessionRecord,
     pub retention: &'a SessionRetentionView,
+    pub access: &'a api::ResourceAccessSummary,
     pub run_limit: usize,
     pub run_cursor: Option<RunId>,
 }
@@ -112,6 +113,7 @@ impl<'a> CoreAgentProjector<'a> {
         };
 
         let session = SessionView {
+            access: params.access.clone(),
             id: params.session_id.as_str().to_owned(),
             display_name: params.record.display_name.clone(),
             metadata: params.record.metadata.clone(),
@@ -3573,6 +3575,12 @@ mod tests {
 
         let session = projector
             .project_session(ProjectSession {
+                access: &api::ResourceAccessSummary {
+                    root: api::ResourceRef::Session("session_1".to_owned()),
+                    owner: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
+                    visibility: api::Visibility::Universe,
+                    execution: None,
+                },
                 session_id: &session_id,
                 state: &state,
                 record: &record,

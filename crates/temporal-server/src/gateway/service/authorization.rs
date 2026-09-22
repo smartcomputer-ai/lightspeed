@@ -224,6 +224,7 @@ impl GatewayAgentApi {
                 },
                 &ResourceController::Session(parent.as_str().to_owned()),
                 None,
+                None,
                 now_ms()? as u64,
             )
             .await
@@ -262,6 +263,55 @@ impl GatewayAgentApi {
         self.caller()
             .map(crate::gateway::authentication::Revalidation::new)
             .map(Some)
+    }
+
+    /// The execution identity a new root runs as. `service` is the
+    /// universe's execution service; `personal` is the requesting person,
+    /// allowed only where the universe enables it. Internal work never
+    /// chooses: its resources copy their controller's.
+    pub(super) async fn resolve_execution(
+        &self,
+        requested: Option<ExecutionInput>,
+    ) -> Result<access::Execution, AgentApiError> {
+        let kind = requested
+            .map(|input| input.kind)
+            .unwrap_or(access::ExecutionKind::Service);
+        let policy = self
+            .access_store()
+            .universe_execution_policy(self.universe_id(), now_ms()? as u64)
+            .await
+            .map_err(access_error)?;
+        match kind {
+            access::ExecutionKind::Service => Ok(access::Execution {
+                run_as: policy.execution_principal_id,
+                kind,
+            }),
+            access::ExecutionKind::Personal => {
+                let principal = self.caller()?.acting_principal().clone();
+                if !policy.personal_execution_enabled
+                    || principal.kind != access::PrincipalKind::User
+                {
+                    return Err(denied());
+                }
+                Ok(access::Execution {
+                    run_as: principal.id,
+                    kind,
+                })
+            }
+        }
+    }
+
+    /// The access summary a view carries; a resource without one was never
+    /// admitted, which is an internal inconsistency, not a caller error.
+    pub(super) async fn access_summary(
+        &self,
+        resource: &ResourceRef,
+    ) -> Result<access::ResourceAccessSummary, AgentApiError> {
+        self.access_store()
+            .access_summary(self.universe_id(), resource)
+            .await
+            .map_err(access_error)?
+            .ok_or_else(|| AgentApiError::internal(format!("{resource:?} has no access policy")))
     }
 
     /// Who a list is for: the request's principal, or internal work's root.
@@ -392,6 +442,7 @@ impl GatewayAgentApi {
         &self,
         resource: ResourceRef,
         root: Option<&ResourceRef>,
+        execution: Option<access::Execution>,
     ) -> Result<(), AgentApiError> {
         if let Some(root) = root {
             if !matches!(root, ResourceRef::Collection(_)) {
@@ -442,6 +493,7 @@ impl GatewayAgentApi {
                 &created_by,
                 &controller,
                 root,
+                execution,
                 now_ms()? as u64,
             )
             .await

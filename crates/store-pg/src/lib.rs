@@ -39,6 +39,17 @@ use uuid::Uuid;
 pub use access::{LOCAL_DEVELOPMENT_PRINCIPAL, PgAccessStore};
 pub use resources::{CollectionRecord, PolicyReplacement, Reader, ResourcePolicyRecord};
 
+/// A session page for one reader: each record with the access summary its
+/// view carries.
+#[derive(Clone, Debug)]
+pub struct SessionListPageWithAccess {
+    pub sessions: Vec<(
+        engine::storage::SessionRecord,
+        ::access::ResourceAccessSummary,
+    )>,
+    pub next_cursor: Option<engine::storage::SessionListCursor>,
+}
+
 pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");
 pub const VFS_SCHEMA_SQL: &str = include_str!("../migrations/002_vfs.sql");
 pub const MCP_SCHEMA_SQL: &str = include_str!("../migrations/003_mcp.sql");

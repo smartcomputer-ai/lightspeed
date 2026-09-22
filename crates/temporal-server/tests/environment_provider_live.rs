@@ -548,6 +548,7 @@ async fn run_environment_power_live_client(
     // until an operation actually needs to use it.
     api.start_session(SessionStartParams {
         access: None,
+        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,

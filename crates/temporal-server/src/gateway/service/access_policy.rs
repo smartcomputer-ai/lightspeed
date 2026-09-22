@@ -13,6 +13,7 @@ fn policy_view(resource: ResourceRef, record: store_pg::ResourcePolicyRecord) ->
         root: record.anchor.audience_root,
         owner: record.policy.owner,
         visibility: record.policy.visibility,
+        execution: record.anchor.execution,
         grants: record.grants,
         revision: record.policy.revision,
         updated_by: record.policy.updated_by,
@@ -145,8 +146,21 @@ impl GatewayAgentApi {
         resource: &ResourceRef,
         access: Option<AccessInput>,
     ) -> Result<(), AgentApiError> {
-        let Some(access) = access else {
-            return Ok(());
+        // A personal root is restricted unless its owner says otherwise.
+        let personal = self
+            .access_store()
+            .anchor(self.universe_id(), resource)
+            .await
+            .map_err(map_policy_error)?
+            .and_then(|anchor| anchor.execution)
+            .is_some_and(|execution| execution.kind == access::ExecutionKind::Personal);
+        let access = match access {
+            Some(access) => access,
+            None if personal => AccessInput {
+                visibility: Some(Visibility::Restricted),
+                ..AccessInput::default()
+            },
+            None => return Ok(()),
         };
         if access.root.is_some() {
             if access.visibility.is_some() || !access.grants.is_empty() {
@@ -178,7 +192,11 @@ impl GatewayAgentApi {
                 actor,
                 resource,
                 &store_pg::PolicyReplacement {
-                    visibility: access.visibility.unwrap_or(Visibility::Universe),
+                    visibility: access.visibility.unwrap_or(if personal {
+                        Visibility::Restricted
+                    } else {
+                        Visibility::Universe
+                    }),
                     grants,
                     expected_revision: None,
                     owner: None,

@@ -303,6 +303,7 @@ mod tests {
                     json!({"session": {
                         "id": "session_1", "status": if status.is_some() { "active" } else { "idle" },
                         "retention": {"rootSessionId": "session_1"}, "managed": false,
+                        "access": {"root": {"kind": "session", "id": "session_1"}, "owner": "00000000-0000-0000-0000-000000000000", "visibility": "universe"},
                         "configRevision": 0, "createdAtMs": 1, "updatedAtMs": 1,
                         "activeContext": {"revision": 0}, "activeRun": active_run,
                         "runs": [{"id": "run_2", "status": "queued", "acceptedAtMs": 2, "source": {"type": "input"}}],

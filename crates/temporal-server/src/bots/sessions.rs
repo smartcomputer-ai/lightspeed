@@ -459,6 +459,7 @@ pub async fn ensure_session(
     if let Err(error) = api
         .start_managed_session(ManagedSessionStartParams {
             access: None,
+            execution: None,
             session_id: Some(request.session_id.clone()),
             display_name: request.display_name.clone(),
             metadata: bot_session_metadata(&request.bot_id),
@@ -844,6 +845,12 @@ mod tests {
             .find(|run| matches!(run.status, RunStatus::Running | RunStatus::Parked))
             .cloned();
         SessionView {
+            access: access::ResourceAccessSummary {
+                root: access::ResourceRef::Bot("triage".to_owned()),
+                owner: uuid::Uuid::nil(),
+                visibility: access::Visibility::Universe,
+                execution: None,
+            },
             metadata: Default::default(),
             id: "bot:v1:triage".to_owned(),
             display_name: None,

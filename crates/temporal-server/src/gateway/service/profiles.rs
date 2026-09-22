@@ -34,6 +34,7 @@ impl GatewayAgentApi {
         self.reserve_resource(
             ResourceRef::Profile(params.profile.profile_id.as_str().to_owned()),
             None,
+            None,
         )
         .await?;
         let created_at_ms = now_ms()?;
@@ -92,7 +93,7 @@ impl GatewayAgentApi {
         } else {
             self.authorize_method(METHOD_PROFILES_CREATE, Some(resource.clone()))
                 .await?;
-            self.reserve_resource(resource, None).await?;
+            self.reserve_resource(resource, None, None).await?;
         }
         let profile = self
             .store

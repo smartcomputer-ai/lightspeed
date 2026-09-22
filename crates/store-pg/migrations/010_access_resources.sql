@@ -28,8 +28,15 @@ CREATE TABLE access_resources (
     audience_root_id text NOT NULL,
     -- The bot whose worker controls this resource, if any.
     bot_id text,
+    -- The principal the root's work runs as, and whether that is the
+    -- universe's execution service or the owner itself. Copied from the root
+    -- at reservation; absent for kinds that run nothing.
+    run_as_principal_id uuid REFERENCES access_principals(principal_id),
+    execution_kind text CHECK (execution_kind IN ('service', 'personal')),
     created_at_ms bigint NOT NULL CHECK (created_at_ms >= 0),
-    PRIMARY KEY (universe_id, resource_kind, resource_id)
+    PRIMARY KEY (universe_id, resource_kind, resource_id),
+    CHECK ((run_as_principal_id IS NULL) = (execution_kind IS NULL)),
+    CHECK ((resource_kind = 'profile') = (run_as_principal_id IS NULL))
 );
 CREATE INDEX access_resources_root_idx ON access_resources (universe_id, audience_root_kind, audience_root_id);
 

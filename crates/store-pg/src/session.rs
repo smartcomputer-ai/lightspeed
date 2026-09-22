@@ -385,12 +385,13 @@ struct SessionSegment {
 
 impl PgStore {
     /// `list_sessions` for one reader: the page holds only sessions the
-    /// reader may read, decided in SQL by the resource policy.
+    /// reader may read, decided in SQL by the resource policy, each with the
+    /// access summary its view carries.
     pub async fn list_sessions_for(
         &self,
         request: ListSessions,
         reader: &crate::Reader,
-    ) -> Result<SessionListPage, SessionStoreError> {
+    ) -> Result<crate::SessionListPageWithAccess, SessionStoreError> {
         if request.limit == 0 {
             return Err(SessionStoreError::InvalidLimit { limit: 0 });
         }
@@ -422,31 +423,42 @@ impl PgStore {
             .then(|| metadata_json(&metadata_exact))
             .transpose()?;
         let metadata_predicate = match (metadata_filter.is_some(), metadata_keys.is_empty()) {
-            (true, false) => "AND metadata_json @> $10 AND metadata_json ?& $11",
-            (true, true) => "AND metadata_json @> $10",
-            (false, false) => "AND metadata_json ?& $10",
+            (true, false) => "AND sessions.metadata_json @> $10 AND sessions.metadata_json ?& $11",
+            (true, true) => "AND sessions.metadata_json @> $10",
+            (false, false) => "AND sessions.metadata_json ?& $10",
             (false, true) => "",
         };
         let lifecycle_predicate = if request.exclude_closed {
-            "AND lifecycle_status <> 'closed'"
+            "AND sessions.lifecycle_status <> 'closed'"
         } else {
             ""
         };
         let readable =
             crate::resources::readable_predicate(reader, "session", "sessions", "session_id", 7);
         let (reader_principal, reader_root_kind, reader_root_id) = reader.binds();
+        let summary_columns = crate::resources::SUMMARY_COLUMNS;
+        // The anchor join brings columns of the same names; qualify ours.
+        let session_columns = SESSION_COLUMNS
+            .split(',')
+            .map(str::trim)
+            .filter(|column| !column.is_empty())
+            .map(|column| format!("sessions.{column}"))
+            .collect::<Vec<_>>()
+            .join(", ");
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}
+            SELECT {session_columns}, {summary_columns}
             FROM sessions
-            WHERE universe_id = $1
-              AND ($2::bigint IS NULL OR (updated_at_ms, session_id) < ($2, $3))
-              AND ($4::text IS NULL OR origin_root_session_id = $4)
-              AND ($5::text IS NULL OR origin_parent_session_id = $5)
+            JOIN access_resources ra ON ra.universe_id = sessions.universe_id AND ra.resource_kind = 'session' AND ra.resource_id = sessions.session_id
+            JOIN access_resource_policies rp ON rp.universe_id = ra.universe_id AND rp.resource_kind = ra.audience_root_kind AND rp.resource_id = ra.audience_root_id
+            WHERE sessions.universe_id = $1
+              AND ($2::bigint IS NULL OR (sessions.updated_at_ms, sessions.session_id) < ($2, $3))
+              AND ($4::text IS NULL OR sessions.origin_root_session_id = $4)
+              AND ($5::text IS NULL OR sessions.origin_parent_session_id = $5)
               {lifecycle_predicate}
               AND {readable}
               {metadata_predicate}
-            ORDER BY updated_at_ms DESC, session_id DESC
+            ORDER BY sessions.updated_at_ms DESC, sessions.session_id DESC
             LIMIT $6
             "#,
         );
@@ -483,17 +495,26 @@ impl PgStore {
 
         let mut sessions = rows
             .iter()
-            .map(session_record_from_row)
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|row| {
+                Ok((
+                    session_record_from_row(row)?,
+                    crate::resources::summary_from_list_row(row).map_err(|error| {
+                        SessionStoreError::Store {
+                            message: error.to_string(),
+                        }
+                    })?,
+                ))
+            })
+            .collect::<Result<Vec<_>, SessionStoreError>>()?;
         let next_cursor = (sessions.len() > request.limit).then(|| {
             sessions.truncate(request.limit);
-            let last = sessions.last().expect("non-empty page");
+            let (last, _) = sessions.last().expect("non-empty page");
             SessionListCursor {
                 updated_at_ms: last.updated_at_ms,
                 session_id: last.session_id.clone(),
             }
         });
-        Ok(SessionListPage {
+        Ok(crate::SessionListPageWithAccess {
             sessions,
             next_cursor,
         })
@@ -652,8 +673,17 @@ impl SessionStore for PgStore {
         &self,
         request: ListSessions,
     ) -> Result<SessionListPage, SessionStoreError> {
-        self.list_sessions_for(request, &crate::Reader::Everything)
-            .await
+        let page = self
+            .list_sessions_for(request, &crate::Reader::Everything)
+            .await?;
+        Ok(SessionListPage {
+            sessions: page
+                .sessions
+                .into_iter()
+                .map(|(record, _)| record)
+                .collect(),
+            next_cursor: page.next_cursor,
+        })
     }
 
     async fn set_session_display_name(

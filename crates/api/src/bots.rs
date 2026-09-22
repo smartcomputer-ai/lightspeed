@@ -237,6 +237,7 @@ pub struct BotView {
 pub struct BotListItem {
     #[serde(flatten)]
     pub bot: BotView,
+    pub access: ResourceAccessSummary,
     pub trigger_count: u32,
     /// Events whose delivery has not finished.
     pub pending_count: u64,
@@ -1022,6 +1023,10 @@ pub struct BotCreateParams {
     /// atomically with its creation. Absent means universe-visible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AccessInput>,
+    /// Execution identity of the bot and every session it creates; absent
+    /// means the universe's execution service. Refused with `access.root`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ExecutionInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1058,6 +1063,8 @@ pub struct BotReadParams {
 #[serde(rename_all = "camelCase")]
 pub struct BotReadResponse {
     pub bot: BotView,
+    /// The root governing this bot and its sessions, and who they run as.
+    pub access: ResourceAccessSummary,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

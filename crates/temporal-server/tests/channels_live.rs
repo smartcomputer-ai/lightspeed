@@ -285,6 +285,7 @@ async fn create_bot_with_chat(
     let created = api
         .create_bot(BotCreateParams {
             access: None,
+            execution: None,
             bot: BotInput {
                 bot_id: bot_id.clone(),
                 document: BotDocument {

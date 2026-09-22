@@ -253,9 +253,29 @@ pub enum ResourcePermission {
     Write,
 }
 
+/// Under whose authority a root's work runs: the universe's execution
+/// service, or the person who created it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionKind {
+    Service,
+    Personal,
+}
+
+/// The execution identity of a root, fixed at creation and copied to every
+/// resource below it. Never a login identity of someone else: `personal`
+/// means the owner itself, `service` a keyless service principal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Execution {
+    pub run_as: Uuid,
+    pub kind: ExecutionKind,
+}
+
 /// Immutable facts of one governed resource, reserved before it exists. The
-/// audience root and managing bot are copied from the admitted controller at
-/// reservation, so a decision reads one row instead of walking a lineage.
+/// audience root, managing bot and execution are copied from the admitted
+/// controller at reservation, so a decision reads one row instead of walking
+/// a lineage.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceAnchor {
@@ -267,7 +287,30 @@ pub struct ResourceAnchor {
     pub audience_root: ResourceRef,
     /// The bot whose worker controls this resource, if any.
     pub bot: Option<String>,
+    /// Absent only for kinds that run nothing (profiles).
+    pub execution: Option<Execution>,
     pub created_at_ms: u64,
+}
+
+/// What a viewer needs to show "shared through X, running as Y" without a
+/// second request: the root and its policy, plus the execution identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceAccessSummary {
+    pub root: ResourceRef,
+    pub owner: Uuid,
+    pub visibility: Visibility,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<Execution>,
+}
+
+/// A universe's execution policy: the service principal its work runs as by
+/// default, and whether people may run work as themselves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UniverseExecutionPolicy {
+    pub execution_principal_id: Uuid,
+    pub personal_execution_enabled: bool,
 }
 
 impl ResourceAnchor {

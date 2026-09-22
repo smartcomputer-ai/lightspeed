@@ -123,7 +123,9 @@ pub async fn list_universe_object_keys(
 /// are revalidated. `false` when the universe did not exist.
 pub async fn delete_universe(pool: &PgPool, universe_id: Uuid) -> Result<bool, PgStoreError> {
     Ok(sqlx::query_scalar(
-        "WITH removed AS (DELETE FROM universes WHERE universe_id = $1 RETURNING 1),
+        "WITH retired AS (UPDATE access_principals SET status = 'disabled'
+                          WHERE principal_id = (SELECT execution_principal_id FROM universes WHERE universe_id = $1)),
+              removed AS (DELETE FROM universes WHERE universe_id = $1 RETURNING 1),
               advanced AS (UPDATE access_policy SET revision = revision + 1
                            WHERE singleton AND EXISTS (SELECT 1 FROM removed))
          SELECT EXISTS (SELECT 1 FROM removed)",

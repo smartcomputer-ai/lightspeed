@@ -212,9 +212,11 @@ fn session_retention_view(
 fn session_summary_view(
     record: engine::storage::SessionRecord,
     root: &engine::storage::SessionRecord,
+    access: access::ResourceAccessSummary,
 ) -> SessionSummaryView {
     let retention = session_retention_view(&record, root);
     SessionSummaryView {
+        access,
         id: record.session_id.as_str().to_owned(),
         display_name: record.display_name,
         metadata: record.metadata,
@@ -235,6 +237,38 @@ fn session_summary_view(
             .flatten(),
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
+    }
+}
+
+impl GatewayAgentApi {
+    /// A summary for a single session, with its access looked up.
+    async fn session_summary(
+        &self,
+        record: engine::storage::SessionRecord,
+        root: &engine::storage::SessionRecord,
+    ) -> Result<SessionSummaryView, AgentApiError> {
+        let access = self
+            .access_summary(&ResourceRef::Session(record.session_id.as_str().to_owned()))
+            .await?;
+        Ok(session_summary_view(record, root, access))
+    }
+
+    /// The execution a new root runs as, or nothing for a member, which
+    /// inherits its collection's and refuses a choice of its own.
+    pub(super) async fn execution_for_new_root(
+        &self,
+        root: Option<&ResourceRef>,
+        requested: Option<ExecutionInput>,
+    ) -> Result<Option<access::Execution>, AgentApiError> {
+        if root.is_some() {
+            if requested.is_some() {
+                return Err(AgentApiError::invalid_request(
+                    "a member of a collection inherits its execution",
+                ));
+            }
+            return Ok(None);
+        }
+        self.resolve_execution(requested).await.map(Some)
     }
 }
 
@@ -1049,12 +1083,16 @@ impl GatewayAgentApi {
         let loaded = self.load_session_state(session_id).await?;
         let retention_root = self.load_retention_root(&loaded.record).await?;
         let retention = session_retention_view(&loaded.record, &retention_root);
+        let access = self
+            .access_summary(&ResourceRef::Session(session_id.as_str().to_owned()))
+            .await?;
         self.projector()
             .project_session(ProjectSession {
                 session_id,
                 state: &loaded.state,
                 record: &loaded.record,
                 retention: &retention,
+                access: &access,
                 run_limit: DEFAULT_RUN_SUMMARY_LIMIT,
                 run_cursor: None,
             })
@@ -1070,12 +1108,16 @@ impl GatewayAgentApi {
         let loaded = self.load_session_state(session_id).await?;
         let retention_root = self.load_retention_root(&loaded.record).await?;
         let retention = session_retention_view(&loaded.record, &retention_root);
+        let access = self
+            .access_summary(&ResourceRef::Session(session_id.as_str().to_owned()))
+            .await?;
         self.projector()
             .project_session(ProjectSession {
                 session_id,
                 state: &loaded.state,
                 record: &loaded.record,
                 retention: &retention,
+                access: &access,
                 run_limit,
                 run_cursor: None,
             })
@@ -1576,6 +1618,42 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
+    async fn read_access_execution(
+        &self,
+        _params: AccessExecutionReadParams,
+    ) -> Result<AgentApiOutcome<AccessExecutionReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ACCESS_EXECUTION_READ, None)
+            .await?;
+        let policy = self
+            .access_store()
+            .universe_execution_policy(self.universe_id(), now_ms()? as u64)
+            .await
+            .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        Ok(AgentApiOutcome::new(AccessExecutionReadResponse { policy }))
+    }
+
+    async fn update_access_execution(
+        &self,
+        params: AccessExecutionUpdateParams,
+    ) -> Result<AgentApiOutcome<AccessExecutionUpdateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ACCESS_EXECUTION_UPDATE, None)
+            .await?;
+        let actor = self.caller()?.acting_principal().id;
+        let policy = self
+            .access_store()
+            .set_personal_execution_enabled(
+                self.universe_id(),
+                actor,
+                params.personal_execution_enabled,
+                now_ms()? as u64,
+            )
+            .await
+            .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        Ok(AgentApiOutcome::new(AccessExecutionUpdateResponse {
+            policy,
+        }))
+    }
+
     async fn create_collection(
         &self,
         params: CollectionCreateParams,
@@ -1682,7 +1760,13 @@ impl AgentApiService for GatewayAgentApi {
         let bot = ::bots::BotStore::read_bot(self.store.as_ref(), &params.bot_id)
             .await
             .map_err(crate::bots::map_bot_error)?;
-        Ok(AgentApiOutcome::new(BotReadResponse { bot: bot.view() }))
+        let access = self
+            .access_summary(&ResourceRef::Bot(params.bot_id.as_str().to_owned()))
+            .await?;
+        Ok(AgentApiOutcome::new(BotReadResponse {
+            bot: bot.view(),
+            access,
+        }))
     }
 
     async fn list_bots(
@@ -2091,6 +2175,7 @@ impl AgentApiService for GatewayAgentApi {
             profile,
             delete_after_close_ms,
             access,
+            execution,
             workflow_tools,
         } = params;
         let workflow_tools = managed_workflow_tools_from_api(workflow_tools)?;
@@ -2123,6 +2208,7 @@ impl AgentApiService for GatewayAgentApi {
                 profile,
                 delete_after_close_ms,
                 access,
+                execution,
             },
             false,
             false,
@@ -2350,9 +2436,9 @@ impl AgentApiService for GatewayAgentApi {
             .await
             .map_err(map_session_store_error)?;
         let mut sessions = Vec::with_capacity(page.sessions.len());
-        for record in page.sessions {
+        for (record, access) in page.sessions {
             let root = self.load_retention_root(&record).await?;
-            sessions.push(session_summary_view(record, &root));
+            sessions.push(session_summary_view(record, &root, access));
         }
         Ok(AgentApiOutcome::new(SessionListResponse {
             sessions,
@@ -2379,7 +2465,7 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(map_session_store_error)?;
         let root = self.load_retention_root(&record).await?;
         Ok(AgentApiOutcome::new(SessionRenameResponse {
-            session: session_summary_view(record, &root),
+            session: self.session_summary(record, &root).await?,
         }))
     }
 
@@ -2403,7 +2489,7 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(map_session_store_error)?;
         let root = self.load_retention_root(&record).await?;
         Ok(AgentApiOutcome::new(SessionMetadataPutResponse {
-            session: session_summary_view(record, &root),
+            session: self.session_summary(record, &root).await?,
         }))
     }
 
@@ -2427,7 +2513,7 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(map_session_store_error)?;
         let root = record.clone();
         Ok(AgentApiOutcome::new(SessionRetentionPutResponse {
-            session: session_summary_view(record, &root),
+            session: self.session_summary(record, &root).await?,
         }))
     }
 
@@ -2603,6 +2689,10 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(map_session_store_error)?
             .ok_or_else(|| AgentApiError::not_found(format!("session not found: {session_id}")))?;
         let root = self.load_retention_root(&target_before_delete).await?;
+        // The anchor goes with the session; capture what the view shows first.
+        let access = self
+            .access_summary(&ResourceRef::Session(session_id.as_str().to_owned()))
+            .await?;
         let deleted = crate::session_deletion::delete_session_subtree(
             self.store.as_ref(),
             engine::storage::DeleteClosedSessions {
@@ -2615,7 +2705,7 @@ impl AgentApiService for GatewayAgentApi {
         .await
         .map_err(map_session_store_error)?;
         Ok(AgentApiOutcome::new(SessionDeleteResponse {
-            session: session_summary_view(deleted.target, &root),
+            session: session_summary_view(deleted.target, &root, access),
             deleted_session_count: deleted.deleted_session_ids.len() as u64,
         }))
     }

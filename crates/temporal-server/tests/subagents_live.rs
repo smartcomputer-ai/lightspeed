@@ -644,6 +644,7 @@ async fn start_subagent_parent_with_features(
 ) -> anyhow::Result<String> {
     api.start_session(SessionStartParams {
         access: None,
+        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1235,6 +1236,7 @@ async fn run_agent_run_inherit_environment_live_client(
         config: None,
         delete_after_close_ms: None,
         access: None,
+        execution: None,
         profile: Some(ProfileSource::Inline {
             profile: Box::new(api::InlineAgentProfile {
                 display_name: None,

@@ -1940,6 +1940,7 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionListResponse {
             sessions: vec![SessionSummaryView {
+                access: test_access_summary(),
                 metadata: Default::default(),
                 id: "session_test".to_owned(),
                 display_name: Some("Test session".to_owned()),
@@ -1961,6 +1962,7 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionRenameResponse {
             session: SessionSummaryView {
+                access: test_access_summary(),
                 metadata: Default::default(),
                 retention: test_session_retention(&params.session_id),
                 id: params.session_id,
@@ -1981,6 +1983,7 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionMetadataPutResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionMetadataPutResponse {
             session: SessionSummaryView {
+                access: test_access_summary(),
                 retention: test_session_retention(&params.session_id),
                 id: params.session_id,
                 display_name: None,
@@ -2017,6 +2020,7 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionDeleteResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionDeleteResponse {
             session: SessionSummaryView {
+                access: test_access_summary(),
                 metadata: Default::default(),
                 retention: test_session_retention(&params.session_id),
                 id: params.session_id,
@@ -3144,6 +3148,7 @@ fn test_workspace(workspace_id: String, revision: u64) -> VfsWorkspaceView {
 fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
     let retention = test_session_retention(&id);
     SessionView {
+        access: test_access_summary(),
         metadata: Default::default(),
         id,
         display_name: Some("Test session".to_owned()),
@@ -3708,4 +3713,13 @@ async fn deployment_dispatch_rejects_universe_scoped_methods_and_vice_versa() {
     )
     .await;
     assert_eq!(response.error.expect("error").code, -32601);
+}
+
+fn test_access_summary() -> ResourceAccessSummary {
+    ResourceAccessSummary {
+        root: ResourceRef::Session("session_1".to_owned()),
+        owner: uuid::Uuid::nil(),
+        visibility: Visibility::Universe,
+        execution: None,
+    }
 }

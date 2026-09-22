@@ -22,6 +22,18 @@ pub trait AgentApiService: Send + Sync {
     ) -> Result<AgentApiOutcome<AccessPolicyPutResponse>, AgentApiError> {
         Err(AgentApiError::internal("access policies are unavailable"))
     }
+    async fn read_access_execution(
+        &self,
+        _params: AccessExecutionReadParams,
+    ) -> Result<AgentApiOutcome<AccessExecutionReadResponse>, AgentApiError> {
+        Err(AgentApiError::internal("execution policy is unavailable"))
+    }
+    async fn update_access_execution(
+        &self,
+        _params: AccessExecutionUpdateParams,
+    ) -> Result<AgentApiOutcome<AccessExecutionUpdateResponse>, AgentApiError> {
+        Err(AgentApiError::internal("execution policy is unavailable"))
+    }
     async fn create_collection(
         &self,
         _params: CollectionCreateParams,

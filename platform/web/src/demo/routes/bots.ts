@@ -6,6 +6,7 @@
 /// `admitBotEvent`: numbered, routed by its trigger's policy to one of the
 /// bot's sessions, and delivered as a run whose end writes the event's
 /// outcome.
+import { demoAccess } from "../fixtures/builders";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type {
@@ -130,6 +131,7 @@ function botViewOf(record: BotRecord): BotView {
 function listItemOf(record: BotRecord): BotListItem {
   return {
     ...botViewOf(record),
+    access: demoAccess("bot", record.bot.botId),
     triggerCount: record.triggers.size,
     pendingCount: record.events.filter((event) => event.outcome === null || event.outcome === undefined)
       .length,

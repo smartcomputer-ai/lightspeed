@@ -54,6 +54,10 @@ pub struct SessionStartParams {
     /// means universe-visible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AccessInput>,
+    /// Execution identity of the new session; absent means the universe's
+    /// execution service. Refused with `access.root`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ExecutionInput>,
 }
 
 /// Creation request for a session with immutable workflow ownership and
@@ -88,6 +92,9 @@ pub struct ManagedSessionStartParams {
     /// Audience of the new session, as for `session/start`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AccessInput>,
+    /// Execution identity of the new session, as for `session/start`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ExecutionInput>,
     pub workflow_tools: ManagedSessionWorkflowToolsInput,
 }
 
@@ -970,6 +977,9 @@ pub struct SessionSummaryView {
     /// Sub-agent lineage; absent for root sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<SessionOriginView>,
+    /// The root governing this session, its owner and visibility, and who
+    /// its work runs as.
+    pub access: ResourceAccessSummary,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }

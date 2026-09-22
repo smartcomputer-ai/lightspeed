@@ -78,3 +78,10 @@ CREATE TABLE api_keys (
 );
 CREATE INDEX authenticated_keys_universe_idx ON api_keys(universe_id);
 
+
+-- Every universe's work runs as its execution service unless a person runs
+-- it as themselves, which an administrator must enable. The service
+-- principal is created with the universe's first governed resource.
+ALTER TABLE universes
+    ADD COLUMN execution_principal_id uuid REFERENCES access_principals (principal_id),
+    ADD COLUMN personal_execution_enabled boolean NOT NULL DEFAULT false;

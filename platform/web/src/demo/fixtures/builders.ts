@@ -1067,10 +1067,18 @@ export function subagentSession(store: DemoStore, universe: UniverseState, init:
   });
 }
 
+/// The demo universe is one open workspace: every root is universe-visible
+/// and owned by the demo person.
+export const DEMO_OWNER = "00000000-0000-4000-8000-000000000001";
+export function demoAccess(kind: "session" | "bot" | "collection", id: string) {
+  return { root: { kind, id }, owner: DEMO_OWNER, visibility: "universe" as const };
+}
+
 /// A session summary in the core wire shape (bot-state descendants).
 export function sessionSummaryOf(session: SessionRecord): SessionSummaryView {
   const view = session.view;
   return {
+    access: demoAccess("session", view.id),
     id: view.id,
     displayName: view.displayName ?? null,
     createdAtMs: view.createdAtMs,

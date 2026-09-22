@@ -209,6 +209,7 @@ impl GatewayAgentApi {
                 // apply a profile's root-session default.
                 delete_after_close_ms: Some(None),
                 access: None,
+                execution: None,
             },
             false,
             true,
@@ -236,6 +237,7 @@ impl GatewayAgentApi {
                 profile,
                 delete_after_close_ms: None,
                 access: None,
+                execution: None,
             },
             close_on_terminal,
             false,
@@ -261,6 +263,7 @@ impl GatewayAgentApi {
             profile,
             delete_after_close_ms,
             access,
+            execution,
         } = params;
         validate_caller_metadata(&metadata)?;
         let workflow_tools = trusted_workflow_tools;
@@ -291,19 +294,20 @@ impl GatewayAgentApi {
             .map_err(|e| AgentApiError::internal(e.to_string()))?
             .is_some()
         {
-            if access.is_some() {
+            if access.is_some() || execution.is_some() {
                 return Err(AgentApiError::invalid_request(
-                    "access is set at creation; use access/policy/put for an existing session",
+                    "access and execution are set at creation; use access/policy/put for an existing session",
                 ));
             }
             self.authorize_method(METHOD_SESSION_CONFIG_PUT, Some(resource))
                 .await?;
         } else {
-            self.reserve_resource(
-                resource.clone(),
-                access.as_ref().and_then(|a| a.root.as_ref()),
-            )
-            .await?;
+            let root = access.as_ref().and_then(|a| a.root.clone());
+            let execution = self
+                .execution_for_new_root(root.as_ref(), execution)
+                .await?;
+            self.reserve_resource(resource.clone(), root.as_ref(), execution)
+                .await?;
             self.apply_creation_access(&resource, access).await?;
         }
         let admitted = workflow_tools

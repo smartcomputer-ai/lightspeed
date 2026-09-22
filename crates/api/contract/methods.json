@@ -69,6 +69,50 @@
     {
       "access": {
         "kind": "universe",
+        "requirement": "manage_access"
+      },
+      "description": "Returns the service principal the universe's work runs as by default and whether people may run work as themselves.",
+      "method": "access/execution/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AccessExecutionReadParams"
+        },
+        "type": "AccessExecutionReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAccessExecutionReadResponse"
+        },
+        "type": "AgentApiOutcome<AccessExecutionReadResponse>"
+      },
+      "scope": "universe",
+      "summary": "Read the universe execution policy"
+    },
+    {
+      "access": {
+        "kind": "universe",
+        "requirement": "manage_access"
+      },
+      "description": "Enables or disables personal execution. Existing roots keep the execution identity they were created with.",
+      "method": "access/execution/update",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AccessExecutionUpdateParams"
+        },
+        "type": "AccessExecutionUpdateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAccessExecutionUpdateResponse"
+        },
+        "type": "AgentApiOutcome<AccessExecutionUpdateResponse>"
+      },
+      "scope": "universe",
+      "summary": "Update the universe execution policy"
+    },
+    {
+      "access": {
+        "kind": "universe",
         "requirement": "create_collection"
       },
       "description": "Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.",

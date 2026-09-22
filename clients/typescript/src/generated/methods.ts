@@ -8,6 +8,8 @@ export const METHODS = [
   "access/read",
   "access/policy/read",
   "access/policy/put",
+  "access/execution/read",
+  "access/execution/update",
   "collection/create",
   "collection/read",
   "collection/list",
@@ -164,6 +166,18 @@ export const METHOD_INFO = {
     access: {"kind":"universe","requirement":"share_resource"},
     summary: "Replace a resource's access policy",
     description: "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.",
+  },
+  "access/execution/read": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"manage_access"},
+    summary: "Read the universe execution policy",
+    description: "Returns the service principal the universe's work runs as by default and whether people may run work as themselves.",
+  },
+  "access/execution/update": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"manage_access"},
+    summary: "Update the universe execution policy",
+    description: "Enables or disables personal execution. Existing roots keep the execution identity they were created with.",
   },
   "collection/create": {
     scope: "universe",
@@ -1022,6 +1036,24 @@ export interface MethodMap {
   "access/policy/put": {
     params: Api.AccessPolicyPutParams;
     result: Api.AgentApiOutcomeOfAccessPolicyPutResponse;
+  };
+  /**
+   * Read the universe execution policy
+   *
+   * Returns the service principal the universe's work runs as by default and whether people may run work as themselves.
+   */
+  "access/execution/read": {
+    params: Api.AccessExecutionReadParams;
+    result: Api.AgentApiOutcomeOfAccessExecutionReadResponse;
+  };
+  /**
+   * Update the universe execution policy
+   *
+   * Enables or disables personal execution. Existing roots keep the execution identity they were created with.
+   */
+  "access/execution/update": {
+    params: Api.AccessExecutionUpdateParams;
+    result: Api.AgentApiOutcomeOfAccessExecutionUpdateResponse;
   };
   /**
    * Create a collection
@@ -2280,6 +2312,22 @@ export const rpc = {
    */
   accessPolicyPut(client: RpcCaller, params: Api.AccessPolicyPutParams): Promise<Api.AgentApiOutcomeOfAccessPolicyPutResponse> {
     return client.call("access/policy/put", params);
+  },
+  /**
+   * Read the universe execution policy
+   *
+   * Returns the service principal the universe's work runs as by default and whether people may run work as themselves.
+   */
+  accessExecutionRead(client: RpcCaller, params: Api.AccessExecutionReadParams): Promise<Api.AgentApiOutcomeOfAccessExecutionReadResponse> {
+    return client.call("access/execution/read", params);
+  },
+  /**
+   * Update the universe execution policy
+   *
+   * Enables or disables personal execution. Existing roots keep the execution identity they were created with.
+   */
+  accessExecutionUpdate(client: RpcCaller, params: Api.AccessExecutionUpdateParams): Promise<Api.AgentApiOutcomeOfAccessExecutionUpdateResponse> {
+    return client.call("access/execution/update", params);
   },
   /**
    * Create a collection

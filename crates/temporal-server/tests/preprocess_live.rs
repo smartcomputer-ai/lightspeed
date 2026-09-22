@@ -93,6 +93,7 @@ async fn run_audio_preprocess_live_client(
 
     api.start_session(SessionStartParams {
         access: None,
+        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -209,6 +210,7 @@ async fn run_transcodable_audio_preprocess_live_client(
 
     api.start_session(SessionStartParams {
         access: None,
+        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,

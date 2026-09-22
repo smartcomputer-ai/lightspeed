@@ -283,6 +283,33 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             assert_eq!(own["root"], json!({"kind":"bot","id":private_bot}));
             assert_eq!(own["visibility"], "restricted");
             assert!(success(rpc(&endpoint, alice, "collection/list", json!({})).await)["collections"].as_array().unwrap().iter().all(|c| c["collectionId"] == collection_id));
+            // Execution identity. Everything so far runs as the universe's execution
+            // service; personal execution needs an Admin to enable it and binds the
+            // owner, restricts the root by default, and refuses hand-off.
+            forbidden(rpc(&endpoint, alice, "access/execution/read", json!({})).await);
+            let execution = success(rpc(&endpoint, universe_admin, "access/execution/read", json!({})).await)["policy"].clone();
+            let service_principal = execution["executionPrincipalId"].as_str().unwrap().to_owned();
+            assert_eq!(execution["personalExecutionEnabled"], false);
+            let read_session = success(rpc(&endpoint, alice, "session/read", json!({"sessionId":session})).await)["session"].clone();
+            assert_eq!(read_session["access"]["execution"]["runAs"], json!(service_principal), "{read_session}");
+            assert_eq!(read_session["access"]["execution"]["kind"], "service");
+            assert_eq!(read_session["access"]["root"], json!({"kind":"session","id":session}));
+            forbidden(rpc(&endpoint, alice, "session/start", json!({"execution":{"kind":"personal"}})).await);
+            success(rpc(&endpoint, universe_admin, "access/execution/update", json!({"personalExecutionEnabled":true})).await);
+            let mine_id = success(rpc(&endpoint, alice, "session/start", json!({"execution":{"kind":"personal"}})).await)["session"]["id"].as_str().unwrap().to_owned();
+            let mine = success(rpc(&endpoint, alice, "session/read", json!({"sessionId":mine_id})).await)["session"].clone();
+            assert_eq!(mine["access"]["visibility"], "restricted", "{mine}");
+            assert_eq!(mine["access"]["execution"], json!({"runAs":alice.record.principal_id,"kind":"personal"}));
+            not_found(rpc(&endpoint, bob, "session/read", json!({"sessionId":mine_id})).await);
+            assert_eq!(rpc(&endpoint, alice, "access/policy/put", json!({"resource":{"kind":"session","id":mine_id},"visibility":"restricted","owner":bob.record.principal_id})).await["error"]["data"]["kind"], "invalid_request");
+            // A member inherits its collection's execution and may not choose one.
+            assert_eq!(rpc(&endpoint, bob, "session/start", json!({"access":{"root":collection_ref},"execution":{"kind":"service"}})).await["error"]["data"]["kind"], "invalid_request");
+            let member = success(rpc(&endpoint, bob, "session/read", json!({"sessionId":team_session})).await)["session"].clone();
+            assert_eq!(member["access"]["execution"]["runAs"], json!(service_principal));
+            let roster = success(rpc(&endpoint, alice, "bots/list", json!({})).await);
+            assert!(roster["bots"].as_array().unwrap().iter().all(|b| b["access"]["execution"]["runAs"] == json!(service_principal)), "{roster}");
+            success(rpc(&endpoint, universe_admin, "access/execution/update", json!({"personalExecutionEnabled":false})).await);
+            forbidden(rpc(&endpoint, alice, "session/start", json!({"execution":{"kind":"personal"}})).await);
             // The group's role served the sharing scenario only; the revocation checks below assume the Viewer's own role.
             access.apply(admin.id, AccessChange::RevokeRole { assignment: RoleAssignment { scope, subject: Subject::Group(readers), role: Role::Viewer } }, 24).await?;
             // A contributor can author templates but cannot edit another author's template.

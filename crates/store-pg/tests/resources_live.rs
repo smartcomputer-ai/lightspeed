@@ -113,6 +113,10 @@ async fn exercise(pool: &sqlx::PgPool) {
     let alice_actor = ActionActor::Principal {
         id: alice.principal.id,
     };
+    let service = Execution {
+        run_as: alice.principal.id,
+        kind: ExecutionKind::Service,
+    };
     let own = |resource: ResourceRef, controller: ResourceController| (resource, controller);
     let personal = ResourceRef::Session("personal".into());
     let bot = ResourceRef::Bot("assistant".into());
@@ -140,7 +144,17 @@ async fn exercise(pool: &sqlx::PgPool) {
         // Retries are idempotent and return the original facts.
         for _ in 0..2 {
             let stored = store
-                .reserve_resource(universe, &record.0, &alice_actor, &record.1, None, 5)
+                .reserve_resource(
+                    universe,
+                    &record.0,
+                    &alice_actor,
+                    &record.1,
+                    None,
+                    (!matches!(&record.0, ResourceRef::Profile(_))
+                        && matches!(&record.1, ResourceController::Principal(_)))
+                    .then_some(service),
+                    5,
+                )
                 .await
                 .unwrap();
             assert_eq!(stored.created_by, alice_actor);
@@ -171,6 +185,21 @@ async fn exercise(pool: &sqlx::PgPool) {
         assert_eq!(policy.visibility, Visibility::Universe);
         assert_eq!(access.grant, None);
     }
+    // Execution is copied from the root to everything below it; a profile
+    // runs nothing and carries none.
+    for resource in [&personal, &child, &bot, &bot_session, &bot_child] {
+        let anchor = store.anchor(universe, resource).await.unwrap().unwrap();
+        assert_eq!(anchor.execution, Some(service), "{resource:?}");
+    }
+    assert_eq!(
+        store
+            .anchor(universe, &profile)
+            .await
+            .unwrap()
+            .unwrap()
+            .execution,
+        None
+    );
     let policy_rows: i64 =
         sqlx::query_scalar("SELECT count(*) FROM access_resource_policies WHERE universe_id=$1")
             .bind(universe)
@@ -239,8 +268,24 @@ async fn exercise(pool: &sqlx::PgPool) {
     };
     let bob_controller = ResourceController::Principal(bob.principal.id);
     let (a, b) = tokio::join!(
-        store.reserve_resource(universe, &race, &alice_actor, &principal, None, 5),
-        store.reserve_resource(universe, &race, &bob_actor, &bob_controller, None, 5)
+        store.reserve_resource(
+            universe,
+            &race,
+            &alice_actor,
+            &principal,
+            None,
+            Some(service),
+            5
+        ),
+        store.reserve_resource(
+            universe,
+            &race,
+            &bob_actor,
+            &bob_controller,
+            None,
+            Some(service),
+            5
+        )
     );
     assert_ne!(a.is_ok(), b.is_ok());
     assert!(matches!(
@@ -266,6 +311,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                 &alice_actor,
                 &ResourceController::Session("missing".into()),
                 None,
+                None,
                 5,
             )
             .await
@@ -276,7 +322,15 @@ async fn exercise(pool: &sqlx::PgPool) {
     // A history fork carries provenance but has its own explicit controller.
     let fork = ResourceRef::Session("fork".into());
     store
-        .reserve_resource(universe, &fork, &bob_actor, &bob_controller, None, 5)
+        .reserve_resource(
+            universe,
+            &fork,
+            &bob_actor,
+            &bob_controller,
+            None,
+            Some(service),
+            5,
+        )
         .await
         .unwrap();
     assert!(!permitted(alice, UniverseAction::ControlSession, &fork).await);
@@ -520,7 +574,15 @@ async fn exercise(pool: &sqlx::PgPool) {
     // and takes none of its own; it cannot go while members remain.
     let collection = ResourceRef::Collection("team".into());
     store
-        .reserve_resource(universe, &collection, &alice_actor, &principal, None, 11)
+        .reserve_resource(
+            universe,
+            &collection,
+            &alice_actor,
+            &principal,
+            None,
+            Some(service),
+            11,
+        )
         .await
         .unwrap();
     store
@@ -535,11 +597,17 @@ async fn exercise(pool: &sqlx::PgPool) {
             &bob_actor,
             &bob_controller,
             Some(&collection),
+            None,
             12,
         )
         .await
         .unwrap();
     assert_eq!(stored.audience_root, collection);
+    assert_eq!(
+        stored.execution,
+        Some(service),
+        "a member runs as its collection"
+    );
     let member_access = store
         .resource_access(universe, Some(alice.principal.id), &member)
         .await
@@ -563,6 +631,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                 &bob_actor,
                 &bob_controller,
                 Some(&personal),
+                None,
                 12
             )
             .await
@@ -577,6 +646,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                 &alice_actor,
                 &ResourceController::Bot("assistant".into()),
                 Some(&collection),
+                None,
                 12
             )
             .await
@@ -607,7 +677,15 @@ async fn exercise(pool: &sqlx::PgPool) {
         .bind(universe).fetch_one(pool).await.unwrap();
     assert_eq!(leftovers, 0);
     let reused = store
-        .reserve_resource(universe, &personal, &bob_actor, &bob_controller, None, 10)
+        .reserve_resource(
+            universe,
+            &personal,
+            &bob_actor,
+            &bob_controller,
+            None,
+            Some(service),
+            10,
+        )
         .await
         .unwrap();
     assert_eq!(reused.created_by, bob_actor);

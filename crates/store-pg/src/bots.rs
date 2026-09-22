@@ -72,13 +72,15 @@ fn prefixed_event_columns(table: &str, prefix: &str) -> String {
 // ── Bots ────────────────────────────────────────────────────────────────────
 
 impl PgStore {
-    /// The roster for one reader: only bots the reader may read.
+    /// The roster for one reader: only bots the reader may read, each with
+    /// the access summary its view carries.
     pub async fn list_bot_roster_for(
         &self,
         reader: &crate::Reader,
-    ) -> Result<Vec<BotRosterRow>, BotError> {
+    ) -> Result<Vec<(BotRosterRow, ::access::ResourceAccessSummary)>, BotError> {
         let last_event_columns = prefixed_event_columns("le", ROSTER_EVENT_PREFIX);
         let readable = crate::resources::readable_predicate(reader, "bot", "b", "bot_id", 2);
+        let summary_columns = crate::resources::SUMMARY_COLUMNS;
         let event_columns = event_columns();
         let query = format!(
             r#"
@@ -87,8 +89,11 @@ impl PgStore {
                 b.closed_sessions_json, b.created_at_ms, b.updated_at_ms,
                 tc.trigger_count,
                 pc.pending_count,
-                {last_event_columns}
+                {last_event_columns},
+                {summary_columns}
             FROM bots b
+            JOIN access_resources ra ON ra.universe_id = b.universe_id AND ra.resource_kind = 'bot' AND ra.resource_id = b.bot_id
+            JOIN access_resource_policies rp ON rp.universe_id = ra.universe_id AND rp.resource_kind = ra.audience_root_kind AND rp.resource_id = ra.audience_root_id
             LEFT JOIN LATERAL (
                 SELECT count(*) AS trigger_count
                 FROM bot_triggers t
@@ -136,12 +141,21 @@ impl PgStore {
                     Some(_) => Some(event_from_row(row, ROSTER_EVENT_PREFIX)?),
                     None => None,
                 };
-                Ok(BotRosterRow {
-                    bot,
-                    trigger_count: u32::try_from(trigger_count).unwrap_or(u32::MAX),
-                    pending_count: u64::try_from(pending_count).unwrap_or(0),
-                    last_event,
-                })
+                let access = crate::resources::summary_from_list_row(row).map_err(|error| {
+                    bot_sql_error(
+                        "decode access summary",
+                        sqlx::Error::Protocol(error.to_string()),
+                    )
+                })?;
+                Ok((
+                    BotRosterRow {
+                        bot,
+                        trigger_count: u32::try_from(trigger_count).unwrap_or(u32::MAX),
+                        pending_count: u64::try_from(pending_count).unwrap_or(0),
+                        last_event,
+                    },
+                    access,
+                ))
             })
             .collect()
     }
@@ -286,7 +300,12 @@ impl BotStore for PgStore {
     }
 
     async fn list_bot_roster(&self) -> Result<Vec<BotRosterRow>, BotError> {
-        self.list_bot_roster_for(&crate::Reader::Everything).await
+        Ok(self
+            .list_bot_roster_for(&crate::Reader::Everything)
+            .await?
+            .into_iter()
+            .map(|(row, _)| row)
+            .collect())
     }
 
     async fn list_bots_for_profile(

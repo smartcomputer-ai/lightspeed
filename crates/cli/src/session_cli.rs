@@ -193,6 +193,7 @@ async fn start(args: StartArgs) -> Result<()> {
     let response = HttpAgentApi::new(args.common.api_url)
         .start_session(api::SessionStartParams {
             access: None,
+            execution: None,
             session_id: args.session_id,
             display_name: args.display_name,
             metadata: args.metadata.map(),
@@ -519,6 +520,12 @@ mod tests {
     #[test]
     fn session_line_shows_metadata_or_dash() {
         let mut session = api::SessionSummaryView {
+            access: api::ResourceAccessSummary {
+                root: api::ResourceRef::Session("session_1".to_owned()),
+                owner: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
+                visibility: api::Visibility::Universe,
+                execution: None,
+            },
             id: "s1".to_owned(),
             display_name: None,
             metadata: BTreeMap::new(),

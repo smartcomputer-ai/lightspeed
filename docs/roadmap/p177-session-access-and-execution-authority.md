@@ -438,17 +438,17 @@ Edited in place; schema revision advances once and the release metadata with it.
 
 - `010_access_resources.sql` is the anchor: `access_resources` with
   `audience_root_kind`, `audience_root_id` and `bot_id`, `owner_principal_id`
-  moved to the policy row; `run_as_principal_id` and `execution_kind` join it
-  in step 4, optional under a per-kind check;
+  moved to the policy row; `run_as_principal_id` and `execution_kind`,
+  optional only for profiles under a per-kind check;
   `access_resource_policies (key, owner_principal_id, visibility, revision,
   updated_by, updated_at_ms)` and `access_resource_grants (key, subject_kind, subject_id,
   permission, granted_by, granted_at_ms)` with an index on the subject, both
   referencing the root's anchor and cascading with it; `collections
   (universe_id, collection_id, display_name, revision, created_at_ms,
   updated_at_ms)`.
-- `001_core.sql`: `execution_principal_id` and `personal_execution_enabled` on
-  `universes` (or a follow-on file, if the principal foreign key needs
-  `007_identity_access.sql` first); `origin` on `cas_session_roots`;
+- `007_identity_access.sql`: `execution_principal_id` and
+  `personal_execution_enabled` on `universes` (the principal foreign key
+  needs that file); `001_core.sql`: `origin` on `cas_session_roots`;
   `blob_uploads (universe_id, digest, principal_id, uploaded_at_ms)` cascading
   with `cas_blobs`.
 - `008_bots.sql`: `origin` on `cas_bot_event_roots`.
@@ -547,9 +547,31 @@ Each step ships on its own; the order is by dependency.
        the wrapper only; an upload is readable by its uploader only; attaching
        a foreign reference is refused; a receiver replying with a reference it
        did not upload is refused.
-4. [ ] Universe execution service, execution policy methods, execution
+4. [x] Universe execution service, execution policy methods, execution
        resolution at creation and inheritance under roots, "Running as" in
        summaries and web.
+       Done 2026-09-22 (web deferred to step 7): `run_as_principal_id` +
+       `execution_kind` on the anchor (nullable only for profiles), copied
+       from the root to members and children; `execution_principal_id` +
+       `personal_execution_enabled` on `universes` (added from
+       `007_identity_access.sql`, where the principal table exists). The
+       execution service is a keyless service principal managed in the
+       universe holding Contributor, created on first use rather than at
+       universe creation so every creation path (`deployment/universes/
+       create`, `ensure_universe`, local development) is covered; universe
+       deletion disables it. `access/execution/read|update` (ManageAccess;
+       update audited and advances the policy revision). `execution:
+       { kind }` on `session/start`, `session/managed/start`, `bots/create`
+       and `collection/create`; `personal` requires the universe to enable
+       it and a user principal, binds `run_as` to the creator and defaults
+       the root to `restricted`; a member of a collection inherits and
+       refuses a choice; hand-off is refused under personal execution.
+       `access` (`ResourceAccessSummary`: root, owner, visibility, execution)
+       on `SessionView`, `SessionSummaryView`, `bots/read`, `bots/list`
+       items and `CollectionView`, joined into the session list and bot
+       roster queries so a list costs no extra lookups; `execution` on
+       `access/policy/read`. A profile requesting an execution default is
+       not implemented; profiles confer nothing either way.
 5. [ ] `admit_run`, `RunAuthority` on the run record, the `llm_generate` turn
        check, `AuthorityRevoked`, the controller context with its execution
        principal, and bot/sub-agent migration onto it. Live: disable an owner

@@ -405,6 +405,44 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
+    "name": "lightspeed_access_execution_read",
+    "method": "access/execution/read",
+    "summary": "Read the universe execution policy",
+    "description": "Returns the service principal the universe's work runs as by default and whether people may run work as themselves.",
+    "paramsType": "AccessExecutionReadParams",
+    "resultType": "AgentApiOutcome<AccessExecutionReadResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_access_execution_update",
+    "method": "access/execution/update",
+    "summary": "Update the universe execution policy",
+    "description": "Enables or disables personal execution. Existing roots keep the execution identity they were created with.",
+    "paramsType": "AccessExecutionUpdateParams",
+    "resultType": "AgentApiOutcome<AccessExecutionUpdateResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "properties": {
+        "personalExecutionEnabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "personalExecutionEnabled"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "lightspeed_collection_create",
     "method": "collection/create",
     "summary": "Create a collection",
@@ -437,6 +475,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         },
         "displayName": {
           "type": "string"
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ExecutionInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Execution identity of the collection and everything created in it;\nabsent means the universe's execution service."
         }
       },
       "required": [
@@ -499,6 +548,29 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           },
           "type": "object"
+        },
+        "ExecutionInput": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Requested execution identity of a new root. `service` runs as the\nuniverse's execution service; `personal` runs as the creating person and\nneeds the universe to allow it. Absent means `service`. A resource\ncreated under another root inherits and refuses this.",
+          "properties": {
+            "kind": {
+              "$ref": "#/definitions/ExecutionKind"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "ExecutionKind": {
+          "description": "Under whose authority a root's work runs: the universe's execution\nservice, or the person who created it.",
+          "enum": [
+            "service",
+            "personal"
+          ],
+          "type": "string"
         },
         "ResourcePermission": {
           "description": "One permission a grant confers on a root. `Read` sees the tree; `Write`\nalso controls it.",
@@ -779,6 +851,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "string",
             "null"
           ]
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ExecutionInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Execution identity of the new session; absent means the universe's\nexecution service. Refused with `access.root`."
         },
         "metadata": {
           "additionalProperties": {
@@ -1077,6 +1160,29 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           },
           "type": "object"
+        },
+        "ExecutionInput": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Requested execution identity of a new root. `service` runs as the\nuniverse's execution service; `personal` runs as the creating person and\nneeds the universe to allow it. Absent means `service`. A resource\ncreated under another root inherits and refuses this.",
+          "properties": {
+            "kind": {
+              "$ref": "#/definitions/ExecutionKind"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "ExecutionKind": {
+          "description": "Under whose authority a root's work runs: the universe's execution\nservice, or the person who created it.",
+          "enum": [
+            "service",
+            "personal"
+          ],
+          "type": "string"
         },
         "FeaturesConfig": {
           "additionalProperties": {
@@ -9200,6 +9306,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "bot": {
           "$ref": "#/definitions/BotInput"
         },
+        "execution": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ExecutionInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Execution identity of the bot and every session it creates; absent\nmeans the universe's execution service. Refused with `access.root`."
+        },
         "triggers": {
           "description": "Triggers created with the bot in one go; a failure rolls the bot\nback.",
           "items": {
@@ -9842,6 +9959,29 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "string"
             }
           ]
+        },
+        "ExecutionInput": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Requested execution identity of a new root. `service` runs as the\nuniverse's execution service; `personal` runs as the creating person and\nneeds the universe to allow it. Absent means `service`. A resource\ncreated under another root inherits and refuses this.",
+          "properties": {
+            "kind": {
+              "$ref": "#/definitions/ExecutionKind"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "ExecutionKind": {
+          "description": "Under whose authority a root's work runs: the universe's execution\nservice, or the person who created it.",
+          "enum": [
+            "service",
+            "personal"
+          ],
+          "type": "string"
         },
         "PollCursorSpec": {
           "description": "Dedupe discipline of a poll: an id set for unordered feeds, a watermark\nfor ordered ones.",

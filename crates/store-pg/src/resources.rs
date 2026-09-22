@@ -34,6 +34,28 @@ fn visibility_name(visibility: Visibility) -> &'static str {
         Visibility::Restricted => "restricted",
     }
 }
+fn execution_kind_name(kind: ExecutionKind) -> &'static str {
+    match kind {
+        ExecutionKind::Service => "service",
+        ExecutionKind::Personal => "personal",
+    }
+}
+fn execution_from_row(row: &sqlx::postgres::PgRow) -> Result<Option<Execution>, AccessError> {
+    let run_as: Option<Uuid> = row.try_get("run_as_principal_id").map_err(error)?;
+    let kind: Option<String> = row.try_get("execution_kind").map_err(error)?;
+    match (run_as, kind.as_deref()) {
+        (Some(run_as), Some("service")) => Ok(Some(Execution {
+            run_as,
+            kind: ExecutionKind::Service,
+        })),
+        (Some(run_as), Some("personal")) => Ok(Some(Execution {
+            run_as,
+            kind: ExecutionKind::Personal,
+        })),
+        (None, None) => Ok(None),
+        other => Err(error(format!("inconsistent execution columns {other:?}"))),
+    }
+}
 fn permission_from_rank(rank: Option<i32>) -> Option<ResourcePermission> {
     match rank {
         Some(2) => Some(ResourcePermission::Write),
@@ -42,7 +64,7 @@ fn permission_from_rank(rank: Option<i32>) -> Option<ResourcePermission> {
     }
 }
 
-const ACCESS_COLUMNS: &str = "a.resource_kind, a.resource_id, a.created_by, a.controller, a.audience_root_kind, a.audience_root_id, a.bot_id, a.created_at_ms,
+const ACCESS_COLUMNS: &str = "a.resource_kind, a.resource_id, a.created_by, a.controller, a.audience_root_kind, a.audience_root_id, a.bot_id, a.run_as_principal_id, a.execution_kind, a.created_at_ms,
     p.owner_principal_id, p.visibility, p.revision, p.updated_by, p.updated_at_ms";
 const ACCESS_JOIN: &str = "FROM access_resources a LEFT JOIN access_resource_policies p
     ON p.universe_id=a.universe_id AND p.resource_kind=a.audience_root_kind AND p.resource_id=a.audience_root_id";
@@ -62,8 +84,70 @@ fn anchor_row(row: &sqlx::postgres::PgRow) -> Result<ResourceAnchor, AccessError
             row.try_get("audience_root_id").map_err(error)?,
         )?,
         bot: row.try_get("bot_id").map_err(error)?,
+        execution: execution_from_row(row)?,
         created_at_ms: u64::try_from(row.try_get::<i64, _>("created_at_ms").map_err(error)?)
             .map_err(error)?,
+    })
+}
+
+/// The summary a view carries; `None` when the resource has no anchor or its
+/// root no policy, which a list never returns and a read hides.
+fn summary_row(row: &sqlx::postgres::PgRow) -> Result<Option<ResourceAccessSummary>, AccessError> {
+    let anchor = anchor_row(row)?;
+    let Some(policy) = policy_row(row)? else {
+        return Ok(None);
+    };
+    Ok(Some(ResourceAccessSummary {
+        root: anchor.audience_root,
+        owner: policy.owner,
+        visibility: policy.visibility,
+        execution: anchor.execution,
+    }))
+}
+
+/// The access summary columns of a content row's anchor, aliased so they
+/// never collide with the content row's own, for list queries that join the
+/// anchor and its root's policy as `ra`/`rp`.
+pub(crate) const SUMMARY_COLUMNS: &str =
+    "ra.audience_root_kind AS access_root_kind, ra.audience_root_id AS access_root_id,
+    ra.run_as_principal_id AS access_run_as, ra.execution_kind AS access_execution_kind,
+    rp.owner_principal_id AS access_owner, rp.visibility AS access_visibility";
+
+pub(crate) fn summary_from_list_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<ResourceAccessSummary, AccessError> {
+    let root = resource_ref(
+        row.try_get("access_root_kind").map_err(error)?,
+        row.try_get("access_root_id").map_err(error)?,
+    )?;
+    let visibility = match row
+        .try_get::<String, _>("access_visibility")
+        .map_err(error)?
+        .as_str()
+    {
+        "universe" => Visibility::Universe,
+        "restricted" => Visibility::Restricted,
+        other => return Err(error(format!("unknown visibility {other}"))),
+    };
+    let run_as: Option<Uuid> = row.try_get("access_run_as").map_err(error)?;
+    let kind: Option<String> = row.try_get("access_execution_kind").map_err(error)?;
+    let execution = match (run_as, kind.as_deref()) {
+        (Some(run_as), Some("service")) => Some(Execution {
+            run_as,
+            kind: ExecutionKind::Service,
+        }),
+        (Some(run_as), Some("personal")) => Some(Execution {
+            run_as,
+            kind: ExecutionKind::Personal,
+        }),
+        (None, None) => None,
+        other => return Err(error(format!("inconsistent execution columns {other:?}"))),
+    };
+    Ok(ResourceAccessSummary {
+        root,
+        owner: row.try_get("access_owner").map_err(error)?,
+        visibility,
+        execution,
     })
 }
 
@@ -106,6 +190,29 @@ impl PgAccessStore {
         sqlx::query("SELECT a.* FROM access_resources a WHERE a.universe_id=$1 AND a.resource_kind=$2 AND a.resource_id=$3")
             .bind(universe).bind(kind).bind(id).fetch_optional(&self.pool).await.map_err(error)?
             .as_ref().map(anchor_row).transpose()
+    }
+
+    /// The summary a view carries, resolved through the root.
+    pub async fn access_summary(
+        &self,
+        universe: Uuid,
+        resource: &ResourceRef,
+    ) -> Result<Option<ResourceAccessSummary>, AccessError> {
+        let (kind, id) = key(resource);
+        let sql = format!(
+            "SELECT {ACCESS_COLUMNS} {ACCESS_JOIN} WHERE a.universe_id=$1 AND a.resource_kind=$2 AND a.resource_id=$3"
+        );
+        sqlx::query(&sql)
+            .bind(universe)
+            .bind(kind)
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(error)?
+            .as_ref()
+            .map(summary_row)
+            .transpose()
+            .map(Option::flatten)
     }
 
     /// Everything one decision needs, in one statement: the anchor, its
@@ -287,6 +394,7 @@ impl PgAccessStore {
     /// a member of that collection; a bot's session and a delegated child join
     /// their controller's root, so a missing controller fails closed. Retries
     /// return the original facts; failed starts retain their reservation.
+    #[allow(clippy::too_many_arguments)]
     pub async fn reserve_resource(
         &self,
         universe: Uuid,
@@ -294,6 +402,7 @@ impl PgAccessStore {
         created_by: &ActionActor,
         controller: &ResourceController,
         root: Option<&ResourceRef>,
+        execution: Option<Execution>,
         now_ms: u64,
     ) -> Result<ResourceAnchor, AccessError> {
         let (kind, id) = key(resource);
@@ -306,41 +415,63 @@ impl PgAccessStore {
         {
             return Err(AccessError::Denied);
         }
-        let (root, bot, owner) = match (controller, root) {
+        // A root takes the execution it was given; everything below a root
+        // copies its root's, so a member or child never carries its own.
+        let (root, bot, owner, execution) = match (controller, root) {
             (ResourceController::Principal(_), Some(collection @ ResourceRef::Collection(_))) => {
-                // A member joins an existing collection and takes no policy.
-                self.anchor(universe, collection)
+                if execution.is_some() {
+                    return Err(AccessError::Invalid(
+                        "a member of a collection inherits its execution".into(),
+                    ));
+                }
+                let parent = self
+                    .anchor(universe, collection)
                     .await?
                     .ok_or(AccessError::Denied)?;
-                (collection.clone(), None, None)
+                (collection.clone(), None, None, parent.execution)
             }
             (_, Some(_)) => {
                 return Err(AccessError::Invalid(
                     "only a principal creates in a collection".into(),
                 ));
             }
-            (ResourceController::Principal(id), None) => (resource.clone(), None, Some(*id)),
+            (ResourceController::Principal(id), None) => {
+                if execution.is_none() != matches!(resource, ResourceRef::Profile(_)) {
+                    return Err(AccessError::Invalid(
+                        "a root that runs work needs an execution identity".into(),
+                    ));
+                }
+                (resource.clone(), None, Some(*id), execution)
+            }
             (ResourceController::Bot(bot), None) => {
                 let parent = self
                     .anchor(universe, &ResourceRef::Bot(bot.clone()))
                     .await?
                     .ok_or(AccessError::Denied)?;
-                (parent.audience_root, Some(bot.clone()), None)
+                (
+                    parent.audience_root,
+                    Some(bot.clone()),
+                    None,
+                    parent.execution,
+                )
             }
             (ResourceController::Session(session), None) => {
                 let parent = self
                     .anchor(universe, &ResourceRef::Session(session.clone()))
                     .await?
                     .ok_or(AccessError::Denied)?;
-                (parent.audience_root, parent.bot, None)
+                (parent.audience_root, parent.bot, None, parent.execution)
             }
         };
         let (root_kind, root_id) = key(&root);
         let now = i64::try_from(now_ms).map_err(error)?;
         let mut tx = self.pool.begin().await.map_err(error)?;
-        let inserted = sqlx::query("INSERT INTO access_resources(universe_id,resource_kind,resource_id,created_by,controller,audience_root_kind,audience_root_id,bot_id,created_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING")
+        let inserted = sqlx::query("INSERT INTO access_resources(universe_id,resource_kind,resource_id,created_by,controller,audience_root_kind,audience_root_id,bot_id,run_as_principal_id,execution_kind,created_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING")
             .bind(universe).bind(kind).bind(id).bind(json!(created_by)).bind(json!(controller))
-            .bind(root_kind).bind(root_id).bind(&bot).bind(now)
+            .bind(root_kind).bind(root_id).bind(&bot)
+            .bind(execution.map(|execution| execution.run_as))
+            .bind(execution.map(|execution| execution_kind_name(execution.kind)))
+            .bind(now)
             .execute(&mut *tx).await.map_err(error)?.rows_affected() == 1;
         if inserted && let Some(owner) = owner {
             sqlx::query("INSERT INTO access_resource_policies(universe_id,resource_kind,resource_id,owner_principal_id,visibility,updated_by,updated_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7)")
@@ -472,6 +603,17 @@ impl PgAccessStore {
                 expected,
                 actual: current,
             });
+        }
+        if owner.is_some() {
+            // A personal root runs as its owner; handing it over would run
+            // someone's work under another person's authority.
+            let kind: Option<String> = sqlx::query_scalar("SELECT execution_kind FROM access_resources WHERE universe_id=$1 AND resource_kind=$2 AND resource_id=$3")
+                .bind(universe).bind(root_kind).bind(root_id).fetch_one(&mut *tx).await.map_err(error)?;
+            if kind.as_deref() == Some("personal") {
+                return Err(AccessError::Invalid(
+                    "a root under personal execution is not handed off".into(),
+                ));
+            }
         }
         let mut seen = std::collections::BTreeSet::new();
         let subjects = grants
@@ -771,5 +913,109 @@ impl PgAccessStore {
             .bind(universe).bind(collection_id).execute(&mut *tx).await.map_err(error)?;
         tx.commit().await.map_err(error)?;
         Ok(record)
+    }
+}
+
+impl PgAccessStore {
+    /// The universe's execution policy. The execution service principal is
+    /// created on first use: a keyless service principal managed in the
+    /// universe, holding Contributor, recorded on the universe row.
+    pub async fn universe_execution_policy(
+        &self,
+        universe: Uuid,
+        now_ms: u64,
+    ) -> Result<UniverseExecutionPolicy, AccessError> {
+        if let Some(policy) = self.read_execution_policy(universe).await? {
+            return Ok(policy);
+        }
+        let now = i64::try_from(now_ms).map_err(error)?;
+        let mut tx = self.pool.begin().await.map_err(error)?;
+        let row = sqlx::query(
+            "SELECT execution_principal_id FROM universes WHERE universe_id=$1 FOR UPDATE",
+        )
+        .bind(universe)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(error)?
+        .ok_or(AccessError::NotFound)?;
+        if row
+            .try_get::<Option<Uuid>, _>("execution_principal_id")
+            .map_err(error)?
+            .is_none()
+        {
+            let id = Uuid::new_v4();
+            sqlx::query("INSERT INTO access_principals(principal_id, kind, status, display_name, management_universe_id, created_at_ms) VALUES($1,'service','active','Execution service',$2,$3)")
+                .bind(id).bind(universe).bind(now).execute(&mut *tx).await.map_err(error)?;
+            sqlx::query("INSERT INTO access_role_assignments(universe_id, principal_id, role) VALUES($1,$2,'contributor')")
+                .bind(universe).bind(id).execute(&mut *tx).await.map_err(error)?;
+            sqlx::query("UPDATE universes SET execution_principal_id=$2 WHERE universe_id=$1")
+                .bind(universe)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(error)?;
+            crate::access::audit(
+                &mut tx,
+                None,
+                json!({"operation": "create_execution_service", "universeId": universe, "principalId": id}),
+                now,
+            )
+            .await?;
+        }
+        tx.commit().await.map_err(error)?;
+        self.read_execution_policy(universe)
+            .await?
+            .ok_or(AccessError::NotFound)
+    }
+
+    async fn read_execution_policy(
+        &self,
+        universe: Uuid,
+    ) -> Result<Option<UniverseExecutionPolicy>, AccessError> {
+        let row = sqlx::query("SELECT execution_principal_id, personal_execution_enabled FROM universes WHERE universe_id=$1")
+            .bind(universe).fetch_optional(&self.pool).await.map_err(error)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let Some(execution_principal_id) = row
+            .try_get::<Option<Uuid>, _>("execution_principal_id")
+            .map_err(error)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(UniverseExecutionPolicy {
+            execution_principal_id,
+            personal_execution_enabled: row.try_get("personal_execution_enabled").map_err(error)?,
+        }))
+    }
+
+    /// Recorded as an access change so the policy revision advances.
+    pub async fn set_personal_execution_enabled(
+        &self,
+        universe: Uuid,
+        actor: Uuid,
+        enabled: bool,
+        now_ms: u64,
+    ) -> Result<UniverseExecutionPolicy, AccessError> {
+        self.universe_execution_policy(universe, now_ms).await?;
+        let now = i64::try_from(now_ms).map_err(error)?;
+        let mut tx = self.pool.begin().await.map_err(error)?;
+        sqlx::query("UPDATE universes SET personal_execution_enabled=$2 WHERE universe_id=$1")
+            .bind(universe)
+            .bind(enabled)
+            .execute(&mut *tx)
+            .await
+            .map_err(error)?;
+        crate::access::audit(
+            &mut tx,
+            Some(actor),
+            json!({"operation": "set_personal_execution", "universeId": universe, "enabled": enabled}),
+            now,
+        )
+        .await?;
+        tx.commit().await.map_err(error)?;
+        self.read_execution_policy(universe)
+            .await?
+            .ok_or(AccessError::NotFound)
     }
 }

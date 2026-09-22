@@ -37,6 +37,7 @@ const subagent = (
 ): SessionSummaryView => ({
   id,
   displayName,
+  access: { root: { kind: "session", id: parentSessionId }, owner: "00000000-0000-0000-0000-000000000000", visibility: "universe" },
   lifecycleStatus: "open",
   managed: true,
   createdAtMs: 0,

@@ -166,6 +166,10 @@ impl Fixture {
                 &ActionActor::Principal { id: self.admin.id },
                 &ResourceController::Principal(self.admin.id),
                 None,
+                Some(access::Execution {
+                    run_as: self.admin.id,
+                    kind: access::ExecutionKind::Service,
+                }),
                 1,
             )
             .await

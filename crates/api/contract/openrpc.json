@@ -340,6 +340,44 @@
         ],
         "type": "object"
       },
+      "AccessExecutionReadParams": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "AccessExecutionReadResponse": {
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/UniverseExecutionPolicy"
+          }
+        },
+        "required": [
+          "policy"
+        ],
+        "type": "object"
+      },
+      "AccessExecutionUpdateParams": {
+        "additionalProperties": false,
+        "properties": {
+          "personalExecutionEnabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "personalExecutionEnabled"
+        ],
+        "type": "object"
+      },
+      "AccessExecutionUpdateResponse": {
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/UniverseExecutionPolicy"
+          }
+        },
+        "required": [
+          "policy"
+        ],
+        "type": "object"
+      },
       "AccessGrantInput": {
         "additionalProperties": false,
         "properties": {
@@ -469,6 +507,17 @@
       "AccessPolicyView": {
         "description": "The policy governing a resource: its root's owner, visibility and grants.\nA resource below a root (a bot's session, a delegated child) shows its\nroot's policy; sharing it means sharing the root.",
         "properties": {
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Execution"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who the root's work runs as; absent for a profile."
+          },
           "grants": {
             "items": {
               "$ref": "#/components/schemas/ResourceGrant"
@@ -749,6 +798,40 @@
           },
           "result": {
             "$ref": "#/components/schemas/AccessDirectory"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfAccessExecutionReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AccessExecutionReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfAccessExecutionUpdateResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AccessExecutionUpdateResponse"
           }
         },
         "required": [
@@ -4936,6 +5019,17 @@
           "bot": {
             "$ref": "#/components/schemas/BotInput"
           },
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Execution identity of the bot and every session it creates; absent\nmeans the universe's execution service. Refused with `access.root`."
+          },
           "triggers": {
             "description": "Triggers created with the bot in one go; a failure rolls the bot\nback.",
             "items": {
@@ -5667,6 +5761,9 @@
       "BotListItem": {
         "description": "Roster row: the bot plus what the console needs at a glance.",
         "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ResourceAccessSummary"
+          },
           "botId": {
             "$ref": "#/components/schemas/BotId"
           },
@@ -5800,6 +5897,7 @@
           "eventSeq",
           "createdAtMs",
           "updatedAtMs",
+          "access",
           "triggerCount",
           "pendingCount"
         ],
@@ -5864,12 +5962,21 @@
       },
       "BotReadResponse": {
         "properties": {
+          "access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ResourceAccessSummary"
+              }
+            ],
+            "description": "The root governing this bot and its sessions, and who they run as."
+          },
           "bot": {
             "$ref": "#/components/schemas/BotView"
           }
         },
         "required": [
-          "bot"
+          "bot",
+          "access"
         ],
         "type": "object"
       },
@@ -7835,6 +7942,17 @@
           },
           "displayName": {
             "type": "string"
+          },
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Execution identity of the collection and everything created in it;\nabsent means the universe's execution service."
           }
         },
         "required": [
@@ -7964,6 +8082,9 @@
       "CollectionView": {
         "description": "A collection: a root with a name that gives the sessions and bots in it\none audience. It routes nothing and runs nothing.",
         "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ResourceAccessSummary"
+          },
           "collectionId": {
             "type": "string"
           },
@@ -7991,6 +8112,7 @@
           "collectionId",
           "displayName",
           "revision",
+          "access",
           "createdAtMs",
           "updatedAtMs"
         ],
@@ -11153,6 +11275,44 @@
         },
         "type": "object"
       },
+      "Execution": {
+        "description": "The execution identity of a root, fixed at creation and copied to every\nresource below it. Never a login identity of someone else: `personal`\nmeans the owner itself, `service` a keyless service principal.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ExecutionKind"
+          },
+          "runAs": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runAs",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "ExecutionInput": {
+        "additionalProperties": false,
+        "description": "Requested execution identity of a new root. `service` runs as the\nuniverse's execution service; `personal` runs as the creating person and\nneeds the universe to allow it. Absent means `service`. A resource\ncreated under another root inherits and refuses this.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ExecutionKind"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "ExecutionKind": {
+        "description": "Under whose authority a root's work runs: the universe's execution\nservice, or the person who created it.",
+        "enum": [
+          "service",
+          "personal"
+        ],
+        "type": "string"
+      },
       "FeaturesConfig": {
         "additionalProperties": false,
         "description": "Capability grants. An absent feature is not granted; `{}` grants it with\ndefaults. Every block carries a behavior `version` that pins semantics.",
@@ -11780,6 +11940,17 @@
               "string",
               "null"
             ]
+          },
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Execution identity of the new session, as for `session/start`."
           },
           "metadata": {
             "additionalProperties": {
@@ -13603,6 +13774,37 @@
           "search"
         ],
         "type": "string"
+      },
+      "ResourceAccessSummary": {
+        "description": "What a viewer needs to show \"shared through X, running as Y\" without a\nsecond request: the root and its policy, plus the execution identity.",
+        "properties": {
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Execution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "owner": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "root": {
+            "$ref": "#/components/schemas/ResourceRef"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility"
+          }
+        },
+        "required": [
+          "root",
+          "owner",
+          "visibility"
+        ],
+        "type": "object"
       },
       "ResourceAccessView": {
         "properties": {
@@ -16787,6 +16989,17 @@
               "null"
             ]
           },
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Execution identity of the new session; absent means the universe's\nexecution service. Refused with `access.root`."
+          },
           "metadata": {
             "additionalProperties": {
               "type": "string"
@@ -16836,6 +17049,14 @@
       },
       "SessionSummaryView": {
         "properties": {
+          "access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ResourceAccessSummary"
+              }
+            ],
+            "description": "The root governing this session, its owner and visibility, and who\nits work runs as."
+          },
           "closedAtMs": {
             "format": "uint64",
             "minimum": 0,
@@ -16897,6 +17118,7 @@
           "lifecycleStatus",
           "retention",
           "managed",
+          "access",
           "createdAtMs",
           "updatedAtMs"
         ],
@@ -16904,6 +17126,14 @@
       },
       "SessionView": {
         "properties": {
+          "access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ResourceAccessSummary"
+              }
+            ],
+            "description": "The root governing this session, its owner and visibility, and who\nits work runs as."
+          },
           "activeContext": {
             "$ref": "#/components/schemas/ContextView"
           },
@@ -17030,6 +17260,7 @@
           "id",
           "status",
           "retention",
+          "access",
           "managed",
           "configRevision",
           "createdAtMs",
@@ -17943,6 +18174,23 @@
             "type": "string"
           }
         ]
+      },
+      "UniverseExecutionPolicy": {
+        "description": "A universe's execution policy: the service principal its work runs as by\ndefault, and whether people may run work as themselves.",
+        "properties": {
+          "executionPrincipalId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "personalExecutionEnabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "executionPrincipalId",
+          "personalExecutionEnabled"
+        ],
+        "type": "object"
       },
       "VfsFeature": {
         "additionalProperties": false,
@@ -18890,6 +19138,56 @@
       "x-lightspeed-access": {
         "kind": "universe",
         "requirement": "share_resource"
+      }
+    },
+    {
+      "description": "Returns the service principal the universe's work runs as by default and whether people may run work as themselves.",
+      "name": "access/execution/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/AccessExecutionReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAccessExecutionReadResponse"
+        }
+      },
+      "summary": "Read the universe execution policy",
+      "x-lightspeed-access": {
+        "kind": "universe",
+        "requirement": "manage_access"
+      }
+    },
+    {
+      "description": "Enables or disables personal execution. Existing roots keep the execution identity they were created with.",
+      "name": "access/execution/update",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/AccessExecutionUpdateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAccessExecutionUpdateResponse"
+        }
+      },
+      "summary": "Update the universe execution policy",
+      "x-lightspeed-access": {
+        "kind": "universe",
+        "requirement": "manage_access"
       }
     },
     {

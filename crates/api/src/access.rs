@@ -5,10 +5,11 @@
 use super::*;
 pub use ::access::{
     AccessChange, AccessChangeResult, AccessDirectory, AccessScope, ActionActor,
-    CapabilityAssignment, EffectiveAccess, Group as IdentityGroup, Membership,
-    Principal as IdentityPrincipal, PrincipalKind as IdentityPrincipalKind, PrincipalStatus,
-    ResourceGrant, ResourcePermission, ResourceRef, Role as AccessRole, RoleAssignment,
-    RoleDecision, ServiceCapability, Subject, UniverseAction, Visibility,
+    CapabilityAssignment, EffectiveAccess, Execution, ExecutionKind, Group as IdentityGroup,
+    Membership, Principal as IdentityPrincipal, PrincipalKind as IdentityPrincipalKind,
+    PrincipalStatus, ResourceAccessSummary, ResourceGrant, ResourcePermission, ResourceRef,
+    Role as AccessRole, RoleAssignment, RoleDecision, ServiceCapability, Subject, UniverseAction,
+    UniverseExecutionPolicy, Visibility,
 };
 use uuid::Uuid;
 
@@ -232,6 +233,9 @@ pub struct AccessPolicyView {
     pub root: ResourceRef,
     pub owner: Uuid,
     pub visibility: Visibility,
+    /// Who the root's work runs as; absent for a profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<Execution>,
     pub grants: Vec<ResourceGrant>,
     /// Advances with every replacement; pass it as `expectedRevision`.
     pub revision: u64,
@@ -279,6 +283,7 @@ pub struct CollectionView {
     pub display_name: String,
     /// Advances with every update; pass it as `expectedRevision`.
     pub revision: u64,
+    pub access: ResourceAccessSummary,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -293,6 +298,10 @@ pub struct CollectionCreateParams {
     /// Audience of the collection; `root` is not accepted here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AccessInput>,
+    /// Execution identity of the collection and everything created in it;
+    /// absent means the universe's execution service.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ExecutionInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -351,4 +360,36 @@ pub struct CollectionDeleteParams {
 #[serde(rename_all = "camelCase")]
 pub struct CollectionDeleteResponse {
     pub collection: CollectionView,
+}
+
+/// Requested execution identity of a new root. `service` runs as the
+/// universe's execution service; `personal` runs as the creating person and
+/// needs the universe to allow it. Absent means `service`. A resource
+/// created under another root inherits and refuses this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionInput {
+    pub kind: ExecutionKind,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessExecutionReadParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessExecutionReadResponse {
+    pub policy: UniverseExecutionPolicy,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessExecutionUpdateParams {
+    pub personal_execution_enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessExecutionUpdateResponse {
+    pub policy: UniverseExecutionPolicy,
 }

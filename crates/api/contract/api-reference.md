@@ -34,6 +34,26 @@ Replaces the visibility and the complete grant set of the root governing the res
 - Params: `AccessPolicyPutParams`
 - Result: `AgentApiOutcome<AccessPolicyPutResponse>`
 
+### `access/execution/read`
+
+**Read the universe execution policy**
+
+Returns the service principal the universe's work runs as by default and whether people may run work as themselves.
+
+- Access: `{"kind":"universe","requirement":"manage_access"}`
+- Params: `AccessExecutionReadParams`
+- Result: `AgentApiOutcome<AccessExecutionReadResponse>`
+
+### `access/execution/update`
+
+**Update the universe execution policy**
+
+Enables or disables personal execution. Existing roots keep the execution identity they were created with.
+
+- Access: `{"kind":"universe","requirement":"manage_access"}`
+- Params: `AccessExecutionUpdateParams`
+- Result: `AgentApiOutcome<AccessExecutionUpdateResponse>`
+
 ### `collection/create`
 
 **Create a collection**

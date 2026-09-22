@@ -359,6 +359,10 @@ api_methods! {
         ["Read a resource's access policy", "Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
     METHOD_ACCESS_POLICY_PUT => put_access_policy(AccessPolicyPutParams) -> AccessPolicyPutResponse =>
         ["Replace a resource's access policy", "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally."], access: MethodAccess::Universe(UniverseAction::ShareResource), audit: true,
+    METHOD_ACCESS_EXECUTION_READ => read_access_execution(AccessExecutionReadParams) -> AccessExecutionReadResponse =>
+        ["Read the universe execution policy", "Returns the service principal the universe's work runs as by default and whether people may run work as themselves."], access: MethodAccess::Universe(UniverseAction::ManageAccess), audit: false,
+    METHOD_ACCESS_EXECUTION_UPDATE => update_access_execution(AccessExecutionUpdateParams) -> AccessExecutionUpdateResponse =>
+        ["Update the universe execution policy", "Enables or disables personal execution. Existing roots keep the execution identity they were created with."], access: MethodAccess::Universe(UniverseAction::ManageAccess), audit: true,
     METHOD_COLLECTION_CREATE => create_collection(CollectionCreateParams) -> CollectionCreateResponse =>
         ["Create a collection", "Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation."], access: MethodAccess::Universe(UniverseAction::CreateCollection), audit: true,
     METHOD_COLLECTION_READ => read_collection(CollectionReadParams) -> CollectionReadResponse =>

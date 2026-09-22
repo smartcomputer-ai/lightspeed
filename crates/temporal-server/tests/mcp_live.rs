@@ -482,6 +482,7 @@ async fn run_matrix_client(
 
     api.start_session(SessionStartParams {
         access: None,
+        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1386,6 +1387,7 @@ async fn run_approval_live_client(
         .build();
     api.start_session(SessionStartParams {
         access: None,
+        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1553,6 +1555,7 @@ async fn run_native_mcp_live_client(
 
     api.start_session(SessionStartParams {
         access: None,
+        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1709,6 +1712,7 @@ async fn run_mcp_live_client(
 
     api.start_session(SessionStartParams {
         access: None,
+        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -2219,6 +2223,7 @@ async fn run_mixed_batch_live_client(
 
     api.start_session(SessionStartParams {
         access: None,
+        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,

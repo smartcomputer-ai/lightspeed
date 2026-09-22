@@ -840,7 +840,10 @@ impl GatewayAgentApi {
             .access
             .as_ref()
             .and_then(|access| access.root.clone());
-        self.reserve_resource(resource.clone(), root.as_ref())
+        let execution = self
+            .execution_for_new_root(root.as_ref(), params.execution)
+            .await?;
+        self.reserve_resource(resource.clone(), root.as_ref(), execution)
             .await?;
         self.apply_creation_access(&resource, params.access).await?;
         let bot = store
@@ -895,8 +898,9 @@ impl GatewayAgentApi {
         Ok(BotListResponse {
             bots: rows
                 .into_iter()
-                .map(|row| BotListItem {
+                .map(|(row, access)| BotListItem {
                     bot: row.bot.view(),
+                    access,
                     trigger_count: row.trigger_count,
                     pending_count: row.pending_count,
                     last_event: row.last_event.map(|event| event.view()),

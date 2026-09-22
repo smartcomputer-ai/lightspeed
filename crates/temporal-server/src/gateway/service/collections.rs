@@ -3,11 +3,15 @@
 //! collection row holds the name. Nothing creates one implicitly.
 use super::*;
 
-fn collection_view(record: store_pg::CollectionRecord) -> CollectionView {
+fn collection_view(
+    record: store_pg::CollectionRecord,
+    access: access::ResourceAccessSummary,
+) -> CollectionView {
     CollectionView {
         collection_id: record.collection_id,
         display_name: record.display_name,
         revision: record.revision,
+        access,
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
     }
@@ -45,6 +49,7 @@ impl GatewayAgentApi {
         collection_id: Option<String>,
         display_name: &str,
         access: Option<AccessInput>,
+        execution: Option<ExecutionInput>,
     ) -> Result<ResourceRef, AgentApiError> {
         validate_display_name(display_name)?;
         if access.as_ref().is_some_and(|access| access.root.is_some()) {
@@ -73,7 +78,9 @@ impl GatewayAgentApi {
                 "collection {collection_id} already exists"
             )));
         }
-        self.reserve_resource(resource.clone(), None).await?;
+        let execution = self.resolve_execution(execution).await?;
+        self.reserve_resource(resource.clone(), None, Some(execution))
+            .await?;
         self.apply_creation_access(&resource, access).await?;
         self.access_store()
             .create_collection(
@@ -92,7 +99,12 @@ impl GatewayAgentApi {
         params: CollectionCreateParams,
     ) -> Result<CollectionCreateResponse, AgentApiError> {
         let ResourceRef::Collection(collection_id) = self
-            .create_collection_record(params.collection_id, &params.display_name, params.access)
+            .create_collection_record(
+                params.collection_id,
+                &params.display_name,
+                params.access,
+                params.execution,
+            )
             .await?
         else {
             unreachable!("collection creation returns a collection reference")
@@ -103,8 +115,11 @@ impl GatewayAgentApi {
             .await
             .map_err(map_collection_error)?
             .ok_or_else(|| AgentApiError::not_found("collection not found"))?;
+        let access = self
+            .access_summary(&ResourceRef::Collection(collection_id))
+            .await?;
         Ok(CollectionCreateResponse {
-            collection: collection_view(record),
+            collection: collection_view(record, access),
         })
     }
 
@@ -122,8 +137,11 @@ impl GatewayAgentApi {
             .collection_members(self.universe_id(), &params.collection_id)
             .await
             .map_err(map_collection_error)?;
+        let access = self
+            .access_summary(&ResourceRef::Collection(params.collection_id.clone()))
+            .await?;
         Ok(CollectionReadResponse {
-            collection: collection_view(record),
+            collection: collection_view(record, access),
             members,
         })
     }
@@ -132,14 +150,18 @@ impl GatewayAgentApi {
         &self,
     ) -> Result<CollectionListResponse, AgentApiError> {
         let reader = self.reader()?;
-        let collections = self
+        let mut collections = Vec::new();
+        for record in self
             .access_store()
             .list_collections(self.universe_id(), &reader)
             .await
             .map_err(map_collection_error)?
-            .into_iter()
-            .map(collection_view)
-            .collect();
+        {
+            let access = self
+                .access_summary(&ResourceRef::Collection(record.collection_id.clone()))
+                .await?;
+            collections.push(collection_view(record, access));
+        }
         Ok(CollectionListResponse { collections })
     }
 
@@ -159,8 +181,11 @@ impl GatewayAgentApi {
             )
             .await
             .map_err(map_collection_error)?;
+        let access = self
+            .access_summary(&ResourceRef::Collection(params.collection_id.clone()))
+            .await?;
         Ok(CollectionUpdateResponse {
-            collection: collection_view(record),
+            collection: collection_view(record, access),
         })
     }
 
@@ -168,13 +193,17 @@ impl GatewayAgentApi {
         &self,
         params: CollectionDeleteParams,
     ) -> Result<CollectionDeleteResponse, AgentApiError> {
+        // The anchor goes with the collection; capture what the view shows first.
+        let access = self
+            .access_summary(&ResourceRef::Collection(params.collection_id.clone()))
+            .await?;
         let record = self
             .access_store()
             .delete_collection(self.universe_id(), &params.collection_id)
             .await
             .map_err(map_collection_error)?;
         Ok(CollectionDeleteResponse {
-            collection: collection_view(record),
+            collection: collection_view(record, access),
         })
     }
 }

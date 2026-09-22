@@ -302,6 +302,7 @@ fn anchor(resource: ResourceRef, root: ResourceRef, bot: Option<&str>) -> Resour
         controller: ResourceController::Principal(Uuid::from_u128(7)),
         audience_root: root,
         bot: bot.map(str::to_owned),
+        execution: None,
         created_at_ms: 0,
     }
 }

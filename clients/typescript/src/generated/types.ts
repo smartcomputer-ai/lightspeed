@@ -158,6 +158,14 @@ export type ResourceRef =
  */
 export type Visibility = "universe" | "restricted";
 /**
+ * Under whose authority a root's work runs: the universe's execution
+ * service, or the person who created it.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ExecutionKind".
+ */
+export type ExecutionKind = "service" | "personal";
+/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ActionActor".
  */
@@ -1971,6 +1979,43 @@ export interface IdentityPrincipal {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessExecutionReadParams".
+ */
+export interface AccessExecutionReadParams {}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessExecutionReadResponse".
+ */
+export interface AccessExecutionReadResponse {
+  policy: UniverseExecutionPolicy;
+}
+/**
+ * A universe's execution policy: the service principal its work runs as by
+ * default, and whether people may run work as themselves.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "UniverseExecutionPolicy".
+ */
+export interface UniverseExecutionPolicy {
+  executionPrincipalId: string;
+  personalExecutionEnabled: boolean;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessExecutionUpdateParams".
+ */
+export interface AccessExecutionUpdateParams {
+  personalExecutionEnabled: boolean;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessExecutionUpdateResponse".
+ */
+export interface AccessExecutionUpdateResponse {
+  policy: UniverseExecutionPolicy;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AccessGrantInput".
  */
 export interface AccessGrantInput {
@@ -2041,6 +2086,10 @@ export interface AccessPolicyPutResponse {
  * via the `definition` "AccessPolicyView".
  */
 export interface AccessPolicyView {
+  /**
+   * Who the root's work runs as; absent for a profile.
+   */
+  execution?: Execution | null;
   grants: ResourceGrant[];
   owner: string;
   resource: ResourceRef;
@@ -2055,6 +2104,18 @@ export interface AccessPolicyView {
   updatedAtMs: number;
   updatedBy: ActionActor;
   visibility: Visibility;
+}
+/**
+ * The execution identity of a root, fixed at creation and copied to every
+ * resource below it. Never a login identity of someone else: `personal`
+ * means the owner itself, `service` a keyless service principal.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "Execution".
+ */
+export interface Execution {
+  kind: ExecutionKind;
+  runAs: string;
 }
 /**
  * One grant on a root as stored.
@@ -2158,6 +2219,11 @@ export interface AgentApiOutcomeOfAccessChangeResult {
  * via the `definition` "SessionView".
  */
 export interface SessionView {
+  /**
+   * The root governing this session, its owner and visibility, and who
+   * its work runs as.
+   */
+  access: ResourceAccessSummary;
   activeContext: ContextView;
   /**
    * The universe environment selected by the session event log.
@@ -2205,6 +2271,19 @@ export interface SessionView {
   runs?: RunSummaryView[];
   status: SessionStatus;
   updatedAtMs: number;
+}
+/**
+ * What a viewer needs to show "shared through X, running as Y" without a
+ * second request: the root and its policy, plus the execution identity.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ResourceAccessSummary".
+ */
+export interface ResourceAccessSummary {
+  execution?: Execution | null;
+  owner: string;
+  root: ResourceRef;
+  visibility: Visibility;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3076,6 +3155,22 @@ export interface ToolCallMediaView {
 export interface AgentApiOutcomeOfAccessDirectory {
   notifications?: AgentNotification[];
   result: AccessDirectory;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfAccessExecutionReadResponse".
+ */
+export interface AgentApiOutcomeOfAccessExecutionReadResponse {
+  notifications?: AgentNotification[];
+  result: AccessExecutionReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfAccessExecutionUpdateResponse".
+ */
+export interface AgentApiOutcomeOfAccessExecutionUpdateResponse {
+  notifications?: AgentNotification[];
+  result: AccessExecutionUpdateResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -4004,6 +4099,7 @@ export interface BotListResponse {
  * via the `definition` "BotListItem".
  */
 export interface BotListItem {
+  access: ResourceAccessSummary;
   botId: BotId;
   breaker?: BotBreaker | null;
   /**
@@ -4097,6 +4193,10 @@ export interface AgentApiOutcomeOfBotReadResponse {
  * via the `definition` "BotReadResponse".
  */
 export interface BotReadResponse {
+  /**
+   * The root governing this bot and its sessions, and who they run as.
+   */
+  access: ResourceAccessSummary;
   bot: BotView;
 }
 /**
@@ -4228,6 +4328,11 @@ export interface BotSessionSnapshot {
  * via the `definition` "SessionSummaryView".
  */
 export interface SessionSummaryView {
+  /**
+   * The root governing this session, its owner and visibility, and who
+   * its work runs as.
+   */
+  access: ResourceAccessSummary;
   closedAtMs?: number | null;
   createdAtMs: number;
   displayName?: string | null;
@@ -4554,6 +4659,7 @@ export interface CollectionCreateResponse {
  * via the `definition` "CollectionView".
  */
 export interface CollectionView {
+  access: ResourceAccessSummary;
   collectionId: string;
   createdAtMs: number;
   displayName: string;
@@ -6897,6 +7003,11 @@ export interface BotCreateParams {
   access?: AccessInput | null;
   bot: BotInput;
   /**
+   * Execution identity of the bot and every session it creates; absent
+   * means the universe's execution service. Refused with `access.root`.
+   */
+  execution?: ExecutionInput | null;
+  /**
    * Triggers created with the bot in one go; a failure rolls the bot
    * back.
    */
@@ -6952,6 +7063,18 @@ export interface BotInput {
    * (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
    */
   selfConfig?: boolean;
+}
+/**
+ * Requested execution identity of a new root. `service` runs as the
+ * universe's execution service; `personal` runs as the creating person and
+ * needs the universe to allow it. Absent means `service`. A resource
+ * created under another root inherits and refuses this.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ExecutionInput".
+ */
+export interface ExecutionInput {
+  kind: ExecutionKind;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -7287,6 +7410,11 @@ export interface CollectionCreateParams {
    */
   collectionId?: string | null;
   displayName: string;
+  /**
+   * Execution identity of the collection and everything created in it;
+   * absent means the universe's execution service.
+   */
+  execution?: ExecutionInput | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -7838,6 +7966,10 @@ export interface ManagedSessionStartParams {
   deleteAfterCloseMs?: number | null;
   displayName?: string | null;
   /**
+   * Execution identity of the new session, as for `session/start`.
+   */
+  execution?: ExecutionInput | null;
+  /**
    * Descriptive key/value metadata with the same bounds as
    * `session/start`; applied only when the session is first created.
    */
@@ -8282,6 +8414,11 @@ export interface SessionStartParams {
    */
   deleteAfterCloseMs?: number | null;
   displayName?: string | null;
+  /**
+   * Execution identity of the new session; absent means the universe's
+   * execution service. Refused with `access.root`.
+   */
+  execution?: ExecutionInput | null;
   /**
    * Descriptive key/value metadata, applied only when the session is
    * first created: at most 32 entries, keys 1..=64 bytes, values 1..=256
