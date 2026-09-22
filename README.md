@@ -183,8 +183,10 @@ Lightspeed covers the table stakes of a modern agent harness. Everything below w
 
 **Interfaces**
 
-- [x] **Web app**: manage universes, sessions, profiles, bots, and channels
-  from the browser, with per-resource attachment access and MCP tool subsets
+- [x] **Web app**: manage universes, sessions, profiles, bots, collections, and
+  channels from the browser, with per-resource attachment access and MCP tool subsets
+- [x] **Shared access**: share sessions, bots and collections with people or groups;
+  choose universe-service or enabled personal execution when creating work
 - [x] **Progressive transcripts**: open at recent activity and automatically
   load earlier history as you scroll, while live updates continue
 - [x] **Input origin metadata**: distinguish direct human input from event deliveries

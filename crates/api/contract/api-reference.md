@@ -2,13 +2,35 @@
 
 Generated from the Rust API method manifest. Parameter and result field details live in `api.schema.json` and `openrpc.json`; this reference focuses on operation semantics.
 
+Successful HTTP reads that rely on `read_private_content` carry `x-lightspeed-privileged-read: true`. Ordinary reads by the same caller omit it. On lists, the marker means the returned page includes privileged content, not that every item required it. The marker reports the authorization decision; the associated privileged audit event is written best-effort. It grants no additional authority.
+
 ## Universe methods
+
+### `access/subjects`
+
+**Find sharing subjects**
+
+Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.
+
+- Access: `{"kind":"universe","requirement":"read"}`
+- Params: `AccessSubjectsParams`
+- Result: `AgentApiOutcome<AccessSubjectsResponse>`
+
+### `vfs/workspaces/files/read`
+
+**Read a workspace file**
+
+Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.
+
+- Access: `{"kind":"universe","requirement":"read"}`
+- Params: `VfsWorkspaceFileReadParams`
+- Result: `AgentApiOutcome<BlobReadResponse>`
 
 ### `access/read`
 
 **Read current action permissions**
 
-Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
+Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
 
 - Access: `{"kind":"universe","requirement":"read"}`
 - Params: `AccessReadParams`
@@ -38,9 +60,9 @@ Replaces the visibility and the complete grant set of the root governing the res
 
 **Read the universe execution policy**
 
-Returns the service principal the universe's work runs as by default and whether people may run work as themselves.
+Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.
 
-- Access: `{"kind":"universe","requirement":"manage_access"}`
+- Access: `{"kind":"universe","requirement":"read"}`
 - Params: `AccessExecutionReadParams`
 - Result: `AgentApiOutcome<AccessExecutionReadResponse>`
 

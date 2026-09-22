@@ -2062,6 +2062,7 @@ async fn vfs_snapshot_api_helpers_commit_and_read_manifest() {
         &store,
         None,
         VfsSnapshotCommitParams {
+            source_workspace_id: None,
             manifest: manifest.clone(),
         },
     )
@@ -2105,6 +2106,7 @@ async fn vfs_snapshot_commit_rejects_missing_file_blob_refs() {
         &store,
         None,
         VfsSnapshotCommitParams {
+            source_workspace_id: None,
             manifest: serde_json::to_value(manifest).expect("manifest json"),
         },
     )

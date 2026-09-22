@@ -161,7 +161,7 @@ pub struct IdentitySelfResponse {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AccessReadParams {
-    /// Up to 100 existing sessions, bots or profiles in the selected universe.
+    /// Up to 100 existing sessions, bots, profiles or collections in the selected universe.
     /// Missing resources return no actions.
     #[serde(default)]
     pub resources: Vec<ResourceRef>,
@@ -184,6 +184,30 @@ pub struct AccessReadResponse {
     /// returned only under `resources`, even when the caller has a broad role.
     pub actions: Vec<UniverseAction>,
     pub resources: Vec<ResourceAccessView>,
+}
+
+/// Search eligible sharing subjects in the selected universe. This exposes
+/// names and identifiers only, never the administrative identity directory.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessSubjectsParams {
+    #[serde(default)]
+    pub query: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessSubjectView {
+    pub subject: Subject,
+    pub display_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessSubjectsResponse {
+    pub principal_id: Uuid,
+    /// At most 100 matches; refine the query to find another subject.
+    pub subjects: Vec<AccessSubjectView>,
 }
 
 /// Audience of a root, requested at creation. A session or bot created under

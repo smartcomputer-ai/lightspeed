@@ -1,3 +1,4 @@
+import { seedAccess } from "./access";
 /// Builds the demo world: one platform admin, a few other users, and one
 /// universe per use-case. Add a universe by adding a seed module here.
 import { DemoStore, type DemoUser } from "../store";
@@ -24,5 +25,6 @@ export function createDemoStore(): DemoStore {
   seedSoftwareFactory(store);
   seedTechnicalSupport(store);
   seedPersonalAssistant(store);
+  seedAccess(store);
   return store;
 }

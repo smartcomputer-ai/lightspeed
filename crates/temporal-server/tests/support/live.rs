@@ -207,6 +207,7 @@ pub async fn upload_snapshot(
     }
     Ok(api
         .commit_vfs_snapshot(api::VfsSnapshotCommitParams {
+            source_workspace_id: None,
             manifest: serde_json::to_value(manifest)?,
         })
         .await?

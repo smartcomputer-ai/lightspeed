@@ -6,6 +6,7 @@ export function isMobileDetailRoute(pathname: string): boolean {
     "/u/:slug/sessions/:sessionId/*",
     "/u/:slug/bots/:botId/*",
     "/u/:slug/profiles/:profileId/*",
+    "/u/:slug/collections/:collectionId/*",
   ].some((path) => matchPath(path, pathname) !== null)
     || Boolean(matchPath("/u/:slug/workspaces/:workspaceId/files/*", pathname)?.params["*"]);
 }

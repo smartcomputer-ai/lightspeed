@@ -95,9 +95,9 @@ it.each(members)("edits the specific role grant for $name", async (member) => {
   await show(<MembersPage admin={false} />);
   await act(async () => container.querySelector<HTMLButtonElement>(`[aria-label="Edit role for ${member.name}"]`)!.click());
   await settle();
-  expect(button("Save changes")!.disabled).toBe(true);
+  expect(button("Save role")!.disabled).toBe(true);
   await chooseMemberRole("operator");
-  await act(async () => button("Save changes")!.click());
+  await act(async () => button("Save role")!.click());
   await settle();
   expect(mocks.api).toHaveBeenCalledWith("PATCH", `/api/v1/universes/universe/members/${member.id}`, { role: "operator" });
   expect(mocks.api.mock.calls.some(([method, path]) => path.includes("/members") && (method === "DELETE" || method === "POST"))).toBe(false);
@@ -115,7 +115,7 @@ it("keeps the original member role and explains a rejected edit", async () => {
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit role for Alice"]')!.click());
   await settle();
   await chooseMemberRole("viewer");
-  await act(async () => button("Save changes")!.click());
+  await act(async () => button("Save role")!.click());
   await settle();
   expect(document.querySelector('[role="alert"]')?.textContent).toContain("At least one active administrator");
   expect(container.querySelector("tbody tr")?.textContent).toContain("contributor");

@@ -16,7 +16,12 @@ use temporal_server::{
 };
 use uuid::Uuid;
 
-async fn rpc(url: &str, key: &MintedApiKey, method: &str, params: Value) -> Value {
+async fn rpc_response(
+    url: &str,
+    key: &MintedApiKey,
+    method: &str,
+    params: Value,
+) -> reqwest::Response {
     reqwest::Client::new()
         .post(url)
         .bearer_auth(key.secret.expose())
@@ -24,17 +29,24 @@ async fn rpc(url: &str, key: &MintedApiKey, method: &str, params: Value) -> Valu
         .send()
         .await
         .unwrap()
+}
+async fn rpc(url: &str, key: &MintedApiKey, method: &str, params: Value) -> Value {
+    rpc_response(url, key, method, params)
+        .await
         .json()
         .await
         .unwrap()
 }
+#[track_caller]
 fn success(value: Value) -> Value {
     assert!(value.get("error").is_none(), "{value}");
     value["result"]["result"].clone()
 }
+#[track_caller]
 fn forbidden(value: Value) {
     assert_eq!(value["error"]["data"]["kind"], "forbidden", "{value}");
 }
+#[track_caller]
 fn not_found(value: Value) {
     assert_eq!(value["error"]["data"]["kind"], "not_found", "{value}");
 }
@@ -183,15 +195,19 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
                 access.apply(admin.id, AccessChange::AssignCapability { assignment: CapabilityAssignment { scope, principal_id: service, capability: Capability::ReadPrivateContent } }, 25).await,
                 Err(AccessError::Invalid(_))
             ));
-            success(rpc(&endpoint, viewer, "session/read", read.clone()).await);
+            let privileged_read = rpc_response(&endpoint, viewer, "session/read", read.clone()).await;
+            assert_eq!(privileged_read.headers()["x-lightspeed-privileged-read"], "true");
+            success(privileged_read.json().await?);
             success(rpc(&endpoint, viewer, "session/events/read", read.clone()).await);
             success(rpc(&endpoint, viewer, "access/policy/read", json!({"resource":resource})).await);
             assert!(lists(&success(rpc(&endpoint, viewer, "session/list", json!({})).await), &private));
             for method in ["session/read", "session/events/read", "access/policy/read", "session/list"] {
                 assert_eq!(privileged_rows(method).await?, 1, "{method}");
             }
-            // Reads the Viewer could make anyway leave no privileged row.
-            success(rpc(&endpoint, viewer, "session/read", json!({"sessionId":session})).await);
+            // Reads the Viewer could make anyway leave no privileged row or UI marker.
+            let ordinary_read = rpc_response(&endpoint, viewer, "session/read", json!({"sessionId":session})).await;
+            assert!(!ordinary_read.headers().contains_key("x-lightspeed-privileged-read"));
+            success(ordinary_read.json().await?);
             success(rpc(&endpoint, viewer, "session/list", json!({"metadata":{"absent":"yes"}})).await);
             assert_eq!(privileged_rows("").await?, 4);
             success(rpc(&endpoint, universe_admin, "deployment/identity/apply", json!({"operation":"revoke_capability","assignment":assignment})).await);
@@ -323,8 +339,16 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             // Execution identity. Everything so far runs as the universe's execution
             // service; personal execution needs an Admin to enable it and binds the
             // owner, restricts the root by default, and refuses hand-off.
-            forbidden(rpc(&endpoint, alice, "access/execution/read", json!({})).await);
             let execution = success(rpc(&endpoint, universe_admin, "access/execution/read", json!({})).await)["policy"].clone();
+            // Creation options and sharing names are available to ordinary
+            // members without exposing the administrative directory.
+            assert_eq!(success(rpc(&endpoint, alice, "access/execution/read", json!({})).await)["policy"], execution);
+            forbidden(rpc(&endpoint, alice, "access/execution/update", json!({"personalExecutionEnabled":true})).await);
+            let subjects = success(rpc(&endpoint, alice, "access/subjects", json!({"query":bob.record.principal_id.to_string()})).await);
+            assert_eq!(subjects["principalId"], alice.record.principal_id.to_string());
+            assert_eq!(subjects["subjects"][0]["subject"]["id"], bob.record.principal_id.to_string());
+            assert_eq!(subjects["subjects"][0].as_object().unwrap().len(), 2);
+
             let service_principal = execution["executionPrincipalId"].as_str().unwrap().to_owned();
             assert_eq!(execution["personalExecutionEnabled"], false);
             let read_session = success(rpc(&endpoint, alice, "session/read", json!({"sessionId":session})).await)["session"].clone();
@@ -394,6 +418,42 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             forbidden(rpc(&endpoint, operator, "vfs/snapshots/commit", manifest(&uploaded)).await);
             let snapshot = success(rpc(&endpoint, alice, "vfs/snapshots/commit", manifest(&uploaded)).await)["snapshotRef"].as_str().unwrap().to_owned();
             forbidden(rpc(&endpoint, viewer, "vfs/workspaces/create", json!({"snapshotRef":snapshot})).await);
+            // An operator explicitly uploads the file and commits its manifest
+            // before placing it in a universe-visible workspace.
+            // Upload exactly the fixture's bytes, preserving the content address.
+            let bytes = success(rpc(&endpoint, alice, "blobs/read", json!({"blobRef":uploaded})).await)["bytesBase64"].clone();
+            success(rpc(&endpoint, operator, "blobs/put", json!({"blobs":[{"bytesBase64":bytes}]})).await);
+            success(rpc(&endpoint, operator, "vfs/snapshots/commit", manifest(&uploaded)).await);
+            let created_workspace = success(rpc(&endpoint, operator, "vfs/workspaces/create", json!({"snapshotRef":snapshot})).await)["workspace"].clone();
+            let workspace = created_workspace["workspaceId"].as_str().unwrap().to_owned();
+            let workspace_revision = created_workspace["revision"].clone();
+            forbidden(rpc(&endpoint, viewer, "blobs/read", json!({"blobRef":uploaded})).await);
+            let mut from_workspace = manifest(&uploaded);
+            from_workspace["sourceWorkspaceId"] = json!(workspace);
+            success(rpc(&endpoint, universe_admin, "vfs/snapshots/commit", from_workspace.clone()).await);
+            let foreign_blob = success(rpc(&endpoint, alice, "blobs/put", json!({"blobs":[{"bytesBase64":base64::engine::general_purpose::STANDARD.encode(b"still private") }]})).await)["blobs"][0]["blobRef"].as_str().unwrap().to_owned();
+            from_workspace["manifest"]["root"]["entries"]["notes.txt"]["blob_ref"] = json!(foreign_blob);
+            forbidden(rpc(&endpoint, universe_admin, "vfs/snapshots/commit", from_workspace.clone()).await);
+            // Raw manifest uploads cannot smuggle somebody else's bytes into a workspace.
+            let raw_manifest = base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&from_workspace["manifest"])?);
+            let poisoned = success(rpc(&endpoint, operator, "blobs/put", json!({"blobs":[{"bytesBase64":raw_manifest}]})).await)["blobs"][0]["blobRef"].clone();
+            forbidden(rpc(&endpoint, operator, "vfs/workspaces/create", json!({"snapshotRef":poisoned})).await);
+            forbidden(rpc(&endpoint, operator, "vfs/workspaces/update", json!({"workspaceId":workspace,"snapshotRef":poisoned,"expectedRevision":workspace_revision})).await);
+            let file = success(rpc(&endpoint, viewer, "vfs/workspaces/files/read", json!({"workspaceId":workspace,"path":"notes.txt"})).await);
+            assert_eq!(file["blobRef"], uploaded);
+            not_found(rpc(&endpoint, viewer, "vfs/workspaces/files/read", json!({"workspaceId":workspace,"path":"missing.txt"})).await);
+            assert_eq!(rpc(&endpoint, viewer, "vfs/workspaces/files/read", json!({"workspaceId":workspace,"path":"../notes.txt"})).await["error"]["data"]["kind"], "invalid_request");
+            // A different editor retains existing files, uploads one addition,
+            // commits through the named workspace, then advances its revision.
+            let added = success(rpc(&endpoint, universe_admin, "blobs/put", json!({"blobs":[{"bytesBase64":base64::engine::general_purpose::STANDARD.encode(b"workspace shared edit")}]})).await)["blobs"][0]["blobRef"].clone();
+            let mut edit = manifest(&uploaded);
+            edit["sourceWorkspaceId"] = json!(workspace);
+            edit["manifest"]["root"]["entries"]["added.txt"] = json!({"kind":"file","blob_ref":added,"size_bytes":21,"executable":false});
+            edit["manifest"]["totals"] = json!({"files":2,"bytes":42});
+            let edited = success(rpc(&endpoint, universe_admin, "vfs/snapshots/commit", edit).await)["snapshotRef"].clone();
+            success(rpc(&endpoint, universe_admin, "vfs/workspaces/update", json!({"workspaceId":workspace,"snapshotRef":edited,"expectedRevision":workspace_revision})).await);
+            assert_eq!(success(rpc(&endpoint, viewer, "vfs/workspaces/files/read", json!({"workspaceId":workspace,"path":"added.txt"})).await)["blobRef"], added);
+
             // The group's role served the sharing scenario only; the revocation checks below assume the Viewer's own role.
             access.apply(admin.id, AccessChange::RevokeRole { assignment: RoleAssignment { scope, subject: Subject::Group(readers), role: Role::Viewer } }, 24).await?;
             // A contributor can author templates but cannot edit another author's template.

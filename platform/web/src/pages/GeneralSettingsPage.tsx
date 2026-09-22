@@ -1,3 +1,4 @@
+import { ExecutionSettings } from "@/components/access/execution-settings";
 import { ReadError } from "@/components/read-error";
 import { useActionPermissions } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
@@ -53,6 +54,7 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
       <div className="grid gap-6">
         <RenameCard universe={universe} />
         <IdentifiersCard universe={universe} />
+        <ExecutionSettings universeId={universe.id} />
         <DangerZone universe={universe} />
       </div>
     </>

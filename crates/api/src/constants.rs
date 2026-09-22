@@ -13,6 +13,7 @@ pub const PROTOCOL_VERSION: &str = "lightspeed.agent.api.v1";
 
 pub const METHOD_INITIALIZE: &str = "initialize";
 pub const METHOD_ACCESS_READ: &str = "access/read";
+pub const METHOD_ACCESS_SUBJECTS: &str = "access/subjects";
 pub const METHOD_ACCESS_POLICY_READ: &str = "access/policy/read";
 pub const METHOD_ACCESS_POLICY_PUT: &str = "access/policy/put";
 pub const METHOD_ACCESS_EXECUTION_READ: &str = "access/execution/read";
@@ -86,6 +87,7 @@ pub const METHOD_VFS_SNAPSHOTS_COMMIT: &str = "vfs/snapshots/commit";
 pub const METHOD_VFS_SNAPSHOTS_READ: &str = "vfs/snapshots/read";
 pub const METHOD_VFS_WORKSPACES_CREATE: &str = "vfs/workspaces/create";
 pub const METHOD_VFS_WORKSPACES_READ: &str = "vfs/workspaces/read";
+pub const METHOD_VFS_WORKSPACES_FILES_READ: &str = "vfs/workspaces/files/read";
 pub const METHOD_VFS_WORKSPACES_LIST: &str = "vfs/workspaces/list";
 pub const METHOD_VFS_WORKSPACES_UPDATE: &str = "vfs/workspaces/update";
 pub const METHOD_VFS_WORKSPACES_DELETE: &str = "vfs/workspaces/delete";

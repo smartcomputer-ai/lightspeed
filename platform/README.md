@@ -167,8 +167,20 @@ ownership and delegated controller checks for sessions, profiles and bots. Creat
 configuration, invocation, stopping and deletion are separate controls. Unknown or
 failed permission lookups leave mutation controls unavailable; previews are scoped
 to the signed-in account and refreshed on focus, after mutations and periodically.
-The runtime still authorizes every operation independently. These controls do not
-introduce private sessions or resource-specific sharing policies.
+The runtime still authorizes every operation independently.
+
+Sessions, bots and collections expose a shared **Access** dialog with visibility,
+people and group grants, ownership, and inherited-root links. Writers can share
+read access; owners can also grant control and transfer service-backed roots.
+Creation offers universe-service or enabled personal execution, plus collection
+membership that inherits access and execution. Collections use the same list and
+detail layout as bots. Personal execution is configured in universe settings;
+workspace and environment attachments retain their independent visibility.
+Content reads name the session or resolve a file through its workspace path.
+Member role editing has a separate private-content capability control for people.
+Successful reads that use it carry a runtime response marker through Platform;
+list, detail and transcript views show **Privileged read** only for those reads.
+Ordinary reads by capability holders remain unmarked.
 
 ## Development
 

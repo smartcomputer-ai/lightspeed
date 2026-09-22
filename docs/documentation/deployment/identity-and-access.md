@@ -1,12 +1,13 @@
 # Core identity and access records
 
 The core `access` crate defines deployment-wide user/service identities, groups,
-memberships, scoped role assignments, and explicit service capabilities.
+memberships, scoped role assignments, and explicit capabilities for people and
+services.
 `store-pg::PgAccessStore` persists them. Platform login credentials and external
 identity mappings remain separate from these effective authorization facts.
 
 The runtime gateway uses these records for scoped key authentication, current
-roles/actions, ownership, service capabilities and user assertions. Platform
+roles/actions, resource audiences, execution authority and user assertions. Platform
 accounts map to these principals and its requests assert the signed-in user. See
 [Authentication and access](authentication-and-tenancy.md) for the current boundary.
 
@@ -77,15 +78,20 @@ separate `auth/grants/*` resource.
 Viewer, Contributor, Operator, and Admin are universe roles. DeploymentAdmin is a
 separate deployment role and supplies no implicit universe membership. The enforced
 role matrix distinguishes creating work, controlling owned work, operating shared
-resources, and managing access. In particular, controlling a session requires
-ownership even for Admin; Operator/Admin may stop another session. Ownership
-includes authorized controller lineage and must be resolved by the runtime, not
-from provenance or client-supplied claims.
+resources, and managing access. Controlling a standalone session requires
+ownership or a write grant even for Admin; Operator/Admin may stop another
+session without acquiring its audience. Bot managers control the bot's visible
+conversations. The runtime resolves these rights from the resource and its root
+policy, never from provenance or client-supplied claims.
 
 Service kind grants no capability. Credential leasing, inbound admission, user
 assertion, channel-account discovery, and identity provisioning have explicit
-capability assignments. Capabilities apply in their declared scope. Only deployment
-administration can assign capabilities in this foundation. The `manage_identity`
+capability assignments. Capabilities apply in their declared scope, and their
+holder kind is checked when assigned and used. Deployment administration assigns
+service capabilities. A universe Admin may also assign or revoke
+`read_private_content` for a person in that universe. This permits audited reads
+outside the person's ordinary audience, without granting control or ownership.
+The `manage_identity`
 capability delegates directory management, including membership and offboarding;
 this is powerful authority because membership can affect privileged group roles.
 It does not permit direct role/capability assignment or universe recovery.
@@ -107,20 +113,24 @@ Universe-scoped assignments cascade away on universe deletion; canonical service
 identity records retain their management provenance.
 
 These guarantees cover core storage, gateway admission, shared runtime services
-and Platform administration. Response-time stream checks, running-session
-revocation, bot standing authority and external effects remain follow-ups.
+and Platform administration. Parked transcript reads revalidate their caller.
+Runs check their execution principal at admission and before each model call;
+losing that authority fails the next check. Completed effects and external jobs
+are not undone or terminated by those checks. The [access guide](authentication-and-tenancy.md#execution-authority)
+explains the difference between personal work and work running as the universe
+service.
 
 ## Authenticated request boundary
 
 The gateway now uses these records for key authentication, membership admission,
 service capabilities, and authenticated user assertions. See
 [authentication and access](authentication-and-tenancy.md) for key issuance,
-canonical keys, core action/ownership enforcement, and current stream-revocation limitations.
+canonical keys, resource sharing, execution checks and the limits of revocation.
 
 ## UI action permissions
 
 `access/read` previews the current caller's universe actions and actions on up to
-100 requested sessions, bots or profiles. The runtime resolves ownership and
+100 requested sessions, bots, profiles or collections. The runtime resolves ownership and
 controller lineage using the same policy as mutations; the client supplies no
 owner or alternate actor. `sessionDeleteCascade` also checks deletion permission
 for every descendant. Missing targets return no actions. Previews describe access,
@@ -144,8 +154,10 @@ Deployment administration can read the full directory; this grants no content ac
 
 `deployment/identity/apply` authorizes each typed change in core. Universe Admins
 may assign/revoke roles in their universe and create universe-managed services.
-They cannot edit deployment groups, global identities or capability assignments.
-Group changes can affect many universes and remain deployment administration.
+They may also grant or revoke the universe's `read_private_content` capability
+for people. They cannot edit deployment groups, global identities or service
+capabilities. Group changes can affect many universes and remain deployment
+administration.
 All query and mutation handlers check the credential ceiling and revalidate
 captured authentication; missing context is never a service fallback.
 
@@ -161,3 +173,14 @@ would remove the last active administrator, leaving the original grant intact.
 The same operation is available through `identity apply` as `replace_role` with
 the existing `assignment` and replacement `role`, and produces one committed
 access-change record.
+
+A person's role editor also shows **Private-content access**. Its separate
+control makes one capability change immediately; **Save role** changes only the
+role. Groups and services have no private-content control. Removing a role does
+not remove independent grants or capabilities, although a capability alone
+cannot supply the universe membership required to read content.
+
+Ordinary members use `access/subjects` to find sharing recipients. This bounded
+search returns only names and identifiers of active principals and groups with
+universe roles. It does not expose the administrative directory or grant the
+ability to change membership.

@@ -2,6 +2,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { LightspeedClient, type EffectiveAccess } from "@lightspeed-ai/agent-client";
 import type { ServerEnv } from "./env.js";
 
+/** Records actual runtime read decisions within one Platform response. */
+export const runtimeReadMetadata = new AsyncLocalStorage<{ privileged: boolean }>();
+
 export const requestIdentity = new AsyncLocalStorage<EffectiveAccess>();
 
 export function actingPrincipal(): string {
@@ -30,7 +33,12 @@ function runtimeClient(env: ServerEnv, principalId: string | null, endpoint?: st
   if (resolved.href !== new URL(env.lightspeedApiUrl).href || resolved.username || resolved.password) throw new GatewayUnconfigured();
   return new LightspeedClient({
     endpoint: resolved.href,
-    fetch: (input, init) => globalThis.fetch(input, { ...init, redirect: "error" }),
+    fetch: async (input, init) => {
+      const response = await globalThis.fetch(input, { ...init, redirect: "error" });
+      const metadata = runtimeReadMetadata.getStore();
+      if (metadata && response.headers.get("x-lightspeed-privileged-read") === "true") metadata.privileged = true;
+      return response;
+    },
     headers: {
       authorization: `Bearer ${env.lightspeedApiKey}`,
       ...(principalId ? { "x-lightspeed-principal": `user:${principalId}` } : {}),

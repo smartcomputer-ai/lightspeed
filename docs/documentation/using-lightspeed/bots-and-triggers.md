@@ -32,7 +32,7 @@ This walkthrough builds `release-watch`, which reviews the Acorn release
 files from [Build your first agent](../getting-started/first-agent.md). First
 create the read-only `release-reviewer` profile from
 [Profiles and instructions](profiles-and-instructions.md#create-a-profile-for-a-job).
-Use a universe owner/admin or platform administrator account. The deployment
+Use a Contributor, Operator or Admin account in the universe. The deployment
 must run the bot controller role as well as the gateway and session workers;
 the local full stack includes it.
 
@@ -74,6 +74,26 @@ bot has no triggers.
 Typing into the bot's Chat composer sends a conversational message. It is
 useful for discussing the work, but it does not exercise the same numbered
 event admission as **Send a test event**.
+
+## Share the bot's work
+
+A bot and its conversations share one audience. The creation form offers
+**Who can read** and **Running as** alongside the job settings. New bots normally
+run as the universe service. Choosing a collection inherits its audience and
+execution identity, so new conversations remain part of the same shared work.
+
+Use **Access** in the bot header to inspect or change that audience. The dialog
+shows whether the bot has its own root or belongs to a collection. Sharing a
+collection applies to all of its sessions and bots. A colleague with read access
+can inspect the work; invocation and management still follow the bot's role and
+grant rules. Trigger secrets remain visible only to managers.
+
+If personal execution is enabled, a standalone bot can run as its creator.
+Disabling that person or removing resource-use rights prevents new run admission
+and fails the next model-call check in active work. A bot running as the universe
+service keeps that authority when its owner changes or leaves. The
+[execution guide](../deployment/authentication-and-tenancy.md#execution-authority)
+explains the fixed choice and the limits of those checks.
 
 ## Add a schedule
 

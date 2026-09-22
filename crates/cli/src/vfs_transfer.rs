@@ -182,11 +182,15 @@ impl CasVfsApi for HttpAgentApi {
         let manifest = serde_json::to_value(manifest).map_err(|error| {
             AgentApiError::invalid_request(format!("failed to encode manifest: {error}"))
         })?;
-        Ok(
-            HttpAgentApi::commit_vfs_snapshot(self, VfsSnapshotCommitParams { manifest })
-                .await?
-                .result,
+        Ok(HttpAgentApi::commit_vfs_snapshot(
+            self,
+            VfsSnapshotCommitParams {
+                manifest,
+                source_workspace_id: None,
+            },
         )
+        .await?
+        .result)
     }
 
     async fn read_vfs_snapshot(

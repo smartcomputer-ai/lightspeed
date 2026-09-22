@@ -373,7 +373,10 @@ export function universeRoutes(ctx: AppContext) {
       const account = r.subject.kind === "principal" ? accounts.find((u) => u.corePrincipalId === r.subject.id) : undefined;
       const subject = r.subject.kind === "principal" ? directory.result.principals.find((p) => p.id === r.subject.id) : directory.result.groups.find((g) => g.id === r.subject.id);
       return { id: `${r.subject.kind}:${r.subject.id}:${r.role}`, userId: account?.id ?? r.subject.id,
-        subject: r.subject, role: r.role, name: account?.name ?? subject?.displayName ?? r.subject.id,
+        subject: r.subject,
+        principalKind: r.subject.kind === "principal" ? directory.result.principals.find((p) => p.id === r.subject.id)?.kind : undefined,
+        readPrivateContent: r.subject.kind === "principal" && directory.result.capabilities.some((capability) => capability.principalId === r.subject.id && capability.capability === "read_private_content"),
+        role: r.role, name: account?.name ?? subject?.displayName ?? r.subject.id,
         email: account?.email ?? (r.subject.kind === "group" ? "Group" : "Core principal"), createdAt: account?.createdAt ?? null };
     }));
   }));
@@ -394,6 +397,21 @@ export function universeRoutes(ctx: AppContext) {
       operation: "assign_role", assignment: { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, subject, role: body.data.role },
     });
     return c.json(result.result, 201);
+  }));
+
+  app.put("/:id/members/:memberId/private-content-access", (c) => withGateway(c, async () => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access || access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
+    const body = await parseBody(c, z.object({ enabled: z.boolean() }).strict());
+    if (!body.ok) return body.response;
+    const [kind, id, role, extra] = c.req.param("memberId").split(":");
+    const parsed = z.object({ kind: z.literal("principal"), id: z.string().uuid(), role: z.enum(["viewer", "contributor", "operator", "admin"]) }).safeParse({ kind, id, role });
+    if (!parsed.success || extra !== undefined) return c.json({ error: "a user principal is required" }, 400);
+    await deploymentClientFor(ctx).call("deployment/identity/apply", {
+      operation: body.data.enabled ? "assign_capability" : "revoke_capability",
+      assignment: { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, principalId: parsed.data.id, capability: "read_private_content" },
+    });
+    return c.json({ enabled: body.data.enabled });
   }));
 
   app.patch("/:id/members/:memberId", (c) => withGateway(c, async () => {

@@ -1593,6 +1593,72 @@ fn validate_subagent_deadline_for_existing_bindings(
 
 #[async_trait]
 impl AgentApiService for GatewayAgentApi {
+    async fn access_subjects(
+        &self,
+        params: AccessSubjectsParams,
+    ) -> Result<AgentApiOutcome<AccessSubjectsResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ACCESS_SUBJECTS, None).await?;
+        if params.query.len() > 200 {
+            return Err(AgentApiError::invalid_request(
+                "sharing search is limited to 200 bytes",
+            ));
+        }
+        let principal_id = self.caller()?.acting_principal().id;
+        let subjects = self
+            .access_store()
+            .sharing_subjects(self.universe_id(), params.query.trim())
+            .await
+            .map_err(|error| AgentApiError::internal(error.to_string()))?
+            .into_iter()
+            .map(|(subject, display_name)| AccessSubjectView {
+                subject,
+                display_name,
+            })
+            .collect();
+        Ok(AgentApiOutcome::new(AccessSubjectsResponse {
+            principal_id,
+            subjects,
+        }))
+    }
+
+    async fn read_vfs_workspace_file(
+        &self,
+        params: VfsWorkspaceFileReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_WORKSPACES_FILES_READ, None)
+            .await?;
+        let path = vfs::VfsPath::parse(&params.path)
+            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+        let workspace = self
+            .read_vfs_workspace_record(VfsWorkspaceReadParams {
+                workspace_id: params.workspace_id,
+            })
+            .await?;
+        let manifest =
+            vfs::read_snapshot_manifest(self.store.as_ref(), &workspace.head_snapshot_ref)
+                .await
+                .map_err(map_vfs_read_error)?;
+        let file = match vfs::lookup_snapshot_path(&manifest, &path) {
+            Ok(vfs::VfsNode::File(file)) => file,
+            Ok(_) => return Err(AgentApiError::invalid_request("path is not a file")),
+            Err(vfs::VfsError::NotFound { .. }) => {
+                return Err(AgentApiError::not_found("file not found"));
+            }
+            Err(error) => return Err(map_vfs_read_error(error)),
+        };
+        // The trusted workspace head admits this exact file. Blob APIs retain
+        // their separate upload/resource checks.
+        read_blob(
+            self.store.as_ref(),
+            BlobReadParams {
+                blob_ref: file.blob_ref.as_str().to_owned(),
+                resource: None,
+            },
+        )
+        .await
+        .map(AgentApiOutcome::new)
+    }
+
     async fn read_access(
         &self,
         params: AccessReadParams,
@@ -3858,10 +3924,12 @@ impl AgentApiService for GatewayAgentApi {
     ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
         self.authorize_method(METHOD_VFS_SNAPSHOTS_COMMIT, None)
             .await?;
-        // A manifest is admitted only when each child passes the same test as
-        // any supplied reference; the committed manifest is then the
-        // committer's own upload.
-        self.authorize_supplied_document(None, &params.manifest)
+        // Edits may retain files from a named readable workspace's current head.
+        // Every other child still needs ordinary admission. The committed
+        // manifest is then the committer's own upload.
+        let manifest: vfs::VfsSnapshotManifest = serde_json::from_value(params.manifest.clone())
+            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+        self.authorize_vfs_manifest(&manifest, params.source_workspace_id.as_deref())
             .await?;
         let response =
             commit_vfs_snapshot(self.store.as_ref(), Some(self.store.as_ref()), params).await?;
@@ -3895,8 +3963,13 @@ impl AgentApiService for GatewayAgentApi {
         self.authorize_method(METHOD_VFS_WORKSPACES_CREATE, None)
             .await?;
         if let Some(snapshot_ref) = params.snapshot_ref.as_deref() {
-            self.authorize_supplied_refs(None, [parse_blob_ref(snapshot_ref)?])
+            let snapshot_ref = parse_blob_ref(snapshot_ref)?;
+            self.authorize_supplied_refs(None, [snapshot_ref.clone()])
                 .await?;
+            let manifest = vfs::read_snapshot_manifest(self.store.as_ref(), &snapshot_ref)
+                .await
+                .map_err(map_vfs_read_error)?;
+            self.authorize_vfs_manifest(&manifest, None).await?;
         }
         let workspace = self.create_vfs_workspace_record(params).await?;
         Ok(AgentApiOutcome::new(VfsWorkspaceCreateResponse {
@@ -3933,6 +4006,21 @@ impl AgentApiService for GatewayAgentApi {
         params: VfsWorkspaceUpdateParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
         self.authorize_method(METHOD_VFS_WORKSPACES_UPDATE, None)
+            .await?;
+        let snapshot_ref = parse_blob_ref(&params.snapshot_ref)?;
+        let current = self
+            .read_vfs_workspace_record(VfsWorkspaceReadParams {
+                workspace_id: params.workspace_id.clone(),
+            })
+            .await?;
+        if snapshot_ref != current.head_snapshot_ref {
+            self.authorize_supplied_refs(None, [snapshot_ref.clone()])
+                .await?;
+        }
+        let manifest = vfs::read_snapshot_manifest(self.store.as_ref(), &snapshot_ref)
+            .await
+            .map_err(map_vfs_read_error)?;
+        self.authorize_vfs_manifest(&manifest, Some(&params.workspace_id))
             .await?;
         let workspace = self.update_vfs_workspace_record(params).await?;
         Ok(AgentApiOutcome::new(VfsWorkspaceUpdateResponse {

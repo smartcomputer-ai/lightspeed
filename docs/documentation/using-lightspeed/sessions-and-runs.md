@@ -9,8 +9,9 @@ This distinction gives you two kinds of control. You can ask for more work
 after the current task, or change what the agent is doing now. The session
 retains both the work and its history when you leave the page.
 
-Use a universe owner/admin or platform administrator account for the web
-procedures below. If you haven't completed a task yet, start with
+Use a Contributor, Operator or Admin account in the universe for the web
+procedures below. To control an existing standalone session, you must own it or
+hold a write grant on its root. If you haven't completed a task yet, start with
 [Build your first agent](../getting-started/first-agent.md).
 
 ## Start and continue a session
@@ -34,6 +35,29 @@ When the answer arrives, send a follow-up in the same session. The agent can
 use the earlier conversation and its linked files. Starting a new session
 from the same profile gives you a fresh conversation; workspace attachments may
 still point to the same shared files.
+
+## Choose who can read and who runs the work
+
+The creation form separates **Who can read** from **Running as**. New standalone
+sessions default to visibility for universe members and execution as the universe
+service. If the universe enables personal execution, **Me** runs the session
+under your authority and defaults its audience to restricted. The choice is fixed
+at creation; a session created inside a collection inherits both settings.
+
+Open **Access** to see the owner and audience, add people or groups, and save their
+grants. A control grant lets another person start work under the session's
+existing execution identity. If access comes from a collection or bot, the
+dialog links to that root: sharing changes apply to the whole audience. A lock
+marks restricted work in the list. **Privileged read** means the displayed view
+includes content read through an explicitly assigned private-content capability,
+which is audited separately from ordinary reads.
+
+For example, keep a review session restricted while drafting, then share read
+access with a colleague who belongs to the universe. Files written into an
+attached shared workspace remain visible through that workspace. Restricting
+the session does not restrict its attachments. See [Authentication and
+access](../deployment/authentication-and-tenancy.md#audience-and-control) for
+collection creation, execution choices and the effect of revocation.
 
 ## Queue, steer, or stop work
 

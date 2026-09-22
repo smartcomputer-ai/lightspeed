@@ -630,6 +630,39 @@ impl PgAccessStore {
 }
 
 impl PgAccessStore {
+    /// Eligible share targets, deliberately separate from the administrative
+    /// directory. The gateway authorizes universe Read before calling this.
+    pub async fn sharing_subjects(
+        &self,
+        universe_id: Uuid,
+        query: &str,
+    ) -> Result<Vec<(Subject, String)>, AccessError> {
+        let rows = sqlx::query(
+            "SELECT kind, id, display_name FROM (
+                SELECT 'principal' AS kind, p.principal_id AS id, p.display_name
+                FROM access_principals p WHERE p.status='active' AND (
+                    EXISTS (SELECT 1 FROM access_role_assignments r WHERE r.universe_id=$1 AND r.principal_id=p.principal_id)
+                    OR EXISTS (SELECT 1 FROM access_memberships m JOIN access_role_assignments r ON r.group_id=m.group_id
+                               WHERE r.universe_id=$1 AND m.principal_id=p.principal_id))
+                UNION ALL
+                SELECT 'group', g.group_id, g.display_name FROM access_groups g
+                WHERE EXISTS (SELECT 1 FROM access_role_assignments r WHERE r.universe_id=$1 AND r.group_id=g.group_id)
+             ) subjects WHERE strpos(lower(display_name), lower($2)) > 0 OR id::text=$2
+             ORDER BY lower(display_name), kind, id LIMIT 100",
+        ).bind(universe_id).bind(query).fetch_all(&self.pool).await.map_err(db_error)?;
+        rows.into_iter()
+            .map(|row| {
+                let id = row.try_get("id").map_err(db_error)?;
+                let subject = if row.try_get::<String, _>("kind").map_err(db_error)? == "group" {
+                    Subject::Group(id)
+                } else {
+                    Subject::Principal(id)
+                };
+                Ok((subject, row.try_get("display_name").map_err(db_error)?))
+            })
+            .collect()
+    }
+
     /// Administrative view from one committed snapshot. In deployment scope
     /// the directory is complete; in universe scope it holds the subjects of
     /// that universe: principals and groups holding a role there, members of

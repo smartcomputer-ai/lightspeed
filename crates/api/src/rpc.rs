@@ -353,14 +353,18 @@ macro_rules! api_methods {
 }
 
 api_methods! {
+    METHOD_ACCESS_SUBJECTS => access_subjects(AccessSubjectsParams) -> AccessSubjectsResponse =>
+        ["Find sharing subjects", "Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
+    METHOD_VFS_WORKSPACES_FILES_READ => read_vfs_workspace_file(VfsWorkspaceFileReadParams) -> BlobReadResponse =>
+        ["Read a workspace file", "Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
     METHOD_ACCESS_READ => read_access(AccessReadParams) -> AccessReadResponse =>
-        ["Read current action permissions", "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
+        ["Read current action permissions", "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
     METHOD_ACCESS_POLICY_READ => read_access_policy(AccessPolicyReadParams) -> AccessPolicyReadResponse =>
         ["Read a resource's access policy", "Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
     METHOD_ACCESS_POLICY_PUT => put_access_policy(AccessPolicyPutParams) -> AccessPolicyPutResponse =>
         ["Replace a resource's access policy", "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally."], access: MethodAccess::Universe(UniverseAction::ShareResource), audit: true,
     METHOD_ACCESS_EXECUTION_READ => read_access_execution(AccessExecutionReadParams) -> AccessExecutionReadResponse =>
-        ["Read the universe execution policy", "Returns the service principal the universe's work runs as by default and whether people may run work as themselves."], access: MethodAccess::Universe(UniverseAction::ManageAccess), audit: false,
+        ["Read the universe execution policy", "Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
     METHOD_ACCESS_EXECUTION_UPDATE => update_access_execution(AccessExecutionUpdateParams) -> AccessExecutionUpdateResponse =>
         ["Update the universe execution policy", "Enables or disables personal execution. Existing roots keep the execution identity they were created with."], access: MethodAccess::Universe(UniverseAction::ManageAccess), audit: true,
     METHOD_COLLECTION_CREATE => create_collection(CollectionCreateParams) -> CollectionCreateResponse =>

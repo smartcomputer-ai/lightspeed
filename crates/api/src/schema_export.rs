@@ -55,7 +55,12 @@ pub fn export_schemas() -> ExportedSchemas {
     let mut api_reference = String::from(
         "# Lightspeed JSON-RPC API Reference\n\n\
          Generated from the Rust API method manifest. Parameter and result field details live in \
-         `api.schema.json` and `openrpc.json`; this reference focuses on operation semantics.\n",
+         `api.schema.json` and `openrpc.json`; this reference focuses on operation semantics.\n\n\
+         Successful HTTP reads that rely on `read_private_content` carry \
+         `x-lightspeed-privileged-read: true`. Ordinary reads by the same caller omit it. \
+         On lists, the marker means the returned page includes privileged content, not that \
+         every item required it. The marker reports the authorization decision; the associated \
+         privileged audit event is written best-effort. It grants no additional authority.\n",
     );
     let mut reference_scope = None;
     for spec in full_method_manifest() {
@@ -191,7 +196,7 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 141);
+        assert_eq!(total, 143);
         assert_eq!(
             manifest
                 .iter()

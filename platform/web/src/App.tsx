@@ -1,3 +1,4 @@
+import { CollectionsPage } from "@/pages/CollectionsPage";
 import { PermissionIdentityProvider, useActionPermissions } from "@/lib/permissions";
 import { AdminGroupsPage } from "@/pages/AdminGroupsPage";
 import { useQuery } from "@tanstack/react-query";
@@ -99,6 +100,8 @@ export function App() {
       }>
         <Route index element={<HomeRedirect admin={admin} />} />
         <Route path="u/:slug" element={<UniverseIndexRedirect />} />
+        <Route path="u/:slug/collections" element={<CollectionsPage />} />
+        <Route path="u/:slug/collections/:collectionId" element={<CollectionsPage />} />
         <Route path="u/:slug/sessions" element={<SessionsPage admin={admin} />} />
         <Route
           path="u/:slug/sessions/:sessionId"

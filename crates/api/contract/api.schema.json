@@ -575,7 +575,7 @@
       "properties": {
         "resources": {
           "default": [],
-          "description": "Up to 100 existing sessions, bots or profiles in the selected universe.\nMissing resources return no actions.",
+          "description": "Up to 100 existing sessions, bots, profiles or collections in the selected universe.\nMissing resources return no actions.",
           "items": {
             "$ref": "#/definitions/ResourceRef"
           },
@@ -645,6 +645,52 @@
           "type": "object"
         }
       ]
+    },
+    "AccessSubjectView": {
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "subject": {
+          "$ref": "#/definitions/Subject"
+        }
+      },
+      "required": [
+        "subject",
+        "displayName"
+      ],
+      "type": "object"
+    },
+    "AccessSubjectsParams": {
+      "additionalProperties": false,
+      "description": "Search eligible sharing subjects in the selected universe. This exposes\nnames and identifiers only, never the administrative identity directory.",
+      "properties": {
+        "query": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "AccessSubjectsResponse": {
+      "properties": {
+        "principalId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "subjects": {
+          "description": "At most 100 matches; refine the query to find another subject.",
+          "items": {
+            "$ref": "#/definitions/AccessSubjectView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "principalId",
+        "subjects"
+      ],
+      "type": "object"
     },
     "ActionActor": {
       "oneOf": [
@@ -883,6 +929,23 @@
         },
         "result": {
           "$ref": "#/definitions/AccessReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfAccessSubjectsResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/AccessSubjectsResponse"
         }
       },
       "required": [
@@ -18316,7 +18379,14 @@
     },
     "VfsSnapshotCommitParams": {
       "properties": {
-        "manifest": true
+        "manifest": true,
+        "sourceWorkspaceId": {
+          "description": "Admit unchanged files from this readable workspace's current head.\nEvery other file must still be an upload of the caller. This does not\nchange the workspace; updating its head has its own permission and\nrevision check.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
       "required": [
         "manifest"
@@ -18436,6 +18506,23 @@
       },
       "required": [
         "workspace"
+      ],
+      "type": "object"
+    },
+    "VfsWorkspaceFileReadParams": {
+      "additionalProperties": false,
+      "description": "Read a file from a workspace's current head. Workspaces remain universe\nresources; this does not authorize arbitrary blobs or snapshot references.",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "path"
       ],
       "type": "object"
     },

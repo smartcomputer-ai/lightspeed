@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SessionEventsPage, SessionRunView } from "@/api";
+import { withReadMetadata, type ReadMetadata, type SessionEventsPage, type SessionRunView } from "@/api";
 import { emptyTranscript, type TranscriptState } from "./transcript";
 import { TranscriptWindow } from "./transcript-window";
 import { isTransientReadError } from "@/lib/read-errors";
 
 export interface SessionTail {
+  privilegedRead?: boolean;
   transcript: TranscriptState;
   phase: "loading" | "live";
   error: string | null;
@@ -53,6 +54,10 @@ export function useSessionTail(universeId: string, sessionId: string): SessionTa
     let loadingOlder = false;
     let historyRevision = 0;
     setTail({ ...initialState(), scope });
+    let privilegedRead = false;
+    const observeRead = (response: ReadMetadata) => {
+      if (response.privilegedRead && !privilegedRead && !signal.aborted) { privilegedRead = true; push({ privilegedRead }); }
+    };
     const push = (patch: Partial<TailState>) => {
       if (!signal.aborted) setTail((prev) => ({ ...prev, ...patch }));
     };
@@ -74,6 +79,7 @@ export function useSessionTail(universeId: string, sessionId: string): SessionTa
           try {
             const response = await fetchHistory(universeId, sessionId, requestedBefore, signal);
             if (signal.aborted) return;
+            observeRead(response);
             if (!response.complete && (!response.nextCursor || response.nextCursor.seq >= requestedBefore)) {
               throw new Error("History cursor did not advance");
             }
@@ -98,6 +104,7 @@ export function useSessionTail(universeId: string, sessionId: string): SessionTa
         try {
           const response = await fetchHistory(universeId, sessionId, null, signal);
           if (signal.aborted) return;
+          observeRead(response);
           if (!response.complete && !response.nextCursor) throw new Error("Missing history cursor");
           window.append(response.events ?? []);
           // Only the INITIAL history fence can initialize live consumption.
@@ -121,6 +128,7 @@ export function useSessionTail(universeId: string, sessionId: string): SessionTa
           // finish would leave a recovered, idle session looking disconnected.
           const waitMs = recovering ? 0 : WAIT_MS;
           const response = await fetchEvents(universeId, sessionId, cursor, waitMs, signal);
+          observeRead(response);
           if (signal.aborted) return;
           if (response.gap) throw new Error("The session event stream contains an unavailable interval");
           const events = (response.events ?? []).filter((event) => event.cursor.seq > cursor);
@@ -163,7 +171,7 @@ function baseUrl(universeId: string, sessionId: string) {
   return `/api/v1/universes/${encodeURIComponent(universeId)}/sessions/${encodeURIComponent(sessionId)}`;
 }
 
-async function fetchHistory(universeId: string, sessionId: string, before: number | null, signal: AbortSignal): Promise<SessionEventsPage> {
+async function fetchHistory(universeId: string, sessionId: string, before: number | null, signal: AbortSignal): Promise<SessionEventsPage & ReadMetadata> {
   const params = new URLSearchParams({ direction: "backward", limit: String(PAGE_LIMIT) });
   if (before !== null) params.set("before", String(before));
   const page = await readPage<SessionEventsPage>(`${baseUrl(universeId, sessionId)}/events?${params}`, signal);
@@ -185,7 +193,7 @@ async function fetchHistory(universeId: string, sessionId: string, before: numbe
   return page;
 }
 
-async function fetchEvents(universeId: string, sessionId: string, after: number, waitMs: number, signal: AbortSignal): Promise<SessionEventsPage> {
+async function fetchEvents(universeId: string, sessionId: string, after: number, waitMs: number, signal: AbortSignal): Promise<SessionEventsPage & ReadMetadata> {
   // A probe needs at most one event to establish progress; do not make its
   // shorter deadline depend on projecting a full catch-up page.
   const params = new URLSearchParams({ limit: String(waitMs === 0 ? 1 : PAGE_LIMIT), after: String(after), waitMs: String(waitMs) });
@@ -208,10 +216,10 @@ async function fetchEvents(universeId: string, sessionId: string, after: number,
   }
 }
 
-async function readPage<T>(url: string, signal: AbortSignal): Promise<T> {
+async function readPage<T>(url: string, signal: AbortSignal): Promise<T & ReadMetadata> {
   const res = await fetch(url, { credentials: "same-origin", signal });
   if (!res.ok) throw new SessionReadHttpError(res.status);
-  return res.json() as Promise<T>;
+  return withReadMetadata(await res.json() as T, res.headers);
 }
 
 class SessionReadHttpError extends Error {

@@ -4,6 +4,7 @@ import type { AccessReadResponse, ResourceRef, UniverseAction } from "@lightspee
 import { api } from "@/api";
 
 const Identity = createContext<string | null>(null);
+export function usePermissionIdentity() { return useContext(Identity); }
 
 /** Keep permission previews isolated across sign-ins, including cached results. */
 export function PermissionIdentityProvider({ userId, children }: { userId: string; children: ReactNode }) {

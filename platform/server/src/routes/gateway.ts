@@ -1,3 +1,5 @@
+import { runtimeReadMetadata } from "../runtime-client.js";
+import { accessInputSchema, executionInputSchema, resourceSchema } from "./access-schemas.js";
 import { userClient, actingPrincipal, GatewayUnconfigured } from "../runtime-client.js";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -84,6 +86,8 @@ export const sessionCreateSchema = z.object({
   metadata: metadataSchema.optional(),
   deleteAfterCloseMs: z.number().int().positive().nullable().optional(),
   profile: profileSourceSchema,
+  access: accessInputSchema.optional(),
+  execution: executionInputSchema.optional(),
 }).strict();
 
 /// Put replaces the whole map; an empty map clears it.
@@ -358,7 +362,7 @@ export function gatewayRoutes(ctx: AppContext) {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
     const body = await parseBody(c, z.object({
-      resources: z.array(z.object({ kind: z.enum(["session", "bot", "profile"]), id: z.string().min(1) }).strict()).max(100).optional(),
+      resources: z.array(resourceSchema).max(100).optional(),
       sessionDeleteCascade: z.boolean().optional(),
     }).strict());
     if (!body.ok) return body.response;
@@ -586,6 +590,8 @@ export function gatewayRoutes(ctx: AppContext) {
           ? { deleteAfterCloseMs: input.deleteAfterCloseMs }
           : {}),
         profile: input.profile as ProfileSource,
+        access: input.access,
+        execution: input.execution,
       });
       const current = await client.call("session/read", {
         sessionId: response.result.session.id,
@@ -690,7 +696,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const custom = active.find((entry) => entry.key === "instructions.050.profile");
       let text: string | null = null;
       if (custom) {
-        const blob = await client.call("blobs/read", { blobRef: custom.contentRef });
+        const blob = await client.call("blobs/read", { blobRef: custom.contentRef, resource: { kind: "session", id: c.req.param("sessionId") } });
         text = Buffer.from(blob.result.bytesBase64, "base64").toString("utf8");
       }
       return c.json({
@@ -1822,6 +1828,14 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
+  app.get("/:id/workspaces/:workspaceId/files/:path{.+}", (c) => withGateway(c, async () => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    return c.json((await engineClientFor(ctx, access.universe).call("vfs/workspaces/files/read", {
+      workspaceId: c.req.param("workspaceId"), path: c.req.param("path"),
+    })).result);
+  }));
+
   app.get("/:id/blobs/:blobRef", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
@@ -1829,8 +1843,13 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access.universe);
+      const kind = c.req.query("resourceKind");
+      const id = c.req.query("resourceId");
+      const parsed = kind !== undefined || id !== undefined ? resourceSchema.safeParse({ kind, id }) : null;
+      if (parsed && !parsed.success) return c.json({ error: "Invalid content resource" }, 400);
       const response = await client.call("blobs/read", {
         blobRef: c.req.param("blobRef"),
+        ...(parsed?.success ? { resource: parsed.data } : {}),
       });
       return c.json(response.result);
     });
@@ -2047,7 +2066,7 @@ async function commitHead(
   manifest: VfsManifest,
   expectedRevision: number,
 ) {
-  const commit = await client.call("vfs/snapshots/commit", { manifest });
+  const commit = await client.call("vfs/snapshots/commit", { manifest, sourceWorkspaceId: workspaceId });
   const updated = await client.call("vfs/workspaces/update", {
     workspaceId,
     snapshotRef: commit.result.snapshotRef,
@@ -2065,7 +2084,10 @@ export async function withGateway(
   fn: () => Promise<Response>,
 ): Promise<Response> {
   try {
-    return await fn();
+    const metadata = { privileged: false };
+    const response = await runtimeReadMetadata.run(metadata, fn);
+    if (response.ok && metadata.privileged) response.headers.set("x-lightspeed-privileged-read", "true");
+    return response;
   } catch (error) {
     if (error instanceof GatewayUnconfigured) {
       return c.json({ error: error.message }, 501);

@@ -6,10 +6,60 @@ import type { GeneratedToolDescriptor } from "../tool-descriptor.js";
 
 export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
+    "name": "lightspeed_access_subjects",
+    "method": "access/subjects",
+    "summary": "Find sharing subjects",
+    "description": "Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.",
+    "paramsType": "AccessSubjectsParams",
+    "resultType": "AgentApiOutcome<AccessSubjectsResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "description": "Search eligible sharing subjects in the selected universe. This exposes\nnames and identifiers only, never the administrative identity directory.",
+      "properties": {
+        "query": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_vfs_workspaces_files_read",
+    "method": "vfs/workspaces/files/read",
+    "summary": "Read a workspace file",
+    "description": "Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.",
+    "paramsType": "VfsWorkspaceFileReadParams",
+    "resultType": "AgentApiOutcome<BlobReadResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "description": "Read a file from a workspace's current head. Workspaces remain universe\nresources; this does not authorize arbitrary blobs or snapshot references.",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "lightspeed_access_read",
     "method": "access/read",
     "summary": "Read current action permissions",
-    "description": "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
+    "description": "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
     "paramsType": "AccessReadParams",
     "resultType": "AgentApiOutcome<AccessReadResponse>",
     "inputSchema": {
@@ -21,7 +71,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "properties": {
         "resources": {
           "default": [],
-          "description": "Up to 100 existing sessions, bots or profiles in the selected universe.\nMissing resources return no actions.",
+          "description": "Up to 100 existing sessions, bots, profiles or collections in the selected universe.\nMissing resources return no actions.",
           "items": {
             "$ref": "#/definitions/ResourceRef"
           },
@@ -408,7 +458,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_access_execution_read",
     "method": "access/execution/read",
     "summary": "Read the universe execution policy",
-    "description": "Returns the service principal the universe's work runs as by default and whether people may run work as themselves.",
+    "description": "Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.",
     "paramsType": "AccessExecutionReadParams",
     "resultType": "AgentApiOutcome<AccessExecutionReadResponse>",
     "inputSchema": {
@@ -8187,7 +8237,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "manifest": {}
+        "manifest": {},
+        "sourceWorkspaceId": {
+          "description": "Admit unchanged files from this readable workspace's current head.\nEvery other file must still be an upload of the caller. This does not\nchange the workspace; updating its head has its own permission and\nrevision check.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
       "required": [
         "manifest"

@@ -2,6 +2,20 @@ use super::*;
 
 #[async_trait]
 pub trait AgentApiService: Send + Sync {
+    async fn access_subjects(
+        &self,
+        _params: AccessSubjectsParams,
+    ) -> Result<AgentApiOutcome<AccessSubjectsResponse>, AgentApiError> {
+        Err(AgentApiError::internal("sharing subjects are unavailable"))
+    }
+    async fn read_vfs_workspace_file(
+        &self,
+        _params: VfsWorkspaceFileReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "workspace file reads are unavailable",
+        ))
+    }
     async fn read_access(
         &self,
         _params: AccessReadParams,

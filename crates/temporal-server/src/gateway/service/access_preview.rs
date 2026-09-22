@@ -31,6 +31,7 @@ fn universe_actions(rights: &access::EffectiveAccess) -> Vec<UniverseAction> {
         CreateSession,
         CreateProfile,
         CreateBot,
+        CreateCollection,
         UseResource,
         ConfigureResource,
         ManageAccess,
@@ -93,7 +94,14 @@ mod tests {
         assert_eq!(universe_actions(&rights(access::Role::Viewer)), vec![Read]);
         assert_eq!(
             universe_actions(&rights(access::Role::Contributor)),
-            vec![Read, CreateSession, CreateProfile, CreateBot, UseResource]
+            vec![
+                Read,
+                CreateSession,
+                CreateProfile,
+                CreateBot,
+                CreateCollection,
+                UseResource
+            ]
         );
         let mut admin = rights(access::Role::Admin);
         assert_eq!(
@@ -103,6 +111,7 @@ mod tests {
                 CreateSession,
                 CreateProfile,
                 CreateBot,
+                CreateCollection,
                 UseResource,
                 ConfigureResource,
                 ManageAccess

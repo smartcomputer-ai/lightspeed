@@ -5,7 +5,51 @@
         "kind": "universe",
         "requirement": "read"
       },
-      "description": "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
+      "description": "Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.",
+      "method": "access/subjects",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AccessSubjectsParams"
+        },
+        "type": "AccessSubjectsParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAccessSubjectsResponse"
+        },
+        "type": "AgentApiOutcome<AccessSubjectsResponse>"
+      },
+      "scope": "universe",
+      "summary": "Find sharing subjects"
+    },
+    {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
+      "description": "Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.",
+      "method": "vfs/workspaces/files/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/VfsWorkspaceFileReadParams"
+        },
+        "type": "VfsWorkspaceFileReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfBlobReadResponse"
+        },
+        "type": "AgentApiOutcome<BlobReadResponse>"
+      },
+      "scope": "universe",
+      "summary": "Read a workspace file"
+    },
+    {
+      "access": {
+        "kind": "universe",
+        "requirement": "read"
+      },
+      "description": "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
       "method": "access/read",
       "params": {
         "schema": {
@@ -69,9 +113,9 @@
     {
       "access": {
         "kind": "universe",
-        "requirement": "manage_access"
+        "requirement": "read"
       },
-      "description": "Returns the service principal the universe's work runs as by default and whether people may run work as themselves.",
+      "description": "Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.",
       "method": "access/execution/read",
       "params": {
         "schema": {

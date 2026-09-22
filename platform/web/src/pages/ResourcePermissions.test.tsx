@@ -44,7 +44,7 @@ beforeEach(() => {
     if (path.endsWith("/access")) return { actions, resources: [] };
     if (path.endsWith("/workspaces")) return [workspace];
     if (path.endsWith("/tree")) return { workspace, manifest: { root: { entries: { "notes.txt": { kind: "file", blob_ref: "text", size_bytes: 5, media_type: "text/plain" } } } } };
-    if (path.includes("/blobs/")) return { bytesBase64: btoa("hello") };
+    if (path.endsWith("/workspaces/docs/files/notes.txt")) return { bytesBase64: btoa("hello") };
     if (path.endsWith("/mcp-servers")) return [{ serverId: "tools", displayName: "Research tools", serverUrl: "https://example.test/mcp", authPolicy: { type: "requiredOAuth" }, status: "needsAuthConfig" }];
     if (path.endsWith("/auth-grants")) return [];
     if (path.endsWith("/secrets")) return { providers: [provider], grants: [] };

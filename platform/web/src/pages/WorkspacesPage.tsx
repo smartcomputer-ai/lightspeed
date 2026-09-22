@@ -423,11 +423,11 @@ function FileDetail({
   });
   const file = tree.data ? findFile(tree.data.manifest.root.entries, filePath) : null;
   const blob = useQuery({
-    queryKey: ["blob", universeId, file?.blob_ref],
+    queryKey: ["workspace-file", universeId, workspaceId, filePath, file?.blob_ref],
     queryFn: () =>
       api<BlobContent>(
         "GET",
-        `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(file!.blob_ref)}`,
+        `/api/v1/universes/${universeId}/workspaces/${encodeURIComponent(workspaceId)}/files/${filePath.split("/").map(encodeURIComponent).join("/")}`,
       ),
     enabled: !!file,
   });

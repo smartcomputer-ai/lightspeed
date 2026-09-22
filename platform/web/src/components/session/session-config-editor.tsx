@@ -1296,7 +1296,7 @@ function VfsFields({
           <div className="min-w-0">
             <p className="text-sm font-medium">Workspace attachments</p>
             <p className="text-xs text-muted-foreground">
-              Attach workspaces at session paths with their own access grants.
+              Attach workspaces at session paths with their own access grants. Files written here remain visible through the workspace, even when the session is restricted.
             </p>
           </div>
           <Button
@@ -1801,7 +1801,7 @@ function EnvironmentFields({
           <p className="text-sm font-medium">Environment attachments</p>
           <p className="text-xs text-muted-foreground">
             Access applies to the active environment. A default fills an empty selection when a
-            profile is applied.
+            profile is applied. Restricting a session does not restrict files or processes in its environment.
           </p>
         </div>
         <Button

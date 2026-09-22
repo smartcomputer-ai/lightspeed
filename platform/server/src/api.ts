@@ -1,3 +1,4 @@
+import { accessRoutes } from "./routes/access.js";
 import { userClient, requestIdentity } from "./runtime-client.js";
 import { identityRoutes } from "./routes/identity.js";
 import { withGateway } from "./routes/gateway.js";
@@ -77,6 +78,7 @@ export function buildApp(ctx: AppContext) {
   api.route("/universes", universeRoutes(ctx));
   api.route("/universes", setupRoutes(ctx));
   api.route("/universes", gatewayRoutes(ctx));
+  api.route("/universes", accessRoutes(ctx));
   api.route("/universes", botRoutes(ctx));
   api.route("/universes", channelUniverseRoutes(ctx));
   api.route("/admin", environmentDeploymentRoutes(ctx));

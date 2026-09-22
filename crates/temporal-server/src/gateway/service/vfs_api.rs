@@ -1,6 +1,32 @@
 use super::*;
 
 impl GatewayAgentApi {
+    /// A workspace edit may retain its current files. New files need the
+    /// caller's own upload even when the manifest itself was uploaded raw.
+    pub(super) async fn authorize_vfs_manifest(
+        &self,
+        manifest: &vfs::VfsSnapshotManifest,
+        source_workspace_id: Option<&str>,
+    ) -> Result<(), AgentApiError> {
+        let mut supplied = vfs::manifest_blob_refs(manifest);
+        if let Some(workspace_id) = source_workspace_id {
+            self.authorize_method(METHOD_VFS_WORKSPACES_READ, None)
+                .await?;
+            let workspace = self
+                .read_vfs_workspace_record(VfsWorkspaceReadParams {
+                    workspace_id: workspace_id.to_owned(),
+                })
+                .await?;
+            let source =
+                vfs::read_snapshot_manifest(self.store.as_ref(), &workspace.head_snapshot_ref)
+                    .await
+                    .map_err(map_vfs_read_error)?;
+            let admitted = vfs::manifest_blob_refs(&source);
+            supplied.retain(|blob_ref| !admitted.contains(blob_ref));
+        }
+        self.authorize_supplied_refs(None, supplied).await
+    }
+
     pub(super) async fn validate_workspace_attachment_targets(
         &self,
         features: &engine::FeaturesConfig,

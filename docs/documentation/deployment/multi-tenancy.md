@@ -1,7 +1,7 @@
 # Multitenancy
 
 One Lightspeed deployment can serve many universes. Each universe contains
-its own sessions, profiles, workspaces, bots, credentials, channels, and
+its own sessions, profiles, workspaces, bots, collections, credentials, channels, and
 environment records, while the deployment supplies shared runtime processes
 and infrastructure. This allows several teams or customers to use the same
 installation without placing their agent data in the same logical space.
@@ -134,16 +134,45 @@ Universe administrators can assign Viewer, Contributor, Operator and Admin to
 people or groups. The directory is deployment-wide, not a separate identity realm
 inside each universe.
 
-Gateway and shared-service enforcement evaluates current roles, explicit service
-capabilities and each resource's anchor and root policy. Contributor control
-requires ownership or a write grant on the root; Operator/Admin may stop another
-person's session but cannot steer it; Admin may delete any session. A root is
-universe-visible unless its creator restricts it, at creation or later through
-`access/policy/put`; a restricted session or bot is absent, in reads and lists
-alike, to everyone but its owner and the principals and groups granted `read`
-or `write` on it, administrators included. Individual resource isolation
-(workspaces, environments, MCP servers) remains a follow-up. Lists and subsequent requests see committed revocations, and
-parked transcript long polls end when their caller's authority is revoked.
+Within a universe, a session or bot also belongs to an audience. Standalone work
+has its own owner and access policy; a collection lets several sessions and bots
+share one. The policy is either universe-visible or restricted to its owner and
+people or groups with explicit grants. Bot conversations and delegated children
+inherit their root's audience. A restricted resource outside the caller's
+audience is omitted from lists and appears absent on direct reads, including to
+administrators without an explicit private-content capability.
+
+For example, Acorn can keep routine release work visible to everyone while a
+restricted investigation collection holds two sessions and a bot. Sharing that
+collection makes the whole investigation available to a colleague who already
+belongs to Acorn. It does not give a Cedar member access, and it does not create
+a separate tenant: the investigation still uses Acorn's providers, credentials
+and shared infrastructure.
+
+Audience and execution identity answer different questions. A root normally
+runs as Acorn's dedicated execution service, so shared work can survive a change
+of owner. If Acorn enables personal execution, its creator can instead choose
+**Me**. That identity is fixed for the root and inherited by its members. The
+runtime checks it at run admission and before each model call; personal work
+fails at the next such check if its owner is disabled or loses resource-use
+rights. Work running as the universe service does not stop simply because its
+owner leaves.
+
+Workspaces, environments and MCP servers remain universe resources. Restricting
+a session does not restrict files it writes into a shared workspace or machine.
+The web attachment editor makes that boundary visible. Reading stored message
+content also requires more than its hash: the caller names a readable resource
+that contains the blob, or reads their own upload. Workspace file reads resolve
+a path through the current workspace head.
+
+Operational governance remains distinct from reading. Operators and Admins may
+stop another person's sessions, and Admins may delete sessions and empty
+collections under their lifecycle rules, without obtaining their contents. A
+universe Admin can separately assign `read_private_content` to a person. Reads
+that rely on it are marked as privileged in the web app and sent to the access
+audit; ordinary reads by the same person stay ordinary. This grants no control
+or ownership. The [access guide](authentication-and-tenancy.md) explains sharing,
+execution, private-content access and revocation at each request boundary.
 
 ## Keep Platform and runtime records aligned
 

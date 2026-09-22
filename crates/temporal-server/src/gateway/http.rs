@@ -963,11 +963,24 @@ async fn rpc(
         privileged,
     )
     .await;
-    if response_budget_exempt(&method) {
-        no_store_json_rpc(response)
+    let response = if response_budget_exempt(&method) {
+        response
     } else {
-        no_store_json_rpc(enforce_response_budget(response))
+        enforce_response_budget(response)
+    };
+    privileged_read_response(response, privileged)
+}
+
+fn privileged_read_response(response: JsonRpcResponse, privileged: bool) -> Response {
+    let successful_read = privileged && response.error.is_none();
+    let mut response = no_store_json_rpc(response);
+    if successful_read {
+        response.headers_mut().insert(
+            "x-lightspeed-privileged-read",
+            HeaderValue::from_static("true"),
+        );
     }
+    response
 }
 
 /// Full message projections and blob reads cannot be shortened with a smaller
@@ -1140,6 +1153,35 @@ fn html_escape(value: &str) -> String {
 mod tests {
     use super::*;
     use api::AgentApiErrorKind;
+
+    #[test]
+    fn only_successful_privileged_reads_carry_the_response_marker() {
+        for privileged in [false, true] {
+            let response = privileged_read_response(
+                JsonRpcResponse::success(
+                    api::RequestId::Number(1),
+                    serde_json::json!({"result": {}}),
+                ),
+                privileged,
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .contains_key("x-lightspeed-privileged-read"),
+                privileged
+            );
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+        let response = privileged_read_response(
+            JsonRpcResponse::failure(api::RequestId::Number(1), AgentApiError::forbidden().into()),
+            true,
+        );
+        assert!(
+            !response
+                .headers()
+                .contains_key("x-lightspeed-privileged-read")
+        );
+    }
 
     #[test]
     fn json_rpc_responses_disable_caching() {

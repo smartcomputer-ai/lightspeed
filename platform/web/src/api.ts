@@ -1,4 +1,5 @@
 import type {
+  ResourceAccessSummary,
   ContextEntryView,
   RunSummaryView,
   RunStatus,
@@ -51,7 +52,17 @@ function extractMessage(body: unknown): string | null {
   return error;
 }
 
-export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+export interface ReadMetadata { privilegedRead?: boolean }
+
+/** Provenance belongs to this response, never to the user's general capabilities. */
+export function withReadMetadata<T>(value: T, headers: Headers): T & ReadMetadata {
+  if (value && typeof value === "object" && !Array.isArray(value) && headers.get("x-lightspeed-privileged-read") === "true") {
+    return { ...value, privilegedRead: true };
+  }
+  return value as T & ReadMetadata;
+}
+
+export async function api<T>(method: string, path: string, body?: unknown): Promise<T & ReadMetadata> {
   const res = await fetch(path, {
     method,
     headers: body !== undefined ? { "content-type": "application/json" } : undefined,
@@ -63,7 +74,7 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
   if (!res.ok) {
     throw new ApiError(res.status, json);
   }
-  return json as T;
+  return withReadMetadata(json as T, res.headers);
 }
 
 export interface Universe {
@@ -103,6 +114,9 @@ export interface UniverseReconcile {
 }
 
 export interface Member {
+  subject?: { kind: "principal" | "group"; id: string };
+  principalKind?: "user" | "service";
+  readPrivateContent?: boolean;
   id: string;
   userId: string;
   role: string;
@@ -419,6 +433,7 @@ export interface SessionOrigin {
 }
 
 export interface SessionSummary {
+  access?: ResourceAccessSummary;
   id: string;
   displayName?: string | null;
   /// Descriptive key/value metadata; absent or empty when none was set.
@@ -458,6 +473,7 @@ export interface ManagedWorkflowTool {
 }
 
 export interface SessionView {
+  access?: ResourceAccessSummary;
   id: string;
   displayName?: string | null;
   metadata?: Record<string, string>;

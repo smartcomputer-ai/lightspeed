@@ -134,6 +134,24 @@ export function workspaceRoutes(store: DemoStore): Hono {
     return c.json({ workspace: commitHead(store, record, manifest) });
   });
 
+  app.get("/:id/workspaces/:workspaceId/files/:path{.+}", (c) => {
+    const universe = universeFor(store, c);
+    const workspace = universe?.workspaces.get(c.req.param("workspaceId"));
+    if (!workspace) return notFound(c);
+    let entries = workspace.manifest.root.entries;
+    const parts = c.req.param("path").split("/").filter(Boolean);
+    for (let i = 0; i < parts.length; i++) {
+      const entry = entries[parts[i]!];
+      if (!entry) return notFound(c);
+      if (entry.kind === "file") {
+        const blob = i === parts.length - 1 ? store.blobs.get(entry.blob_ref) : undefined;
+        return blob ? c.json(blob) : notFound(c);
+      }
+      entries = entry.entries;
+    }
+    return badRequest(c, "Path is not a file");
+  });
+
   app.get("/:id/blobs/:blobRef", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);

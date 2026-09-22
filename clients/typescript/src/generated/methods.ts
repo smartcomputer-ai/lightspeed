@@ -5,6 +5,8 @@
 import type * as Api from "./types.js";
 
 export const METHODS = [
+  "access/subjects",
+  "vfs/workspaces/files/read",
   "access/read",
   "access/policy/read",
   "access/policy/put",
@@ -149,11 +151,23 @@ export const METHODS = [
 ] as const;
 
 export const METHOD_INFO = {
+  "access/subjects": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"read"},
+    summary: "Find sharing subjects",
+    description: "Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.",
+  },
+  "vfs/workspaces/files/read": {
+    scope: "universe",
+    access: {"kind":"universe","requirement":"read"},
+    summary: "Read a workspace file",
+    description: "Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.",
+  },
   "access/read": {
     scope: "universe",
     access: {"kind":"universe","requirement":"read"},
     summary: "Read current action permissions",
-    description: "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
+    description: "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
   },
   "access/policy/read": {
     scope: "universe",
@@ -169,9 +183,9 @@ export const METHOD_INFO = {
   },
   "access/execution/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"manage_access"},
+    access: {"kind":"universe","requirement":"read"},
     summary: "Read the universe execution policy",
-    description: "Returns the service principal the universe's work runs as by default and whether people may run work as themselves.",
+    description: "Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.",
   },
   "access/execution/update": {
     scope: "universe",
@@ -1011,9 +1025,27 @@ export type NotificationMethod = (typeof NOTIFICATIONS)[number];
 
 export interface MethodMap {
   /**
+   * Find sharing subjects
+   *
+   * Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.
+   */
+  "access/subjects": {
+    params: Api.AccessSubjectsParams;
+    result: Api.AgentApiOutcomeOfAccessSubjectsResponse;
+  };
+  /**
+   * Read a workspace file
+   *
+   * Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.
+   */
+  "vfs/workspaces/files/read": {
+    params: Api.VfsWorkspaceFileReadParams;
+    result: Api.AgentApiOutcomeOfBlobReadResponse;
+  };
+  /**
    * Read current action permissions
    *
-   * Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
+   * Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
    */
   "access/read": {
     params: Api.AccessReadParams;
@@ -1040,7 +1072,7 @@ export interface MethodMap {
   /**
    * Read the universe execution policy
    *
-   * Returns the service principal the universe's work runs as by default and whether people may run work as themselves.
+   * Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.
    */
   "access/execution/read": {
     params: Api.AccessExecutionReadParams;
@@ -2290,9 +2322,25 @@ export interface RpcCaller {
 
 export const rpc = {
   /**
+   * Find sharing subjects
+   *
+   * Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.
+   */
+  accessSubjects(client: RpcCaller, params: Api.AccessSubjectsParams): Promise<Api.AgentApiOutcomeOfAccessSubjectsResponse> {
+    return client.call("access/subjects", params);
+  },
+  /**
+   * Read a workspace file
+   *
+   * Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.
+   */
+  vfsWorkspacesFilesRead(client: RpcCaller, params: Api.VfsWorkspaceFileReadParams): Promise<Api.AgentApiOutcomeOfBlobReadResponse> {
+    return client.call("vfs/workspaces/files/read", params);
+  },
+  /**
    * Read current action permissions
    *
-   * Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots or profiles. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
+   * Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
    */
   accessRead(client: RpcCaller, params: Api.AccessReadParams): Promise<Api.AgentApiOutcomeOfAccessReadResponse> {
     return client.call("access/read", params);
@@ -2316,7 +2364,7 @@ export const rpc = {
   /**
    * Read the universe execution policy
    *
-   * Returns the service principal the universe's work runs as by default and whether people may run work as themselves.
+   * Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.
    */
   accessExecutionRead(client: RpcCaller, params: Api.AccessExecutionReadParams): Promise<Api.AgentApiOutcomeOfAccessExecutionReadResponse> {
     return client.call("access/execution/read", params);

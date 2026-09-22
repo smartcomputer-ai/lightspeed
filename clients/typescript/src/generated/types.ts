@@ -2158,7 +2158,7 @@ export interface AccessPolicyReadResponse {
  */
 export interface AccessReadParams {
   /**
-   * Up to 100 existing sessions, bots or profiles in the selected universe.
+   * Up to 100 existing sessions, bots, profiles or collections in the selected universe.
    * Missing resources return no actions.
    */
   resources?: ResourceRef[];
@@ -2186,6 +2186,35 @@ export interface AccessReadResponse {
 export interface ResourceAccessView {
   actions: UniverseAction[];
   resource: ResourceRef;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessSubjectView".
+ */
+export interface AccessSubjectView {
+  displayName: string;
+  subject: Subject;
+}
+/**
+ * Search eligible sharing subjects in the selected universe. This exposes
+ * names and identifiers only, never the administrative identity directory.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessSubjectsParams".
+ */
+export interface AccessSubjectsParams {
+  query?: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessSubjectsResponse".
+ */
+export interface AccessSubjectsResponse {
+  principalId: string;
+  /**
+   * At most 100 matches; refine the query to find another subject.
+   */
+  subjects: AccessSubjectView[];
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3201,6 +3230,14 @@ export interface AgentApiOutcomeOfAccessPolicyReadResponse {
 export interface AgentApiOutcomeOfAccessReadResponse {
   notifications?: AgentNotification[];
   result: AccessReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfAccessSubjectsResponse".
+ */
+export interface AgentApiOutcomeOfAccessSubjectsResponse {
+  notifications?: AgentNotification[];
+  result: AccessSubjectsResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -8464,6 +8501,13 @@ export interface SkillListParams {
  */
 export interface VfsSnapshotCommitParams {
   manifest: unknown;
+  /**
+   * Admit unchanged files from this readable workspace's current head.
+   * Every other file must still be an upload of the caller. This does not
+   * change the workspace; updating its head has its own permission and
+   * revision check.
+   */
+  sourceWorkspaceId?: string | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -8490,6 +8534,17 @@ export interface VfsWorkspaceCreateParams {
  * via the `definition` "VfsWorkspaceDeleteParams".
  */
 export interface VfsWorkspaceDeleteParams {
+  workspaceId: string;
+}
+/**
+ * Read a file from a workspace's current head. Workspaces remain universe
+ * resources; this does not authorize arbitrary blobs or snapshot references.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "VfsWorkspaceFileReadParams".
+ */
+export interface VfsWorkspaceFileReadParams {
+  path: string;
   workspaceId: string;
 }
 /**

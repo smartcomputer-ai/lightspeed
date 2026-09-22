@@ -825,3 +825,203 @@ async fn exercise(pool: &sqlx::PgPool) {
         Err(AccessError::AlreadyBootstrapped)
     );
 }
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires explicitly approved LIGHTSPEED_TEST_POSTGRES_URL; creates an isolated schema"]
+async fn sharing_search_returns_only_active_universe_subjects_and_is_bounded() {
+    with_isolated_schema(exercise_sharing_search).await;
+}
+
+async fn exercise_sharing_search(pool: &sqlx::PgPool) {
+    PgStore::migrate(pool).await.unwrap();
+    let store = PgAccessStore::new(pool.clone());
+    let actor = Uuid::new_v4();
+    let universe = Uuid::new_v4();
+    let foreign = Uuid::new_v4();
+    store.bootstrap(actor, "Admin".into(), 1).await.unwrap();
+    for universe_id in [universe, foreign] {
+        store
+            .apply(
+                actor,
+                AccessChange::CreateUniverse {
+                    universe_id,
+                    slug: None,
+                },
+                2,
+            )
+            .await
+            .unwrap();
+    }
+    let scope = AccessScope::Universe {
+        universe_id: universe,
+    };
+    let group = Uuid::new_v4();
+    store
+        .apply(
+            actor,
+            AccessChange::CreateGroup {
+                id: group,
+                display_name: "Research group".into(),
+            },
+            3,
+        )
+        .await
+        .unwrap();
+    store
+        .apply(
+            actor,
+            AccessChange::AssignRole {
+                assignment: role(scope, Subject::Group(group), Role::Viewer),
+            },
+            4,
+        )
+        .await
+        .unwrap();
+    let direct = Uuid::new_v4();
+    let member = Uuid::new_v4();
+    let disabled = Uuid::new_v4();
+    let outsider = Uuid::new_v4();
+    for (id, name) in [
+        (direct, "Alice"),
+        (member, "Group member"),
+        (disabled, "Disabled"),
+        (outsider, "Other universe"),
+    ] {
+        store
+            .apply(
+                actor,
+                AccessChange::CreatePrincipal {
+                    id,
+                    kind: PrincipalKind::User,
+                    display_name: name.into(),
+                    management_scope: AccessScope::Deployment,
+                },
+                5,
+            )
+            .await
+            .unwrap();
+    }
+    for id in [direct, disabled] {
+        store
+            .apply(
+                actor,
+                AccessChange::AssignRole {
+                    assignment: role(scope, Subject::Principal(id), Role::Contributor),
+                },
+                6,
+            )
+            .await
+            .unwrap();
+    }
+    store
+        .apply(
+            actor,
+            AccessChange::PutMembership {
+                membership: Membership {
+                    group_id: group,
+                    principal_id: member,
+                },
+            },
+            7,
+        )
+        .await
+        .unwrap();
+    store
+        .apply(
+            actor,
+            AccessChange::AssignRole {
+                assignment: role(
+                    AccessScope::Universe {
+                        universe_id: foreign,
+                    },
+                    Subject::Principal(outsider),
+                    Role::Contributor,
+                ),
+            },
+            8,
+        )
+        .await
+        .unwrap();
+    store
+        .apply(
+            actor,
+            AccessChange::SetPrincipalStatus {
+                id: disabled,
+                status: PrincipalStatus::Disabled,
+            },
+            9,
+        )
+        .await
+        .unwrap();
+    let subjects = store.sharing_subjects(universe, "").await.unwrap();
+    assert_eq!(subjects.len(), 4);
+    assert!(subjects.contains(&(Subject::Principal(actor), "Admin".into())));
+    assert!(
+        !subjects
+            .iter()
+            .any(|(subject, _)| *subject == Subject::Principal(disabled)
+                || *subject == Subject::Principal(outsider))
+    );
+    assert!(subjects.contains(&(Subject::Principal(direct), "Alice".into())));
+    assert!(subjects.contains(&(Subject::Principal(member), "Group member".into())));
+    assert!(subjects.contains(&(Subject::Group(group), "Research group".into())));
+    assert_eq!(
+        store.sharing_subjects(universe, "aLiCe").await.unwrap(),
+        vec![(Subject::Principal(direct), "Alice".into())]
+    );
+    assert!(
+        store
+            .sharing_subjects(universe, "%")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .sharing_subjects(universe, &member.to_string())
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    for index in 0..101 {
+        let id = Uuid::new_v4();
+        store
+            .apply(
+                actor,
+                AccessChange::CreatePrincipal {
+                    id,
+                    kind: PrincipalKind::User,
+                    display_name: format!("Search result {index:03}"),
+                    management_scope: AccessScope::Deployment,
+                },
+                10,
+            )
+            .await
+            .unwrap();
+        store
+            .apply(
+                actor,
+                AccessChange::AssignRole {
+                    assignment: role(scope, Subject::Principal(id), Role::Viewer),
+                },
+                11,
+            )
+            .await
+            .unwrap();
+    }
+    let subjects = store
+        .sharing_subjects(universe, "Search result")
+        .await
+        .unwrap();
+    assert_eq!(subjects.len(), 100);
+    assert_eq!(subjects[0].1, "Search result 000");
+    assert_eq!(
+        store
+            .sharing_subjects(universe, "Search result 100")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}

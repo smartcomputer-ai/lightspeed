@@ -57,7 +57,9 @@ service capabilities and credential scope. Bare tenant headers never authenticat
 | `authenticated` | Canonical bearer principal; universe or deployment credential ceiling | Platform, connectors, and direct clients |
 | `single` | Explicit local development principal in one configured universe | Private local development |
 
-Platform calls assert canonical users; private-session access policies remain pending.
+Platform calls assert canonical users. Sessions, bots and collections have their
+own audiences within a universe; ordinary administration does not grant access
+to restricted content.
 See the [access guide](authentication-and-tenancy.md) for the exact boundary and
 [Multitenancy](multi-tenancy.md) for isolation and shared infrastructure.
 

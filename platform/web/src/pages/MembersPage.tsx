@@ -1,3 +1,4 @@
+import { PrivateContentAccess } from "@/components/access/private-content-access";
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
@@ -79,6 +80,7 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
     queryClient.invalidateQueries({ queryKey: ["universes"] }),
     queryClient.invalidateQueries({ queryKey: ["me"] }),
     queryClient.invalidateQueries({ queryKey: ["action-permissions"] }),
+    ...["session", "sessions", "bot", "bots", "bot-state", "collection", "collections", "access-policy"].map((key) => queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] === key && query.queryKey.includes(universeId) })),
   ]);
 
   const remove = useMutation({
@@ -122,7 +124,7 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
                 <TableRow key={member.id}>
                   <TableCell>{member.name}</TableCell>
                   <TableCell>{member.email}</TableCell>
-                  <TableCell>{member.role}</TableCell>
+                  <TableCell>{member.role}{member.readPrivateContent && <span className="mt-1 block text-xs text-muted-foreground">Private-content access</span>}</TableCell>
                   {writable && (
                     <TableActionsCell>
                       <Button
@@ -230,11 +232,12 @@ function EditMemberRoleDialog({ universeId, member, onClose, onDone }: {
               <SelectItem value="admin">admin</SelectItem>
             </SelectContent>
           </Select>
+          <PrivateContentAccess universeId={universeId} member={member} onDone={onDone} />
           {edit.error && <p role="alert" className="text-sm text-destructive">{edit.error.message}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
             <Button type="submit" disabled={edit.isPending || role === member.role}>
-              {edit.isPending ? "Saving…" : "Save changes"}
+              {edit.isPending ? "Saving…" : "Save role"}
             </Button>
           </DialogFooter>
         </form>

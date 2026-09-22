@@ -32,51 +32,186 @@ may use deployment-wide `assert_user`. The request uses the user's permissions
 alone, retaining both authenticated and acting identities in request context.
 Missing context and duplicate identity headers fail closed.
 
-**Current boundary:** the gateway and shared services enforce the universe role/action
-matrix. Viewer is read-only. Contributors control their own sessions and manage
-their own profiles/bots. Operator/Admin can manage bots and profiles, configure
-resources, and stop other people's sessions, but cannot steer them; only the
-owner or an Admin deletes a session. Bot-controlled sessions follow
-bot-management rights; delegated children follow explicitly admitted controller
-lineage. Metadata and provenance do not grant control. Bot trigger secrets are
-visible only to managers.
+## Audience and control
 
-Every session, bot and profile has an anchor reserved before it exists: its
-creator, its admitted controller, the root whose policy governs it, and the
-managing bot, copied from the controller at reservation so a decision reads one
-row. A root (a session or bot created by a person, or a profile) carries a policy
-row with its current owner and visibility; a bot's sessions and delegated
-children resolve to their root's policy and have no owner of their own. Every
-decision loads the anchor, the root's policy and the caller's grant on the root
-in one statement and then decides; a root without a policy row is unreadable by
-everyone. `access/policy/read` shows a resource's governing policy and
-`access/policy/put` replaces its visibility and grants: writers share read
-access or change visibility, only the owner grants write, every subject must
-hold a role in the universe, and a share revoked while a reader waits on the
-transcript ends that wait. Anchors are independent of execution credentials. Deleting content
-releases its anchor, so the id belongs to the universe again; content without a
-trusted anchor cannot be claimed by retrying creation.
+A universe role establishes what kinds of work a person may do. Each session,
+bot and collection also has an owner and an audience. These answer a more
+specific question: which of this universe's work may this person read or control?
+A Viewer can read work in their audience. A Contributor can create work and
+control sessions they own or have a write grant on. An Operator's ability to
+configure shared resources does not grant control of another person's standalone
+session.
 
-Each request is resolved once at the API boundary: the presented key and its
-principal, an asserting service's `assert_user` capability, and the acting
-principal's roles and capabilities in the addressed scope. Handlers decide from
-that resolved context; nothing is cached across requests, so every new request
-sees committed status, membership, capability and key changes.
+The audience has two visibility settings. `universe` lets every current universe
+member read. `restricted` limits ordinary reads to the owner and people or groups
+with a `read` or `write` grant. A grant does not supply universe membership: its
+subject must still hold a role there. Restricted work outside a caller's audience
+is omitted from lists and returns `not_found` when read directly. Admins follow
+the same reading rule, with the explicit [private-content capability](#private-content-access)
+as a separately assigned exception.
 
-Session content remains universe-visible. Only a parked request can outlive a
-change: an event long poll revalidates while it waits (at most 250 ms between
-polls). Every identity, role, capability and key change, and every universe
-removal, advances one policy revision, so an unchanged revision proves the
-resolved context still holds and the recheck is a single read; a changed revision
-re-resolves the caller. A reader that loses its credential gets `unauthenticated`,
-one that loses its rights gets `forbidden`, and the wait ends without content. A
-request that was admitted and is already reading is not rechecked, and a response
-handed to the transport cannot be recalled.
+A collection gives related sessions and bots one audience. Suppose an
+investigation needs two sessions and a bot. Create a restricted collection and
+create that work inside it. Sharing the collection with an investigator then
+makes all three available to that person. A bot's conversations and a session's
+delegated children inherit the same policy, so a new conversation does not need
+a separate round of sharing. Existing resources cannot be moved into a
+collection; a collection can be deleted once it is empty.
 
-Live transcripts use these bounded long polls, not persistent user-content
-sockets. Environment daemon connections retain their separate authentication
-boundary. Private-session policies and standing execution authority remain
-pending: access revocation does not stop admitted runs or external processes.
+The resource whose policy governs this audience is called its *root*. A
+standalone session or bot is its own root; a member of a collection uses the
+collection's root. The **Access** dialog shows the owner, visibility, grants and
+execution identity. For inherited access, it links to the root and explains that
+changes apply to everything sharing that policy. Writers can add readers and
+change visibility. Only the owner can change writer grants. The web app offers
+read-only sharing for personal work.
+
+Ownership, reading and operational control remain separate. Operators and Admins
+may stop sessions, including restricted ones, without receiving their contents.
+Admins may delete sessions and empty collections under their lifecycle rules.
+Managers of a visible bot can control its conversations. These governance rights
+do not turn an administrator into the owner of the underlying work.
+
+The runtime resolves each resource's recorded identity, root policy and caller
+grant together. Client metadata cannot claim ownership or controller authority.
+A missing root policy denies access. `access/policy/read` returns the governing
+policy; `access/policy/put` replaces its visibility and grants. Use
+`expectedRevision` from the read to protect edits against concurrent changes.
+The web dialog does this and asks you to reload after a conflict.
+
+### Create and share work in the web app
+
+1. Open **New session**, **New bot**, or **New collection**. Choose **Running as**
+   and **Who can read**. Standalone work defaults to the universe service and
+   universe visibility; choosing **Me** defaults its audience to restricted.
+2. To create a session or bot inside a collection, select that collection.
+   The form shows its inherited audience and execution identity. Only
+   collections you may create work in are offered.
+3. Open **Access** on the resulting session, bot or collection. Search for people
+   or groups in the universe, add their grants, then save. A control grant lets
+   another person start runs under the work's existing execution identity.
+4. For work running as the universe service, its owner can transfer the entire
+   root through **Transfer ownership**. The former owner retains only access
+   supplied by visibility, explicit grants or their role. Personal work cannot
+   change owners.
+
+The sharing search exposes names and identifiers, with at most 100 matches per
+query. It is available to ordinary universe readers through `access/subjects`;
+the administrative identity directory remains restricted to administrators.
+
+## Execution authority
+
+The person asking for a run and the principal carrying out the work can be
+different. **Running as** makes that distinction visible. A shared control grant
+allows someone to ask for work under the root's execution identity; it does not
+replace that identity with the requester.
+
+By default, work runs as a dedicated universe service. The runtime creates this
+keyless service principal when it is first needed and assigns it Contributor in
+that universe. Its authority survives a change of owner, which allows shared
+work to continue when a person leaves. The service is disabled when the universe
+is deleted. It is not a general credential that clients can borrow.
+
+A universe Admin can enable personal execution under **Settings → General →
+Execution**. A person can then choose **Me** when creating a root. That work runs
+as its owner, and sharing control does not change who it runs as. The execution
+choice is fixed at creation. Collection members, bot conversations and delegated
+children inherit their root's choice. Turning off personal execution prevents
+new personal roots; existing ones retain their identity.
+
+At run admission, and before each model call, the runtime checks that the
+execution principal is active and still has `UseResource` in the universe.
+If the admission check fails, the run is refused. If authority is lost during a
+run, the next model call fails with `authority_revoked`; the session remains
+open. For example, reducing a personal owner's role to Viewer removes the
+ability to use resources even though the person may still read the universe.
+Disabling an owner does not stop work that runs as the universe service.
+
+These checks happen at defined boundaries. They do not interrupt an already
+admitted model call or undo a tool's completed effects, and they do not terminate
+external jobs automatically. Offboarding and shutdown procedures still need to
+account for those processes. Runtime controllers also remain bounded to their
+own work: sharing an execution service does not give one session control of a
+sibling session.
+
+## Content reads and attachments
+
+Large messages and files live in content-addressed storage. Knowing a content
+hash identifies bytes; it does not grant permission to read them. A caller uses
+`blobs/read` or `blobs/has` with a `resource` naming a readable session, bot or
+collection. The blob must also be admitted content of that resource. Without a
+resource, these methods expose the caller's own uploads and built-in engine
+blobs. Uploading bytes that are already stored grants that uploader access to
+those bytes without making other content readable.
+
+Admission checks apply when a caller supplies references in run input, context
+edits and snapshot manifests. References in content fields must be permitted at
+that boundary. A digest written into ordinary text does not become admitted
+content merely because it resembles a reference. The web app supplies the
+session context when fetching full message text or media.
+
+Workspaces and execution environments still have universe-wide visibility.
+Attaching one to a restricted session does not restrict its audience. If the
+investigation writes a report into a shared workspace, other universe members
+can read that file through the workspace. The attachment editor states this
+because it is a choice about where the work's output will be visible.
+
+`vfs/workspaces/files/read` resolves a file path in the workspace's current head.
+When editing, `vfs/snapshots/commit` can name `sourceWorkspaceId` to retain files
+already in that readable head; other references still need admission. Workspace
+creation and updates check file references even when the manifest was uploaded
+as raw bytes. Snapshot-manifest reads remain universe-scoped, so restricting a
+session does not make its workspace manifests private.
+
+## Revocation while reading
+
+Each request resolves the presented key, its principal, any asserted user, and
+the acting principal's current scoped rights at the API boundary. Those facts
+are not cached across requests. A committed change therefore applies to the
+next request, including requests made through Platform.
+
+A parked transcript long poll revalidates while it waits, at most 250 ms between
+checks. Identity, membership, role, capability and key changes advance a policy
+revision; an unchanged revision makes the check a single read. When the revision
+changes, the runtime resolves the caller again. Resource sharing is checked too.
+A revoked credential produces `unauthenticated`; lost authority can produce
+`forbidden` or hide the resource with `not_found`. The wait ends without content.
+
+A response already handed to the transport cannot be recalled, and downloaded
+content is not erased by revocation. Live transcripts use these bounded long
+polls rather than persistent user-content sockets. Environment daemon
+connections have their own authentication lifecycle.
+
+## Private-content access
+
+Sometimes a person needs to inspect restricted work that has not been shared
+with them. `read_private_content` is an explicit, universe-scoped capability for
+that purpose. It can be assigned to a user principal, never a group or service.
+The person must still be active and have a role that permits universe reads.
+Neither Admin nor DeploymentAdmin implies this capability.
+
+A universe Admin can grant or remove it in **Settings → Members → Edit role →
+Private-content access**. The control applies immediately and independently of
+the role edit. The same change is available through `deployment/identity/apply`
+or the administrative CLI as `assign_capability` or `revoke_capability`, with the
+universe scope, the person's canonical `principalId`, and capability
+`read_private_content`. Deployment administrators can administer the assignment
+too. Each change uses the ordinary attributed, audited identity-change path.
+
+When a read depends on this capability, the runtime records an access audit event
+with `privileged = true`. A read the person could already make through ownership,
+visibility or a share remains an ordinary read. The successful HTTP response
+carries `x-lightspeed-privileged-read: true` only in the first case. Platform
+preserves that indication, and the web app labels affected views **Privileged
+read**. On a list, the marker means the returned page includes content read this
+way; it does not mean every item required the capability.
+
+The capability grants reading, not control, sharing or ownership. Any stop or
+delete authority comes from the person's role and the ordinary operation rules.
+Removing the capability restores normal audience checks on subsequent reads.
+The audit event's write is best-effort, as described below; the UI marker reports
+the authorization decision, not a guarantee that the audit database write
+succeeded.
 
 ## Durable access audit
 
@@ -87,7 +222,7 @@ of the session event log.
 | Table | What is written |
 | --- | --- |
 | `access_audit_changes` | One committed identity, group, membership, role, capability or API-key change, in the same transaction as its policy revision. No-op changes, including repeated key revocation, add no change row. |
-| `access_audit_events` | One row per call of an audited API method, with its outcome, and one row per refusal of an authenticated caller. |
+| `access_audit_events` | One row per audited API call, authenticated authorization refusal, or read that relied on private-content access, with its outcome. |
 
 Every API method declares `audit: true` or `audit: false` next to its `access`
 requirement, so a new method cannot be added without deciding. Audited methods
@@ -109,11 +244,13 @@ event row and one committed change row.
 
 Callers without a valid credential (`unauthenticated`: missing, malformed,
 unknown or revoked keys, and keys of disabled principals) are logged but leave no
-row, so an anonymous caller cannot make the deployment write. Successful reads,
-inventories, self queries, permission previews, transcript polls, session
+row, so an anonymous caller cannot make the deployment write. Ordinary successful
+reads, inventories, self queries, permission previews, transcript polls, session
 creation/renaming/context edits, profile editing, blob/snapshot writes, workspace
 head updates, credential leasing, MCP discovery, and routine bot/channel ingress
-add no rows. Internal work (bot activities, delegated sessions, reapers) is not
+add no rows. Reads that rely on `read_private_content` are the exception: they
+write one event with `privileged = true`, including list pages and transcript
+polls whose authorization needed it. Internal work (bot activities, delegated sessions, reapers) is not
 an API caller: it is attributed in domain events and logs, not in this table.
 Normal MCP tool execution uses session history; a tool calling an audited
 Lightspeed administration API is audited as that API operation.
@@ -122,7 +259,7 @@ Event rows hold the authenticated principal, the acting principal (an
 unauthorized assertion never attributes the claimed user), a non-secret
 credential reference (the key's display prefix), the method, the universe, the
 policy revision the decision was made under, selected target identifiers, the
-outcome and the error category. Target identifiers come from a fixed list of
+outcome, the error category and whether a read relied on privileged access. Target identifiers come from a fixed list of
 parameter names; a malformed identifier or a key prefix that is not a display
 prefix is dropped rather than stored. Events exclude bodies, credential values,
 display names, endpoint URLs, metadata and session content. Committed change

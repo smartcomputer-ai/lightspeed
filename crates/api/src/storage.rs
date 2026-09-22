@@ -98,6 +98,12 @@ pub struct BlobHasResponse {
 #[serde(rename_all = "camelCase")]
 pub struct VfsSnapshotCommitParams {
     pub manifest: Value,
+    /// Admit unchanged files from this readable workspace's current head.
+    /// Every other file must still be an upload of the caller. This does not
+    /// change the workspace; updating its head has its own permission and
+    /// revision check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_workspace_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -146,6 +152,15 @@ pub struct VfsWorkspaceCreateResponse {
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceReadParams {
     pub workspace_id: String,
+}
+
+/// Read a file from a workspace's current head. Workspaces remain universe
+/// resources; this does not authorize arbitrary blobs or snapshot references.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VfsWorkspaceFileReadParams {
+    pub workspace_id: String,
+    pub path: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -1,3 +1,7 @@
+import { PrivilegedReadMarker } from "@/components/access/privileged-read";
+import { AccessButton } from "@/components/access/access-dialog";
+import { ExecutionLabel, RestrictedMarker } from "@/components/access/shared";
+import { CreationAccessFields, creationAccessInput, defaultCreationAccess } from "@/components/access/creation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   type InfiniteData,
@@ -223,7 +227,13 @@ function SessionList({
     refetchInterval: SESSION_LIST_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
-  const [createOpen, setCreateOpen] = useState(false);
+  const createOpen = searchParams.get("new") === "session";
+  const setCreateOpen = (open: boolean) => {
+    const next = new URLSearchParams(searchParams);
+    if (open) next.set("new", "session");
+    else { next.delete("new"); next.delete("collection"); }
+    setSearchParams(next, { replace: !open });
+  };
   const [selecting, setSelecting] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -366,6 +376,7 @@ function SessionList({
     <>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
         <h1 className="text-sm font-semibold">Sessions</h1>
+        <PrivilegedReadMarker privileged={pages.data?.pages.some((page) => page.privilegedRead)} />
         <span className="text-xs text-muted-foreground">
           {sessions.length}
           {pages.hasNextPage ? "+" : ""}
@@ -650,7 +661,7 @@ function SessionList({
           </Button>
         </div>
       )}
-      {canCreate && <NewSessionDialog
+      {canCreate && createOpen && <NewSessionDialog
         universeId={universeId}
         slug={slug}
         open={createOpen}
@@ -828,6 +839,7 @@ function SessionListItem({
         <span className="min-w-0 flex-1 truncate font-medium" title={displayName ? undefined : session.id}>
           {displayName || session.id}
         </span>
+        <RestrictedMarker access={session.access} />
         {origin && (
           <Badge
             variant="outline"
@@ -911,6 +923,7 @@ function NewSessionDialog({
   onOpenChange: (open: boolean) => void;
   search: string;
 }) {
+  const [creationAccess, setCreationAccess] = useState(() => ({ ...defaultCreationAccess(), collectionId: new URLSearchParams(search).get("collection") ?? "" }));
   const [displayName, setDisplayName] = useState("");
   const [profileId, setProfileId] = useState("");
   const [step, setStep] = useState<"basics" | "setup">("basics");
@@ -938,6 +951,7 @@ function NewSessionDialog({
       api<SessionView>("POST", `/api/v1/universes/${universeId}/sessions`, {
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
         profile: profileForCreate(profileId, inlineProfile, selectedProfile.data),
+        ...creationAccessInput(creationAccess),
       }),
     onSuccess: async (session) => {
       await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
@@ -950,7 +964,9 @@ function NewSessionDialog({
       setConfigError(null);
       setRetentionError(null);
       setError(null);
-      navigate(`/u/${slug}/sessions/${target}${search ? `?${search}` : ""}`);
+      const nextSearch = new URLSearchParams(search);
+      nextSearch.delete("new"); nextSearch.delete("collection");
+      navigate(`/u/${slug}/sessions/${target}${nextSearch.size ? `?${nextSearch}` : ""}`);
     },
     onError: (err) => setError(err.message),
   });
@@ -1057,6 +1073,7 @@ function NewSessionDialog({
                   The profile is resolved at creation; later profile edits do not change this session.
                 </FieldDescription>
               </Field>
+              <CreationAccessFields universeId={universeId} value={creationAccess} onChange={setCreationAccess} enabled={open} />
               <Button
                 type="button"
                 variant="outline"
@@ -1319,11 +1336,11 @@ export function SessionDetail({
   const loadFullText = useCallback(
     async (blobRef: string) => {
       const result = await api<{ bytesBase64: string }>(
-        "GET", `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(blobRef)}`,
+        "GET", `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(blobRef)}?resourceKind=session&resourceId=${encodeURIComponent(sessionId)}`,
       );
       return new TextDecoder().decode(Uint8Array.from(atob(result.bytesBase64), (char) => char.charCodeAt(0)));
     },
-    [universeId],
+    [universeId, sessionId],
   );
   const activeRun = tail.transcript.activeRun;
   const queuedRuns = tail.transcript.queuedRuns;
@@ -1544,12 +1561,12 @@ export function SessionDetail({
   const loadMedia = useCallback(
     async (blobRef: string, mime: string) => {
       const result = await api<{ bytesBase64: string }>(
-        "GET", `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(blobRef)}`,
+        "GET", `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(blobRef)}?resourceKind=session&resourceId=${encodeURIComponent(sessionId)}`,
       );
       const bytes = Uint8Array.from(atob(result.bytesBase64), (char) => char.charCodeAt(0));
       return new Blob([bytes], { type: mime });
     },
-    [universeId],
+    [universeId, sessionId],
   );
   const transcriptMedia = useMemo(() => mediaByHandle(entries), [entries]);
   const transcriptLinks = useMemo<TranscriptLinks>(() => {
@@ -1802,6 +1819,8 @@ export function SessionDetail({
             <h1 className="min-w-0 truncate text-sm font-semibold">
               {session.data?.displayName ?? sessionId.slice(0, 24)}
             </h1>
+            <RestrictedMarker access={session.data?.access} />
+            <PrivilegedReadMarker privileged={session.data?.privilegedRead || tail.privilegedRead} />
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -1821,6 +1840,7 @@ export function SessionDetail({
                 className="max-h-[min(28rem,calc(100vh-1rem))] w-80 max-w-[calc(100vw-1rem)]"
               >
                 <SessionMenuIdentity sessionId={sessionId} />
+                <div className="px-2 py-1"><ExecutionLabel universeId={universeId} access={session.data?.access} /></div>
                 <SessionMenuPreferences />
                 {owningBotHref && (
                   <>
@@ -1837,6 +1857,7 @@ export function SessionDetail({
             </DropdownMenu>
           </div>
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
+            {session.data?.access && <AccessButton universeId={universeId} slug={slug} resource={target} access={session.data.access} />}
             {activeRun && (
               <span className="hidden max-w-40 shrink truncate text-xs text-muted-foreground xl:inline">
                 {activeRun.label}…

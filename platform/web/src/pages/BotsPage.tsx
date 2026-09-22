@@ -1,3 +1,6 @@
+import { PrivilegedReadMarker } from "@/components/access/privileged-read";
+import type { BotReadResponse } from "@lightspeed-ai/agent-client";
+import { RestrictedMarker } from "@/components/access/shared";
 import { ReadError } from "@/components/read-error";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
@@ -44,7 +47,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
   const setCreateOpen = (open: boolean) => {
     const next = new URLSearchParams(searchParams);
     if (open) next.set("new", "bot");
-    else next.delete("new");
+    else { next.delete("new"); next.delete("collection"); }
     setSearchParams(next, { replace: !open });
   };
   return (
@@ -85,7 +88,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
           </div>
         )}
       </section>
-      {create && (
+      {create && createOpen && (
         <BotCreateDialog
           universeId={universe.id}
           slug={slug!}
@@ -161,6 +164,7 @@ function BotsPane({
     <>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
         <h1 className="text-sm font-semibold">Bots</h1>
+        <PrivilegedReadMarker privileged={bots.data?.privilegedRead} />
         {bots.data && <span className="text-xs text-muted-foreground">{roster.length}</span>}
         {create && (
           <Button
@@ -208,7 +212,7 @@ function BotsPane({
                     >
                       <BotAvatar botId={bot.botId} size={28} className="row-span-2" />
                       <span className="flex min-w-0 items-center gap-1.5">
-                        <StatusDot tone={line.tone} />
+                        <StatusDot tone={line.tone} /><RestrictedMarker access={bot.access} />
                         <span className="min-w-0 truncate font-medium">{botLabel(bot)}</span>
                       </span>
                       <span className="text-right text-[11px] text-muted-foreground">
@@ -256,7 +260,7 @@ function BotWorkspace({
 }) {
   const bot = useQuery({
     queryKey: ["bot", universeId, botId],
-    queryFn: () => api<{ bot: BotView }>("GET", `/api/v1/universes/${universeId}/bots/${botId}`),
+    queryFn: () => api<BotReadResponse>("GET", `/api/v1/universes/${universeId}/bots/${botId}`),
   });
   const state = useQuery({
     queryKey: ["bot-state", universeId, botId],
@@ -281,6 +285,8 @@ function BotWorkspace({
       universeId={universeId}
       slug={slug}
       bot={bot.data.bot}
+      access={bot.data.access}
+      privilegedRead={bot.data.privilegedRead || state.data?.privilegedRead}
       {...(state.data?.state ? { state: state.data.state } : {})}
       {...(state.error ? { stateError: state.error.message } : {})}
       view={view}

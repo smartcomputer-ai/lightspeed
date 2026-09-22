@@ -608,8 +608,9 @@ Each step ships on its own; the order is by dependency.
        universe holding Contributor, created on first use rather than at
        universe creation so every creation path (`deployment/universes/
        create`, `ensure_universe`, local development) is covered; universe
-       deletion disables it. `access/execution/read|update` (ManageAccess;
-       update audited and advances the policy revision). `execution:
+       deletion disables it. `access/execution/read` requires Read;
+       `access/execution/update` requires ManageAccess, is audited and advances
+       the policy revision. `execution:
        { kind }` on `session/start`, `session/managed/start`, `bots/create`
        and `collection/create`; `personal` requires the universe to enable
        it and a user principal, binds `run_as` to the creator and defaults
@@ -671,22 +672,62 @@ Each step ships on its own; the order is by dependency.
        the request (a task-local beside the request context) and the HTTP
        boundary writes the audit row with `privileged = true` even for
        methods that are otherwise quiet; a holder's ordinary reads leave no
-       row. Web role editing and privileged-read markers are deferred to
-       step 7 with the rest of the UI. Live: a universe Admin grants the
+       row. Web role editing and privileged-read markers are implemented in
+       step 7. Live: a universe Admin grants the
        capability to the Viewer over HTTP (a Contributor is refused, a
        service principal cannot hold it); the Viewer reads, lists and reads
        the policy of a restricted session with exactly one privileged row per
        call, ordinary reads add none, and revocation restores `not_found`.
-7. [ ] Web: Access panel, share dialog, restricted markers, execution choice,
+7. [x] Web: Access panel, share dialog, restricted markers, execution choice,
        collection pages, workspace visibility note; Platform mapping of the new
        methods; docs (`multi-tenancy.md`, `authentication-and-tenancy.md`, API
-       reference). User documentation is deferred to this step: steps 2–6
-       change no `docs/documentation` page beyond the generated API reference,
-       and the sharing paragraphs already there describe the state after
-       step 2's sharing part.
+       reference).
+       Implemented 2026-09-22: discovery/content gaps, Platform routes, shared
+       Access components, creation and collections are implemented. Ordinary
+       universe readers can search a bounded names-and-identifiers sharing
+       directory and read execution options; execution-policy updates remain
+       Admin-only.
+       Platform preserves the signed-in principal on policy, execution and
+       collection calls. Session content reads name their session; workspace
+       file reads resolve a path in the current head. Workspace edits name
+       their source workspace to retain existing files, while new references
+       still require admission; raw manifest uploads cannot bypass child
+       admission during workspace create/update.
+       The shared Access dialog handles inherited roots, read/control grants,
+       service-root hand-off and revision conflicts. Creation offers visibility,
+       service/personal execution and collection inheritance. Collections have
+       list/detail, creation, rename, member links and empty-only deletion.
+       Restricted markers, Running as, personal-execution settings and attachment
+       visibility notes use the existing UI patterns. The browser demo includes
+       service and personal collections.
+       Privileged-access UI and documentation completed 2026-09-22: member role
+       editing offers a separate, attributed grant/revoke control for user-only
+       `read_private_content`. The runtime marks successful privileged responses
+       with `x-lightspeed-privileged-read: true`; Platform preserves the marker
+       within each request, and the web app labels affected session, bot,
+       collection and Access views. Transcript history retains provenance while
+       displayed and resets it on navigation. Ordinary reads by capability
+       holders stay unmarked. The demo mirrors these distinctions.
+       Authentication, multitenancy, identity administration, deployment,
+       architecture and task guides now explain audiences, collections, fixed
+       execution identities, content admission, revocation and audited private
+       reads using the writing guidance in P165. The generated API reference
+       documents the response header. Implementation and automated validation
+       are complete; the browser walkthrough remains open below.
+       Validated: 460 web tests, 73 Platform route/server tests, 31 client/MCP
+       tests, 436 API/runtime unit tests, strict Clippy, formatting, TypeScript
+       typechecks, both web builds and documentation checks. Sharing-directory
+       discovery passes on isolated PostgreSQL; the expanded authenticated live matrix passes in
+       12.5 seconds on an isolated schema, including retained-file edits, raw
+       manifest refusal and privileged-versus-ordinary response markers.
+       API artifacts and generated consumers are regenerated;
+       repeated consumer generation is unchanged.
 
 ## Validation
 
+- [ ] User walkthrough: authenticated browser → Platform → live runtime,
+  checking sharing, collections, execution choice and privileged-read UI
+  across users. Lukas is handling this remaining end-to-end check.
 - Unit: access decisions for every visibility × grant × role combination for
   sessions, bots and collections, with a missing policy row denying; only the
   owner adds a writer to a personal root, and that writer's run records the
