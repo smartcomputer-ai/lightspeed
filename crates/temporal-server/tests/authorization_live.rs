@@ -278,14 +278,11 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             not_found(rpc(&endpoint, alice, "collection/read", json!({"collectionId":collection_id})).await);
             assert_eq!(success(rpc(&endpoint, bob, "access/policy/read", json!({"resource":{"kind":"bot","id":team_bot}})).await)["policy"]["owner"], json!(bob.record.principal_id));
             success(rpc(&endpoint, bob, "collection/update", json!({"collectionId":collection_id,"displayName":"Bob's"})).await);
-            // A bot created without a root gets a collection of its own, which goes with the bot.
+            // A bot created without a root is its own root; no collection appears for it.
             let own = success(rpc(&endpoint, alice, "access/policy/read", json!({"resource":{"kind":"bot","id":private_bot}})).await)["policy"].clone();
-            assert_eq!(own["root"]["kind"], "collection");
-            let own_collection = own["root"]["id"].as_str().unwrap().to_owned();
+            assert_eq!(own["root"], json!({"kind":"bot","id":private_bot}));
             assert_eq!(own["visibility"], "restricted");
-            success(rpc(&endpoint, alice, "collection/read", json!({"collectionId":own_collection})).await);
-            not_found(rpc(&endpoint, operator, "collection/read", json!({"collectionId":own_collection})).await);
-            // Removal of that collection with the bot needs the bots worker; the bots suite covers it.
+            assert!(success(rpc(&endpoint, alice, "collection/list", json!({})).await)["collections"].as_array().unwrap().iter().all(|c| c["collectionId"] == collection_id));
             // The group's role served the sharing scenario only; the revocation checks below assume the Viewer's own role.
             access.apply(admin.id, AccessChange::RevokeRole { assignment: RoleAssignment { scope, subject: Subject::Group(readers), role: Role::Viewer } }, 24).await?;
             // A contributor can author templates but cannot edit another author's template.

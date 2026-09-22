@@ -561,19 +561,7 @@ impl GatewayAgentApi {
                     .await;
             }
         }
-        let root = self
-            .access_store()
-            .anchor(
-                self.universe_id(),
-                &ResourceRef::Bot(bot_id.as_str().to_owned()),
-            )
-            .await
-            .map_err(|error| AgentApiError::internal(error.to_string()))?
-            .map(|anchor| anchor.audience_root);
         let bot = store.delete_bot(bot_id).await.map_err(map_bot_error)?;
-        if let Some(ResourceRef::Collection(collection_id)) = root {
-            self.remove_collection_if_empty(&collection_id).await;
-        }
         Ok((bot, deleted_sessions))
     }
 
@@ -844,25 +832,17 @@ impl GatewayAgentApi {
         let store = self.store();
         let BotInput { bot_id, document } = params.bot;
         self.require_profile(&document.profile_id).await?;
-        // A bot always lives in a collection: the one named, or one created
-        // with it, named after it, carrying the requested audience.
+        // A bot created into a collection is a member of it, its sessions
+        // included; otherwise the bot is its own root and its sessions
+        // follow it. Either way its sessions carry its audience.
         let resource = ResourceRef::Bot(bot_id.as_str().to_owned());
-        let root = match params
+        let root = params
             .access
             .as_ref()
-            .and_then(|access| access.root.clone())
-        {
-            Some(root) => root,
-            None => {
-                let display_name = document
-                    .display_name
-                    .clone()
-                    .unwrap_or_else(|| bot_id.as_str().to_owned());
-                self.create_collection_record(None, &display_name, params.access.clone())
-                    .await?
-            }
-        };
-        self.reserve_resource(resource.clone(), Some(&root)).await?;
+            .and_then(|access| access.root.clone());
+        self.reserve_resource(resource.clone(), root.as_ref())
+            .await?;
+        self.apply_creation_access(&resource, params.access).await?;
         let bot = store
             .create_bot(bot_id.clone(), document, bot_now_ms())
             .await

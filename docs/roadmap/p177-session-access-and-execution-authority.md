@@ -89,11 +89,13 @@ These settle what the parent document leaves open.
    uploader; a nested reference needs its own admission. Retention keeps
    scanning every exact reference so nothing is swept, but scanned references
    confer nothing, and edges are never followed to decide a read.
-10. **A bot is a member of its collection, and a thin wrapper around its
-    sessions.** A bot always lives in a collection: one created with it, or an
-    existing one its creator may write to. The collection's policy governs the
-    bot, its events and activity, and every session it creates, as one
-    audience; none of them carries a policy of its own. `read` on the
+10. **A bot is a thin wrapper around its sessions, and may be a member of a
+    collection.** A bot's sessions always carry the bot's audience: created
+    into a collection its creator may write to, the bot is a member and the
+    collection's policy governs the bot, its events and activity, and every
+    session it creates, none of which carries a policy of its own; created
+    on its own, the bot is its own root with the same effect. Nothing
+    creates a collection implicitly. `read` on the
     collection sees all of it; `write` also invokes its bots and controls its
     sessions. What stays the bot's own is control, not audience: routing,
     admission, its worker's authority over its sessions, and configuration,
@@ -260,16 +262,15 @@ Governance        = Stop by role and Delete by Admin need no read; all else hidd
   generic collector and flags new reference-bearing fields. The garbage
   collector's "collection roots" are retention roots and get that name, so the
   word is not overloaded.
-- **Bots.** `bots/create` puts the bot in a collection: `access.root` names an
-  existing one the creator may write to, otherwise a collection named after the
-  bot is created with it, owned by the creator, with the requested execution
-  and a `restricted` policy when that execution is personal. The bot's anchor,
-  its events and activity, and every session it creates carry the collection
-  as audience root; a bot's sessions also carry the bot as managing bot, which
-  is the bot worker's control scope. `write` on the collection invokes its bots
-  and controls its sessions; trigger configuration and secrets stay with the
-  owner and ManageBot as today. Deleting a bot removes its sessions as today and
-  its collection when nothing else is left in it.
+- **Bots.** `bots/create` with `access.root` puts the bot in an existing
+  collection the creator may write to; without it the bot is its own root
+  with the requested audience and, later, execution. The bot's anchor, its
+  events and activity, and every session it creates carry that root as
+  audience root; a bot's sessions also carry the bot as managing bot, which
+  is the bot worker's control scope. `write` on the root invokes the bot and
+  controls its sessions; trigger configuration and secrets stay with the
+  owner and ManageBot as today. Deleting a bot removes its sessions as today;
+  a collection is only ever removed explicitly.
 - **Collections.** A collection is a root with a name, an owner, an execution
   identity and a policy, and nothing else: it exists so that sessions and bots
   share one audience and one execution identity that administrators govern in
@@ -514,10 +515,12 @@ Each step ships on its own; the order is by dependency.
        `access.root` on `session/start`, `session/managed/start` and
        `bots/create` places a member in a collection the caller may write to
        (`ControlSession` on the collection), members take no visibility or
-       grants of their own; a bot created without `access.root` gets a
-       collection named after it carrying the requested audience, and
-       deleting a bot removes its collection once nothing else is left in it
-       (no marker for how the collection came to be); `owner` on
+       grants of their own; a bot created without `access.root` is its own
+       root and its sessions follow it, so nothing creates a collection
+       implicitly (decided 2026-09-22: a collection is always something
+       someone made on purpose, which is the meaning it keeps when it grows
+       into projects; decision 10's "a bot always lives in a collection" is
+       relaxed accordingly); `owner` on
        `access/policy/put` hands a root over (owner only, new owner must
        hold a role, previous owner keeps nothing); governance without
        content: Operator/Admin stop and Admin deletes a resource they cannot

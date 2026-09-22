@@ -1,6 +1,5 @@
--- A collection is a root with a name and nothing else: sessions and bots in
--- it share its policy. Deleting a bot removes its collection when nothing
--- else is left in it.
+-- A collection is a root with a name and nothing else: sessions and bots
+-- created into it share its policy. Nothing creates one implicitly.
 CREATE TABLE collections (
     universe_id uuid NOT NULL REFERENCES universes(universe_id) ON DELETE CASCADE,
     collection_id text NOT NULL CHECK (collection_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),

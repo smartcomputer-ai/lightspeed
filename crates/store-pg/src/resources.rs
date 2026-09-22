@@ -612,7 +612,7 @@ pub(crate) fn readable_predicate(
 }
 
 /// Collections: a root with a name. Members are whatever anchors point at
-/// it; deleting a bot removes its collection once nothing else is left.
+/// it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectionRecord {
     pub collection_id: String,

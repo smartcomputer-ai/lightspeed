@@ -1,7 +1,6 @@
 //! Collections: a named root that gives the sessions and bots created in it
 //! one audience. The anchor and policy are reserved like any root; the
-//! collection row holds the name. Deleting a bot removes its collection once
-//! nothing else is left in it.
+//! collection row holds the name. Nothing creates one implicitly.
 use super::*;
 
 fn collection_view(record: store_pg::CollectionRecord) -> CollectionView {
@@ -177,21 +176,5 @@ impl GatewayAgentApi {
         Ok(CollectionDeleteResponse {
             collection: collection_view(record),
         })
-    }
-
-    /// A bot's collection goes with the bot once nothing else is left in it.
-    /// Best effort: a leftover empty collection is harmless.
-    pub(super) async fn remove_collection_if_empty(&self, collection_id: &str) {
-        if let Err(error) = self
-            .access_store()
-            .delete_collection(self.universe_id(), collection_id)
-            .await
-            && !matches!(
-                error,
-                access::AccessError::Conflict | access::AccessError::NotFound
-            )
-        {
-            tracing::warn!(target: "temporal_server", %collection_id, %error, "remove implicit collection failed");
-        }
     }
 }
