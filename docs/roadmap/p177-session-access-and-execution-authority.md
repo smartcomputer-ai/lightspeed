@@ -472,7 +472,7 @@ Each step ships on its own; the order is by dependency.
        (the Platform's group picker reads the deployment directory with its
        own capability); external sign-up is exercised through Better Auth's
        OAuth user-info path in the Platform live test.
-2. [ ] The anchor, policy and grant rows written at reservation for standalone
+2. [x] The anchor, policy and grant rows written at reservation for standalone
        sessions and collections, bots joining collections, `collections` and
        its methods, the one-statement `authorize` with unit coverage in
        `access`; session, bot and collection lists and content surfaces enforce
@@ -534,7 +534,7 @@ Each step ships on its own; the order is by dependency.
        session, a universe-visible collection holding a bot, and a restricted
        collection holding a bot and a person's sessions, with the sessions and
        events under them.
-3. [ ] Content: typed extraction and root origins, admission writing `content`
+3. [x] Content: typed extraction and root origins, admission writing `content`
        rows for direct references and for the children of admitted manifests,
        `blob_uploads`, `resource` on `blobs/read` and `blobs/has`, attachment
        authorization on every path that accepts an existing reference, the
