@@ -313,7 +313,9 @@ impl GatewayAgentApi {
         Err(denied())
     }
 
-    async fn permitted(
+    /// Whether the current caller, request or internal controller, meets a
+    /// requirement; handlers use it for rules beyond their method's own.
+    pub(super) async fn permitted(
         &self,
         requirement: MethodAccess,
         target: Option<&ResourceRef>,

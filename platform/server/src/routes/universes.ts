@@ -352,10 +352,13 @@ export function universeRoutes(ctx: AppContext) {
     return c.json({ ...updated, slug: access.slug, role: access.role });
   });
 
+  /// Groups a universe administrator may add as members. The universe-scoped
+  /// directory lists only groups already holding a role, so this reads the
+  /// deployment directory with the Platform's own identity capability.
   app.get("/:id/groups", (c) => withGateway(c, async () => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access || access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
-    const directory = await deploymentClientFor(ctx).call("deployment/identity/directory", { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId } });
+    const directory = await deploymentClientFor(ctx).call("deployment/identity/directory", { scope: { kind: "deployment" } });
     return c.json(directory.result.groups);
   }));
 

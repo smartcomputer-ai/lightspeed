@@ -7,7 +7,10 @@ import type { ServerEnv } from "./env.js";
 
 export function createAuth(db: Db, env: ServerEnv) {
   return betterAuth({
-    user: { additionalFields: { corePrincipalId: { type: "string", required: true, input: false } } },
+    // The core principal is assigned by the create hook below, never by input.
+    // Better Auth validates required fields before hooks run, so the field
+    // must be optional at the input layer; the database column stays NOT NULL.
+    user: { additionalFields: { corePrincipalId: { type: "string", required: false, input: false } } },
     baseURL: env.baseUrl,
     secret: env.authSecret,
     basePath: "/api/auth",
@@ -17,6 +20,13 @@ export function createAuth(db: Db, env: ServerEnv) {
       enabled: true,
       // Local accounts are created by core deployment administrators.
       disableSignUp: true,
+    },
+    account: {
+      // An external login never attaches to an existing user by e-mail: a
+      // provider account is a distinct identity until an administrator says
+      // otherwise. Local users are inserted with a verified e-mail, which
+      // would otherwise make them link targets.
+      accountLinking: { enabled: false },
     },
     ...(env.github
       ? {

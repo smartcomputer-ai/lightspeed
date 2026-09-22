@@ -784,6 +784,12 @@ pub struct GatewayAgentApi {
 }
 
 impl GatewayAgentApi {
+    /// Hosts and networks outbound requests may reach beyond the public
+    /// internet. One policy for every outbound HTTP client in the process.
+    pub(crate) fn private_networks(&self) -> &crate::worker::mcp::McpPrivateNetworkPolicy {
+        &self.mcp_private_networks
+    }
+
     pub fn builder(client: Client, store: Arc<PgStore>) -> GatewayAgentApiBuilder {
         let environment_gateway = crate::environments::gateway::EnvironmentGatewayClientConfig::new(
             DEFAULT_PUBLIC_BASE_URL,
@@ -2000,6 +2006,26 @@ impl AgentApiService for GatewayAgentApi {
             workflow_tools,
         } = params;
         let workflow_tools = managed_workflow_tools_from_api(workflow_tools)?;
+        // The runtime signals these endpoints on the caller's behalf, so an
+        // endpoint inside the runtime's own `{universe}/…` namespace must be
+        // in the caller's universe; plugin workflows live outside it.
+        if let Some(controller) = &workflow_tools.lifecycle_controller {
+            self.require_universe_workflow_reference(
+                "lifecycleController.workflowId",
+                &controller.workflow_id,
+            )?;
+        }
+        for tool in &workflow_tools.tools {
+            if let Some(receiver) = tool.target.bound_receiver() {
+                self.require_universe_workflow_reference(
+                    &format!(
+                        "workflow tool {} receiver.workflowId",
+                        tool.definition.tool_id
+                    ),
+                    &receiver.workflow_id,
+                )?;
+            }
+        }
         self.start_session_internal(
             SessionStartParams {
                 session_id,

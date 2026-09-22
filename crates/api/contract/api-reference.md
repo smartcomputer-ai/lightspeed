@@ -1173,7 +1173,7 @@ Returns current caller rights and accessible universes within the credential cei
 
 **Read the access directory**
 
-Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory.
+Requires administration of the requested scope. In universe scope the directory holds only that universe's subjects: principals and groups holding a role there, their members, and service principals it manages. The deployment-wide directory requires deployment administration or the manage_identity capability.
 
 - Access: `{"kind":"identity"}`
 - Params: `IdentityScopeParams`

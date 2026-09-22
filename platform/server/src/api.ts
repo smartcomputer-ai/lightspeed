@@ -39,6 +39,7 @@ export function buildApp(ctx: AppContext) {
     if (!principalId) return c.json({ error: "account has no canonical identity" }, 403);
     const self = await userClient(ctx.env, principalId).call("deployment/identity/self", { scope: { kind: "deployment" } });
     c.set("session", session);
+    c.set("principalId", principalId);
     await requestIdentity.run(self.result.access, next);
   });
 
@@ -51,7 +52,7 @@ export function buildApp(ctx: AppContext) {
   /// Restricted to administrators who can assign access.
   api.get("/users", async (c) => {
     if (!isPlatformAdmin()) {
-      const self = await userClient(ctx.env, c.get("session").user.corePrincipalId).call("deployment/identity/self", { scope: { kind: "deployment" } });
+      const self = await userClient(ctx.env, c.get("principalId")).call("deployment/identity/self", { scope: { kind: "deployment" } });
       if (!self.result.universes.some((r) => r.roles.includes("admin"))) return c.json({ error: "universe admin required" }, 403);
     }
     const rows = await ctx.db

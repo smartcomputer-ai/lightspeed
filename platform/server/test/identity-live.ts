@@ -1,4 +1,5 @@
 import { LightspeedClient } from "@lightspeed-ai/agent-client";
+import { handleOAuthUserInfo } from "better-auth/oauth2";
 // Invoked by the ignored Rust Platform integration suite with disposable services.
 import assert from "node:assert/strict";
 import pg from "pg";
@@ -27,14 +28,32 @@ try {
   await migrateDb(handle);
   await bootstrapAdmin(handle.db, env);
   const auth = createAuth(handle.db, env);
-  // The same creation hook used by external login adapters provisions a core user.
-  const adapter = (await auth.$context).internalAdapter;
-  const external = await adapter.createUser({ name: "External account", email: "external@identity.test", emailVerified: true });
+  // External sign-up goes through the same function the OAuth callback runs,
+  // so it exercises input validation of the user fields, the creation hook
+  // that provisions the core principal, and the account-linking policy.
+  const authContext = await auth.$context;
+  const oauthContext = { context: authContext } as unknown as Parameters<typeof handleOAuthUserInfo>[0];
+  const providerAccount = (accountId: string) => ({ providerId: "github", accountId, accessToken: "disposable", refreshToken: undefined, idToken: undefined, accessTokenExpiresAt: undefined, refreshTokenExpiresAt: undefined, scope: "read:user" });
+  const signUp = await handleOAuthUserInfo(oauthContext, {
+    userInfo: { id: "external", name: "External account", email: "external@identity.test", emailVerified: true, image: null },
+    account: providerAccount("gh-external"),
+  });
+  assert.equal(signUp.error, null, signUp.error ?? undefined);
+  assert.equal(signUp.isRegister, true);
+  const external = signUp.data!.user as Auth["$Infer"]["Session"]["user"];
   assert.ok(external.corePrincipalId);
   const externalPrincipal = external.corePrincipalId;
+  const adapter = authContext.internalAdapter;
   await adapter.updateUser(external.id, { name: "External account renamed" });
   const externalAfter = await adapter.findUserById(external.id) as Auth["$Infer"]["Session"]["user"] | null;
   assert.equal(externalAfter?.corePrincipalId, externalPrincipal);
+  // A provider account carrying a local user's verified e-mail is refused, never linked.
+  const linkAttempt = await handleOAuthUserInfo(oauthContext, {
+    userInfo: { id: "impostor", name: "Impostor", email: env.adminEmail!, emailVerified: true, image: null },
+    account: providerAccount("gh-impostor"),
+  });
+  assert.equal(linkAttempt.error, "account not linked");
+  assert.equal(linkAttempt.data, null);
   const app = buildApp({ ...handle, auth, env });
   let checks = 0;
   async function call(method: string, path: string, cookie = "", body?: unknown, expected = 200, extra: Record<string, string> = {}) {

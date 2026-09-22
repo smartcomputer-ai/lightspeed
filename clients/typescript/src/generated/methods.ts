@@ -834,7 +834,7 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"identity"},
     summary: "Read the access directory",
-    description: "Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory.",
+    description: "Requires administration of the requested scope. In universe scope the directory holds only that universe's subjects: principals and groups holding a role there, their members, and service principals it manages. The deployment-wide directory requires deployment administration or the manage_identity capability.",
   },
   "deployment/universes/create": {
     scope: "deployment",
@@ -1985,7 +1985,7 @@ export interface MethodMap {
   /**
    * Read the access directory
    *
-   * Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory.
+   * Requires administration of the requested scope. In universe scope the directory holds only that universe's subjects: principals and groups holding a role there, their members, and service principals it manages. The deployment-wide directory requires deployment administration or the manage_identity capability.
    */
   "deployment/identity/directory": {
     params: Api.IdentityScopeParams;
@@ -3068,7 +3068,7 @@ export const rpc = {
   /**
    * Read the access directory
    *
-   * Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory.
+   * Requires administration of the requested scope. In universe scope the directory holds only that universe's subjects: principals and groups holding a role there, their members, and service principals it manages. The deployment-wide directory requires deployment administration or the manage_identity capability.
    */
   deploymentIdentityDirectory(client: RpcCaller, params: Api.IdentityScopeParams): Promise<Api.AgentApiOutcomeOfAccessDirectory> {
     return client.call("deployment/identity/directory", params);

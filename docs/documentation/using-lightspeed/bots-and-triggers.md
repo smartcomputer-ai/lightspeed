@@ -143,6 +143,13 @@ polls compare against that cursor. For example, a URL returning
 `id` for unseen-item detection. Add a new ID in the source to verify that the
 next poll produces an event.
 
+A URL poll reaches public addresses over HTTPS and does not follow redirects;
+hosts on the deployment's private-network list (`LIGHTSPEED_MCP_PRIVATE_NETWORKS`)
+may also use HTTP. A poll can send a stored credential, which goes only where
+that credential belongs: the grant's audience must cover the poll URL, and a
+grant without an audience can be attached only by someone who may configure
+the universe.
+
 An execution poll needs an existing, lasting execution environment and a
 command that prints JSON to stdout. The UI enables **Run a command** when the
 profile attaches a default environment. Enter one argument per line in the

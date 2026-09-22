@@ -58,9 +58,16 @@ pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
              via deployment/universes/create (or `server universe create`); remove the variable"
         );
     }
-    let mode = env::var("LIGHTSPEED_AUTH_MODE").unwrap_or_else(|_| "single".to_owned());
+    // `single` serves every request as an unauthenticated deployment
+    // administrator, so it must be chosen, never fallen into.
+    let Some(mode) = optional_env("LIGHTSPEED_AUTH_MODE") else {
+        anyhow::bail!(
+            "LIGHTSPEED_AUTH_MODE is required: `single` (one universe, no authentication; \
+             local development only) or `authenticated` (scoped bearer keys)"
+        );
+    };
     match mode.as_str() {
-        "single" | "" => Ok(GatewayAuthMode::Single {
+        "single" => Ok(GatewayAuthMode::Single {
             universe_id: universe_id_from_env()?,
         }),
         "authenticated" => Ok(GatewayAuthMode::Authenticated),

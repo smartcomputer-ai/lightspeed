@@ -160,7 +160,10 @@ impl GatewayAgentApi {
         }
     }
 
-    async fn validate_retrievable_grant_id(&self, grant_id: &str) -> Result<(), AgentApiError> {
+    async fn validate_retrievable_grant_id(
+        &self,
+        grant_id: &str,
+    ) -> Result<auth::AuthGrantRecord, AgentApiError> {
         let grant_id = parse_auth_grant_id(grant_id.to_owned())?;
         let grants: &dyn AuthGrantStore = self.store().as_ref();
         let record = grants.read_grant(&grant_id).await.map_err(map_auth_error)?;
@@ -169,9 +172,13 @@ impl GatewayAgentApi {
                 "auth grant {grant_id} is not active"
             )));
         }
-        require_retrievable_grant(&record)
+        require_retrievable_grant(&record)?;
+        Ok(record)
     }
 
+    /// A poll sends its leased credential to the poll URL, so the URL must
+    /// lie within the grant's audience. A grant bound to no audience would
+    /// follow any URL; attaching one is universe configuration, not bot use.
     async fn validate_trigger_grants(
         &self,
         document: &BotTriggerDocument,
@@ -180,14 +187,41 @@ impl GatewayAgentApi {
             BotTriggerSpec::Webhook {
                 verification: WebhookVerification::HmacSha256 { grant_id, .. },
                 ..
-            } => self.validate_retrievable_grant_id(grant_id).await,
+            } => self
+                .validate_retrievable_grant_id(grant_id)
+                .await
+                .map(|_| ()),
             BotTriggerSpec::Poll {
                 source:
                     PollSource::Http {
-                        auth: Some(auth), ..
+                        url,
+                        auth: Some(auth),
+                        ..
                     },
                 ..
-            } => self.validate_retrievable_grant_id(&auth.grant_id).await,
+            } => {
+                let grant = self.validate_retrievable_grant_id(&auth.grant_id).await?;
+                match &grant.audience {
+                    Some(audience) if auth::audience_covers(audience, url) => Ok(()),
+                    Some(audience) => Err(AgentApiError::rejected(format!(
+                        "auth grant {} is bound to {audience}, which does not cover the poll URL",
+                        grant.grant_id
+                    ))),
+                    None => {
+                        if self
+                            .permitted(
+                                MethodAccess::Universe(UniverseAction::ConfigureResource),
+                                None,
+                            )
+                            .await?
+                        {
+                            Ok(())
+                        } else {
+                            Err(AgentApiError::forbidden())
+                        }
+                    }
+                }
+            }
             _ => Ok(()),
         }
     }

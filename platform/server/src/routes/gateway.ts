@@ -2057,7 +2057,9 @@ async function commitHead(
 }
 
 /// Maps gateway failures onto API responses: engine not_found/conflict pass
-/// through as 404/409, transport or internal errors surface as 502.
+/// through as 404/409, transport or internal errors surface as 502. Only
+/// typed errors carry their message; anything else (a database driver error
+/// includes its SQL and parameters) is logged here and answered generically.
 export async function withGateway(
   c: { json: (body: unknown, status?: 400 | 403 | 404 | 409 | 501 | 502) => Response },
   fn: () => Promise<Response>,
@@ -2083,9 +2085,7 @@ export async function withGateway(
       }
       return c.json({ error: `engine error: ${error.message}` }, 502);
     }
-    return c.json(
-      { error: error instanceof Error ? error.message : String(error) },
-      502,
-    );
+    console.error("unhandled request error", error);
+    return c.json({ error: "internal error" }, 502);
   }
 }

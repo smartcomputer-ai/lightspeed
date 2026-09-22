@@ -448,7 +448,16 @@ Edited in place; schema revision advances once and the release metadata with it.
 
 Each step ships on its own; the order is by dependency.
 
-1. [ ] Hardening (scope 0), including the manifest enforcement test.
+1. [x] Hardening (scope 0), including the manifest enforcement test
+       (2026-09-22). Poll URLs use the pinned outbound client (public
+       addresses over HTTPS unless the host is a listed private network, no
+       redirects); an attached grant must cover the poll URL with its
+       audience, an audience-less grant needs `ConfigureResource`; endpoint
+       ids inside another universe's `{universe}/…` namespace are refused;
+       the universe-scoped directory holds that universe's subjects only
+       (the Platform's group picker reads the deployment directory with its
+       own capability); external sign-up is exercised through Better Auth's
+       OAuth user-info path in the Platform live test.
 2. [ ] The anchor, policy and grant rows written at reservation for standalone
        sessions and collections, bots joining collections, `collections` and
        its methods, the one-statement `authorize` with unit coverage in

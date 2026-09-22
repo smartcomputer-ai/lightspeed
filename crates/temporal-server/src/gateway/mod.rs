@@ -3,6 +3,7 @@
 mod audit;
 pub mod authentication;
 pub mod deployment;
+mod enforcement;
 pub mod http;
 pub mod principal;
 pub mod registration;

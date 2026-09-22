@@ -567,7 +567,7 @@ deployment_api_methods! {
     METHOD_DEPLOYMENT_IDENTITY_SELF => identity_self(IdentityScopeParams) -> IdentitySelfResponse =>
         ["Read own access", "Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected."], access: MethodAccess::Identity, audit: false,
     METHOD_DEPLOYMENT_IDENTITY_DIRECTORY => identity_directory(IdentityScopeParams) -> AccessDirectory =>
-        ["Read the access directory", "Requires administration of the requested scope. Universe administrators see directory subjects and assignments for that universe; deployment administrators see the full directory."], access: MethodAccess::Identity, audit: false,
+        ["Read the access directory", "Requires administration of the requested scope. In universe scope the directory holds only that universe's subjects: principals and groups holding a role there, their members, and service principals it manages. The deployment-wide directory requires deployment administration or the manage_identity capability."], access: MethodAccess::Identity, audit: false,
 
     METHOD_DEPLOYMENT_UNIVERSES_CREATE => create_universe(DeploymentUniverseCreateParams) -> DeploymentUniverseCreateResponse =>
         ["Create a universe", "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created."], access: MethodAccess::DeploymentAdmin, audit: true,
