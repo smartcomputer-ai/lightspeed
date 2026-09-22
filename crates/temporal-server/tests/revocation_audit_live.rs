@@ -160,7 +160,7 @@ impl Fixture {
     async fn session(&self) -> String {
         let id = SessionId::new(format!("audit-session-{}", Uuid::new_v4()));
         self.access
-            .reserve_ownership(
+            .reserve_resource(
                 self.universe,
                 &ResourceRef::Session(id.to_string()),
                 &ActionActor::Principal { id: self.admin.id },

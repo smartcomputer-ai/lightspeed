@@ -48,7 +48,7 @@ impl BotWorkerActivities {
     ) -> Result<
         (
             Arc<GatewayAgentApi>,
-            crate::gateway::service::authorization::ControllerAuthority,
+            crate::gateway::service::authorization::ControllerContext,
         ),
         ActivityError,
     > {

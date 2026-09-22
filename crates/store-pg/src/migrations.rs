@@ -24,7 +24,9 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "access_memberships",
     "access_policy",
     "access_principals",
-    "access_resource_ownership",
+    "access_resource_grants",
+    "access_resource_policies",
+    "access_resources",
     "access_role_assignments",
     "agent_profiles",
     "api_keys",
@@ -112,8 +114,8 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 10,
-        name: "resource_ownership",
-        sql: include_str!("../migrations/010_resource_ownership.sql"),
+        name: "access_resources",
+        sql: include_str!("../migrations/010_access_resources.sql"),
     },
     EmbeddedMigration {
         version: 11,

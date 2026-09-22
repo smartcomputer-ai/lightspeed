@@ -373,6 +373,13 @@ impl BotStore for PgStore {
                 bot_id: bot_id.clone(),
             });
         };
+        // The anchor goes with the bot, so the id is free again.
+        sqlx::query("DELETE FROM access_resources WHERE universe_id = $1 AND resource_kind = 'bot' AND resource_id = $2")
+            .bind(self.config.universe_id)
+            .bind(bot_id.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| bot_sql_error("release bot anchor", error))?;
         bot_from_row(&row)
     }
 

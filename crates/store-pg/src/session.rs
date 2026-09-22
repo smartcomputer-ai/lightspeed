@@ -899,6 +899,15 @@ impl SessionStore for PgStore {
         .execute(&mut *tx)
         .await
         .map_err(|error| session_sql_error("delete session subtree", error))?;
+        // The anchor goes with the content, so the id is free again.
+        sqlx::query(
+            "DELETE FROM access_resources WHERE universe_id = $1 AND resource_kind = 'session' AND resource_id = ANY($2)",
+        )
+        .bind(self.config.universe_id)
+        .bind(&selected_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| session_sql_error("release session anchors", error))?;
         tx.commit()
             .await
             .map_err(|error| session_sql_error("commit delete session", error))?;

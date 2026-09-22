@@ -135,11 +135,13 @@ people or groups. The directory is deployment-wide, not a separate identity real
 inside each universe.
 
 Gateway and shared-service enforcement evaluates current roles, explicit service
-capabilities and immutable ownership. Contributor control requires ownership;
-Operator/Admin may stop another person's session but cannot steer it. Existing
-content is readable by universe members. Private-session policies and individual
-resource isolation remain follow-ups, so principal attribution alone is not a
-privacy boundary. Lists and subsequent requests see committed revocations, and
+capabilities and each resource's anchor and root policy. Contributor control
+requires ownership or a write grant on the root; Operator/Admin may stop another
+person's session but cannot steer it; Admin may delete any session. Every root
+is currently universe-visible, so existing content is readable by universe
+members. The sharing methods that restrict a root and grant readers and writers,
+and individual resource isolation, remain follow-ups, so principal attribution
+alone is not yet a privacy boundary. Lists and subsequent requests see committed revocations, and
 parked transcript long polls end when their caller's authority is revoked.
 
 ## Keep Platform and runtime records aligned

@@ -35,16 +35,23 @@ Missing context and duplicate identity headers fail closed.
 **Current boundary:** the gateway and shared services enforce the universe role/action
 matrix. Viewer is read-only. Contributors control their own sessions and manage
 their own profiles/bots. Operator/Admin can manage bots and profiles, configure
-resources, and stop other people's sessions, but cannot steer or delete their
-personal sessions. Bot-controlled sessions follow bot-management rights; delegated
-children follow explicitly admitted controller lineage. Metadata and provenance
-do not grant control. Bot trigger secrets are visible only to managers.
+resources, and stop other people's sessions, but cannot steer them; only the
+owner or an Admin deletes a session. Bot-controlled sessions follow
+bot-management rights; delegated children follow explicitly admitted controller
+lineage. Metadata and provenance do not grant control. Bot trigger secrets are
+visible only to managers.
 
-Ownership reservations preserve the creator/controller across retries and deletion.
-They are independent of execution credentials. Each reservation also records the
-owning principal and managing bot of its control lineage, copied from the admitted
-controller, so a permission check reads one row. There is no legacy ownership
-backfill: content without trusted ownership cannot be claimed by retrying creation.
+Every session, bot and profile has an anchor reserved before it exists: its
+creator, its admitted controller, the root whose policy governs it, and the
+managing bot, copied from the controller at reservation so a decision reads one
+row. A root (a session or bot created by a person, or a profile) carries a policy
+row with its current owner and visibility; a bot's sessions and delegated
+children resolve to their root's policy and have no owner of their own. Every
+decision loads the anchor, the root's policy and the caller's grant on the root
+in one statement and then decides; a root without a policy row is unreadable by
+everyone. Anchors are independent of execution credentials. Deleting content
+releases its anchor, so the id belongs to the universe again; content without a
+trusted anchor cannot be claimed by retrying creation.
 
 Each request is resolved once at the API boundary: the presented key and its
 principal, an asserting service's `assert_user` capability, and the acting

@@ -106,9 +106,9 @@ async fn platform_accounts_use_canonical_access_end_to_end() -> anyhow::Result<(
         for (index, user) in ["alice", "bob"].iter().enumerate() {
             let id = Uuid::parse_str(summary[user].as_str().unwrap())?;
             let session = summary["sessions"][index].as_str().unwrap();
-            let ownership = store.ownership(universe, &ResourceRef::Session(session.into())).await?.unwrap();
-            assert_eq!(ownership.created_by, ActionActor::Principal { id });
-            assert_eq!(ownership.controller, ResourceController::Principal(id));
+            let anchor = store.anchor(universe, &ResourceRef::Session(session.into())).await?.unwrap();
+            assert_eq!(anchor.created_by, ActionActor::Principal { id });
+            assert_eq!(anchor.controller, ResourceController::Principal(id));
         }
         let assertions: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events WHERE universe_id=$1 AND authenticated_principal_id=$2")
             .bind(universe).bind(service).fetch_one(&pool).await?;

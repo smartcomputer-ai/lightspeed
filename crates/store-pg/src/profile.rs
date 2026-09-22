@@ -209,6 +209,13 @@ impl ProfileStore for PgStore {
                 profile_id: profile_id.clone(),
             });
         };
+        // The anchor goes with the profile, so the id is free again.
+        sqlx::query("DELETE FROM access_resources WHERE universe_id = $1 AND resource_kind = 'profile' AND resource_id = $2")
+            .bind(self.config.universe_id)
+            .bind(profile_id.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| profile_sql_error("release profile anchor", error))?;
         profile_from_row(&row)
     }
 }

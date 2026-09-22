@@ -277,30 +277,242 @@ fn credential_scope_is_a_ceiling() {
     assert!(!universe().permits(AccessScope::Deployment));
 }
 
-#[test]
-fn ownership_follows_the_owner_and_bot_management_only() {
-    let owned = |owner: u128, bot: Option<&str>| ResourceOwnership {
-        resource: ResourceRef::Session("s".into()),
+fn anchor(resource: ResourceRef, root: ResourceRef, bot: Option<&str>) -> ResourceAnchor {
+    ResourceAnchor {
+        resource,
         created_by: ActionActor::Principal {
-            id: Uuid::from_u128(owner),
+            id: Uuid::from_u128(7),
         },
-        controller: ResourceController::Principal(Uuid::from_u128(owner)),
-        owner: Uuid::from_u128(owner),
+        controller: ResourceController::Principal(Uuid::from_u128(7)),
+        audience_root: root,
         bot: bot.map(str::to_owned),
         created_at_ms: 0,
-    };
+    }
+}
+
+fn policy(owner: u128, visibility: Visibility) -> ResourcePolicy {
+    ResourcePolicy {
+        owner: Uuid::from_u128(owner),
+        visibility,
+        updated_by: ActionActor::Principal {
+            id: Uuid::from_u128(owner),
+        },
+        updated_at_ms: 0,
+    }
+}
+
+fn session(
+    owner: u128,
+    visibility: Visibility,
+    grant: Option<ResourcePermission>,
+) -> ResourceAccess {
+    let id = ResourceRef::Session("s".into());
+    ResourceAccess {
+        anchor: anchor(id.clone(), id, None),
+        policy: Some(policy(owner, visibility)),
+        grant,
+    }
+}
+
+#[test]
+fn resource_decisions_follow_owner_visibility_grant_and_role() {
+    use Decision::*;
+    use UniverseAction::*;
+    use Visibility::*;
+    let viewer = access(Role::Viewer, universe());
     let contributor = access(Role::Contributor, universe());
     let operator = access(Role::Operator, universe());
     let admin = access(Role::Admin, universe());
-    // Personal work: the owner only; elevated roles never widen it.
-    assert!(owned(1, None).controlled_by(&contributor));
-    assert!(!owned(7, None).controlled_by(&contributor));
-    assert!(!owned(7, None).controlled_by(&operator));
-    assert!(!owned(7, None).controlled_by(&admin));
-    // Bot lineage: bot managers, plus the bot's owner.
-    assert!(owned(7, Some("b")).controlled_by(&operator));
-    assert!(owned(1, Some("b")).controlled_by(&contributor));
-    assert!(!owned(7, Some("b")).controlled_by(&contributor));
+    let decide = |rights: &EffectiveAccess, action, resource: &ResourceAccess| {
+        authorize(Caller::Request(rights), action, Some(resource))
+    };
+    // A universe-visible session: everyone reads, the owner controls,
+    // elevated roles stop, only owner or Admin deletes.
+    let mine = session(1, Universe, None);
+    let theirs = session(7, Universe, None);
+    for rights in [&viewer, &contributor, &operator, &admin] {
+        assert_eq!(decide(rights, Read, &theirs), Allowed);
+    }
+    assert_eq!(decide(&contributor, ControlSession, &mine), Allowed);
+    assert_eq!(decide(&contributor, DeleteSession, &mine), Allowed);
+    assert_eq!(decide(&contributor, ControlSession, &theirs), Forbidden);
+    assert_eq!(decide(&operator, ControlSession, &theirs), Forbidden);
+    assert_eq!(decide(&admin, ControlSession, &theirs), Forbidden);
+    assert_eq!(decide(&contributor, StopSession, &theirs), Forbidden);
+    assert_eq!(decide(&operator, StopSession, &theirs), Allowed);
+    assert_eq!(decide(&operator, DeleteSession, &theirs), Forbidden);
+    assert_eq!(decide(&admin, DeleteSession, &theirs), Allowed);
+    assert_eq!(decide(&viewer, ControlSession, &theirs), Forbidden);
+    // A restricted session is absent to everyone without a grant, Admin
+    // included; a reader sees it, a writer controls and stops it, neither
+    // deletes it.
+    let private = session(7, Restricted, None);
+    for rights in [&viewer, &contributor, &operator, &admin] {
+        assert_eq!(decide(rights, Read, &private), Hidden, "{:?}", rights.roles);
+        assert_eq!(decide(rights, StopSession, &private), Hidden);
+    }
+    assert_eq!(
+        decide(&contributor, Read, &session(1, Restricted, None)),
+        Allowed
+    );
+    let shared_read = session(7, Restricted, Some(ResourcePermission::Read));
+    assert_eq!(decide(&viewer, Read, &shared_read), Allowed);
+    assert_eq!(
+        decide(&contributor, ControlSession, &shared_read),
+        Forbidden
+    );
+    let shared_write = session(7, Restricted, Some(ResourcePermission::Write));
+    assert_eq!(decide(&contributor, ControlSession, &shared_write), Allowed);
+    assert_eq!(decide(&contributor, StopSession, &shared_write), Allowed);
+    assert_eq!(
+        decide(&contributor, DeleteSession, &shared_write),
+        Forbidden
+    );
+    // A grant never widens a role: a viewer with write still cannot control.
+    assert_eq!(decide(&viewer, ControlSession, &shared_write), Forbidden);
+    // A missing policy row denies outright.
+    let orphan = ResourceAccess {
+        policy: None,
+        ..session(1, Universe, None)
+    };
+    assert_eq!(decide(&admin, Read, &orphan), Hidden);
+    // A bot's session is controlled by bot managers as well as the owner.
+    let bot_session = ResourceAccess {
+        anchor: anchor(
+            ResourceRef::Session("s".into()),
+            ResourceRef::Bot("b".into()),
+            Some("b"),
+        ),
+        policy: Some(policy(7, Universe)),
+        grant: None,
+    };
+    assert_eq!(decide(&operator, ControlSession, &bot_session), Allowed);
+    assert_eq!(decide(&operator, DeleteSession, &bot_session), Allowed);
+    assert_eq!(
+        decide(&contributor, ControlSession, &bot_session),
+        Forbidden
+    );
+    // Bots: invocation follows the role on a universe-visible root, managing
+    // follows ownership or the Operator role on a universe-visible root.
+    let bot = ResourceAccess {
+        anchor: anchor(
+            ResourceRef::Bot("b".into()),
+            ResourceRef::Bot("b".into()),
+            None,
+        ),
+        policy: Some(policy(7, Universe)),
+        grant: None,
+    };
+    assert_eq!(decide(&contributor, InvokeBot, &bot), Allowed);
+    assert_eq!(decide(&viewer, InvokeBot, &bot), Forbidden);
+    assert_eq!(decide(&contributor, ManageBot, &bot), Forbidden);
+    assert_eq!(decide(&operator, ManageBot, &bot), Allowed);
+    let private_bot = ResourceAccess {
+        policy: Some(policy(7, Restricted)),
+        grant: Some(ResourcePermission::Write),
+        ..bot.clone()
+    };
+    assert_eq!(decide(&operator, ManageBot, &private_bot), Forbidden);
+    assert_eq!(decide(&contributor, InvokeBot, &private_bot), Allowed);
+    // Without a target, only the role decides.
+    assert_eq!(
+        authorize(Caller::Request(&contributor), CreateSession, None),
+        Allowed
+    );
+    assert_eq!(
+        authorize(Caller::Request(&contributor), ControlSession, None),
+        Forbidden
+    );
+}
+
+#[test]
+fn controller_contexts_control_themselves_their_bots_sessions_and_admitted_children() {
+    use Decision::*;
+    use UniverseAction::*;
+    let bot = ControllerContext {
+        universe_id: Uuid::from_u128(2),
+        actor: ResourceRef::Bot("b".into()),
+        root: ResourceRef::Bot("b".into()),
+        cause: "test".into(),
+    };
+    let parent = ControllerContext {
+        actor: ResourceRef::Session("p".into()),
+        root: ResourceRef::Session("p".into()),
+        ..bot.clone()
+    };
+    let with =
+        |resource: ResourceRef, root: ResourceRef, bot_id: Option<&str>, controller, visibility| {
+            ResourceAccess {
+                anchor: ResourceAnchor {
+                    controller,
+                    ..anchor(resource, root, bot_id)
+                },
+                policy: Some(policy(7, visibility)),
+                grant: None,
+            }
+        };
+    let bot_session = with(
+        ResourceRef::Session("s".into()),
+        ResourceRef::Bot("b".into()),
+        Some("b"),
+        ResourceController::Bot("b".into()),
+        Visibility::Restricted,
+    );
+    let child = with(
+        ResourceRef::Session("c".into()),
+        ResourceRef::Session("p".into()),
+        None,
+        ResourceController::Session("p".into()),
+        Visibility::Restricted,
+    );
+    let stranger = with(
+        ResourceRef::Session("x".into()),
+        ResourceRef::Session("x".into()),
+        None,
+        ResourceController::Principal(Uuid::from_u128(7)),
+        Visibility::Universe,
+    );
+    let hidden = with(
+        ResourceRef::Session("y".into()),
+        ResourceRef::Session("y".into()),
+        None,
+        ResourceController::Principal(Uuid::from_u128(7)),
+        Visibility::Restricted,
+    );
+    let decide =
+        |context, action, resource| authorize(Caller::Controller(context), action, Some(resource));
+    assert_eq!(decide(&bot, ControlSession, &bot_session), Allowed);
+    assert_eq!(decide(&bot, ControlSession, &child), Hidden);
+    assert_eq!(decide(&bot, ControlSession, &stranger), Forbidden);
+    assert_eq!(decide(&bot, Read, &stranger), Allowed);
+    assert_eq!(decide(&bot, Read, &hidden), Hidden);
+    assert_eq!(decide(&parent, ControlSession, &child), Allowed);
+    assert_eq!(decide(&parent, Read, &child), Allowed);
+    assert_eq!(decide(&parent, ControlSession, &bot_session), Hidden);
+    assert_eq!(decide(&parent, ControlSession, &stranger), Forbidden);
+    assert_eq!(decide(&parent, ManageAccess, &child), Forbidden);
+    // A sibling under the same root is readable, never controlled.
+    let sibling = with(
+        ResourceRef::Session("c2".into()),
+        ResourceRef::Session("p".into()),
+        None,
+        ResourceController::Session("c".into()),
+        Visibility::Restricted,
+    );
+    assert_eq!(decide(&parent, Read, &sibling), Allowed);
+    assert_eq!(decide(&parent, ControlSession, &sibling), Forbidden);
+    assert_eq!(
+        authorize(Caller::Controller(&bot), UseResource, None),
+        Allowed
+    );
+    assert_eq!(
+        authorize(Caller::Controller(&parent), UseResource, None),
+        Forbidden
+    );
+    assert_eq!(
+        authorize(Caller::Controller(&parent), CreateSession, None),
+        Allowed
+    );
 }
 
 #[test]

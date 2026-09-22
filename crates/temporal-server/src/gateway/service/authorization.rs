@@ -1,26 +1,17 @@
 //! Shared-service admission. No public method may rely on HTTP checks alone:
 //! every handler decides from the request context resolved at the trusted
-//! boundary, or from an explicit controller authority for internal work.
-//! Role decisions read that context; only ownership reads storage.
+//! boundary, or from an explicit controller context for internal work. Both
+//! go through `access::authorize`; storage supplies the resource facts.
 use super::*;
-use access::{ActionActor, ResourceController, ResourceRef};
-
-/// Authority of internal work running for an admitted bot or delegated
-/// session. It holds no roles and is not a bypass: it may read and create
-/// within its universe and control only itself and the sessions of its bot.
-#[derive(Clone)]
-pub(crate) struct ControllerAuthority {
-    pub universe_id: uuid::Uuid,
-    pub resource: ResourceRef,
-    pub cause: String,
-}
+pub(crate) use access::ControllerContext;
+use access::{ActionActor, Caller, Decision, ResourceController, ResourceRef};
 
 tokio::task_local! {
-    static CONTROLLER: ControllerAuthority;
+    static CONTROLLER: ControllerContext;
 }
 
 pub(crate) async fn with_controller_authority<F: Future>(
-    authority: ControllerAuthority,
+    authority: ControllerContext,
     future: F,
 ) -> F::Output {
     CONTROLLER.scope(authority, future).await
@@ -54,25 +45,20 @@ impl GatewayAgentApi {
                 if receiver.workflow_id == workflow_id && receiver.workflow_kind == temporal_workflow::channels::CHANNEL_CONVERSATION_WORKFLOW_KIND));
         let bot = self
             .access_store()
-            .ownership(
+            .anchor(
                 self.universe_id(),
                 &ResourceRef::Session(params.session_id.clone()),
             )
             .await
             .map_err(access_error)?
-            .and_then(|ownership| ownership.bot);
+            .and_then(|anchor| anchor.bot);
         let (true, Some(bot)) = (bound, bot) else {
             return Err(denied());
         };
-        with_controller_authority(
-            ControllerAuthority {
-                universe_id: self.universe_id(),
-                resource: ResourceRef::Bot(bot),
-                cause: workflow_id.to_owned(),
-            },
-            self.read_run(params),
-        )
-        .await
+        let context = self
+            .controller_context(ResourceRef::Bot(bot), workflow_id.to_owned())
+            .await?;
+        with_controller_authority(context, self.read_run(params)).await
     }
 
     /// Cascade deletion checks every session of the retention tree.
@@ -120,7 +106,7 @@ impl GatewayAgentApi {
     ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {
         use ::bots::BotTriggerStore as _;
         let authority = CONTROLLER.try_with(Clone::clone).map_err(|_| denied())?;
-        let ResourceRef::Bot(ref id) = authority.resource else {
+        let ResourceRef::Bot(ref id) = authority.actor else {
             return Err(denied());
         };
         if authority.universe_id != self.universe_id() {
@@ -143,13 +129,34 @@ impl GatewayAgentApi {
         self.lease_grant_token(params).await
     }
 
+    /// A controller context for an admitted actor; an actor without an
+    /// anchor holds no authority.
+    async fn controller_context(
+        &self,
+        actor: ResourceRef,
+        cause: String,
+    ) -> Result<ControllerContext, AgentApiError> {
+        let anchor = self
+            .access_store()
+            .anchor(self.universe_id(), &actor)
+            .await
+            .map_err(access_error)?
+            .ok_or_else(denied)?;
+        Ok(ControllerContext {
+            universe_id: self.universe_id(),
+            actor,
+            root: anchor.audience_root,
+            cause,
+        })
+    }
+
     /// Only the worker adapter constructs this authority. Bind it to the
     /// Temporal controller identity, not a session's display metadata.
     pub(crate) async fn bot_activity_authority(
         &self,
         workflow_id: &str,
         requested_bot: Option<&api::BotId>,
-    ) -> Result<ControllerAuthority, AgentApiError> {
+    ) -> Result<ControllerContext, AgentApiError> {
         let prefix = format!("{}/bot-", self.universe_id());
         let id = if let Some(id) = workflow_id.strip_prefix(&prefix) {
             let id = api::BotId::try_new(id.to_owned()).map_err(|_| denied())?;
@@ -164,22 +171,11 @@ impl GatewayAgentApi {
             }
             id.clone()
         };
-        let resource = ResourceRef::Bot(id.as_str().to_owned());
-        // A bot without admitted ownership holds no authority.
-        if self
-            .access_store()
-            .ownership(self.universe_id(), &resource)
-            .await
-            .map_err(access_error)?
-            .is_none()
-        {
-            return Err(denied());
-        }
-        Ok(ControllerAuthority {
-            universe_id: self.universe_id(),
-            resource,
-            cause: workflow_id.to_owned(),
-        })
+        self.controller_context(
+            ResourceRef::Bot(id.as_str().to_owned()),
+            workflow_id.to_owned(),
+        )
+        .await
     }
 
     /// Authority of a delegated child over itself. The delegation service has
@@ -188,22 +184,23 @@ impl GatewayAgentApi {
     pub(crate) async fn delegated_session_authority(
         &self,
         session: &SessionId,
-    ) -> Result<ControllerAuthority, AgentApiError> {
+    ) -> Result<ControllerContext, AgentApiError> {
         let resource = ResourceRef::Session(session.as_str().to_owned());
-        let ownership = self
+        let anchor = self
             .access_store()
-            .ownership(self.universe_id(), &resource)
+            .anchor(self.universe_id(), &resource)
             .await
             .map_err(access_error)?
             .ok_or_else(denied)?;
         let (ResourceController::Session(_), ActionActor::Internal { cause, .. }) =
-            (ownership.controller, ownership.created_by)
+            (anchor.controller, anchor.created_by)
         else {
             return Err(denied());
         };
-        Ok(ControllerAuthority {
+        Ok(ControllerContext {
             universe_id: self.universe_id(),
-            resource,
+            actor: resource,
+            root: anchor.audience_root,
             cause,
         })
     }
@@ -218,7 +215,7 @@ impl GatewayAgentApi {
         cause: &str,
     ) -> Result<(), AgentApiError> {
         self.access_store()
-            .reserve_ownership(
+            .reserve_resource(
                 self.universe_id(),
                 &ResourceRef::Session(child.as_str().to_owned()),
                 &ActionActor::Internal {
@@ -272,27 +269,29 @@ impl GatewayAgentApi {
         resource: Option<ResourceRef>,
     ) -> Result<(), AgentApiError> {
         let requirement = api::method_access(method).ok_or_else(denied)?;
-        if self.permitted(requirement, resource.as_ref()).await? {
+        let decision = self.decide(requirement, resource.as_ref()).await?;
+        if decision == Decision::Allowed {
             return Ok(());
         }
-        // An unknown target is missing, not forbidden: content is universe-visible,
-        // so a reader learns nothing new. A reserved or existing target stays refused.
-        if let Some(resource) = &resource
-            && self
-                .permitted(MethodAccess::Universe(UniverseAction::Read), None)
-                .await?
+        // A resource the caller may not see is missing, not forbidden, provided
+        // the caller may read universe content at all. Existing content without
+        // an anchor stays refused.
+        if decision == Decision::Hidden
+            && let Some(resource) = &resource
+            && CONTROLLER.try_with(|_| ()).is_err()
+            && self.caller()?.rights.universe_action(UniverseAction::Read) == RoleDecision::Allowed
         {
             let store = self.access_store();
-            let known = store
-                .ownership(self.universe_id(), resource)
+            let anchored = store
+                .anchor(self.universe_id(), resource)
                 .await
                 .map_err(access_error)?
-                .is_some()
-                || store
-                    .resource_exists(self.universe_id(), resource)
-                    .await
-                    .map_err(access_error)?;
-            if !known {
+                .is_some();
+            let exists = store
+                .resource_exists(self.universe_id(), resource)
+                .await
+                .map_err(access_error)?;
+            if anchored || !exists {
                 let (kind, id) = match resource {
                     ResourceRef::Session(id) => ("session", id),
                     ResourceRef::Bot(id) => ("bot", id),
@@ -320,66 +319,58 @@ impl GatewayAgentApi {
         requirement: MethodAccess,
         target: Option<&ResourceRef>,
     ) -> Result<bool, AgentApiError> {
-        if let Ok(controller) = CONTROLLER.try_with(Clone::clone) {
-            return self
-                .controller_permitted(&controller, requirement, target)
-                .await;
-        }
-        let context = self.caller()?;
-        match requirement {
-            MethodAccess::Universe(action) => self
-                .access_store()
-                .resource_permitted(&context.rights, action, target)
-                .await
-                .map_err(access_error),
-            MethodAccess::Service(capability) => Ok(context.rights.has_capability(capability)),
-            _ => Ok(false),
-        }
+        Ok(self.decide(requirement, target).await? == Decision::Allowed)
     }
 
-    async fn controller_permitted(
+    /// One decision for the current caller. A target that has no anchor yet
+    /// is decided by role alone, which is how creation of a fresh id and a
+    /// request for a missing resource both resolve; an existing target is
+    /// decided from its anchor, its root's policy and the caller's grant.
+    async fn decide(
         &self,
-        authority: &ControllerAuthority,
         requirement: MethodAccess,
         target: Option<&ResourceRef>,
-    ) -> Result<bool, AgentApiError> {
-        if authority.universe_id != self.universe_id() {
-            return Ok(false);
-        }
-        match requirement {
-            // Catalog/content reads are universe-wide in this slice.
-            MethodAccess::Universe(UniverseAction::Read | UniverseAction::CreateSession) => {
-                return Ok(true);
+    ) -> Result<Decision, AgentApiError> {
+        let controller = CONTROLLER.try_with(Clone::clone).ok();
+        let context = match &controller {
+            Some(controller) => {
+                if controller.universe_id != self.universe_id() {
+                    return Ok(Decision::Forbidden);
+                }
+                None
             }
-            MethodAccess::Universe(UniverseAction::UseResource)
-                if matches!(authority.resource, ResourceRef::Bot(_)) =>
-            {
-                return Ok(true);
+            None => Some(self.caller()?),
+        };
+        let caller = match (&controller, &context) {
+            (Some(controller), _) => Caller::Controller(controller),
+            (None, Some(context)) => Caller::Request(&context.rights),
+            (None, None) => unreachable!("a request without a context was refused above"),
+        };
+        let action = match requirement {
+            MethodAccess::Universe(action) => action,
+            MethodAccess::Service(capability) => {
+                return Ok(match &context {
+                    Some(context) if context.rights.has_capability(capability) => Decision::Allowed,
+                    _ => Decision::Forbidden,
+                });
             }
-            MethodAccess::Universe(
-                UniverseAction::ControlSession
-                | UniverseAction::StopSession
-                | UniverseAction::DeleteSession
-                | UniverseAction::ManageBot,
-            ) => {}
-            _ => return Ok(false),
-        }
+            _ => return Ok(Decision::Forbidden),
+        };
         let Some(target) = target else {
-            return Ok(false);
+            return Ok(access::authorize(caller, action, None));
         };
-        if target == &authority.resource {
-            return Ok(true);
-        }
-        // Beyond itself, only a bot reaches further: the sessions of its lineage.
-        let ResourceRef::Bot(bot) = &authority.resource else {
-            return Ok(false);
-        };
-        Ok(self
+        match self
             .access_store()
-            .ownership(self.universe_id(), target)
+            .decide(caller, action, target)
             .await
             .map_err(access_error)?
-            .is_some_and(|ownership| ownership.bot.as_ref() == Some(bot)))
+        {
+            Some(decision) => Ok(decision),
+            None => Ok(match access::authorize(caller, action, None) {
+                Decision::Allowed => Decision::Allowed,
+                _ => Decision::Hidden,
+            }),
+        }
     }
 
     /// Record who controls a new resource before it exists. Callers own what
@@ -390,7 +381,7 @@ impl GatewayAgentApi {
     ) -> Result<(), AgentApiError> {
         let (created_by, controller) = if let Ok(authority) = CONTROLLER.try_with(Clone::clone) {
             let (ResourceRef::Bot(bot), ResourceRef::Session(_), true) = (
-                authority.resource,
+                authority.actor,
                 &resource,
                 authority.universe_id == self.universe_id(),
             ) else {
@@ -415,7 +406,7 @@ impl GatewayAgentApi {
             )
         };
         self.access_store()
-            .reserve_ownership(
+            .reserve_resource(
                 self.universe_id(),
                 &resource,
                 &created_by,

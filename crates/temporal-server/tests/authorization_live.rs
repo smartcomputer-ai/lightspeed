@@ -139,14 +139,14 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             forbidden(rpc(&endpoint, bob, "profiles/put", document.clone()).await);
             forbidden(rpc(&endpoint, viewer, "profiles/put", document.clone()).await);
             success(rpc(&endpoint, operator, "profiles/put", document.clone()).await);
-            let owned = access.ownership(universe, &ResourceRef::Profile(profile.clone())).await?.unwrap();
+            let owned = access.anchor(universe, &ResourceRef::Profile(profile.clone())).await?.unwrap();
             assert_eq!(owned.created_by, ActionActor::Principal { id: alice.record.principal_id });
             assert_eq!(owned.controller, ResourceController::Principal(alice.record.principal_id));
             let bot = format!("bot-{}", Uuid::new_v4().simple());
             let create_bot = json!({"bot":{"botId":bot,"profileId":profile},
                 "triggers":[{"triggerId":"hook","kind":"webhook"}]});
             success(rpc(&endpoint, alice, "bots/create", create_bot).await);
-            let bot_ownership = access.ownership(universe, &ResourceRef::Bot(bot.clone())).await?.unwrap();
+            let bot_ownership = access.anchor(universe, &ResourceRef::Bot(bot.clone())).await?.unwrap();
             assert_eq!(bot_ownership.created_by, ActionActor::Principal { id: alice.record.principal_id });
             let trigger = json!({"botId":bot,"triggerId":"hook"});
             for caller in [alice, operator] {
@@ -178,14 +178,17 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             // A real run is accepted and completes through the worker's fake model.
             let run = success(rpc(&endpoint, alice, "session/runs/start", json!({"sessionId":session,"source":{"type":"input","items":[{"type":"text","text":"hello"}]}})).await);
             assert!(run["run"]["id"].is_string(), "{run}");
-            // Elevated roles can stop, but still cannot delete someone else's personal session.
+            // Elevated roles can stop; only the owner or an Admin deletes someone else's session.
             forbidden(rpc(&endpoint, bob, "session/close", json!({"sessionId":session,"force":true})).await);
             success(rpc(&endpoint, operator, "session/close", json!({"sessionId":session,"force":true})).await);
-            forbidden(rpc(&endpoint, universe_admin, "session/delete", json!({"sessionId":session})).await);
-            success(rpc(&endpoint, alice, "session/delete", json!({"sessionId":session})).await);
-            // Deleting content does not erase attribution or allow identity takeover.
-            forbidden(rpc(&endpoint, bob, "session/start", start).await);
-            assert!(access.ownership(universe, &ResourceRef::Session(session.into())).await?.is_some());
+            forbidden(rpc(&endpoint, bob, "session/delete", json!({"sessionId":session})).await);
+            forbidden(rpc(&endpoint, operator, "session/delete", json!({"sessionId":session})).await);
+            success(rpc(&endpoint, universe_admin, "session/delete", json!({"sessionId":session})).await);
+            // Deletion releases the id: the next creator owns it under a fresh anchor.
+            assert!(access.anchor(universe, &ResourceRef::Session(session.into())).await?.is_none());
+            success(rpc(&endpoint, bob, "session/start", start).await);
+            let reused = access.anchor(universe, &ResourceRef::Session(session.into())).await?.unwrap();
+            assert_eq!(reused.created_by, ActionActor::Principal { id: bob.record.principal_id });
             let admissions: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_events WHERE universe_id=$1 AND acting_principal_id=$2 AND method='session/runs/start' AND outcome='succeeded'")
                 .bind(universe).bind(alice.record.principal_id).fetch_one(&pool).await?;
             assert_eq!(admissions, 1, "one record per run, despite nested service calls");

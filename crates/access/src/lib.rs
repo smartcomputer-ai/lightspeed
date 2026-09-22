@@ -224,31 +224,194 @@ pub enum ResourceController {
     Session(String),
 }
 
-/// Immutable control facts of one resource. `owner` and `bot` are copied from
-/// the admitted controller when the resource is reserved, so permission checks
-/// read one row instead of walking a lineage.
+/// Who may see a root's tree without a grant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Visibility {
+    Universe,
+    Restricted,
+}
+
+/// One permission a grant confers on a root. `Read` sees the tree; `Write`
+/// also controls it.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourcePermission {
+    Read,
+    Write,
+}
+
+/// Immutable facts of one governed resource, reserved before it exists. The
+/// audience root and managing bot are copied from the admitted controller at
+/// reservation, so a decision reads one row instead of walking a lineage.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct ResourceOwnership {
+pub struct ResourceAnchor {
     pub resource: ResourceRef,
     pub created_by: ActionActor,
     /// The immediate, separately admitted controller.
     pub controller: ResourceController,
-    /// The principal at the root of the control lineage.
-    pub owner: Uuid,
-    /// The bot whose management rights extend to this resource, if any.
+    /// The root whose policy governs this resource; itself for a root.
+    pub audience_root: ResourceRef,
+    /// The bot whose worker controls this resource, if any.
     pub bot: Option<String>,
     pub created_at_ms: u64,
 }
 
-impl ResourceOwnership {
-    /// Whether `rights` satisfy an ownership-dependent action on this resource.
-    /// Bot lineages follow bot management; the operator role never widens a
-    /// personal owner.
-    pub fn controlled_by(&self, rights: &EffectiveAccess) -> bool {
-        (self.bot.is_some()
-            && rights.universe_action(UniverseAction::ManageBot) == RoleDecision::Allowed)
-            || self.owner == rights.principal.id
+impl ResourceAnchor {
+    pub fn is_root(&self) -> bool {
+        self.audience_root == self.resource
+    }
+}
+
+/// What can change about a root: its current owner and visibility.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourcePolicy {
+    pub owner: Uuid,
+    pub visibility: Visibility,
+    pub updated_by: ActionActor,
+    pub updated_at_ms: u64,
+}
+
+/// Everything one decision about one resource needs, loaded in one statement:
+/// the anchor, its root's policy, and the caller's best grant on that root.
+/// A missing policy denies: the root was never admitted or is gone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResourceAccess {
+    pub anchor: ResourceAnchor,
+    pub policy: Option<ResourcePolicy>,
+    pub grant: Option<ResourcePermission>,
+}
+
+/// Authority of the runtime's own work for an admitted bot or delegated
+/// session. It holds no roles and is not a bypass: it reads its own root and
+/// universe-visible content, creates in its own root, and controls only
+/// itself, its bot's sessions and the children it admitted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ControllerContext {
+    pub universe_id: Uuid,
+    pub actor: ResourceRef,
+    /// The actor's audience root, resolved when the context is built.
+    pub root: ResourceRef,
+    pub cause: String,
+}
+
+/// Who asks: a request resolved at the trusted boundary, or internal work.
+#[derive(Clone, Copy, Debug)]
+pub enum Caller<'a> {
+    Request(&'a EffectiveAccess),
+    Controller(&'a ControllerContext),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decision {
+    Allowed,
+    /// The caller may see the resource but not do this.
+    Forbidden,
+    /// The caller may not see the resource at all; it should look absent.
+    Hidden,
+}
+
+/// The one evaluator for resource decisions. Roles decide first; a resource
+/// decision then reads the loaded access facts and never storage.
+pub fn authorize(
+    caller: Caller<'_>,
+    action: UniverseAction,
+    resource: Option<&ResourceAccess>,
+) -> Decision {
+    match caller {
+        Caller::Request(rights) => authorize_request(rights, action, resource),
+        Caller::Controller(context) => authorize_controller(context, action, resource),
+    }
+}
+
+fn authorize_request(
+    rights: &EffectiveAccess,
+    action: UniverseAction,
+    resource: Option<&ResourceAccess>,
+) -> Decision {
+    use UniverseAction::*;
+    let role = rights.universe_action(action);
+    let Some(access) = resource else {
+        return if role == RoleDecision::Allowed {
+            Decision::Allowed
+        } else {
+            Decision::Forbidden
+        };
+    };
+    let Some(policy) = &access.policy else {
+        return Decision::Hidden;
+    };
+    let owner = policy.owner == rights.principal.id;
+    let universe_visible = policy.visibility == Visibility::Universe;
+    let readable = rights.universe_action(Read) == RoleDecision::Allowed
+        && (universe_visible || owner || access.grant.is_some());
+    if !readable {
+        return Decision::Hidden;
+    }
+    if role == RoleDecision::Denied {
+        return Decision::Forbidden;
+    }
+    let by_role = role == RoleDecision::Allowed;
+    let writer = owner || access.grant == Some(ResourcePermission::Write);
+    // A bot's sessions follow the bot's managers.
+    let manages_bot =
+        access.anchor.bot.is_some() && rights.universe_action(ManageBot) == RoleDecision::Allowed;
+    let allowed = match action {
+        Read => true,
+        ControlSession => writer || manages_bot,
+        StopSession => by_role || writer,
+        DeleteSession => owner || manages_bot || rights.has_role(Role::Admin),
+        InvokeBot => (by_role && universe_visible) || writer,
+        ManageBot => owner || (by_role && universe_visible),
+        ManageProfile => owner || by_role,
+        CreateSession | CreateProfile | CreateBot | UseResource | ConfigureResource
+        | ManageAccess => by_role,
+    };
+    if allowed {
+        Decision::Allowed
+    } else {
+        Decision::Forbidden
+    }
+}
+
+fn authorize_controller(
+    context: &ControllerContext,
+    action: UniverseAction,
+    resource: Option<&ResourceAccess>,
+) -> Decision {
+    use UniverseAction::*;
+    let is_bot = matches!(context.actor, ResourceRef::Bot(_));
+    let Some(access) = resource else {
+        return match action {
+            Read | CreateSession => Decision::Allowed,
+            UseResource if is_bot => Decision::Allowed,
+            _ => Decision::Forbidden,
+        };
+    };
+    let Some(policy) = &access.policy else {
+        return Decision::Hidden;
+    };
+    if policy.visibility != Visibility::Universe && access.anchor.audience_root != context.root {
+        return Decision::Hidden;
+    }
+    let anchor = &access.anchor;
+    let controls = anchor.resource == context.actor
+        || matches!((&context.actor, &anchor.bot), (ResourceRef::Bot(bot), Some(managed)) if bot == managed)
+        || matches!((&context.actor, &anchor.controller), (ResourceRef::Session(actor), ResourceController::Session(parent)) if actor == parent);
+    let allowed = match action {
+        Read | CreateSession => true,
+        UseResource => is_bot,
+        ControlSession | StopSession | DeleteSession | ManageBot => controls,
+        _ => false,
+    };
+    if allowed {
+        Decision::Allowed
+    } else {
+        Decision::Forbidden
     }
 }
 

@@ -59,7 +59,9 @@ These settle what the parent document leaves open.
 5. **Policy rows are explicit and fail closed.** A resource kind that the policy
    system covers gets its policy row atomically at creation, `universe` included;
    a missing row denies. Kinds not yet covered keep their role rules. This slice
-   covers sessions, bots and collections; profiles stay on role rules.
+   covers sessions, bots and collections; profiles get a policy row too, so
+   one rule holds for every anchored kind, but stay on role rules with no
+   sharing surface.
 6. **Role rights no longer short-circuit.** Every resource decision reads the
    resource's anchor, its root's policy and the caller's grant in one statement,
    then decides. Only a role `Denied` returns without reading.
@@ -196,7 +198,7 @@ Invoke bot        = InvokeBot allowed (universe collection) OR owner OR write gr
 Manage bot        = owner, OR ManageBot allowed when the collection is universe-visible
 Manage collection = owner, OR ConfigureResource allowed when universe-visible
 Stop              = StopSession allowed (Operator/Admin) OR owner OR write grant
-Delete / close    = owner OR Admin
+Delete / close    = owner OR Admin OR (managing bot AND ManageBot allowed)
 Hand off owner    = owner, only under service execution; moves the whole tree
 ```
 
@@ -430,10 +432,10 @@ declarations stay mandatory.
 
 Edited in place; schema revision advances once and the release metadata with it.
 
-- `010_resource_ownership.sql` becomes the anchor: `access_resource_ownership`
-  renamed `access_resources`, with `audience_root_kind`, `audience_root_id`,
-  `run_as_principal_id` and `execution_kind` added, `owner_principal_id` moved
-  to the policy row, and bot and execution optional under a per-kind check;
+- `010_access_resources.sql` is the anchor: `access_resources` with
+  `audience_root_kind`, `audience_root_id` and `bot_id`, `owner_principal_id`
+  moved to the policy row; `run_as_principal_id` and `execution_kind` join it
+  in step 4, optional under a per-kind check;
   `access_resource_policies (key, owner_principal_id, visibility, updated_by,
   updated_at_ms)` and `access_resource_grants (key, subject_kind, subject_id,
   permission, granted_by, granted_at_ms)` with an index on the subject, both
@@ -471,7 +473,21 @@ Each step ships on its own; the order is by dependency.
        its methods, the one-statement `authorize` with unit coverage in
        `access`; session, bot and collection lists and content surfaces enforce
        the policy; forks and clones become new roots; release on delete; Admin
-       delete; hand-off under service execution only. Live matrix through HTTP:
+       delete; hand-off under service execution only.
+       Done 2026-09-22, behavior-preserving: `access_resources` +
+       `access_resource_policies` + `access_resource_grants` (migration 010
+       edited in place, revision stays 11), `access::authorize(Caller, action,
+       ResourceAccess) -> Allowed | Forbidden | Hidden` with the full matrix in
+       unit tests, `ControllerContext { universe, actor, root, cause }` as the
+       controller arm, `PgAccessStore::resource_access` as the one statement
+       (anchor → root policy → best grant through memberships), `not_found`
+       for hidden resources, release on delete for sessions, bots and
+       profiles, Admin delete, bot managers delete bot sessions. Every root
+       today is a session, bot or profile with `universe` visibility; the
+       live suites pass unchanged except for the two intended changes.
+       Open in this step: sharing methods, list predicates in SQL, forks and
+       clones as new roots, collections and bots joining them, hand-off,
+       execution on the anchor (step 4). Live matrix through HTTP:
        owner, reader, writer, group member, Viewer, Operator, Admin against
        read, list, events, control, stop, delete and share, for a standalone
        session, a universe-visible collection holding a bot, and a restricted
@@ -553,7 +569,7 @@ delegation enforcement, then SSO and provisioning, whose offboarding must govern
 API keys and the standing bot and collection authority defined here.
 
 Current seams: [authorization service](../../crates/temporal-server/src/gateway/service/authorization.rs),
-[ownership store](../../crates/store-pg/src/ownership.rs),
+[resource store](../../crates/store-pg/src/resources.rs),
 [reference collector](../../crates/engine/src/storage/blobs.rs),
 [model-call activity](../../crates/temporal-server/src/worker/activities/llm.rs),
 [bot worker](../../crates/temporal-server/src/worker/bots.rs),

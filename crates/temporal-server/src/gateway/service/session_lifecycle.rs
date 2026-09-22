@@ -283,7 +283,7 @@ impl GatewayAgentApi {
         let resource = ResourceRef::Session(session_id.as_str().to_owned());
         if self
             .access_store()
-            .ownership(self.universe_id(), &resource)
+            .anchor(self.universe_id(), &resource)
             .await
             .map_err(|e| AgentApiError::internal(e.to_string()))?
             .is_some()
