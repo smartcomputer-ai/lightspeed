@@ -267,7 +267,7 @@ async fn exercise(pool: &sqlx::PgPool) {
     let assertion = CapabilityAssignment {
         scope,
         principal_id: service,
-        capability: ServiceCapability::AssertUser,
+        capability: Capability::AssertUser,
     };
     let asserted_headers = headers(&service_key, Some(universe), Some(user));
     assert!(
@@ -319,7 +319,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                 assignment: CapabilityAssignment {
                     scope,
                     principal_id: service,
-                    capability: ServiceCapability::LeaseCredentials,
+                    capability: Capability::LeaseCredentials,
                 },
             },
             23,

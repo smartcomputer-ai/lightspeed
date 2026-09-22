@@ -56,10 +56,7 @@ async fn platform_accounts_use_canonical_access_end_to_end() -> anyhow::Result<(
             3,
         )
         .await?;
-    for capability in [
-        ServiceCapability::AssertUser,
-        ServiceCapability::ManageIdentity,
-    ] {
+    for capability in [Capability::AssertUser, Capability::ManageIdentity] {
         store
             .apply(
                 host.id,

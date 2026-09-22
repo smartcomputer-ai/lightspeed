@@ -2445,6 +2445,7 @@ impl AgentApiService for GatewayAgentApi {
             )
             .await
             .map_err(map_session_store_error)?;
+        self.note_privileged_list(page.privileged);
         let mut sessions = Vec::with_capacity(page.sessions.len());
         for (record, access) in page.sessions {
             let root = self.load_retention_root(&record).await?;
@@ -3831,10 +3832,13 @@ impl AgentApiService for GatewayAgentApi {
         let mut blobs = Vec::with_capacity(params.blob_refs.len());
         for blob_ref in params.blob_refs {
             let blob_ref = parse_blob_ref(&blob_ref)?;
-            let exists = self
+            let decision = self
                 .blob_read_decision(params.resource.as_ref(), &blob_ref)
-                .await?
-                == access::Decision::Allowed
+                .await?;
+            if decision == access::Decision::Privileged {
+                crate::gateway::principal::mark_privileged();
+            }
+            let exists = decision.allows()
                 && self
                     .store
                     .has_blob(&blob_ref)

@@ -45,10 +45,11 @@ CREATE TABLE IF NOT EXISTS access_capabilities (
     universe_id uuid REFERENCES universes (universe_id) ON DELETE CASCADE,
     principal_id uuid NOT NULL REFERENCES access_principals (principal_id),
     capability text NOT NULL CHECK (capability IN
-        ('assert_user', 'lease_credentials', 'admit_channel_inbound', 'discover_channel_accounts', 'manage_identity')),
+        ('assert_user', 'lease_credentials', 'admit_channel_inbound', 'discover_channel_accounts', 'manage_identity',
+         'read_private_content')),
     CHECK (capability = 'assert_user' OR
            (universe_id IS NULL AND capability IN ('discover_channel_accounts', 'manage_identity')) OR
-           (universe_id IS NOT NULL AND capability IN ('lease_credentials', 'admit_channel_inbound')))
+           (universe_id IS NOT NULL AND capability IN ('lease_credentials', 'admit_channel_inbound', 'read_private_content')))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS access_capabilities_idx ON access_capabilities
     (COALESCE(universe_id, '00000000-0000-0000-0000-000000000000'::uuid), principal_id, capability);

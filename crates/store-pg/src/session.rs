@@ -433,8 +433,10 @@ impl PgStore {
         } else {
             ""
         };
-        let readable =
-            crate::resources::readable_predicate(reader, "session", "sessions", "session_id", 7);
+        let crate::resources::ReadableClauses {
+            filter: readable,
+            privileged,
+        } = crate::resources::readable_clauses(reader, "session", "sessions", "session_id", 7);
         let (reader_principal, reader_root_kind, reader_root_id) = reader.binds();
         let summary_columns = crate::resources::SUMMARY_COLUMNS;
         // The anchor join brings columns of the same names; qualify ours.
@@ -447,7 +449,7 @@ impl PgStore {
             .join(", ");
         let query = format!(
             r#"
-            SELECT {session_columns}, {summary_columns}
+            SELECT {session_columns}, {summary_columns}, {privileged} AS access_privileged
             FROM sessions
             JOIN access_resources ra ON ra.universe_id = sessions.universe_id AND ra.resource_kind = 'session' AND ra.resource_id = sessions.session_id
             JOIN access_resource_policies rp ON rp.universe_id = ra.universe_id AND rp.resource_kind = ra.audience_root_kind AND rp.resource_id = ra.audience_root_id
@@ -493,30 +495,36 @@ impl PgStore {
             .await
             .map_err(|error| session_sql_error("list sessions", error))?;
 
+        let store_error = |error: ::access::AccessError| SessionStoreError::Store {
+            message: error.to_string(),
+        };
         let mut sessions = rows
             .iter()
             .map(|row| {
                 Ok((
                     session_record_from_row(row)?,
-                    crate::resources::summary_from_list_row(row).map_err(|error| {
-                        SessionStoreError::Store {
-                            message: error.to_string(),
-                        }
-                    })?,
+                    crate::resources::summary_from_list_row(row).map_err(store_error)?,
+                    crate::resources::privileged_from_list_row(row).map_err(store_error)?,
                 ))
             })
             .collect::<Result<Vec<_>, SessionStoreError>>()?;
         let next_cursor = (sessions.len() > request.limit).then(|| {
             sessions.truncate(request.limit);
-            let (last, _) = sessions.last().expect("non-empty page");
+            let (last, _, _) = sessions.last().expect("non-empty page");
             SessionListCursor {
                 updated_at_ms: last.updated_at_ms,
                 session_id: last.session_id.clone(),
             }
         });
+        // Only the returned page counts as read.
+        let privileged = sessions.iter().any(|(_, _, privileged)| *privileged);
         Ok(crate::SessionListPageWithAccess {
-            sessions,
+            sessions: sessions
+                .into_iter()
+                .map(|(record, access, _)| (record, access))
+                .collect(),
             next_cursor,
+            privileged,
         })
     }
 }

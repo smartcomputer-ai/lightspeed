@@ -951,9 +951,18 @@ async fn rpc(
             return no_store_json_rpc(JsonRpcResponse::failure(request.id, refusal.error.into()));
         }
     };
-    let response =
-        principal::with_request_context(context.clone(), state.dispatch(&context, request)).await;
-    super::audit::completed(state.pool(), &method, target, &context, &response).await;
+    let (response, privileged) =
+        principal::with_audited_request_context(context.clone(), state.dispatch(&context, request))
+            .await;
+    super::audit::completed(
+        state.pool(),
+        &method,
+        target,
+        &context,
+        &response,
+        privileged,
+    )
+    .await;
     if response_budget_exempt(&method) {
         no_store_json_rpc(response)
     } else {

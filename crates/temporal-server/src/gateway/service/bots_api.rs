@@ -890,11 +890,12 @@ impl GatewayAgentApi {
 
     pub(super) async fn list_bot_roster(&self) -> Result<BotListResponse, AgentApiError> {
         let reader = self.reader()?;
-        let rows = self
+        let (rows, privileged) = self
             .store()
             .list_bot_roster_for(&reader)
             .await
             .map_err(map_bot_error)?;
+        self.note_privileged_list(privileged);
         Ok(BotListResponse {
             bots: rows
                 .into_iter()

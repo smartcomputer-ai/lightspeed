@@ -322,7 +322,7 @@ impl PgAccessStore {
         let caller = Caller::Request(rights);
         let mut actions = Vec::new();
         for &action in candidates {
-            if authorize(caller, action, Some(&access)) != Decision::Allowed {
+            if !authorize(caller, action, Some(&access)).allows() {
                 continue;
             }
             // Cascade deletion needs every session of the retention tree.
@@ -333,10 +333,10 @@ impl PgAccessStore {
                 let mut cascade_permitted = true;
                 for target in self.session_deletion_targets(universe_id, id).await? {
                     if &target != id
-                        && self
+                        && !self
                             .decide(caller, DeleteSession, &ResourceRef::Session(target))
                             .await?
-                            != Some(Decision::Allowed)
+                            .is_some_and(Decision::allows)
                     {
                         cascade_permitted = false;
                         break;
@@ -699,12 +699,19 @@ pub enum Reader {
     /// Internal maintenance that sees everything; never a caller.
     Everything,
     Principal(Uuid),
+    /// A person holding `read_private_content`: lists every resource and
+    /// reports whether the page relied on the capability, so the read can
+    /// be audited as privileged.
+    Privileged(Uuid),
     Root(ResourceRef),
 }
 
 impl Reader {
     pub fn from_caller(caller: Caller<'_>) -> Self {
         match caller {
+            Caller::Request(rights) if rights.has_capability(Capability::ReadPrivateContent) => {
+                Reader::Privileged(rights.principal.id)
+            }
             Caller::Request(rights) => Reader::Principal(rights.principal.id),
             Caller::Controller(context) => Reader::Root(context.root.clone()),
         }
@@ -714,7 +721,7 @@ impl Reader {
     pub(crate) fn binds(&self) -> (Option<Uuid>, Option<&'static str>, Option<&str>) {
         match self {
             Reader::Everything => (None, None, None),
-            Reader::Principal(id) => (Some(*id), None, None),
+            Reader::Principal(id) | Reader::Privileged(id) => (Some(*id), None, None),
             Reader::Root(root) => {
                 let (kind, id) = key(root);
                 (None, Some(kind), Some(id))
@@ -723,19 +730,46 @@ impl Reader {
     }
 }
 
-/// SQL predicate over a content row: `alias.id_column` names a resource of
+/// The SQL a list query needs for one reader: the row filter, and a column
+/// expression that is true when the row is listed only because the reader
+/// holds `read_private_content`.
+pub(crate) struct ReadableClauses {
+    pub filter: String,
+    pub privileged: String,
+}
+
+/// Clauses over a content row: `alias.id_column` names a resource of
 /// `kind`; `$p` is the reader's principal, `$p+1`/`$p+2` its root. A row
 /// without an anchored, policied root is never listed.
-pub(crate) fn readable_predicate(
+pub(crate) fn readable_clauses(
     reader: &Reader,
     kind: &str,
     alias: &str,
     id_column: &str,
     p: usize,
-) -> String {
-    if *reader == Reader::Everything {
-        return "TRUE".to_owned();
+) -> ReadableClauses {
+    match reader {
+        Reader::Everything => ReadableClauses {
+            filter: "TRUE".to_owned(),
+            privileged: "FALSE".to_owned(),
+        },
+        Reader::Privileged(_) => ReadableClauses {
+            filter: "TRUE".to_owned(),
+            privileged: format!("NOT {}", readable_predicate(kind, alias, id_column, p)),
+        },
+        Reader::Principal(_) | Reader::Root(_) => ReadableClauses {
+            filter: readable_predicate(kind, alias, id_column, p),
+            privileged: "FALSE".to_owned(),
+        },
     }
+}
+
+/// Whether a list row was listed only through the privileged-read capability.
+pub(crate) fn privileged_from_list_row(row: &sqlx::postgres::PgRow) -> Result<bool, AccessError> {
+    row.try_get("access_privileged").map_err(error)
+}
+
+fn readable_predicate(kind: &str, alias: &str, id_column: &str, p: usize) -> String {
     let root_kind = p + 1;
     let root_id = p + 2;
     format!(
@@ -811,16 +845,18 @@ impl PgAccessStore {
             .transpose()
     }
 
-    /// Collections the reader may read, by id.
+    /// Collections the reader may read, by id, and whether any of them is
+    /// listed only through the privileged-read capability.
     pub async fn list_collections(
         &self,
         universe: Uuid,
         reader: &Reader,
-    ) -> Result<Vec<CollectionRecord>, AccessError> {
-        let readable = readable_predicate(reader, "collection", "c", "collection_id", 2);
+    ) -> Result<(Vec<CollectionRecord>, bool), AccessError> {
+        let ReadableClauses { filter, privileged } =
+            readable_clauses(reader, "collection", "c", "collection_id", 2);
         let (principal, root_kind, root_id) = reader.binds();
-        sqlx::query(&format!(
-            "SELECT c.* FROM collections c WHERE c.universe_id=$1 AND {readable} ORDER BY c.collection_id"
+        let rows = sqlx::query(&format!(
+            "SELECT c.*, {privileged} AS access_privileged FROM collections c WHERE c.universe_id=$1 AND {filter} ORDER BY c.collection_id"
         ))
         .bind(universe)
         .bind(principal)
@@ -828,10 +864,16 @@ impl PgAccessStore {
         .bind(root_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(error)?
-        .iter()
-        .map(collection_row)
-        .collect()
+        .map_err(error)?;
+        let mut any_privileged = false;
+        let collections = rows
+            .iter()
+            .map(|row| {
+                any_privileged |= privileged_from_list_row(row)?;
+                collection_row(row)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((collections, any_privileged))
     }
 
     /// Replace the name, guarded by the revision when given.

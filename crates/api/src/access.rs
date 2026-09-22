@@ -4,11 +4,11 @@
 
 use super::*;
 pub use ::access::{
-    AccessChange, AccessChangeResult, AccessDirectory, AccessScope, ActionActor,
+    AccessChange, AccessChangeResult, AccessDirectory, AccessScope, ActionActor, Capability,
     CapabilityAssignment, EffectiveAccess, Execution, ExecutionKind, Group as IdentityGroup,
     Membership, Principal as IdentityPrincipal, PrincipalKind as IdentityPrincipalKind,
     PrincipalStatus, ResourceAccessSummary, ResourceGrant, ResourcePermission, ResourceRef,
-    Role as AccessRole, RoleAssignment, RoleDecision, ServiceCapability, Subject, UniverseAction,
+    Role as AccessRole, RoleAssignment, RoleDecision, Subject, UniverseAction,
     UniverseExecutionPolicy, Visibility,
 };
 use uuid::Uuid;
@@ -19,14 +19,14 @@ pub enum MethodAccess {
     /// A current universe role permitting the action, with authoritative ownership where required.
     Universe(UniverseAction),
     /// An explicitly scoped service capability; service kind is insufficient.
-    Service(ServiceCapability),
+    Service(Capability),
     DeploymentAdmin,
     /// Authenticated identity; key ownership and issuance rules apply in the handler.
     CredentialManagement,
     /// Authenticated caller; handler enforces requested identity scope and operation.
     Identity,
     /// Deployment discovery serves both administration and scoped connectors.
-    DeploymentAdminOrCapability(ServiceCapability),
+    DeploymentAdminOrCapability(Capability),
 }
 
 impl MethodAccess {
@@ -128,18 +128,16 @@ mod tests {
         );
         assert_eq!(
             method_access(METHOD_AUTH_GRANTS_LEASE),
-            Some(MethodAccess::Service(ServiceCapability::LeaseCredentials))
+            Some(MethodAccess::Service(Capability::LeaseCredentials))
         );
         assert_eq!(
             method_access(METHOD_CHANNELS_INBOUND_ADMIT),
-            Some(MethodAccess::Service(
-                ServiceCapability::AdmitChannelInbound
-            ))
+            Some(MethodAccess::Service(Capability::AdmitChannelInbound))
         );
         assert_eq!(
             method_access(METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST),
             Some(MethodAccess::DeploymentAdminOrCapability(
-                ServiceCapability::DiscoverChannelAccounts
+                Capability::DiscoverChannelAccounts
             ))
         );
     }

@@ -50,6 +50,9 @@ pub struct AuditEvent {
     pub outcome: AuditOutcome,
     /// Stable error category, never an error message or provider response.
     pub error_kind: Option<String>,
+    /// A decision of the request relied on `read_private_content`. Reads are
+    /// otherwise quiet; a privileged read is always recorded.
+    pub privileged: bool,
     pub occurred_at_ms: u64,
 }
 
@@ -65,6 +68,7 @@ impl AuditEvent {
             policy_revision: None,
             outcome,
             error_kind: None,
+            privileged: false,
             occurred_at_ms,
         }
     }

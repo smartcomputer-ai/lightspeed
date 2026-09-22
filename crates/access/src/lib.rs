@@ -126,24 +126,37 @@ pub struct RoleAssignment {
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum ServiceCapability {
+pub enum Capability {
     AssertUser,
     LeaseCredentials,
     AdmitChannelInbound,
     DiscoverChannelAccounts,
     ManageIdentity,
+    /// Read restricted content of a universe without a grant. Held by a
+    /// person, never implied by a role, and every read that relies on it is
+    /// audited. It reads; it never controls, shares or takes ownership.
+    ReadPrivateContent,
 }
 
-impl ServiceCapability {
+impl Capability {
     pub fn valid_in(self, scope: AccessScope) -> bool {
         match self {
             Self::AssertUser => true,
-            Self::LeaseCredentials | Self::AdmitChannelInbound => {
+            Self::LeaseCredentials | Self::AdmitChannelInbound | Self::ReadPrivateContent => {
                 matches!(scope, AccessScope::Universe { .. })
             }
             Self::DiscoverChannelAccounts | Self::ManageIdentity => {
                 scope == AccessScope::Deployment
             }
+        }
+    }
+
+    /// The kind of principal that may hold the capability: services act
+    /// for systems, privileged reading is a person's accountable act.
+    pub fn holder(self) -> PrincipalKind {
+        match self {
+            Self::ReadPrivateContent => PrincipalKind::User,
+            _ => PrincipalKind::Service,
         }
     }
 }
@@ -153,7 +166,7 @@ impl ServiceCapability {
 pub struct CapabilityAssignment {
     pub scope: AccessScope,
     pub principal_id: Uuid,
-    pub capability: ServiceCapability,
+    pub capability: Capability,
 }
 
 /// Actions are independent of RPC spelling. Ownership and resource policy are
@@ -188,8 +201,8 @@ pub struct EffectiveAccess {
     pub scope: AccessScope,
     /// Only assignments in this exact scope, including group-derived roles.
     pub roles: BTreeSet<Role>,
-    /// Explicit service capabilities in this exact scope; no role implies one.
-    pub capabilities: BTreeSet<ServiceCapability>,
+    /// Explicit capabilities in this exact scope; no role implies one.
+    pub capabilities: BTreeSet<Capability>,
     pub policy_revision: u64,
 }
 
@@ -377,10 +390,19 @@ pub enum Caller<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decision {
     Allowed,
+    /// Allowed only because the caller holds `read_private_content`: the
+    /// read proceeds and the request is audited as privileged.
+    Privileged,
     /// The caller may see the resource but not do this.
     Forbidden,
     /// The caller may not see the resource at all; it should look absent.
     Hidden,
+}
+
+impl Decision {
+    pub fn allows(self) -> bool {
+        matches!(self, Self::Allowed | Self::Privileged)
+    }
 }
 
 /// The one evaluator for resource decisions. Roles decide first; a resource
@@ -420,16 +442,21 @@ fn authorize_request(
     let by_role = role == RoleDecision::Allowed;
     if !readable {
         // Governance without content: Operator/Admin stop, Admin deletes,
-        // restricted work included. Everything else looks absent.
+        // restricted work included. Everything else looks absent, except to
+        // a holder of the privileged-read capability, who reads and is
+        // audited for it, and is refused, not hidden, for anything else.
         let governs = match action {
             StopSession => by_role,
             DeleteSession | DeleteCollection => rights.has_role(Role::Admin),
             _ => false,
         };
-        return if governs {
-            Decision::Allowed
-        } else {
-            Decision::Hidden
+        let privileged = rights.universe_action(Read) == RoleDecision::Allowed
+            && rights.has_capability(Capability::ReadPrivateContent);
+        return match (governs, privileged, action) {
+            (true, _, _) => Decision::Allowed,
+            (false, true, Read) => Decision::Privileged,
+            (false, true, _) => Decision::Forbidden,
+            (false, false, _) => Decision::Hidden,
         };
     }
     if role == RoleDecision::Denied {
@@ -508,9 +535,9 @@ impl EffectiveAccess {
         self.active() && role.valid_in(self.scope) && self.roles.contains(&role)
     }
 
-    pub fn has_capability(&self, capability: ServiceCapability) -> bool {
+    pub fn has_capability(&self, capability: Capability) -> bool {
         self.active()
-            && self.principal.kind == PrincipalKind::Service
+            && self.principal.kind == capability.holder()
             && capability.valid_in(self.scope)
             && self.capabilities.contains(&capability)
     }

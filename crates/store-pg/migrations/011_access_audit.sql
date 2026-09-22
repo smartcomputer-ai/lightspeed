@@ -21,7 +21,10 @@ CREATE TABLE access_audit_events (
     credential text,
     universe_id uuid,
     target jsonb,
-    policy_revision bigint
+    policy_revision bigint,
+    -- A decision of the request relied on read_private_content. Reads are
+    -- otherwise quiet; every privileged read has a row.
+    privileged boolean NOT NULL DEFAULT false
 );
 CREATE INDEX access_audit_events_time_idx ON access_audit_events (occurred_at_ms);
 CREATE INDEX access_audit_events_actor_idx ON access_audit_events (acting_principal_id, occurred_at_ms);

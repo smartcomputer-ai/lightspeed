@@ -64,16 +64,18 @@ impl GatewayAgentApi {
         let digest = digest_of(blob_ref);
         if let Some(resource) = resource {
             let decision = self.decide_resource(UniverseAction::Read, resource).await?;
-            if decision != Decision::Allowed {
+            if !decision.allows() {
                 return Ok(decision);
             }
+            // A privileged read of the resource is a privileged read of its
+            // content; the decision carries that through.
             return Ok(
                 if store
                     .admitted_content(self.universe_id(), resource, digest)
                     .await
                     .map_err(|error| AgentApiError::internal(error.to_string()))?
                 {
-                    Decision::Allowed
+                    decision
                 } else {
                     Decision::Forbidden
                 },
@@ -93,6 +95,10 @@ impl GatewayAgentApi {
     ) -> Result<(), AgentApiError> {
         match self.blob_read_decision(resource, blob_ref).await? {
             Decision::Allowed => Ok(()),
+            Decision::Privileged => {
+                crate::gateway::principal::mark_privileged();
+                Ok(())
+            }
             Decision::Hidden => Err(AgentApiError::not_found("resource not found")),
             Decision::Forbidden => Err(AgentApiError::forbidden()),
         }

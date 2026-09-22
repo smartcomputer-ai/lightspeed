@@ -48,6 +48,8 @@ pub struct SessionListPageWithAccess {
         ::access::ResourceAccessSummary,
     )>,
     pub next_cursor: Option<engine::storage::SessionListCursor>,
+    /// The page holds a session listed only through `read_private_content`.
+    pub privileged: bool,
 }
 
 pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");

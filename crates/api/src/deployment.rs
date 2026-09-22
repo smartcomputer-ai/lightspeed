@@ -600,5 +600,5 @@ deployment_api_methods! {
     METHOD_DEPLOYMENT_ENVIRONMENTS_ADOPT => adopt_environment(DeploymentEnvironmentAdoptParams) -> DeploymentEnvironmentAdoptResponse =>
         ["Adopt a provider environment", "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer."], access: MethodAccess::DeploymentAdmin, audit: true,
     METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST => list_deployment_channel_accounts(DeploymentChannelAccountListParams) -> DeploymentChannelAccountListResponse =>
-        ["List channel accounts across universes", "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since."], access: MethodAccess::DeploymentAdminOrCapability(ServiceCapability::DiscoverChannelAccounts), audit: false,
+        ["List channel accounts across universes", "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since."], access: MethodAccess::DeploymentAdminOrCapability(Capability::DiscoverChannelAccounts), audit: false,
 }

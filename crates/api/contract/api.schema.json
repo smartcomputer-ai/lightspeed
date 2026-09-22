@@ -7121,11 +7121,30 @@
         }
       ]
     },
+    "Capability": {
+      "oneOf": [
+        {
+          "enum": [
+            "assert_user",
+            "lease_credentials",
+            "admit_channel_inbound",
+            "discover_channel_accounts",
+            "manage_identity"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "read_private_content",
+          "description": "Read restricted content of a universe without a grant. Held by a\nperson, never implied by a role, and every read that relies on it is\naudited. It reads; it never controls, shares or takes ownership.",
+          "type": "string"
+        }
+      ]
+    },
     "CapabilityAssignment": {
       "additionalProperties": false,
       "properties": {
         "capability": {
-          "$ref": "#/definitions/ServiceCapability"
+          "$ref": "#/definitions/Capability"
         },
         "principalId": {
           "format": "uuid",
@@ -9678,9 +9697,9 @@
     "EffectiveAccess": {
       "properties": {
         "capabilities": {
-          "description": "Explicit service capabilities in this exact scope; no role implies one.",
+          "description": "Explicit capabilities in this exact scope; no role implies one.",
           "items": {
-            "$ref": "#/definitions/ServiceCapability"
+            "$ref": "#/definitions/Capability"
           },
           "type": "array",
           "uniqueItems": true
@@ -12774,7 +12793,7 @@
               "type": "string"
             },
             "requirement": {
-              "$ref": "#/definitions/ServiceCapability"
+              "$ref": "#/definitions/Capability"
             }
           },
           "required": [
@@ -12829,7 +12848,7 @@
               "type": "string"
             },
             "requirement": {
-              "$ref": "#/definitions/ServiceCapability"
+              "$ref": "#/definitions/Capability"
             }
           },
           "required": [
@@ -14614,16 +14633,6 @@
         "envd"
       ],
       "type": "object"
-    },
-    "ServiceCapability": {
-      "enum": [
-        "assert_user",
-        "lease_credentials",
-        "admit_channel_inbound",
-        "discover_channel_accounts",
-        "manage_identity"
-      ],
-      "type": "string"
     },
     "SessionCloseParams": {
       "properties": {

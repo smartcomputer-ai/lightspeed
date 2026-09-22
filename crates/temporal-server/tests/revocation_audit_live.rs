@@ -343,7 +343,7 @@ async fn exercise_revocation(f: &Fixture, session: &str, revocation: Revocation,
     let assertion = CapabilityAssignment {
         scope: f.scope(),
         principal_id: service,
-        capability: ServiceCapability::AssertUser,
+        capability: Capability::AssertUser,
     };
     f.change(AccessChange::AssignCapability {
         assignment: assertion,
@@ -486,7 +486,7 @@ async fn audited_operations_and_denials_keep_safe_durable_attribution() -> anyho
         assignment: CapabilityAssignment {
             scope: AccessScope::Deployment,
             principal_id: service,
-            capability: ServiceCapability::AssertUser,
+            capability: Capability::AssertUser,
         },
     })
     .await;
@@ -644,7 +644,7 @@ async fn audited_operations_and_denials_keep_safe_durable_attribution() -> anyho
         assignment: CapabilityAssignment {
             scope: f.scope(),
             principal_id: scoped_service,
-            capability: ServiceCapability::AssertUser,
+            capability: Capability::AssertUser,
         },
     })
     .await;
@@ -955,7 +955,7 @@ async fn routine_traffic_is_quiet_and_noop_revocation_does_not_change_history() 
         assignment: CapabilityAssignment {
             scope: f.scope(),
             principal_id: service,
-            capability: ServiceCapability::LeaseCredentials,
+            capability: Capability::LeaseCredentials,
         },
     })
     .await;

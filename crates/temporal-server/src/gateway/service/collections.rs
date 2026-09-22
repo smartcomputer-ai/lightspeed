@@ -151,12 +151,13 @@ impl GatewayAgentApi {
     ) -> Result<CollectionListResponse, AgentApiError> {
         let reader = self.reader()?;
         let mut collections = Vec::new();
-        for record in self
+        let (records, privileged) = self
             .access_store()
             .list_collections(self.universe_id(), &reader)
             .await
-            .map_err(map_collection_error)?
-        {
+            .map_err(map_collection_error)?;
+        self.note_privileged_list(privileged);
+        for record in records {
             let access = self
                 .access_summary(&ResourceRef::Collection(record.collection_id.clone()))
                 .await?;

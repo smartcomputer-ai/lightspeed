@@ -354,9 +354,17 @@ impl GatewayAgentApi {
         if let Ok(controller) = CONTROLLER.try_with(Clone::clone) {
             return Ok(store_pg::Reader::Root(controller.root));
         }
-        Ok(store_pg::Reader::Principal(
-            self.caller()?.acting_principal().id,
-        ))
+        Ok(store_pg::Reader::from_caller(Caller::Request(
+            &self.caller()?.rights,
+        )))
+    }
+
+    /// A list that included something only `read_private_content` allowed
+    /// is a privileged read of it.
+    pub(super) fn note_privileged_list(&self, privileged: bool) {
+        if privileged {
+            crate::gateway::principal::mark_privileged();
+        }
     }
 
     pub(crate) async fn authorize_method(
@@ -366,7 +374,10 @@ impl GatewayAgentApi {
     ) -> Result<(), AgentApiError> {
         let requirement = api::method_access(method).ok_or_else(denied)?;
         let decision = self.decide(requirement, resource.as_ref()).await?;
-        if decision == Decision::Allowed {
+        if decision == Decision::Privileged {
+            crate::gateway::principal::mark_privileged();
+        }
+        if decision.allows() {
             return Ok(());
         }
         // A resource the caller may not see is missing, not forbidden, provided
@@ -416,7 +427,11 @@ impl GatewayAgentApi {
         requirement: MethodAccess,
         target: Option<&ResourceRef>,
     ) -> Result<bool, AgentApiError> {
-        Ok(self.decide(requirement, target).await? == Decision::Allowed)
+        let decision = self.decide(requirement, target).await?;
+        if decision == Decision::Privileged {
+            crate::gateway::principal::mark_privileged();
+        }
+        Ok(decision.allows())
     }
 
     /// One decision for the current caller. A target that has no anchor yet

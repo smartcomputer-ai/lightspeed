@@ -514,7 +514,7 @@ api_methods! {
     METHOD_AUTH_GRANTS_IMPORT => import_auth_grant(AuthGrantImportParams) -> AuthGrantImportResponse =>
         ["Import a static bearer grant", "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases."], access: MethodAccess::Universe(UniverseAction::ConfigureResource), audit: true,
     METHOD_AUTH_GRANTS_LEASE => lease_auth_grant(AuthGrantLeaseParams) -> AuthGrantLeaseResponse =>
-        ["Lease a retrievable authentication grant", "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads."], access: MethodAccess::Service(ServiceCapability::LeaseCredentials), audit: false,
+        ["Lease a retrievable authentication grant", "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads."], access: MethodAccess::Service(Capability::LeaseCredentials), audit: false,
     METHOD_AUTH_GRANTS_READ => read_auth_grant(AuthGrantReadParams) -> AuthGrantReadResponse =>
         ["Read authentication grant metadata", "Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
     METHOD_AUTH_GRANTS_LIST => list_auth_grants(AuthGrantListParams) -> AuthGrantListResponse =>
@@ -590,7 +590,7 @@ api_methods! {
     METHOD_CHANNELS_ACCOUNTS_DELETE => delete_channel_account(ChannelAccountDeleteParams) -> ChannelAccountDeleteResponse =>
         ["Delete a channel account", "Removes the account and its pairings; chat triggers that reference it stop serving conversations."], access: MethodAccess::Universe(UniverseAction::ConfigureResource), audit: true,
     METHOD_CHANNELS_INBOUND_ADMIT => admit_channel_inbound(ChannelInboundAdmitParams) -> ChannelInboundAdmitResponse =>
-        ["Admit a provider message", "Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns."], access: MethodAccess::Service(ServiceCapability::AdmitChannelInbound), audit: false,
+        ["Admit a provider message", "Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns."], access: MethodAccess::Service(Capability::AdmitChannelInbound), audit: false,
     METHOD_CHANNELS_PAIRINGS_LIST => list_channel_pairings(ChannelPairingListParams) -> ChannelPairingListResponse =>
         ["List chat pairings", "Lists conversations paired to chat triggers, optionally by account or bot."], access: MethodAccess::Universe(UniverseAction::Read), audit: false,
     METHOD_CHANNELS_PAIRINGS_DELETE => delete_channel_pairing(ChannelPairingDeleteParams) -> ChannelPairingDeleteResponse =>

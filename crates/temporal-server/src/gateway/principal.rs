@@ -7,18 +7,42 @@ use tracing::Instrument as _;
 
 tokio::task_local! {
     static REQUEST_CONTEXT: RequestContext;
+    /// Set when a decision of the request relied on `read_private_content`;
+    /// the boundary audits the request as privileged.
+    static PRIVILEGED: std::cell::Cell<bool>;
 }
 
+/// Runs the request under its trusted context. In-process callers have no
+/// audit boundary, so the privileged marker is dropped here.
 pub async fn with_request_context<F: Future>(context: RequestContext, future: F) -> F::Output {
+    with_audited_request_context(context, future).await.0
+}
+
+/// Runs the request under its trusted context and reports whether any of its
+/// decisions relied on the privileged-read capability, for the boundary to
+/// audit.
+pub async fn with_audited_request_context<F: Future>(
+    context: RequestContext,
+    future: F,
+) -> (F::Output, bool) {
     let span = tracing::info_span!("request_authority",
         acting_principal = %context.acting_principal().id,
         authenticated_principal = %context.authenticated_principal.id,
         authentication = ?context.authentication,
         target_scope = ?context.target_scope());
-    REQUEST_CONTEXT
-        .scope(context, future)
+    PRIVILEGED
+        .scope(std::cell::Cell::new(false), async {
+            let output = REQUEST_CONTEXT.scope(context, future).await;
+            (output, PRIVILEGED.with(std::cell::Cell::get))
+        })
         .instrument(span)
         .await
+}
+
+/// Record that the current request read something only the privileged-read
+/// capability allowed. Outside a request scope there is nothing to mark.
+pub fn mark_privileged() {
+    let _ = PRIVILEGED.try_with(|privileged| privileged.set(true));
 }
 
 pub fn request_context() -> Result<RequestContext, AgentApiError> {

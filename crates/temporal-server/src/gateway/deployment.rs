@@ -223,6 +223,8 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 access::AccessChange::AssignRole { assignment }
                 | access::AccessChange::RevokeRole { assignment }
                 | access::AccessChange::ReplaceRole { assignment, .. } => assignment.scope,
+                access::AccessChange::AssignCapability { assignment }
+                | access::AccessChange::RevokeCapability { assignment } => assignment.scope,
                 access::AccessChange::CreatePrincipal {
                     management_scope, ..
                 } => *management_scope,

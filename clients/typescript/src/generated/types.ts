@@ -111,14 +111,17 @@ export type Subject =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ServiceCapability".
+ * via the `definition` "Capability".
  */
-export type ServiceCapability =
-  | "assert_user"
-  | "lease_credentials"
-  | "admit_channel_inbound"
-  | "discover_channel_accounts"
-  | "manage_identity";
+export type Capability =
+  | (
+      | "assert_user"
+      | "lease_credentials"
+      | "admit_channel_inbound"
+      | "discover_channel_accounts"
+      | "manage_identity"
+    )
+  | "read_private_content";
 /**
  * One permission a grant confers on a root. `Read` sees the tree; `Write`
  * also controls it.
@@ -1872,7 +1875,7 @@ export type MethodAccess =
     }
   | {
       kind: "service";
-      requirement: ServiceCapability;
+      requirement: Capability;
     }
   | {
       kind: "deployment_admin";
@@ -1885,7 +1888,7 @@ export type MethodAccess =
     }
   | {
       kind: "deployment_admin_or_capability";
-      requirement: ServiceCapability;
+      requirement: Capability;
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -1929,7 +1932,7 @@ export interface RoleAssignment {
  * via the `definition` "CapabilityAssignment".
  */
 export interface CapabilityAssignment {
-  capability: ServiceCapability;
+  capability: Capability;
   principalId: string;
   scope: AccessScope;
 }
@@ -5758,9 +5761,9 @@ export interface IdentitySelfResponse {
  */
 export interface EffectiveAccess {
   /**
-   * Explicit service capabilities in this exact scope; no role implies one.
+   * Explicit capabilities in this exact scope; no role implies one.
    */
-  capabilities: ServiceCapability[];
+  capabilities: Capability[];
   policyRevision: number;
   principal: IdentityPrincipal;
   /**

@@ -548,14 +548,14 @@ async fn exercise(pool: &sqlx::PgPool) {
     let capability = CapabilityAssignment {
         scope,
         principal_id: service,
-        capability: ServiceCapability::LeaseCredentials,
+        capability: Capability::LeaseCredentials,
     };
     assert!(
         !store
             .effective_access(service, scope)
             .await
             .unwrap()
-            .has_capability(ServiceCapability::LeaseCredentials)
+            .has_capability(Capability::LeaseCredentials)
     );
     assert_eq!(
         store
@@ -584,14 +584,14 @@ async fn exercise(pool: &sqlx::PgPool) {
             .effective_access(service, scope)
             .await
             .unwrap()
-            .has_capability(ServiceCapability::LeaseCredentials)
+            .has_capability(Capability::LeaseCredentials)
     );
     assert!(
         !store
             .effective_access(service, AccessScope::Universe { universe_id: v })
             .await
             .unwrap()
-            .has_capability(ServiceCapability::LeaseCredentials)
+            .has_capability(Capability::LeaseCredentials)
     );
     assert!(matches!(
         store
@@ -616,7 +616,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                     assignment: CapabilityAssignment {
                         scope: AccessScope::Deployment,
                         principal_id: service,
-                        capability: ServiceCapability::AssertUser
+                        capability: Capability::AssertUser
                     }
                 },
                 15
@@ -639,7 +639,7 @@ async fn exercise(pool: &sqlx::PgPool) {
             .effective_access(service, scope)
             .await
             .unwrap()
-            .has_capability(ServiceCapability::LeaseCredentials)
+            .has_capability(Capability::LeaseCredentials)
     );
 
     // Disablement may orphan a universe. Recovery is deployment-only, audited,

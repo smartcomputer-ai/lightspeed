@@ -139,7 +139,7 @@ fn deployment_admin_does_not_imply_universe_membership_or_service_capabilities()
         admin.universe_action(UniverseAction::Read),
         RoleDecision::Denied
     );
-    assert!(!admin.has_capability(ServiceCapability::AssertUser));
+    assert!(!admin.has_capability(Capability::AssertUser));
     let misplaced = access(Role::DeploymentAdmin, universe());
     assert_eq!(
         misplaced.universe_action(UniverseAction::Read),
@@ -152,22 +152,93 @@ fn deployment_admin_does_not_imply_universe_membership_or_service_capabilities()
 fn disabled_identity_and_service_kind_alone_convey_no_rights() {
     let mut effective = access(Role::Admin, universe());
     effective.principal.status = PrincipalStatus::Disabled;
-    effective.capabilities.insert(ServiceCapability::AssertUser);
+    effective.capabilities.insert(Capability::AssertUser);
     effective.principal.kind = PrincipalKind::Service;
     assert_eq!(
         effective.universe_action(UniverseAction::Read),
         RoleDecision::Denied
     );
-    assert!(!effective.has_capability(ServiceCapability::AssertUser));
+    assert!(!effective.has_capability(Capability::AssertUser));
     effective.principal.status = PrincipalStatus::Active;
     effective.capabilities.clear();
-    assert!(!effective.has_capability(ServiceCapability::LeaseCredentials));
+    assert!(!effective.has_capability(Capability::LeaseCredentials));
+    effective.capabilities.insert(Capability::LeaseCredentials);
+    assert!(effective.has_capability(Capability::LeaseCredentials));
+    effective.principal.kind = PrincipalKind::User;
+    assert!(!effective.has_capability(Capability::LeaseCredentials));
+    // Privileged reading is a person's accountable act; a service never
+    // holds it, and it is universe-scoped.
     effective
         .capabilities
-        .insert(ServiceCapability::LeaseCredentials);
-    assert!(effective.has_capability(ServiceCapability::LeaseCredentials));
+        .insert(Capability::ReadPrivateContent);
+    assert!(effective.has_capability(Capability::ReadPrivateContent));
+    effective.principal.kind = PrincipalKind::Service;
+    assert!(!effective.has_capability(Capability::ReadPrivateContent));
     effective.principal.kind = PrincipalKind::User;
-    assert!(!effective.has_capability(ServiceCapability::LeaseCredentials));
+    effective.scope = AccessScope::Deployment;
+    assert!(!effective.has_capability(Capability::ReadPrivateContent));
+}
+
+#[test]
+fn privileged_reading_reads_restricted_content_and_nothing_more() {
+    use Decision::*;
+    use UniverseAction::*;
+    use Visibility::*;
+    let decide = |rights: &EffectiveAccess, action, resource: &ResourceAccess| {
+        authorize(Caller::Request(rights), action, Some(resource))
+    };
+    let mut viewer = access(Role::Viewer, universe());
+    viewer.capabilities.insert(Capability::ReadPrivateContent);
+    let mut contributor = access(Role::Contributor, universe());
+    contributor
+        .capabilities
+        .insert(Capability::ReadPrivateContent);
+    let mut admin = access(Role::Admin, universe());
+    admin.capabilities.insert(Capability::ReadPrivateContent);
+    let private = session(7, Restricted, None);
+    // The read is distinguishable from an ordinary one, so it can be audited;
+    // everything else is refused rather than hidden, since the holder sees
+    // the resource.
+    for rights in [&viewer, &contributor, &admin] {
+        assert_eq!(decide(rights, Read, &private), Privileged);
+        assert_eq!(decide(rights, ControlSession, &private), Forbidden);
+        assert_eq!(decide(rights, ShareResource, &private), Forbidden);
+    }
+    assert_eq!(decide(&contributor, DeleteSession, &private), Forbidden);
+    assert_eq!(decide(&contributor, StopSession, &private), Forbidden);
+    // Governance by role is unchanged and never privileged.
+    assert_eq!(decide(&admin, StopSession, &private), Allowed);
+    assert_eq!(decide(&admin, DeleteSession, &private), Allowed);
+    // Content the holder may read anyway is an ordinary read.
+    assert_eq!(decide(&viewer, Read, &session(7, Universe, None)), Allowed);
+    assert_eq!(
+        decide(
+            &viewer,
+            Read,
+            &session(7, Restricted, Some(ResourcePermission::Read))
+        ),
+        Allowed
+    );
+    assert_eq!(
+        decide(&contributor, Read, &session(1, Restricted, None)),
+        Allowed
+    );
+    // The capability adds nothing to a caller who may not read the
+    // universe, a service, or a resource without a policy row.
+    let mut no_role = access(Role::Viewer, universe());
+    no_role.roles.clear();
+    no_role.capabilities.insert(Capability::ReadPrivateContent);
+    assert_eq!(decide(&no_role, Read, &private), Hidden);
+    let mut service = viewer.clone();
+    service.principal.kind = PrincipalKind::Service;
+    assert_eq!(decide(&service, Read, &private), Hidden);
+    let orphan = ResourceAccess {
+        policy: None,
+        ..session(7, Restricted, None)
+    };
+    assert_eq!(decide(&viewer, Read, &orphan), Hidden);
+    assert!(Privileged.allows() && Allowed.allows());
+    assert!(!Forbidden.allows() && !Hidden.allows());
 }
 
 #[test]
@@ -196,7 +267,7 @@ fn role_and_capability_assignments_cannot_cross_scope_classes() {
     let capability = CapabilityAssignment {
         scope: universe(),
         principal_id: Uuid::from_u128(1),
-        capability: ServiceCapability::ManageIdentity,
+        capability: Capability::ManageIdentity,
     };
     assert!(
         AccessChange::AssignCapability {
@@ -204,6 +275,28 @@ fn role_and_capability_assignments_cannot_cross_scope_classes() {
         }
         .validate()
         .is_err()
+    );
+    let privileged = CapabilityAssignment {
+        scope: AccessScope::Deployment,
+        principal_id: Uuid::from_u128(1),
+        capability: Capability::ReadPrivateContent,
+    };
+    assert!(
+        AccessChange::AssignCapability {
+            assignment: privileged
+        }
+        .validate()
+        .is_err()
+    );
+    assert!(
+        AccessChange::AssignCapability {
+            assignment: CapabilityAssignment {
+                scope: universe(),
+                ..privileged
+            }
+        }
+        .validate()
+        .is_ok()
     );
 }
 

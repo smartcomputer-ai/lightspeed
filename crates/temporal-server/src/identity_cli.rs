@@ -89,14 +89,14 @@ pub async fn run(command: IdentityCommand) -> anyhow::Result<()> {
                     assignment: access::CapabilityAssignment {
                         scope: AccessScope::Deployment,
                         principal_id: principal.id,
-                        capability: access::ServiceCapability::AssertUser,
+                        capability: access::Capability::AssertUser,
                     },
                 },
                 access::AccessChange::AssignCapability {
                     assignment: access::CapabilityAssignment {
                         scope: AccessScope::Deployment,
                         principal_id: principal.id,
-                        capability: access::ServiceCapability::ManageIdentity,
+                        capability: access::Capability::ManageIdentity,
                     },
                 },
             ] {

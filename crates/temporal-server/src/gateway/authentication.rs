@@ -300,11 +300,11 @@ impl Revalidation {
             return Err(AgentApiError::forbidden());
         }
         if let (Some(resource), MethodAccess::Universe(action)) = (resource, requirement)
-            && access
+            && !access
                 .decide(access::Caller::Request(&rights), action, resource)
                 .await
                 .map_err(|e| store_error(&e))?
-                != Some(access::Decision::Allowed)
+                .is_some_and(access::Decision::allows)
         {
             return Err(AgentApiError::forbidden());
         }

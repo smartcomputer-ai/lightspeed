@@ -73,13 +73,17 @@ fn prefixed_event_columns(table: &str, prefix: &str) -> String {
 
 impl PgStore {
     /// The roster for one reader: only bots the reader may read, each with
-    /// the access summary its view carries.
+    /// the access summary its view carries, and whether any of them is
+    /// listed only through the privileged-read capability.
     pub async fn list_bot_roster_for(
         &self,
         reader: &crate::Reader,
-    ) -> Result<Vec<(BotRosterRow, ::access::ResourceAccessSummary)>, BotError> {
+    ) -> Result<(Vec<(BotRosterRow, ::access::ResourceAccessSummary)>, bool), BotError> {
         let last_event_columns = prefixed_event_columns("le", ROSTER_EVENT_PREFIX);
-        let readable = crate::resources::readable_predicate(reader, "bot", "b", "bot_id", 2);
+        let crate::resources::ReadableClauses {
+            filter: readable,
+            privileged,
+        } = crate::resources::readable_clauses(reader, "bot", "b", "bot_id", 2);
         let summary_columns = crate::resources::SUMMARY_COLUMNS;
         let event_columns = event_columns();
         let query = format!(
@@ -90,7 +94,8 @@ impl PgStore {
                 tc.trigger_count,
                 pc.pending_count,
                 {last_event_columns},
-                {summary_columns}
+                {summary_columns},
+                {privileged} AS access_privileged
             FROM bots b
             JOIN access_resources ra ON ra.universe_id = b.universe_id AND ra.resource_kind = 'bot' AND ra.resource_id = b.bot_id
             JOIN access_resource_policies rp ON rp.universe_id = ra.universe_id AND rp.resource_kind = ra.audience_root_kind AND rp.resource_id = ra.audience_root_id
@@ -125,8 +130,13 @@ impl PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| bot_sql_error("list bot roster", error))?;
-        rows.iter()
+        let mut any_privileged = false;
+        let roster = rows
+            .iter()
             .map(|row| {
+                any_privileged |= row
+                    .try_get::<bool, _>("access_privileged")
+                    .map_err(|error| bot_sql_error("decode access privileged", error))?;
                 let bot = bot_from_row(row)?;
                 let trigger_count: i64 = row
                     .try_get("trigger_count")
@@ -157,7 +167,8 @@ impl PgStore {
                     access,
                 ))
             })
-            .collect()
+            .collect::<Result<Vec<_>, BotError>>()?;
+        Ok((roster, any_privileged))
     }
 }
 
@@ -303,6 +314,7 @@ impl BotStore for PgStore {
         Ok(self
             .list_bot_roster_for(&crate::Reader::Everything)
             .await?
+            .0
             .into_iter()
             .map(|(row, _)| row)
             .collect())

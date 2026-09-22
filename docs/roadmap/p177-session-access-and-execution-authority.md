@@ -652,7 +652,31 @@ Each step ships on its own; the order is by dependency.
        runs as the same execution service; a run in a collection failing to
        steer a sibling session; a hand-off of a service collection reaching
        every session and bot in it and leaving the previous owner nothing.
-6. [ ] `read_private_content`, privileged reads and their audit rows.
+6. [x] `read_private_content`, privileged reads and their audit rows.
+       Done 2026-09-22: `Capability::ReadPrivateContent` (the capability enum
+       drops its `Service` prefix, since this one is held by a person: each
+       capability names its holder kind, the store refuses any other, and
+       the effective-rights query no longer filters capabilities by kind).
+       Universe-scoped; assigned and revoked through the existing
+       `deployment/identity/apply` changes by the universe's Admin (or
+       DeploymentAdmin), audited like every access change. One evaluator
+       arm: a holder who may read the universe gets `Decision::Privileged`
+       for `Read` on a restricted resource they neither own nor hold a grant
+       on, and `Forbidden` rather than `Hidden` for anything else there;
+       governance by role is unchanged. `Privileged` flows through
+       `authorize_method`, `permitted`, blob reads (`blobs/read`, `blobs/has`
+       with a resource) and parked-reader revalidation; lists run as
+       `Reader::Privileged` and report whether the returned page held a row
+       the ordinary predicate would have excluded. Each such decision marks
+       the request (a task-local beside the request context) and the HTTP
+       boundary writes the audit row with `privileged = true` even for
+       methods that are otherwise quiet; a holder's ordinary reads leave no
+       row. Web role editing and privileged-read markers are deferred to
+       step 7 with the rest of the UI. Live: a universe Admin grants the
+       capability to the Viewer over HTTP (a Contributor is refused, a
+       service principal cannot hold it); the Viewer reads, lists and reads
+       the policy of a restricted session with exactly one privileged row per
+       call, ordinary reads add none, and revocation restores `not_found`.
 7. [ ] Web: Access panel, share dialog, restricted markers, execution choice,
        collection pages, workspace visibility note; Platform mapping of the new
        methods; docs (`multi-tenancy.md`, `authentication-and-tenancy.md`, API

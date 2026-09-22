@@ -162,6 +162,42 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
                 not_found(rpc(&endpoint, caller, "session/delete", read.clone()).await);
             }
             assert_eq!(rpc(&endpoint, universe_admin, "session/delete", read.clone()).await["error"]["data"]["kind"], "rejected");
+            // Privileged reading. The universe Admin grants `read_private_content`
+            // to the Viewer, a person; the Viewer then reads the restricted session,
+            // is audited for exactly those reads, and loses them with the capability.
+            let privileged_rows = |method: &'static str| {
+                let pool = pool.clone();
+                let viewer = viewer.record.principal_id;
+                async move {
+                    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM access_audit_events WHERE universe_id=$1 AND acting_principal_id=$2 AND ($3 = '' OR method=$3) AND privileged AND outcome='succeeded'")
+                        .bind(universe).bind(viewer).bind(method).fetch_one(&pool).await
+                }
+            };
+            let assignment = json!({"scope":{"kind":"universe","universeId":universe},"principalId":viewer.record.principal_id,"capability":"read_private_content"});
+            forbidden(rpc(&endpoint, alice, "deployment/identity/apply", json!({"operation":"assign_capability","assignment":assignment})).await);
+            success(rpc(&endpoint, universe_admin, "deployment/identity/apply", json!({"operation":"assign_capability","assignment":assignment})).await);
+            // Never a service: privileged reading is a person's accountable act.
+            let service = Uuid::new_v4();
+            access.apply(admin.id, AccessChange::CreatePrincipal { id: service, kind: PrincipalKind::Service, management_scope: scope, display_name: "Exporter".into() }, 24).await?;
+            assert!(matches!(
+                access.apply(admin.id, AccessChange::AssignCapability { assignment: CapabilityAssignment { scope, principal_id: service, capability: Capability::ReadPrivateContent } }, 25).await,
+                Err(AccessError::Invalid(_))
+            ));
+            success(rpc(&endpoint, viewer, "session/read", read.clone()).await);
+            success(rpc(&endpoint, viewer, "session/events/read", read.clone()).await);
+            success(rpc(&endpoint, viewer, "access/policy/read", json!({"resource":resource})).await);
+            assert!(lists(&success(rpc(&endpoint, viewer, "session/list", json!({})).await), &private));
+            for method in ["session/read", "session/events/read", "access/policy/read", "session/list"] {
+                assert_eq!(privileged_rows(method).await?, 1, "{method}");
+            }
+            // Reads the Viewer could make anyway leave no privileged row.
+            success(rpc(&endpoint, viewer, "session/read", json!({"sessionId":session})).await);
+            success(rpc(&endpoint, viewer, "session/list", json!({"metadata":{"absent":"yes"}})).await);
+            assert_eq!(privileged_rows("").await?, 4);
+            success(rpc(&endpoint, universe_admin, "deployment/identity/apply", json!({"operation":"revoke_capability","assignment":assignment})).await);
+            not_found(rpc(&endpoint, viewer, "session/read", read.clone()).await);
+            assert!(!lists(&success(rpc(&endpoint, viewer, "session/list", json!({})).await), &private));
+            assert_eq!(privileged_rows("").await?, 4);
             assert!(lists(&success(rpc(&endpoint, alice, "session/list", json!({})).await), &private));
             let policy = success(rpc(&endpoint, alice, "access/policy/read", json!({"resource":resource})).await)["policy"].clone();
             assert_eq!(policy["visibility"], "restricted");

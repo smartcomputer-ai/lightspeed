@@ -102,13 +102,16 @@ pub(super) async fn refused(pool: &PgPool, mut event: AuditEvent, target: Option
     write(pool, &event).await;
 }
 
-/// The outcome of a dispatched request.
+/// The outcome of a dispatched request. `privileged` says a decision of the
+/// request relied on `read_private_content`: such a read is recorded even
+/// though reads are otherwise quiet.
 pub(super) async fn completed(
     pool: &PgPool,
     method: &str,
     target: Option<Value>,
     context: &RequestContext,
     response: &JsonRpcResponse,
+    privileged: bool,
 ) {
     let error = response
         .error
@@ -120,13 +123,14 @@ pub(super) async fn completed(
         Some(Some(AgentApiErrorKind::Forbidden | AgentApiErrorKind::Unauthenticated)) => {
             AuditOutcome::Denied
         }
-        _ if !api::method_audited(method) => return,
+        _ if !api::method_audited(method) && !privileged => return,
         Some(_) => AuditOutcome::Failed,
         None => AuditOutcome::Succeeded,
     };
     let mut event = AuditEvent::new(method, outcome, now_ms()).with_context(context);
     event.target = target;
     event.error_kind = error.flatten().and_then(error_kind);
+    event.privileged = privileged;
     write(pool, &event).await;
 }
 

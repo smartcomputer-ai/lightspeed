@@ -105,7 +105,7 @@ pub(crate) async fn effective(
                  (SELECT 1 FROM access_memberships m
                    WHERE m.group_id = r.group_id AND m.principal_id = p.principal_id))) AS roles,
            ARRAY(SELECT c.capability FROM access_capabilities c
-             WHERE p.status = 'active' AND p.kind = 'service' AND
+             WHERE p.status = 'active' AND
                c.universe_id IS NOT DISTINCT FROM $2 AND c.principal_id = p.principal_id) AS capabilities
          FROM access_principals p WHERE p.principal_id = $1",
     )
@@ -186,7 +186,7 @@ async fn authorize_change(
     }
     // Provisioning delegates directory changes, including privileged group
     // membership. Direct role/capability assignment and recovery are separate.
-    let provisioning = deployment.has_capability(ServiceCapability::ManageIdentity);
+    let provisioning = deployment.has_capability(Capability::ManageIdentity);
     match change {
         AccessChange::AssignRole { assignment }
         | AccessChange::RevokeRole { assignment }
@@ -206,6 +206,21 @@ async fn authorize_change(
             ..
         } => {
             if effective(connection, actor, *scope)
+                .await?
+                .has_role(Role::Admin)
+            {
+                return Ok(());
+            }
+        }
+        // Privileged reading of a universe's restricted content is granted
+        // by that universe's Admin, audited like any access change. Service
+        // capabilities stay with the deployment.
+        AccessChange::AssignCapability { assignment }
+        | AccessChange::RevokeCapability { assignment }
+            if assignment.capability == Capability::ReadPrivateContent
+                && matches!(assignment.scope, AccessScope::Universe { .. }) =>
+        {
+            if effective(connection, actor, assignment.scope)
                 .await?
                 .has_role(Role::Admin)
             {
@@ -319,7 +334,7 @@ async fn apply_change(
         }
         AssignCapability { assignment } | RevokeCapability { assignment } => {
             let principal = read_principal(connection, assignment.principal_id).await?;
-            if principal.kind != PrincipalKind::Service { return Err(AccessError::Invalid("capabilities require a service principal".into())); }
+            if principal.kind != assignment.capability.holder() { return Err(AccessError::Invalid("capability does not belong to this kind of principal".into())); }
             // Universe-managed services must never acquire deployment-wide powers
             // or capabilities in a different universe.
             if !principal.management_scope.permits(assignment.scope) {
@@ -582,17 +597,14 @@ impl PgAccessStore {
             .await?;
         }
         for (scope, capability) in [
+            (AccessScope::Deployment, Capability::DiscoverChannelAccounts),
             (
-                AccessScope::Deployment,
-                ServiceCapability::DiscoverChannelAccounts,
+                AccessScope::Universe { universe_id },
+                Capability::LeaseCredentials,
             ),
             (
                 AccessScope::Universe { universe_id },
-                ServiceCapability::LeaseCredentials,
-            ),
-            (
-                AccessScope::Universe { universe_id },
-                ServiceCapability::AdmitChannelInbound,
+                Capability::AdmitChannelInbound,
             ),
         ] {
             changed |= apply_change(
@@ -635,7 +647,7 @@ impl PgAccessStore {
             .map_err(db_error)?;
         let deployment = effective(&mut tx, actor, AccessScope::Deployment).await?;
         let global = deployment.has_role(Role::DeploymentAdmin)
-            || deployment.has_capability(ServiceCapability::ManageIdentity);
+            || deployment.has_capability(Capability::ManageIdentity);
         if !global
             && !effective(&mut tx, actor, scope)
                 .await?
