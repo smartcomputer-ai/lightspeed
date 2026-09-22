@@ -13,11 +13,11 @@ current universe-visible content model.
 
 A person can keep an investigation private in a universe their team shares, share
 it with named people or groups when they choose, and see who a session runs as.
-A system that sets up sessions with its own tools gives them one audience and
-one execution default that administrators govern in one place. Every run carries
-a recorded execution identity; when that identity loses its authority, the run
-stops at its next turn. Administrators govern and stop work without reading
-private content unless they hold an explicit, audited permission.
+A collection gives sessions and bots one audience and one execution identity
+that administrators govern in one place. Every run carries a recorded execution
+identity; when that identity loses its authority, the run stops at its next turn.
+Administrators govern and stop work without reading private content unless they
+hold an explicit, audited permission.
 
 Today none of this exists: sessions have no audience (every Viewer reads every
 session), a run records no identity ([`RunRecord`](../../crates/engine/src/core/components/run.rs)),
@@ -37,43 +37,44 @@ These settle what the parent document leaves open.
    retry can defer that; accepted for now. Adapters do not check authority.
 2. **Execution identity is immutable per session, and personal execution binds
    the owner.** A session records who it runs as at creation and never changes
-   it. Ownership of a personal session or bot never changes hands, because its
-   owner is the authority it runs under. Work under a different identity is a
-   new session with deliberate context transfer: a fork.
-3. **Audiences belong to roots.** A root is a standalone session, a bot, or a
-   project. Delegated children and the sessions a bot or project creates share
-   their root's policy. A history fork or a config-only clone is a new root owned
-   by whoever made it, holding content the maker could already read; that is the
+   it. Ownership of a personal session or collection never changes hands,
+   because its owner is the authority it runs under. Work under a different
+   identity is a new session with deliberate context transfer: a fork.
+3. **Audiences belong to roots, and there are two root kinds.** A root is a
+   standalone session or a collection. Delegated children share their parent's
+   root; a bot, its events, and every session it creates share the bot's
+   collection. A history fork or a config-only clone is a new root owned by
+   whoever made it, holding content the maker could already read; that is the
    authorized context transfer the parent requires.
 4. **One anchor per governed resource; the mutable governance lives once, on
    the root.** Every governed resource has an anchor row keyed
    `(universe, kind, id)` holding only immutable facts: creator, admitted
-   controller, audience root, and, for sessions, bots and projects, the
+   controller, audience root, and, for sessions, bots and collections, the
    managing bot and execution. A root's policy row holds what can change: its
    current owner and visibility; grant rows hold one permission for one
-   principal or group. Sessions below a root have no owner of their own, so
+   principal or group. Resources below a root have no owner of their own, so
    handing a root to someone else moves the whole tree in one row and the
    previous owner keeps nothing. Owner-less resources such as workspaces and
    MCP servers get an anchor and a policy without execution later.
 5. **Policy rows are explicit and fail closed.** A resource kind that the policy
    system covers gets its policy row atomically at creation, `universe` included;
    a missing row denies. Kinds not yet covered keep their role rules. This slice
-   covers sessions, bots and projects; profiles stay on role rules.
+   covers sessions, bots and collections; profiles stay on role rules.
 6. **Role rights no longer short-circuit.** Every resource decision reads the
    resource's anchor, its root's policy and the caller's grant in one statement,
    then decides. Only a role `Denied` returns without reading.
 7. **Administrators do not read private content.** Operator/Admin keep stop
-   rights and Admin gains delete on any session, bot or project, restricted ones
-   included, with metadata only. Reading restricted content without a grant
+   rights and Admin gains delete on any session, bot or collection, restricted
+   ones included, with metadata only. Reading restricted content without a grant
    requires the explicit `read_private_content` capability, which no role implies
    and whose every use is audited. The capability reads; it never controls or
    takes ownership.
 8. **Personal execution is attribution and a revocation source, nothing more,
    until per-person credentials exist.** A personal run uses the same universe
    resources a service run would. What differs: the run is attributed to the
-   person, the session is restricted by default with no writers, and disabling
-   the person or removing their universe access stops the work. The owner may
-   still add a writer explicitly; that writer's runs execute under the owner's
+   person, the root is restricted by default with no writers, and disabling the
+   person or removing their universe access stops the work. The owner may still
+   add a writer explicitly; that writer's runs execute under the owner's
    authority with the writer as `authorizedBy`, so the delegation is attributed
    and ends with the membership. The UI does not offer it.
 9. **A content hash is never access, and authorization never traverses.** A
@@ -86,15 +87,19 @@ These settle what the parent document leaves open.
    uploader; a nested reference needs its own admission. Retention keeps
    scanning every exact reference so nothing is swept, but scanned references
    confer nothing, and edges are never followed to decide a read.
-10. **A bot is a thin wrapper around its sessions and shares their access
-    model.** One policy row governs the bot, its events and activity, and every
-    session it creates, as one audience; those sessions carry no policy of their
-    own. `read` on a bot reads all of it; `write` also invokes the bot and
-    controls its sessions. Configuring the bot stays with its owner and the
-    ManageBot role. A universe-visible bot follows role rules, so Contributors
-    invoke it without controlling its sessions; a personal bot is restricted to
-    its owner until shared. Invoke-only grants on restricted bots and
-    conversations private to their invoker are deliberately not supported here.
+10. **A bot is a member of its collection, and a thin wrapper around its
+    sessions.** A bot always lives in a collection: one created with it, or an
+    existing one its creator may write to. The collection's policy governs the
+    bot, its events and activity, and every session it creates, as one
+    audience; none of them carries a policy of its own. `read` on the
+    collection sees all of it; `write` also invokes its bots and controls its
+    sessions. What stays the bot's own is control, not audience: routing,
+    admission, its worker's authority over its sessions, and configuration,
+    which belongs to the owner and the ManageBot role. A universe-visible
+    collection follows role rules, so Contributors invoke its bots without
+    controlling their sessions; a personal bot's collection is restricted to
+    its owner until shared. Invoke-only grants and conversations private to
+    their invoker are deliberately not supported here.
 11. **Contributors keep universe-wide resource use.** Per-resource restriction is
     the next slice. This slice only closes the paths by which a Contributor reads
     or exfiltrates a stored secret (see hardening).
@@ -107,8 +112,8 @@ These settle what the parent document leaves open.
     The audience of a new session is a policy choice made by whoever holds the
     authority to make it: the requester (a principal, or a service asserting
     one) sets `access` on a standalone session it will own; a run's delegated
-    child takes the parent's root; a caller with write on a bot or project may
-    create under it and inherit. Inheritance is one choice, never the rule for
+    child takes the parent's root; a caller with write on a collection may
+    create in it and inherit. Inheritance is one choice, never the rule for
     every controller, and a controller's privilege over the protocol never
     decides the audience. Reservation already refuses a creator without an
     anchor of its own, so no session exists without one of the three.
@@ -121,11 +126,12 @@ These settle what the parent document leaves open.
     acting resource, execution principal, cause. Reads resolve through the
     actor's audience root; control comes from the actor alone: itself, a bot's
     own sessions, and the children a run admitted. Sharing an audience never
-    confers control over its other members, so a session in a project cannot
-    steer a sibling and a delegated child cannot control its root. Resource
-    use is the execution principal's rights, nothing else, so two sessions
-    that run as the same universe execution service cannot read each other.
-    Run provenance (`RunAuthority`) is recorded on the run; it is not a caller.
+    confers control over its other members, so a session in a collection
+    cannot steer a sibling and a delegated child cannot control its root.
+    Resource use is the execution principal's rights, nothing else, so two
+    sessions that run as the same universe execution service cannot read each
+    other. Run provenance (`RunAuthority`) is recorded on the run; it is not a
+    caller.
 
 ## Scope
 
@@ -168,26 +174,27 @@ Records, all keyed by `(universe_id, resource_kind, resource_id)`:
 
 | Record | Holds | Mutable |
 | --- | --- | --- |
-| `access_resources` (the anchor; today's ownership table renamed) | creator, admitted controller, `audience_root` (kind + id), created_at; for sessions, bots and projects the managing bot, `run_as_principal_id` and `execution_kind` | no |
+| `access_resources` (the anchor; today's ownership table renamed) | creator, admitted controller, `audience_root` (kind + id), created_at; for sessions, bots and collections the managing bot, `run_as_principal_id` and `execution_kind` | no |
 | `access_resource_policies` | a root's current owner and `visibility`; who changed them and when | yes |
 | `access_resource_grants` | one `permission` for a principal or group on a root; who granted it and when | yes |
-| `projects` | id and display name; everything else is on the anchor and policy | name |
+| `collections` | id and display name; everything else is on the anchor and policy | name |
 
 `audience_root` is copied at reservation like the managing bot: itself for a
-standalone session, a bot or a project; the parent's root for a delegated
-child; the bot or project for a session created under one. Policy and grant
+standalone session or a collection; the parent's root for a delegated child;
+the collection for a bot and for every session created in it. Policy and grant
 rows exist only for roots; everything below resolves to its root's rows, owner
 included. Permission vocabularies are per resource kind and validated in
-`access`; this slice defines `read` and `write` for sessions, bots and projects
+`access`; this slice defines `read` and `write` for sessions and collections
 with one meaning: `read` sees the tree, `write` controls it.
 
 ```text
 owner             = the root's current owner, for every resource in the tree
 Read              = Read allowed AND (root universe OR owner OR grant on root OR privileged)
 Control session   = owner OR write grant on root OR (managing bot AND ManageBot allowed)
-Create under root = owner OR write grant on root; a bot's worker under the bot
-Invoke bot        = InvokeBot allowed (universe bot) OR owner OR write grant
-Manage bot/project= owner, OR ManageBot / ConfigureResource allowed when universe-visible
+Create in root    = owner OR write grant on root; a bot's worker, in its collection
+Invoke bot        = InvokeBot allowed (universe collection) OR owner OR write grant
+Manage bot        = owner, OR ManageBot allowed when the collection is universe-visible
+Manage collection = owner, OR ConfigureResource allowed when universe-visible
 Stop              = StopSession allowed (Operator/Admin) OR owner OR write grant
 Delete / close    = owner OR Admin
 Hand off owner    = owner, only under service execution; moves the whole tree
@@ -197,30 +204,30 @@ Hand off owner    = owner, only under service execution; moves the whole tree
   `resource_permitted`/`resource_actions`: after the role decision, one statement
   loads the resource's anchor, follows its `audience_root` to the root's policy
   and the caller's best grant there (through `access_group_members`), and
-  `access` decides. A bot's or project's session is therefore decided at the
-  session, by its own row and rights, with the root's policy joined in: no bot
-  or project method is involved and a viewer needs only the session id. The
-  managing bot and the admitted controller come from the session row; owner,
-  visibility and grants come from the root. `session/list`, the bot list and
-  the project list apply the same predicate in SQL, so lists return readable
-  resources only, including children listed by origin.
-- **Sharing.** One method pair for every root kind: `access/policy/read
-  { resource }` returns owner, visibility, run-as and grants;
+  `access` decides. A session in a collection is therefore decided at the
+  session, by its own row and rights, with the collection's policy joined in:
+  no collection or bot method is involved and a viewer needs only the session
+  id. The managing bot and the admitted controller come from the session row;
+  owner, visibility and grants come from the root. `session/list`, the bot list
+  and the collection list apply the same predicate in SQL, so lists return
+  readable resources only, including children listed by origin.
+- **Sharing.** One method pair for every kind: `access/policy/read { resource }`
+  returns owner, visibility, run-as, the audience root and grants;
   `access/policy/update { resource }` replaces visibility and the grant set.
-  Write members share read access or make the resource universe-visible; only
-  the owner adds writers or, under service execution, hands ownership to another
-  member; readers change nothing. On a personal session, bot or project only the
-  owner may add a writer, and the share dialog offers read only. A session under
-  a root has no policy of its own: reading its access shows the root's, and
-  sharing it means sharing the root. Session, bot and project creation accept
-  the same `access` shape, plus `access.root` to create a session under a bot or
-  project the caller may write to, so a requester, or a service acting for one,
-  sets the audience atomically instead of narrowing it after the fact; the
-  default is `restricted` for personal execution and `universe` otherwise.
-  Changes are audited (`audit: true`) and recorded as typed rows in
-  `access_audit_changes` in the same transaction. Subjects must currently hold a
-  role in the universe; losing universe access ends shared access without editing
-  grants.
+  Write members share read access or make the root universe-visible; only the
+  owner adds writers or, under service execution, hands ownership to another
+  member; readers change nothing. On a personal root only the owner may add a
+  writer, and the share dialog offers read only. A session or bot in a
+  collection has no policy of its own: reading its access shows the
+  collection's, and sharing it means sharing the collection. Session, bot and
+  collection creation accept the same `access` shape, plus `access.root` to
+  create a session or bot in a collection the caller may write to, so a
+  requester, or a service acting for one, sets the audience atomically instead
+  of narrowing it after the fact; the default is `restricted` for personal
+  execution and `universe` otherwise. Changes are audited (`audit: true`) and
+  recorded as typed rows in `access_audit_changes` in the same transaction.
+  Subjects must currently hold a role in the universe; losing universe access
+  ends shared access without editing grants.
 - **Content surfaces.** The policy applies to `session/read`, `session/list`,
   `session/events/read` and its long polls, run and approval reads, bot events
   and activity, and the access preview. Control actions additionally require a
@@ -245,48 +252,55 @@ Hand off owner    = owner, only under service execution; moves the whole tree
   indexed lookup. `blobs/put` records the uploader in `blob_uploads`, cascading
   with the blob; the sweeper's age cutoff already gives an upload its window
   before attachment. A format test keeps the typed extraction a subset of the
-  generic collector and flags new reference-bearing fields.
-- **Bots.** Bot creation writes the bot's policy row; a personal bot is
-  `restricted`. Bot events, activity, and every session the bot creates are read
-  through that row; `write` invokes the bot and controls its sessions; trigger
-  configuration and secrets stay with the owner and ManageBot as today. Sessions
-  a bot creates carry the bot as audience root and no policy row. The Access
-  panel is one component for bots, projects and sessions.
-- **Projects.** A project is a root with a name, an owner, an execution identity
-  and a policy, and nothing else: it exists so that a set of sessions shares one
-  audience and one execution identity that administrators govern in one place.
-  A person creates one to share a body of work with a few people; a system may
-  create one and create sessions under it with `access.root`, or not use one at
-  all. Contributors create projects and own them; Operators manage
-  universe-visible ones; Admin may delete any. Projects route nothing and run
-  nothing. The name is provisional.
+  generic collector and flags new reference-bearing fields. The garbage
+  collector's "collection roots" are retention roots and get that name, so the
+  word is not overloaded.
+- **Bots.** `bots/create` puts the bot in a collection: `access.root` names an
+  existing one the creator may write to, otherwise a collection named after the
+  bot is created with it, owned by the creator, with the requested execution
+  and a `restricted` policy when that execution is personal. The bot's anchor,
+  its events and activity, and every session it creates carry the collection
+  as audience root; a bot's sessions also carry the bot as managing bot, which
+  is the bot worker's control scope. `write` on the collection invokes its bots
+  and controls its sessions; trigger configuration and secrets stay with the
+  owner and ManageBot as today. Deleting a bot removes its sessions as today and
+  its collection when nothing else is left in it.
+- **Collections.** A collection is a root with a name, an owner, an execution
+  identity and a policy, and nothing else: it exists so that sessions and bots
+  share one audience and one execution identity that administrators govern in
+  one place. A person creates one to share a body of work with a few people;
+  a bot always lives in one; a team puts a bot and its own sessions in the same
+  one; a system may create one for what it creates, or not. Contributors create
+  collections and own them; Operators manage universe-visible ones; Admin may
+  delete any, with everything in it. Collections route nothing and run nothing.
 - **Plugins.** A workflow plugin needs no resource kind of its own. It holds a
   service principal; the sessions it creates through `session/managed/start`
   or `session/start` are standalone roots it owns, each with the `access` it
-  chooses, or sessions under a root it may write to; it is lifecycle controller
-  of any of them regardless of their audiences. A lifecycle controller that a
-  person's request installs acts through the API with its own principal and
-  needs a write grant on that session, given at creation and visible in the
-  Access panel. A tool receiver reads nothing of a session by default: the
-  binding names the receiver's service principal, the invocation delivered to
-  it is a readable resource for that principal (`blobs/read { resource:
-  { kind: invocation, id } }` covers its arguments and their admitted
-  references), and a reply's result reference is admitted into the session
-  only when that principal uploaded it or it is already content of the session.
-  Broader transcript access, starting runs or controlling other sessions come
-  only from grants.
+  chooses, or sessions in a collection it may write to; it is lifecycle
+  controller of any of them regardless of their audiences. A lifecycle
+  controller that a person's request installs acts through the API with its
+  own principal and needs a write grant on that session, given at creation and
+  visible in the Access panel. A tool receiver reads nothing of a session by
+  default: the binding names the receiver's service principal, the invocation
+  delivered to it is a readable resource for that principal (`blobs/read
+  { resource: { kind: invocation, id } }` covers its arguments and their
+  admitted references), and a reply's result reference is admitted into the
+  session only when that principal uploaded it or it is already content of the
+  session. Broader transcript access, starting runs or controlling other
+  sessions come only from grants.
 - **Workspaces and environments stay universe resources.** Files a restricted
   session writes into a shared workspace are as visible as that workspace, and
   `vfs/snapshots/read` stays universe-scoped until workspaces get policy rows.
   The UI says so where a session attaches one.
-- **Release on delete.** Deleting a session, bot or project removes its anchor,
-  policy and grant rows with the rest of the cascade, so its id is free again;
-  the id namespace belongs to the universe, not to whoever used it first. Admin
-  may delete any of them, which also covers offboarded owners.
+- **Release on delete.** Deleting a session, bot or collection removes its
+  anchor, policy and grant rows with the rest of the cascade, so its id is free
+  again; the id namespace belongs to the universe, not to whoever used it first.
+  Admin may delete any of them, which also covers offboarded owners.
 - **Web.** An Access panel (owner, running as, visibility, members) and a share
-  dialog fed by the universe-scoped directory; restricted sessions, bots and
-  projects are marked in lists; a session under a root shows its access as the
-  root's; the permission preview gains `read` and `share` decisions.
+  dialog fed by the universe-scoped directory; restricted sessions and
+  collections are marked in lists; a session or bot in a collection shows its
+  access as the collection's; the permission preview gains `read` and `share`
+  decisions.
 
 ### 2. Execution identity
 
@@ -299,33 +313,33 @@ Hand off owner    = owner, only under service execution; moves the whole tree
   row, off by default. `access/execution/read` and `access/execution/update`
   (Admin, `ManageAccess`, audited).
 - **Resolution at creation.** `execution` requests `{ kind: service | personal }`
-  when creating a standalone session, a bot or a project; a profile may request
-  the same and confers nothing. `service` runs as the universe execution service.
-  `personal` requires personal execution to be enabled, a user principal, and
-  that the run-as is the caller; the resource then defaults to `restricted`. A
-  request that is not allowed is refused with `forbidden`; there is no fallback.
-  A session created under a root, and every delegated child, inherits the root's
-  execution and accepts no `execution` of its own. Execution stays on the anchor
-  because it is immutable, reserved in the same transaction and copied through
-  the same mechanism as the audience root; a named-binding reference can join
-  it there in a later slice.
-- **Visible.** Session, bot and project summaries and `access/policy/read`
+  when creating a standalone session or a collection, and a bot created with
+  its own collection; a profile may request the same and confers nothing.
+  `service` runs as the universe execution service. `personal` requires
+  personal execution to be enabled, a user principal, and that the run-as is the
+  caller; the root then defaults to `restricted`. A request that is not allowed
+  is refused with `forbidden`; there is no fallback. A session or bot created in
+  a collection, and every delegated child, inherits the root's execution and
+  accepts no `execution` of its own. Execution stays on the anchor because it
+  is immutable, reserved in the same transaction and copied through the same
+  mechanism as the audience root; a named-binding reference can join it there
+  in a later slice.
+- **Visible.** Session, bot and collection summaries and `access/policy/read`
   expose owner, visibility, run-as and the audience root, so a viewer can show
-  "shared through bot X" without a second request; the web UI shows "Running
-  as" on a session and offers the personal choice only where the universe
-  enables it.
+  "shared through collection X" without a second request; the web UI shows
+  "Running as" on a session and offers the personal choice only where the
+  universe enables it.
 
 ### 3. Run admission, controller contexts and turn-boundary authority
 
-- **Admission.** Every run start — API, bot trigger, project plugin, sub-agent,
-  workflow tool — passes `admit_run`, which resolves the session's run-as
-  principal and requires it active with `UseResource` in the universe. The
-  requester's own control check is unchanged and separate. Admission records
+- **Admission.** Every run start — API, bot trigger, sub-agent, workflow tool —
+  passes `admit_run`, which resolves the session's run-as principal and requires
+  it active with `UseResource` in the universe. The requester's own control check
+  is unchanged and separate. Admission records
   `RunAuthority { runAs, authorizedBy, parent }` on the accepted-run event, so the
   run record and replay carry who ran and who asked. `authorizedBy` is the acting
-  principal for API starts, `Internal { component, cause }` for bot and project
-  triggers, and the parent run for delegated children. Scalars only; the engine
-  reads no policy.
+  principal for API starts, `Internal { component, cause }` for bot triggers, and
+  the parent run for delegated children. Scalars only; the engine reads no policy.
 - **Turn check.** `llm_generate` begins by resolving the run-as principal's
   current rights (one statement; two for a personal run, whose owner must also
   hold universe access). A model call takes seconds, so there is no revision
@@ -342,28 +356,27 @@ Hand off owner    = owner, only under service execution; moves the whole tree
   calls they make bind it to the run's session. Reads resolve through the
   actor's audience root; control is the actor's own: itself, a bot's sessions
   (`bot` on the anchor), and the children a run admitted (`controller` on the
-  anchor), never siblings under a shared root. It creates sessions only under
-  its own root and uses resources only as its execution principal may. It
-  exists before a run and after one, which is why it is not `RunAuthority`.
-  Plugins never hold one; they are principals.
+  anchor), never siblings under a shared root. It creates sessions only in its
+  own root and uses resources only as its execution principal may. It exists
+  before a run and after one, which is why it is not `RunAuthority`. Plugins
+  never hold one; they are principals.
 - **Delegation versus own authority.** The binding decides which relationship
   an invocation establishes, never the model's arguments: a sub-agent is
   delegation and inherits the parent's run-as; a workflow tool invokes a
   receiver that acts with its own service authority. Enforcing a delegable
   scope on children, and admitting a plugin to act under the invoker's
   authority, belong to the delegation slice.
-- **Stopping standing work.** Disabling a personal bot's or project's owner,
+- **Stopping standing work.** Disabling the owner of a personal collection,
   removing their universe access, disabling the universe execution service, or
-  revoking a plugin's key or grants fails each subsequent admission; the bot
-  records the refusal in its activity.
-  Closing the bot cancels its in-flight work as today. Automatic pausing after
-  repeated refusals is not in this slice.
+  revoking a plugin's key or grants fails each subsequent admission; a bot
+  records the refusal in its activity. Closing a bot cancels its in-flight work
+  as today. Automatic pausing after repeated refusals is not in this slice.
 
 ### 4. Private-content access
 
 - A universe-scoped `read_private_content` capability, assignable to a user
   principal through the existing capability changes (Admin, audited, never
-  implied by a role). Holders read restricted sessions, bots and projects they
+  implied by a role). Holders read restricted sessions and collections they
   hold no grant on. They gain no control and no ownership; to continue orphaned
   work they fork what they may read into a session of their own, under their
   own execution.
@@ -379,7 +392,7 @@ Illustrative shapes, not final wire signatures:
 
 ```text
 ResourceAnchor    = kind + id + created_by + controller + audience_root(kind, id)
-                  + [bot + execution(run_as, service | personal)]   (sessions, bots, projects)
+                  + [bot + execution(run_as, service | personal)]   (sessions, bots, collections)
 ResourcePolicy    = owner + visibility(universe | restricted)          (roots only)
 Grant             = subject(principal | group) + permission + granted_by
 ResourceAccess    = anchor + root policy + caller's best grant (one statement)
@@ -396,9 +409,9 @@ may_read_blob(caller, resource, blob)    = authorize(caller, Read, resource)
                                            AND admitted_content(resource, blob)
 ```
 
-`access/policy/read|update`, `access/execution/read|update`, `project/create|
+`access/policy/read|update`, `access/execution/read|update`, `collection/create|
 read|list|update|delete`, `execution` and `access` (with `access.root`) on
-session, bot and project creation, `access` on their summaries, `read`/`share`
+session, bot and collection creation, `access` on their summaries, `read`/`share`
 in the access preview, `resource` on `blobs/read` and `blobs/has` (including
 `invocation`), the receiver principal on workflow-tool declarations, source
 naming on attachments, `privileged` on audit events, and `authority_revoked` as
@@ -416,8 +429,8 @@ Edited in place; schema revision advances once and the release metadata with it.
   `access_resource_policies (key, owner_principal_id, visibility, updated_by,
   updated_at_ms)` and `access_resource_grants (key, subject_kind, subject_id,
   permission, granted_by, granted_at_ms)` with an index on the subject, both
-  referencing the root's anchor and cascading with it; `projects (universe_id,
-  project_id, display_name, created_at_ms)`.
+  referencing the root's anchor and cascading with it; `collections
+  (universe_id, collection_id, display_name, created_at_ms)`.
 - `001_core.sql`: `execution_principal_id` and `personal_execution_enabled` on
   `universes` (or a follow-on file, if the principal foreign key needs
   `007_identity_access.sql` first); `origin` on `cas_session_roots`;
@@ -437,14 +450,16 @@ Each step ships on its own; the order is by dependency.
 
 1. [ ] Hardening (scope 0), including the manifest enforcement test.
 2. [ ] The anchor, policy and grant rows written at reservation for standalone
-       sessions, bots and projects, `projects` and its methods, the
-       one-statement `authorize` with unit coverage in `access`; session, bot
-       and project lists and content surfaces enforce the policy; forks and
-       clones become new roots; release on delete; Admin delete; hand-off under
-       service execution only. Live matrix through HTTP: owner, reader, writer,
-       group member, Viewer, Operator, Admin against read, list, events, control,
-       stop, delete and share, for a standalone session, a shared bot, a
-       restricted bot and a project with the sessions and events under them.
+       sessions and collections, bots joining collections, `collections` and
+       its methods, the one-statement `authorize` with unit coverage in
+       `access`; session, bot and collection lists and content surfaces enforce
+       the policy; forks and clones become new roots; release on delete; Admin
+       delete; hand-off under service execution only. Live matrix through HTTP:
+       owner, reader, writer, group member, Viewer, Operator, Admin against
+       read, list, events, control, stop, delete and share, for a standalone
+       session, a universe-visible collection holding a bot, and a restricted
+       collection holding a bot and a person's sessions, with the sessions and
+       events under them.
 3. [ ] Content: typed extraction and root origins, admission writing `content`
        rows for direct references and for the children of admitted manifests,
        `blob_uploads`, `resource` on `blobs/read` and `blobs/has`, attachment
@@ -467,24 +482,24 @@ Each step ships on its own; the order is by dependency.
        with the kind; a sub-agent child failing after its parent's principal is
        disabled; a personal bot refusing admission after its owner is disabled;
        a controller context bound to one root failing to read another root that
-       runs as the same execution service; a run in a project failing to steer
-       a sibling session; a hand-off of a service root reaching every session
-       under it and leaving the previous owner nothing.
+       runs as the same execution service; a run in a collection failing to
+       steer a sibling session; a hand-off of a service collection reaching
+       every session and bot in it and leaving the previous owner nothing.
 6. [ ] `read_private_content`, privileged reads and their audit rows.
 7. [ ] Web: Access panel, share dialog, restricted markers, execution choice,
-       project pages, workspace visibility note; Platform mapping of the new
+       collection pages, workspace visibility note; Platform mapping of the new
        methods; docs (`multi-tenancy.md`, `authentication-and-tenancy.md`, API
        reference).
 
 ## Validation
 
 - Unit: access decisions for every visibility × grant × role combination for
-  sessions, bots and projects, with a missing policy row denying; only the owner
-  adds a writer to a personal resource, and that writer's run records the owner
-  as run-as and the writer as authorizer; hand-off refused under personal
-  execution; execution resolution refuses without fallback and is refused under
-  a root; typed extraction is a subset of the generic collector on every event
-  fixture; audit target extraction for the new methods.
+  sessions, bots and collections, with a missing policy row denying; only the
+  owner adds a writer to a personal root, and that writer's run records the
+  owner as run-as and the writer as authorizer; hand-off refused under personal
+  execution; execution resolution refuses without fallback and is refused
+  inside a collection; typed extraction is a subset of the generic collector on
+  every event fixture; audit target extraction for the new methods.
 - Live (disposable services, serialized): the HTTP access matrix above; the
   content cases in step 3; a fork by a reader yielding a new root owned by the
   reader; execution recorded on run records and visible in summaries;
@@ -508,16 +523,17 @@ Not in this slice: named execution bindings with resource scopes, policy rows
 and permission vocabularies for workspaces, environments, MCP servers and
 grants (next slice, on the same anchor; `vfs/snapshots/read` then takes a
 workspace context), invoke-only bot grants and conversations private to their
-invoker, project surfaces beyond creation and the Access panel, a plugin acting
-under the invoker's authority or holding an internal execution context of its
-own (named bindings), requester propagation to first-party MCP servers such as
-the Configurator, SSO and provisioning, personal event-driven automation,
-source-imposed audience limits, audit retention and export, a two-person rule
-or UI flow for privileged access, and effect-time checks inside adapters.
+invoker, collection surfaces beyond creation and the Access panel, a plugin
+acting under the invoker's authority or holding an internal execution context
+of its own (named bindings), requester propagation to first-party MCP servers
+such as the Configurator, SSO and provisioning, personal event-driven
+automation, source-imposed audience limits, audit retention and export, a
+two-person rule or UI flow for privileged access, and effect-time checks inside
+adapters.
 
 After this slice the parent sequence continues with resource restrictions and
 delegation enforcement, then SSO and provisioning, whose offboarding must govern
-API keys and the standing bot and project authority defined here.
+API keys and the standing bot and collection authority defined here.
 
 Current seams: [authorization service](../../crates/temporal-server/src/gateway/service/authorization.rs),
 [ownership store](../../crates/store-pg/src/ownership.rs),
