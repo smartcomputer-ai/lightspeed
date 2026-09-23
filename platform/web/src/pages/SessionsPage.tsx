@@ -231,7 +231,7 @@ function SessionList({
   const setCreateOpen = (open: boolean) => {
     const next = new URLSearchParams(searchParams);
     if (open) next.set("new", "session");
-    else { next.delete("new"); next.delete("collection"); }
+    else next.delete("new");
     setSearchParams(next, { replace: !open });
   };
   const [selecting, setSelecting] = useState(false);
@@ -923,7 +923,7 @@ function NewSessionDialog({
   onOpenChange: (open: boolean) => void;
   search: string;
 }) {
-  const [creationAccess, setCreationAccess] = useState(() => ({ ...defaultCreationAccess(), collectionId: new URLSearchParams(search).get("collection") ?? "" }));
+  const [creationAccess, setCreationAccess] = useState(defaultCreationAccess);
   const [displayName, setDisplayName] = useState("");
   const [profileId, setProfileId] = useState("");
   const [step, setStep] = useState<"basics" | "setup">("basics");
@@ -965,7 +965,7 @@ function NewSessionDialog({
       setRetentionError(null);
       setError(null);
       const nextSearch = new URLSearchParams(search);
-      nextSearch.delete("new"); nextSearch.delete("collection");
+      nextSearch.delete("new");
       navigate(`/u/${slug}/sessions/${target}${nextSearch.size ? `?${nextSearch}` : ""}`);
     },
     onError: (err) => setError(err.message),

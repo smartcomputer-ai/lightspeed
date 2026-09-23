@@ -37,7 +37,7 @@ export function ExecutionSettings({ universeId }: { universeId: string }) {
         <CardTitle>Execution</CardTitle>
         <CardDescription>
           Allow people to create work that runs under their own authority.
-          Existing sessions, bots, and collections keep their execution
+          Existing sessions and bots keep their execution
           identity.
         </CardDescription>
       </CardHeader>

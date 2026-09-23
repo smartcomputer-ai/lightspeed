@@ -33,8 +33,8 @@ export function PrivateContentAccess({
       <h3 className="text-sm font-medium">Private-content access</h3>
       <p className="text-sm text-muted-foreground">
         {enabled ? "Allowed" : "Not allowed"}. This person can{" "}
-        {enabled ? "" : "be allowed to "}read restricted sessions, bots and
-        collections without a share. Each such read is audited. This grants no
+        {enabled ? "" : "be allowed to "}read restricted sessions and bots
+        without a share. Each such read is audited. This grants no
         control or ownership.
       </p>
       <Button

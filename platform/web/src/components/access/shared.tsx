@@ -116,13 +116,12 @@ export function ExecutionLabel({
   );
 }
 
-export function resourceHref(slug: string, resource: ResourceRef): string {
-  const section =
-    resource.kind === "collection"
-      ? "collections"
-      : resource.kind === "bot"
-        ? "bots"
-        : "sessions";
+export function resourceHref(
+  slug: string,
+  resource: ResourceRef,
+): string | undefined {
+  if (resource.kind !== "bot" && resource.kind !== "session") return undefined;
+  const section = resource.kind === "bot" ? "bots" : "sessions";
   return `/u/${slug}/${section}/${encodeURIComponent(resource.id)}`;
 }
 
@@ -140,8 +139,6 @@ export async function invalidateAccess(
       "bots",
       "bot",
       "bot-state",
-      "collections",
-      "collection",
     ].map((name) =>
       client.invalidateQueries({
         predicate: (query) =>

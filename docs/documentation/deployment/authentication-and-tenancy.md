@@ -50,20 +50,20 @@ is omitted from lists and returns `not_found` when read directly. Admins follow
 the same reading rule, with the explicit [private-content capability](#private-content-access)
 as a separately assigned exception.
 
-A collection gives related sessions and bots one audience. Suppose an
-investigation needs two sessions and a bot. Create a restricted collection and
-create that work inside it. Sharing the collection with an investigator then
-makes all three available to that person. A bot's conversations and a session's
-delegated children inherit the same policy, so a new conversation does not need
-a separate round of sharing. Existing resources cannot be moved into a
-collection; a collection can be deleted once it is empty.
+A bot's conversations and a session's delegated children inherit the same
+policy, so a new conversation does not need a separate round of sharing.
+The API also supports collections, which give several sessions and bots one
+audience and execution identity. Collections are deferred in the web app;
+create and share sessions or bots directly there. Through the API, resources
+can join a collection only at creation, and a collection can be deleted only
+once it is empty.
 
 The resource whose policy governs this audience is called its *root*. A
 standalone session or bot is its own root; a member of a collection uses the
 collection's root. The **Access** dialog shows the owner, visibility, grants and
-execution identity. For inherited access, it links to the root and explains that
-changes apply to everything sharing that policy. Writers can add readers and
-change visibility. Only the owner can change writer grants. The web app offers
+execution identity. For bot conversations and delegated sessions, it links to
+the governing bot or session and explains that changes apply to everything
+sharing that policy. Writers can add readers and change visibility. Only the owner can change writer grants. The web app offers
 read-only sharing for personal work.
 
 Ownership, reading and operational control remain separate. Operators and Admins
@@ -81,16 +81,14 @@ The web dialog does this and asks you to reload after a conflict.
 
 ### Create and share work in the web app
 
-1. Open **New session**, **New bot**, or **New collection**. Choose **Running as**
-   and **Who can read**. Standalone work defaults to the universe service and
-   universe visibility; choosing **Me** defaults its audience to restricted.
-2. To create a session or bot inside a collection, select that collection.
-   The form shows its inherited audience and execution identity. Only
-   collections you may create work in are offered.
-3. Open **Access** on the resulting session, bot or collection. Search for people
-   or groups in the universe, add their grants, then save. A control grant lets
-   another person start runs under the work's existing execution identity.
-4. For work running as the universe service, its owner can transfer the entire
+1. Open **New session** or **New bot**. Choose **Running as** and **Who can read**.
+   New work defaults to the universe service and universe visibility; choosing
+   **Me** defaults its audience to restricted.
+2. Open **Access** on the resulting session or bot. Search for people or groups
+   in the universe, add their grants, then save. A control grant lets another
+   person start runs under the work's existing execution identity. Bot
+   conversations and delegated sessions inherit access and execution.
+3. For work running as the universe service, its owner can transfer the entire
    root through **Transfer ownership**. The former owner retains only access
    supplied by visibility, explicit grants or their role. Personal work cannot
    change owners.

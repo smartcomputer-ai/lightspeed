@@ -181,6 +181,7 @@ function PolicyEditor({
   const inherited =
     policy.resource.kind !== policy.root.kind ||
     policy.resource.id !== policy.root.id;
+  const rootHref = resourceHref(slug, policy.root);
   const dirty =
     visibility !== policy.visibility ||
     newOwner !== "" ||
@@ -216,15 +217,21 @@ function PolicyEditor({
     <div className="grid gap-5">
       {inherited && (
         <div className="rounded-lg border bg-muted/40 p-3 text-sm">
-          Shared through{" "}
-          <Link
-            className="underline underline-offset-4"
-            to={resourceHref(slug, policy.root)}
-            onClick={onClose}
-          >
-            {policy.root.kind} {policy.root.id}
-          </Link>
-          .
+          {rootHref ? (
+            <>
+              Shared through{" "}
+              <Link
+                className="underline underline-offset-4"
+                to={rootHref}
+                onClick={onClose}
+              >
+                {policy.root.kind} {policy.root.id}
+              </Link>
+              .
+            </>
+          ) : (
+            "Shared access."
+          )}
           <p className="mt-1 text-muted-foreground">
             Changes apply to everything sharing this access.
           </p>
@@ -428,9 +435,9 @@ function PolicyEditor({
               ]}
             />
             <p className="text-xs text-muted-foreground">
-              The new owner receives the entire root. You retain only explicit
-              grants. Execution stays unchanged. Search above to find another
-              member.
+              Ownership changes for everything sharing this access. You retain only
+              explicit grants. Execution stays unchanged. Search above to find
+              another member.
             </p>
           </div>
         </details>

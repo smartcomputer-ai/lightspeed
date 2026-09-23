@@ -158,7 +158,6 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
                         label="Sessions"
                         prefix
                       />
-                      <NavItem to={`/u/${active.slug}/collections`} icon={Boxes} label="Collections" prefix />
                       <NavItem
                         to={`/u/${active.slug}/profiles`}
                         icon={SlidersHorizontal}
@@ -304,7 +303,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         {/* Master-detail surfaces (sessions, workspaces, profiles, bots)
             manage their own panes and scrolling — full-bleed. Everything else
             gets the centered scrolling column. */}
-        {/\/u\/[^/]+\/(sessions|workspaces|profiles|bots|collections)/.test(location.pathname) ? (
+        {/\/u\/[^/]+\/(sessions|workspaces|profiles|bots)/.test(location.pathname) ? (
           <main className="flex min-h-0 min-w-0 flex-1 flex-col">
             <Outlet />
           </main>

@@ -41,13 +41,14 @@ still point to the same shared files.
 The creation form separates **Who can read** from **Running as**. New standalone
 sessions default to visibility for universe members and execution as the universe
 service. If the universe enables personal execution, **Me** runs the session
-under your authority and defaults its audience to restricted. The choice is fixed
-at creation; a session created inside a collection inherits both settings.
+under your authority and defaults its audience to restricted. Execution identity
+is fixed at creation; the audience can be changed through **Access**.
 
 Open **Access** to see the owner and audience, add people or groups, and save their
 grants. A control grant lets another person start work under the session's
-existing execution identity. If access comes from a collection or bot, the
-dialog links to that root: sharing changes apply to the whole audience. A lock
+existing execution identity. Bot conversations and delegated sessions inherit
+access from their bot or parent session. The dialog links to that resource:
+sharing changes apply to everything using the same policy. A lock
 marks restricted work in the list. **Privileged read** means the displayed view
 includes content read through an explicitly assigned private-content capability,
 which is audited separately from ordinary reads.
@@ -57,7 +58,7 @@ access with a colleague who belongs to the universe. Files written into an
 attached shared workspace remain visible through that workspace. Restricting
 the session does not restrict its attachments. See [Authentication and
 access](../deployment/authentication-and-tenancy.md#audience-and-control) for
-collection creation, execution choices and the effect of revocation.
+sharing, execution choices and the effect of revocation.
 
 ## Queue, steer, or stop work
 

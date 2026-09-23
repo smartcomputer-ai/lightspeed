@@ -80,7 +80,7 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
     queryClient.invalidateQueries({ queryKey: ["universes"] }),
     queryClient.invalidateQueries({ queryKey: ["me"] }),
     queryClient.invalidateQueries({ queryKey: ["action-permissions"] }),
-    ...["session", "sessions", "bot", "bots", "bot-state", "collection", "collections", "access-policy"].map((key) => queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] === key && query.queryKey.includes(universeId) })),
+    ...["session", "sessions", "bot", "bots", "bot-state", "access-policy"].map((key) => queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] === key && query.queryKey.includes(universeId) })),
   ]);
 
   const remove = useMutation({

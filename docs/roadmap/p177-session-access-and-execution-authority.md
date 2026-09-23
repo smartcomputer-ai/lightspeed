@@ -700,6 +700,14 @@ Each step ships on its own; the order is by dependency.
        Restricted markers, Running as, personal-execution settings and attachment
        visibility notes use the existing UI patterns. The browser demo includes
        service and personal collections.
+       UI scope narrowed 2026-09-23: collection navigation, routes, management
+       pages, creation selectors and query-parameter membership are removed.
+       Session and bot creation always uses independent access and execution;
+       bot conversations and delegated children retain inherited sharing.
+       The demo uses a standalone personal session and standalone bots, without
+       seeded collections. Collection APIs and runtime policies remain for later
+       project work. User-facing guides now describe direct session/bot sharing;
+       access and demo tests cover it, including inherited bot/session policies.
        Privileged-access UI and documentation completed 2026-09-22: member role
        editing offers a separate, attributed grant/revoke control for user-only
        `read_private_content`. The runtime marks successful privileged responses
@@ -758,7 +766,7 @@ Not in this slice: further execution principals with `run_as` grants, policy
 rows and permission vocabularies for workspaces, environments, MCP servers and
 grants (next slice, on the same anchor; `vfs/snapshots/read` then takes a
 workspace context), invoke-only bot grants and conversations private to their
-invoker, collection surfaces beyond creation and the Access panel, a plugin
+invoker, collection UI (including creation and management), a plugin
 acting under the invoker's authority or holding an internal execution context
 of its own, requester propagation to first-party MCP servers
 such as the Configurator, SSO and provisioning, personal event-driven

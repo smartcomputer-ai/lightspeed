@@ -154,7 +154,7 @@ function Wizard({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [step, setStep] = useState<Step>("job");
-  const [creationAccess, setCreationAccess] = useState(() => ({ ...defaultCreationAccess(), collectionId: new URLSearchParams(window.location.search).get("collection") ?? "" }));
+  const [creationAccess, setCreationAccess] = useState(defaultCreationAccess);
   const [templateId, setTemplateId] = useState("blank");
   // The last name a template suggested: a person's own name is never
   // overwritten, a suggestion is replaced by the next template's.

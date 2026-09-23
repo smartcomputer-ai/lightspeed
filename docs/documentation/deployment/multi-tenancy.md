@@ -143,11 +143,12 @@ audience is omitted from lists and appears absent on direct reads, including to
 administrators without an explicit private-content capability.
 
 For example, Acorn can keep routine release work visible to everyone while a
-restricted investigation collection holds two sessions and a bot. Sharing that
-collection makes the whole investigation available to a colleague who already
-belongs to Acorn. It does not give a Cedar member access, and it does not create
-a separate tenant: the investigation still uses Acorn's providers, credentials
-and shared infrastructure.
+restricted investigation session is shared with selected colleagues. API clients
+can also group sessions and bots in a collection; collection UI is deferred.
+Sharing that collection makes the whole investigation available to a colleague
+who already belongs to Acorn. It does not give a Cedar member access, and it does
+not create a separate tenant: the investigation still uses Acorn's providers,
+credentials and shared infrastructure.
 
 Audience and execution identity answer different questions. A root normally
 runs as Acorn's dedicated execution service, so shared work can survive a change

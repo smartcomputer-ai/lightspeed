@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -11,7 +11,7 @@ import type {
 import { ApiError } from "@/api";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { AccessButton } from "./access-dialog";
-import { CreationAccessFields, creationAccessInput } from "./creation";
+import { CreationAccessFields, creationAccessInput, defaultCreationAccess } from "./creation";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({
@@ -45,7 +45,7 @@ vi.mock("./shared", async (original) => {
     ),
   };
 });
-const rootResource: ResourceRef = { kind: "collection", id: "research" };
+const rootResource: ResourceRef = { kind: "bot", id: "research" };
 const child: ResourceRef = { kind: "session", id: "child" };
 let policy: AccessPolicyView;
 let actor: string;
@@ -151,16 +151,17 @@ function button(label: string) {
     (b) => b.textContent === label,
   );
 }
-it("shows inherited access to readers without offering sharing mutations", async () => {
+it.each(["bot", "session"] as const)("shows inherited %s access to readers without offering sharing mutations", async (kind) => {
+  policy.root = { kind, id: "research" };
   actor = "reader";
   writable = false;
   await show();
   expect(document.body.textContent).toContain(
-    "Shared through collection research",
+    `Shared through ${kind} research`,
   );
   expect(
     document.querySelector<HTMLAnchorElement>(
-      'a[href="/u/test/collections/research"]',
+      `a[href="/u/test/${kind === "bot" ? "bots" : "sessions"}/research"]`,
     ),
   ).not.toBeNull();
   expect(document.body.textContent).toContain("Running as universe service");
@@ -204,89 +205,58 @@ it("personal roots offer read-only sharing and no ownership transfer", async () 
   );
   expect(document.body.textContent).not.toContain("Transfer ownership");
 });
-it("collection creation inputs omit independent execution and grants", () => {
-  expect(
-    creationAccessInput({
-      collectionId: "team",
-      kind: "personal",
-      visibility: "restricted",
-    }),
-  ).toEqual({ access: { root: { kind: "collection", id: "team" } } });
-  expect(
-    creationAccessInput({
-      collectionId: "",
-      kind: "personal",
-      visibility: "restricted",
-    }),
-  ).toEqual({
-    access: { visibility: "restricted" },
-    execution: { kind: "personal" },
+it("edits a standalone session's own policy", async () => {
+  policy.root = child;
+  await show();
+  expect(document.body.textContent).not.toContain("Shared through");
+  await act(async () => button("readerAdd")!.click());
+  await act(async () => button("Save")!.click());
+  await settle();
+  const put = mocks.api.mock.calls.find(([method]) => method === "PUT");
+  expect(put?.[2].resource).toEqual(child);
+});
+
+it.each([
+  ["service", "universe"],
+  ["personal", "restricted"],
+] as const)("creates standalone %s work with its own audience", (kind, visibility) => {
+  expect(creationAccessInput({ kind, visibility })).toEqual({
+    access: { visibility },
+    execution: { kind },
   });
 });
 
-async function showCreation(collectionId = "") {
-  vi.useRealTimers();
-  mocks.api.mockImplementation(
-    async (
-      _method: string,
-      path: string,
-      body?: { resources?: ResourceRef[] },
-    ) => {
-      if (path.endsWith("/execution"))
-        return { policy: { personalExecutionEnabled: false } };
-      if (path.endsWith("/collections"))
-        return {
-          collections: [
-            {
-              collectionId: "team",
-              displayName: "Team research",
-              access: {
-                visibility: "restricted",
-                execution: { kind: "personal" },
-              },
-            },
-          ],
-        };
-      if (path.endsWith("/access"))
-        return {
-          actions: ["read"],
-          resources: (body?.resources ?? []).map((resource) => ({
-            resource,
-            actions: ["read", "control_session"],
-          })),
-        };
-      throw new Error(path);
-    },
-  );
+async function showCreation(personalExecutionEnabled = false) {
+  mocks.api.mockImplementation(async (_method: string, path: string) => {
+    if (path.endsWith("/execution"))
+      return { policy: { personalExecutionEnabled } };
+    throw new Error(path);
+  });
+  function CreationForm() {
+    const [value, onChange] = useState(defaultCreationAccess);
+    return (
+      <CreationAccessFields universeId="universe" value={value} onChange={onChange} />
+    );
+  }
   await act(async () =>
     root.render(
       <QueryClientProvider client={client}>
         <PermissionIdentityProvider userId={actor}>
           <MemoryRouter>
-            <CreationAccessFields
-              universeId="universe"
-              value={{ collectionId, kind: "service", visibility: "universe" }}
-              onChange={() => {}}
-            />
+            <CreationForm />
           </MemoryRouter>
         </PermissionIdentityProvider>
       </QueryClientProvider>,
     ),
   );
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  });
+  await settle();
 }
-it("shows collection inheritance without independent visibility or execution controls", async () => {
-  await showCreation("team");
-  expect(document.body.textContent).toContain(
-    "Access and execution come from Team research",
-  );
-  expect(document.body.textContent).toContain(
-    "Restricted access; runs as the collection owner",
-  );
-  expect(document.querySelector('[aria-label="Running as"]')).toBeNull();
-  expect(document.querySelector('[aria-label="Who can read"]')).toBeNull();
+it("offers direct access settings without collection discovery", async () => {
+  await showCreation();
+  expect(document.querySelector('[aria-label="Collection"]')).toBeNull();
+  expect(document.querySelector('[aria-label="Running as"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Who can read"]')).not.toBeNull();
+  expect(mocks.api.mock.calls.some(([, path]) => path.includes("/collections"))).toBe(false);
 });
 it("offers only universe service while personal execution is disabled", async () => {
   await showCreation();
@@ -295,4 +265,14 @@ it("offers only universe service while personal execution is disabled", async ()
   ].map((option) => option.textContent);
   expect(options).toContain("Universe service");
   expect(options).not.toContain("Me");
+});
+it("defaults personal execution to restricted access", async () => {
+  await showCreation(true);
+  const execution = document.querySelector<HTMLSelectElement>('[aria-label="Running as"]')!;
+  expect([...execution.options].map((option) => option.textContent)).toContain("Me");
+  await act(async () => {
+    execution.value = "personal";
+    execution.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(document.querySelector<HTMLSelectElement>('[aria-label="Who can read"]')!.value).toBe("restricted");
 });

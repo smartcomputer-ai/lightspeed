@@ -181,8 +181,9 @@ user UUID and keeps universe display/routing metadata. The
 groups, scoped roles and explicit capabilities. All interactive Platform calls
 assert their user through the service's `assert_user` capability; gateway and
 shared-service checks enforce that user's permissions and the resource's audience.
-A collection gives related sessions and bots one root policy. Its members and
-their delegated children inherit that policy and its execution identity. Work
+Standalone sessions and bots have their own root policies; bot conversations
+and delegated children inherit access and execution. The API also supports collections for
+sharing one policy across related sessions and bots; their UI is deferred. Work
 normally runs as a dedicated universe service; enabled personal work runs as its
 owner. The runtime checks that principal at run admission and before each model
 call, so the person requesting a run and the principal carrying it out are

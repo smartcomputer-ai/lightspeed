@@ -169,13 +169,15 @@ failed permission lookups leave mutation controls unavailable; previews are scop
 to the signed-in account and refreshed on focus, after mutations and periodically.
 The runtime still authorizes every operation independently.
 
-Sessions, bots and collections expose a shared **Access** dialog with visibility,
-people and group grants, ownership, and inherited-root links. Writers can share
-read access; owners can also grant control and transfer service-backed roots.
-Creation offers universe-service or enabled personal execution, plus collection
-membership that inherits access and execution. Collections use the same list and
-detail layout as bots. Personal execution is configured in universe settings;
-workspace and environment attachments retain their independent visibility.
+Sessions and bots expose a shared **Access** dialog with visibility, people and
+group grants, ownership, and links to the bot or parent session when access is
+inherited. Writers can share read access; owners can also grant control and
+transfer service-backed work. Creation offers universe-service or enabled
+personal execution and an audience for the new session or bot. Bot conversations
+and delegated sessions inherit access and execution. Collection APIs remain
+available, but collection creation and management are deferred in the web app.
+Personal execution is configured in universe settings; workspace and environment
+attachments retain their independent visibility.
 Content reads name the session or resolve a file through its workspace path.
 Member role editing has a separate private-content capability control for people.
 Successful reads that use it carry a runtime response marker through Platform;

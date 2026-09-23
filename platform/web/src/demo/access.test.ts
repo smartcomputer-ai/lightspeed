@@ -66,11 +66,11 @@ it("creates a collection and session, shares the root, and prevents stale saves 
   ).toBe(400);
 });
 
-it("exposes the bot's collection policy separately from its configuration", async () => {
+it("exposes the bot's own policy and inherits it in its conversations", async () => {
   const app = createDemoRouter(createDemoStore());
   const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
   const bot = await (await app.request(`${base}/bots/implementer`)).json();
-  expect(bot.access.root).toEqual({ kind: "collection", id: "delivery" });
+  expect(bot.access.root).toEqual({ kind: "bot", id: "implementer" });
   const session = await (
     await app.request(`${base}/sessions/bot:v1:implementer`)
   ).json();
@@ -83,7 +83,7 @@ it("models privileged reads separately from ordinary reads and sharing", async (
   const app = createDemoRouter(store);
   const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
   const policy = accessState(universe).policies.get(
-    "collection:investigations",
+    "session:session-flaky-scheduler",
   )!;
   policy.owner = "another-person";
   const member = universe.members.find(
@@ -95,20 +95,20 @@ it("models privileged reads separately from ordinary reads and sharing", async (
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enabled }),
     });
-  expect((await app.request(`${base}/collections/investigations`)).status).toBe(
+  expect((await app.request(`${base}/sessions/session-flaky-scheduler`)).status).toBe(
     404,
   );
   expect((await grant(true)).status).toBe(200);
-  const restricted = await app.request(`${base}/collections/investigations`);
+  const restricted = await app.request(`${base}/sessions/session-flaky-scheduler`);
   expect(restricted.status).toBe(200);
   expect(restricted.headers.get("x-lightspeed-privileged-read")).toBe("true");
   expect(
-    (await app.request(`${base}/collections`)).headers.get(
+    (await app.request(`${base}/sessions`)).headers.get(
       "x-lightspeed-privileged-read",
     ),
   ).toBe("true");
   expect(
-    (await app.request(`${base}/collections/delivery`)).headers.has(
+    (await app.request(`${base}/bots/implementer`)).headers.has(
       "x-lightspeed-privileged-read",
     ),
   ).toBe(false);
@@ -124,7 +124,18 @@ it("models privileged reads separately from ordinary reads and sharing", async (
   });
   expect(change.status).toBe(403);
   expect((await grant(false)).status).toBe(200);
-  expect((await app.request(`${base}/collections/investigations`)).status).toBe(
+  expect((await app.request(`${base}/sessions/session-flaky-scheduler`)).status).toBe(
     404,
   );
+});
+
+it("seeds standalone work without collections", () => {
+  const store = createDemoStore();
+  const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+  expect(accessState(universe).collections.size).toBe(0);
+  expect([...accessState(universe).roots.values()].some((root) => root.kind === "collection")).toBe(false);
+  const personal = accessState(universe).policies.get("session:session-flaky-scheduler")!;
+  expect(personal.root).toEqual({ kind: "session", id: "session-flaky-scheduler" });
+  expect(personal.visibility).toBe("restricted");
+  expect(personal.execution).toEqual({ kind: "personal", runAs: store.currentUser.id });
 });

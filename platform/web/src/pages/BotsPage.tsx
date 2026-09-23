@@ -47,7 +47,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
   const setCreateOpen = (open: boolean) => {
     const next = new URLSearchParams(searchParams);
     if (open) next.set("new", "bot");
-    else { next.delete("new"); next.delete("collection"); }
+    else next.delete("new");
     setSearchParams(next, { replace: !open });
   };
   return (

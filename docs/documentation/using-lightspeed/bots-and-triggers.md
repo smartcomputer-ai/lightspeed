@@ -79,12 +79,11 @@ event admission as **Send a test event**.
 
 A bot and its conversations share one audience. The creation form offers
 **Who can read** and **Running as** alongside the job settings. New bots normally
-run as the universe service. Choosing a collection inherits its audience and
+run as the universe service. Their conversations inherit the bot's audience and
 execution identity, so new conversations remain part of the same shared work.
 
-Use **Access** in the bot header to inspect or change that audience. The dialog
-shows whether the bot has its own root or belongs to a collection. Sharing a
-collection applies to all of its sessions and bots. A colleague with read access
+Use **Access** in the bot header to inspect or change that audience. Sharing the
+bot applies to its conversations as well. A colleague with read access
 can inspect the work; invocation and management still follow the bot's role and
 grant rules. Trigger secrets remain visible only to managers.
 
