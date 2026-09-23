@@ -774,9 +774,16 @@ automation, source-imposed audience limits, audit retention and export, a
 two-person rule or UI flow for privileged access, and effect-time checks inside
 adapters.
 
-After this slice the parent sequence continues with resource restrictions and
-delegation enforcement, then SSO and provisioning, whose offboarding must govern
-API keys and the standing bot and collection authority defined here.
+The next slice is [resource access and session authority](p178-resource-access-and-session-authority.md).
+It gives workspaces, environments and MCP servers policy rows with one `use`
+grant, moves agent identities from Contributor to a system Executor role, and
+extends this slice's per-turn checks to attached resources; adapters still check
+nothing. It also removes collections (step 2 above), whose UI was already taken
+out on 2026-09-23 and which nothing can reach; the `audience_root` mechanism
+stays for delegated children and bot sessions. Additional execution identities
+and general `run_as` grants remain later work. The parent sequence then continues
+toward SSO and provisioning, whose offboarding must govern API keys and the
+standing bot authority defined here.
 
 Current seams: [authorization service](../../crates/temporal-server/src/gateway/service/authorization.rs),
 [resource store](../../crates/store-pg/src/resources.rs),

@@ -118,9 +118,10 @@ Creating a narrower persona therefore costs one row, not a new concept, and
 "why may this session use X" is always one lookup: which principal, which
 grants.
 
-Start with one universe execution service per universe, a keyless service
-principal holding Contributor, which every Contributor and Operator may run as
-by default. Individual resource policies are exceptions, not mandatory setup.
+Start with one universe execution service per universe: a keyless service
+principal holding the system Executor role (see and use, nothing else, so that
+agent authority is not coupled to a role written for people), which every
+Contributor and Operator may run as by default. Individual resource policies are exceptions, not mandatory setup.
 Sharing group membership does not itself grant permission to act as another
 principal. Further service principals are created when distinct authority
 boundaries are needed (research versus release, development versus production
@@ -289,8 +290,13 @@ Important boundaries:
    private/shared sessions and their content together with one complete
    authorized execution path: a stable execution identity per session and
    bounded run authority.
-3. Extend resource restrictions and execution/delegation enforcement across tools,
-   environments, bots, and background work.
+3. [Resource access and session authority](../p178-resource-access-and-session-authority.md):
+   the version 0.1 boundary. Policy rows and one `use` grant for workspaces,
+   environments and MCP servers, the Executor role for agent identities,
+   attachment admission against the execution identity, and per-turn
+   revocation extended to attached resources. Keeps the default and personal
+   execution choices; additional execution identities, general `run_as`
+   grants and model connections as a kind remain later work.
 4. Connect SSO and provisioning to the same identity and membership lifecycle;
    offboarding must also govern API keys and delegated work.
 
@@ -304,9 +310,9 @@ Product surfaces should make this understandable: an **Access** panel,
 - For later personal event automation, how do we distinguish task inputs from
   another person's control requests?
 - Are access policies and groups sufficient initially, or is a project-level
-  collaboration scope needed? The second slice introduces collections: a
-  minimal root that gives sessions and bots one audience and one execution
-  identity.
+  collaboration scope needed? The second slice built collections, a minimal
+  shared root, and the third removes them again: nothing in the product needed
+  one yet, and a project scope will be designed when something does.
 - How do external directory changes reach core, and when is offboarding
   considered complete?
 - How is the separate private-content access permission assigned and exercised,
