@@ -26,8 +26,8 @@ const ROLE_ACTIONS: Record<string, UniverseAction[]> = {
   operator: ["read", "create_session", "create_profile", "create_bot", "create_workspace", "use_resource", "configure_resource"],
   admin: ["read", "create_session", "create_profile", "create_bot", "create_workspace", "use_resource", "configure_resource", "manage_access"],
 };
-const WORK = ["Bots", "Sessions", "Profiles"];
-const RESOURCES = ["Models", "Workspaces", "Environments", "MCP servers"];
+const WORK = ["Bots", "Sessions", "Profiles", "Workspaces"];
+const RESOURCES = ["Environments", "MCP servers"];
 
 let root: Root;
 let container: HTMLDivElement;
@@ -78,7 +78,7 @@ it.each(["viewer", "contributor"])("shows a %s the work, resources and readable 
   expect(await sidebarFor(role)).toEqual({
     "": WORK,
     Resources: RESOURCES,
-    Access: ["Members", "API keys"],
+    Access: ["Models", "API keys", "Members"],
   });
 });
 
@@ -86,7 +86,7 @@ it("adds credentials, channels and templates for an Operator", async () => {
   expect(await sidebarFor("operator")).toEqual({
     "": WORK,
     Resources: RESOURCES,
-    Access: ["Members", "API keys", "Credentials"],
+    Access: ["Models", "Credentials", "API keys", "Members"],
     Settings: ["Channels", "Templates"],
   });
 });
@@ -95,7 +95,7 @@ it("adds general settings for an Admin", async () => {
   expect(await sidebarFor("admin")).toEqual({
     "": WORK,
     Resources: RESOURCES,
-    Access: ["Members", "API keys", "Credentials"],
+    Access: ["Models", "Credentials", "API keys", "Members"],
     Settings: ["General", "Channels", "Templates"],
   });
 });
@@ -103,9 +103,9 @@ it("adds general settings for an Admin", async () => {
 it("links each page at its flat route", async () => {
   await sidebarFor("admin");
   expect([...container.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
-    "/u/test/bots", "/u/test/sessions", "/u/test/profiles",
-    "/u/test/models", "/u/test/workspaces", "/u/test/environments", "/u/test/mcp-servers",
-    "/u/test/members", "/u/test/api-keys", "/u/test/credentials",
+    "/u/test/bots", "/u/test/sessions", "/u/test/profiles", "/u/test/workspaces",
+    "/u/test/environments", "/u/test/mcp-servers",
+    "/u/test/models", "/u/test/credentials", "/u/test/api-keys", "/u/test/members",
     "/u/test/settings/general", "/u/test/settings/channels", "/u/test/settings/templates",
   ]);
 });

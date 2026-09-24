@@ -189,9 +189,9 @@ names, roles and the kind of member, including the execution identity, which
 holds the system `executor` role and never gets a key. Emails, account links and
 the private-content capability are shown to Admins only.
 
-The universe sidebar groups the work (Bots, Sessions, Profiles), **Resources**
-agents use (Models, Workspaces, Environments, MCP servers), **Access** (Members,
-API keys, Credentials) and the universe's **Settings** (General, Channels,
+The universe sidebar groups the work (Bots, Sessions, Profiles, Workspaces),
+**Resources** agents use (Environments, MCP servers), **Access** (Models,
+Credentials, API keys, Members) and the universe's **Settings** (General, Channels,
 Templates) at flat `/u/:slug/...` routes; bare `/u/:slug/settings` opens the
 first settings page the caller may see. Models holds model provider keys,
 compatible endpoints and coding-agent subscriptions. Credentials lists reusable
@@ -200,7 +200,8 @@ model and MCP server logins stay on their own pages, while credential pickers
 still offer every grant. Credentials, Channels and Templates are for Operators
 and Admins; General is for Admins.
 Content reads name the session or resolve a file through its workspace path.
-Member role editing has a separate private-content capability control for people.
+The private-content capability is assigned through the runtime identity API, not the web app;
+the Members list shows Admins who holds it.
 Successful reads that use it carry a runtime response marker through Platform;
 list, detail and transcript views show **Privileged read** only for those reads.
 Ordinary reads by capability holders remain unmarked.
@@ -262,6 +263,9 @@ Development defaults use `admin@lightspeed.dev` and
 `lightspeed-dev-password`. Override them with
 `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`.
 These defaults are local-only and must never be used in a deployed environment.
+The default full launcher also seeds a Test universe with Operator, Contributor,
+and Viewer logins using the same initial password; see
+[development logins](../docs/documentation/development/local-development.md#development-logins).
 
 The server accepts the following primary configuration names:
 

@@ -94,7 +94,8 @@ describe("OpenAI processing tier config", () => {
       models: [model],
     }));
 
-    expect(html).toContain("Model run controls");
+    expect(html).toContain('aria-label="Customize model run controls"');
+    expect(html).toContain("Default run controls");
     expect(html).not.toContain("Processing tier");
   });
 
@@ -248,13 +249,24 @@ describe("environment feature config", () => {
 
   it("keeps Model run controls collapsed when optional settings already exist", () => {
     const html = renderToString(createElement(SessionConfigEditor, {
-      value: { generation: { parallelToolUse: true } },
+      value: { generation: { parallelToolUse: true, reasoningEffort: "high" }, limits: { maxTurns: 4, maxToolRounds: 8 } },
       onChange: () => {},
     }));
 
-    expect(html).toContain("Model run controls");
+    expect(html).toContain('aria-label="Customize model run controls"');
+    expect(html).toContain("1 generation setting · 2 run limits");
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("Run limits");
+  });
+
+  it("opens Model run controls on its own while a specific tool choice lacks its id", () => {
+    const html = renderToString(createElement(SessionConfigEditor, {
+      value: { generation: { toolChoice: { type: "specific", toolId: "" } } },
+      onChange: () => {},
+    }));
+
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("Tool ID");
   });
 
   it("renders features in task-oriented order and keeps Timers non-expandable", () => {

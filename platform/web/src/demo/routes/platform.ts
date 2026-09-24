@@ -162,18 +162,6 @@ export function platformRoutes(store: DemoStore): Hono {
     return c.json(created, 201);
   });
 
-  app.put("/universes/:id/members/:memberId/private-content-access", async (c) => {
-    const state = universeFor(store, c);
-    if (!state) return notFound(c);
-    if (state.universe.role !== "admin") return c.json({ error: "Admin required" }, 403);
-    const member = state.members.find((m) => m.id === c.req.param("memberId"));
-    if (!member) return notFound(c);
-    const body = await readBody<{ enabled: boolean }>(c);
-    if (member.email === "Group" || typeof body.enabled !== "boolean") return badRequest(c, "A person and an enabled value are required");
-    member.readPrivateContent = body.enabled;
-    return c.json({ enabled: body.enabled });
-  });
-
   app.patch("/universes/:id/members/:memberId", async (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);

@@ -11,7 +11,7 @@ import type {
 import { ApiError } from "@/api";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { AccessButton } from "./access-dialog";
-import { CreationAccessFields, creationAccessInput, defaultCreationAccess } from "./creation";
+import { CreationAccessSummary, creationAccessInput, defaultCreationAccess } from "./creation";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({
@@ -322,6 +322,55 @@ it("never offers the default agent identity as a session grantee", async () => {
   expect(button("Default agent identityAdd")).toBeFalsy();
 });
 
+async function chooseVisibility(label: string, value: string) {
+  const select = document.querySelector<HTMLSelectElement>(`[aria-label="${label}"]`)!;
+  await act(async () => {
+    select.value = value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+function putBody() {
+  return mocks.api.mock.calls.find(([method]) => method === "PUT")?.[2];
+}
+it("lists nobody on a universe-visible resource but keeps its grants", async () => {
+  operational("workspace");
+  await show();
+  await chooseVisibility("Who can use", "universe");
+  expect(document.body.textContent).toContain("Everyone in the universe can use this.");
+  expect(document.querySelector("#share-search")).toBeNull();
+  expect(document.querySelector('[aria-label="Remove writer"]')).toBeNull();
+  await act(async () => button("Save")!.click());
+  await settle();
+  expect(putBody()).toMatchObject({
+    visibility: "universe",
+    grants: [{ subject: { kind: "principal", id: "writer" }, permission: "use" }],
+  });
+});
+it("lets the owner of a universe-visible session add people to control it", async () => {
+  policy.root = child;
+  policy.visibility = "universe";
+  await show();
+  expect(document.body.textContent).toContain(
+    "Everyone in the universe can already read this. Add people who should also be able to control it.",
+  );
+  await act(async () => button("readerAdd")!.click());
+  await act(async () => button("Save")!.click());
+  await settle();
+  expect(putBody()?.grants).toContainEqual({
+    subject: { kind: "principal", id: "reader" },
+    permission: "write",
+  });
+});
+it("offers a writer nothing to add on a universe-visible session", async () => {
+  policy.root = child;
+  policy.visibility = "universe";
+  actor = "writer";
+  await show();
+  expect(document.body.textContent).toContain("Everyone in the universe can already read this.");
+  expect(document.body.textContent).not.toContain("Add people who should also");
+  expect(document.querySelector("#share-search")).toBeNull();
+});
+
 it.each([
   ["service", "universe"],
   ["personal", "restricted"],
@@ -341,7 +390,7 @@ async function showCreation(personalExecutionEnabled = false) {
   function CreationForm() {
     const [value, onChange] = useState(defaultCreationAccess);
     return (
-      <CreationAccessFields universeId="universe" value={value} onChange={onChange} />
+      <CreationAccessSummary audience="read" universeId="universe" value={value} onChange={onChange} />
     );
   }
   await act(async () =>
@@ -357,26 +406,62 @@ async function showCreation(personalExecutionEnabled = false) {
   );
   await settle();
 }
-it("offers direct access settings for a new root", async () => {
+async function changeAccess() {
+  const change = document.querySelector<HTMLButtonElement>(
+    '[aria-label="Change access and identity"]',
+  )!;
+  expect(change.textContent).toBe("Change");
+  await act(async () => change.click());
+}
+it("summarizes a new root's default access and identity in one closed line", async () => {
   await showCreation();
-  expect(document.querySelector('[aria-label="Running as"]')).not.toBeNull();
+  expect(container.textContent).toBe(
+    "Universe members can read it · Runs as Default agent identity·Change",
+  );
+  expect(document.querySelector('[aria-label="Running as"]')).toBeNull();
+  expect(document.querySelector('[aria-label="Who can read"]')).toBeNull();
+  await changeAccess();
   expect(document.querySelector('[aria-label="Who can read"]')).not.toBeNull();
 });
-it("offers only the default agent identity while personal execution is disabled", async () => {
+it("shows the default agent identity as text while personal execution is disabled", async () => {
   await showCreation();
-  const options = [
-    ...document.querySelectorAll('[aria-label="Running as"] option'),
-  ].map((option) => option.textContent);
-  expect(options).toContain("Default agent identity");
-  expect(options).not.toContain("Me");
+  await changeAccess();
+  expect(document.querySelector('[aria-label="Running as"]')).toBeNull();
+  expect(container.textContent).toContain("Running asDefault agent identity");
 });
 it("defaults personal execution to restricted access", async () => {
   await showCreation(true);
+  await changeAccess();
   const execution = document.querySelector<HTMLSelectElement>('[aria-label="Running as"]')!;
-  expect([...execution.options].map((option) => option.textContent)).toContain("Me");
+  expect([...execution.options].map((option) => option.textContent)).toEqual([
+    "Default agent identity",
+    "Me",
+  ]);
   await act(async () => {
     execution.value = "personal";
     execution.dispatchEvent(new Event("change", { bubbles: true }));
   });
   expect(document.querySelector<HTMLSelectElement>('[aria-label="Who can read"]')!.value).toBe("restricted");
+  expect(container.textContent).toContain(
+    "Only you and people you share with can read it · Runs as you·Hide",
+  );
+});
+it("summarizes who can use a new workspace, environment or MCP server", async () => {
+  function UseForm() {
+    const [value, onChange] = useState<"universe" | "restricted">("universe");
+    return <CreationAccessSummary audience="use" value={value} onChange={onChange} />;
+  }
+  await act(async () => root.render(<UseForm />));
+  expect(container.textContent).toBe("Universe members can use it·Change");
+  await act(async () =>
+    document.querySelector<HTMLButtonElement>('[aria-label="Change who can use it"]')!.click(),
+  );
+  const visibility = document.querySelector<HTMLSelectElement>('[aria-label="Who can use"]')!;
+  await act(async () => {
+    visibility.value = "restricted";
+    visibility.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(container.textContent).toContain(
+    "Only you and people you share with can use it·Hide",
+  );
 });

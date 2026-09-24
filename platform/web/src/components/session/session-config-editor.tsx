@@ -10,7 +10,6 @@ import {
   Network,
   Plus,
   Server,
-  SlidersHorizontal,
   Tags,
   Trash2,
   Wrench,
@@ -39,6 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SettingsDisclosure, SettingsGroup } from "@/components/ui/settings-disclosure";
 import { Switch } from "@/components/ui/switch";
 import { supportsOpenAiProcessingTier } from "@/lib/sessions/run-options";
 import { cn } from "@/lib/utils";
@@ -424,13 +424,12 @@ export function configError(config: SessionConfig | undefined, pinnedApiKind?: s
     const roots = stringList(source.roots);
     if (!roots.length) return `${label} root overrides must not be empty; clear the override to use defaults.`;
     const attachments = workspaceAttachmentsFromConfig(config);
-    if (roots.some((root) => !isCanonicalAbsolutePath(root)
-      || !attachments.some((attachment) => attachment.path === "/" || root === attachment.path || root.startsWith(`${attachment.path}/`)))) {
+    if (roots.some((root) => !isCanonicalAbsolutePath(root) || !insideWorkspaceAttachment(root, attachments))) {
       return `${label} roots must be absolute paths inside workspace attachments.`;
     }
   }
   const vfsCwd = string(vfs.workingDirectory);
-  if (vfsCwd && (!isCanonicalAbsolutePath(vfsCwd) || (vfsCwd !== "/" && !workspaceAttachmentsFromConfig(config).some((attachment) => attachment.path === "/" || vfsCwd === attachment.path || vfsCwd.startsWith(`${attachment.path}/`))))) {
+  if (vfsCwd && (!isCanonicalAbsolutePath(vfsCwd) || (vfsCwd !== "/" && !insideWorkspaceAttachment(vfsCwd, workspaceAttachmentsFromConfig(config))))) {
     return "VFS working directory must be / or an absolute path inside a workspace attachment.";
   }
   const environment = record(features.environments);
@@ -501,6 +500,10 @@ export function mcpAttachmentError(config: unknown, servers: McpServerOption[]):
     }
   }
   return null;
+}
+
+function insideWorkspaceAttachment(path: string, attachments: WorkspaceAttachmentDraft[]): boolean {
+  return attachments.some((attachment) => attachment.path === "/" || path === attachment.path || path.startsWith(`${attachment.path}/`));
 }
 
 function isCanonicalAbsolutePath(path: string): boolean {
@@ -1049,19 +1052,47 @@ function ModelCapabilities({ option }: { option: ModelOption }) {
   );
 }
 
+const compactionModeLabels: Record<string, string> = {
+  disabled: "disabled",
+  providerTriggered: "provider triggered",
+  providerStandalone: "provider standalone",
+};
+
+/** Names each customized model run control; empty when all are defaults. */
+function runControlsSummary(config: SessionConfig): string[] {
+  // Reasoning effort is generation config too, but it is edited beside the model.
+  const generation = Object.keys(record(config.generation))
+    .filter((key) => key !== "reasoningEffort").length;
+  const limits = Object.keys(record(config.limits)).length;
+  const mode = string(record(record(config.context).compaction).mode);
+  return [
+    generation > 0 && `${generation} generation ${generation === 1 ? "setting" : "settings"}`,
+    limits > 0 && `${limits} run ${limits === 1 ? "limit" : "limits"}`,
+    mode && `compaction ${compactionModeLabels[mode] ?? mode}`,
+  ].filter((part): part is string => Boolean(part));
+}
+
 function AdvancedFields({ config, change }: { config: RecordValue; change: (fn: (next: RecordValue) => void) => void }) {
+  const parts = runControlsSummary(config);
+  const toolChoice = record(record(config.generation).toolChoice);
   return (
-    <ExpandableSetupPanel
-      title="Model run controls"
-      description="Optional generation controls, run limits, and context compaction."
-      icon={SlidersHorizontal}
+    <SettingsDisclosure
+      summary={parts.length ? parts.join(" · ") : "Default run controls"}
+      action="Customize run controls"
+      label="Customize model run controls"
+      forceOpen={toolChoice.type === "specific" && !string(toolChoice.toolId)}
+      contentClassName="gap-6"
     >
-      <div className="grid gap-5">
+      <SettingsGroup title="Generation" description="Defaults applied to every run.">
         <GenerationFields config={config} change={change} />
+      </SettingsGroup>
+      <SettingsGroup title="Run limits" description="Leave unset to use the engine budget.">
         <LimitsFields config={config} change={change} />
+      </SettingsGroup>
+      <SettingsGroup title="Context compaction" description="Control how long sessions compact prior context.">
         <ContextFields config={config} change={change} />
-      </div>
-    </ExpandableSetupPanel>
+      </SettingsGroup>
+    </SettingsDisclosure>
   );
 }
 
@@ -1078,81 +1109,78 @@ function GenerationFields({ config, change }: { config: RecordValue; change: (fn
   const toolChoice = record(generation.toolChoice);
   const toolChoiceType = string(toolChoice.type) || "default";
   return (
-    <div className="grid gap-3 border-b pb-5">
-      <div><p className="text-sm font-medium">Generation</p><p className="text-xs text-muted-foreground">Defaults applied to every run.</p></div>
-      <div className="grid gap-3 sm:grid-cols-2">
-          <Field>
-            <FieldLabel>Max output tokens</FieldLabel>
-            <Input
-              type="number"
-              min="0"
-              value={numberString(generation.maxOutputTokens)}
-              onChange={(e) => update("maxOutputTokens", parseNumber(e.target.value))}
-              placeholder="Provider default"
-            />
-          </Field>
-          <Field>
-            <FieldLabel>Parallel tool use</FieldLabel>
-            <Select value={parallel} onValueChange={(value) => update("parallelToolUse", value === "default" ? undefined : value === "true")}>
-              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="default">Provider default</SelectItem>
-                <SelectItem value="true">Allow</SelectItem>
-                <SelectItem value="false">Disallow</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          {supportsProcessingTier && (
-            <Field>
-              <FieldLabel>Processing tier</FieldLabel>
-              <Select
-                value={processingTier}
-                onValueChange={(value) => update(
-                  "processingTier",
-                  value === "providerDefault" ? undefined : value,
-                )}
-              >
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="providerDefault">Provider default</SelectItem>
-                  <SelectItem value="standard">Standard</SelectItem>
-                  <SelectItem value="fast">Fast</SelectItem>
-                  <SelectItem value="flex">Flex</SelectItem>
-                </SelectContent>
-              </Select>
-              <FieldDescription className="text-xs">
-                Applied to every run. Fast prioritizes latency; Flex uses lower-priority processing.
-              </FieldDescription>
-            </Field>
-          )}
-          <Field>
-            <FieldLabel>Tool choice</FieldLabel>
-            <Select value={toolChoiceType} onValueChange={(value) => update("toolChoice", value === "default" ? undefined : { type: value })}>
-              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="default">Provider default</SelectItem>
-                <SelectItem value="auto">Auto</SelectItem>
-                <SelectItem value="none">None</SelectItem>
-                <SelectItem value="requiredAny">Require a tool</SelectItem>
-                <SelectItem value="specific">Specific tool</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          {toolChoiceType === "specific" && (
-            <Field className="sm:col-span-2">
-              <FieldLabel>Tool ID</FieldLabel>
-              <Input
-                value={string(toolChoice.toolId)}
-                onChange={(e) => update("toolChoice", { type: "specific", toolId: e.target.value })}
-                placeholder="env.run_process"
-              />
-              <FieldDescription className="text-xs">
-                Use the enabled tool's registry ID, such as env.run_process or vfs.read_file.
-                Builtin tool names are resolved for the selected model. For custom functions, use the function name.
-              </FieldDescription>
-            </Field>
-          )}
-      </div>
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Field>
+        <FieldLabel>Max output tokens</FieldLabel>
+        <Input
+          type="number"
+          min="0"
+          value={numberString(generation.maxOutputTokens)}
+          onChange={(e) => update("maxOutputTokens", parseNumber(e.target.value))}
+          placeholder="Provider default"
+        />
+      </Field>
+      <Field>
+        <FieldLabel>Parallel tool use</FieldLabel>
+        <Select value={parallel} onValueChange={(value) => update("parallelToolUse", value === "default" ? undefined : value === "true")}>
+          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="default">Provider default</SelectItem>
+            <SelectItem value="true">Allow</SelectItem>
+            <SelectItem value="false">Disallow</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+      {supportsProcessingTier && (
+        <Field>
+          <FieldLabel>Processing tier</FieldLabel>
+          <Select
+            value={processingTier}
+            onValueChange={(value) => update(
+              "processingTier",
+              value === "providerDefault" ? undefined : value,
+            )}
+          >
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="providerDefault">Provider default</SelectItem>
+              <SelectItem value="standard">Standard</SelectItem>
+              <SelectItem value="fast">Fast</SelectItem>
+              <SelectItem value="flex">Flex</SelectItem>
+            </SelectContent>
+          </Select>
+          <FieldDescription className="text-xs">
+            Applied to every run. Fast prioritizes latency; Flex uses lower-priority processing.
+          </FieldDescription>
+        </Field>
+      )}
+      <Field>
+        <FieldLabel>Tool choice</FieldLabel>
+        <Select value={toolChoiceType} onValueChange={(value) => update("toolChoice", value === "default" ? undefined : { type: value })}>
+          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="default">Provider default</SelectItem>
+            <SelectItem value="auto">Auto</SelectItem>
+            <SelectItem value="none">None</SelectItem>
+            <SelectItem value="requiredAny">Require a tool</SelectItem>
+            <SelectItem value="specific">Specific tool</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+      {toolChoiceType === "specific" && (
+        <Field className="sm:col-span-2">
+          <FieldLabel>Tool ID</FieldLabel>
+          <Input
+            value={string(toolChoice.toolId)}
+            onChange={(e) => update("toolChoice", { type: "specific", toolId: e.target.value })}
+            placeholder="env.run_process"
+          />
+          <FieldDescription className="text-xs">
+            Use the enabled tool's registry ID, such as env.run_process or vfs.read_file.
+            Builtin tool names are resolved for the selected model. For custom functions, use the function name.
+          </FieldDescription>
+        </Field>
+      )}
     </div>
   );
 }
@@ -1165,7 +1193,7 @@ function LimitsFields({ config, change }: { config: RecordValue; change: (fn: (n
     if (number === undefined) delete item[key]; else item[key] = number;
     if (Object.keys(item).length) next.limits = item; else delete next.limits;
   });
-  return <div className="grid gap-3 border-b pb-5"><div><p className="text-sm font-medium">Run limits</p><p className="text-xs text-muted-foreground">Leave unset to use the engine budget.</p></div><div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Max turns</FieldLabel><Input type="number" min="0" value={numberString(limits.maxTurns)} onChange={(e) => update("maxTurns", e.target.value)} /></Field><Field><FieldLabel>Max tool rounds</FieldLabel><Input type="number" min="0" value={numberString(limits.maxToolRounds)} onChange={(e) => update("maxToolRounds", e.target.value)} /></Field></div></div>;
+  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Max turns</FieldLabel><Input type="number" min="0" value={numberString(limits.maxTurns)} onChange={(e) => update("maxTurns", e.target.value)} /></Field><Field><FieldLabel>Max tool rounds</FieldLabel><Input type="number" min="0" value={numberString(limits.maxToolRounds)} onChange={(e) => update("maxToolRounds", e.target.value)} /></Field></div>;
 }
 
 function ContextFields({ config, change }: { config: RecordValue; change: (fn: (next: RecordValue) => void) => void }) {
@@ -1179,7 +1207,7 @@ function ContextFields({ config, change }: { config: RecordValue; change: (fn: (
     if (Object.keys(compact).length) context.compaction = compact; else delete context.compaction;
     if (Object.keys(context).length) next.context = context; else delete next.context;
   });
-  return <div className="grid gap-3"><div><p className="text-sm font-medium">Context compaction</p><p className="text-xs text-muted-foreground">Control how long sessions compact prior context.</p></div><div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Mode</FieldLabel><Select value={mode} onValueChange={(value) => update("mode", value === "default" ? undefined : value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">Engine default</SelectItem><SelectItem value="disabled">Disabled</SelectItem><SelectItem value="providerTriggered">Provider triggered</SelectItem><SelectItem value="providerStandalone">Provider standalone</SelectItem></SelectContent></Select></Field>{mode === "providerTriggered" || mode === "providerStandalone" ? <Field><FieldLabel>Compact threshold tokens</FieldLabel><Input type="number" min="0" value={numberString(compaction.compactThresholdTokens)} onChange={(e) => update("compactThresholdTokens", parseNumber(e.target.value))} /></Field> : null}{mode === "providerStandalone" ? <Field><FieldLabel>Target tokens</FieldLabel><Input type="number" min="0" value={numberString(compaction.targetTokens)} onChange={(e) => update("targetTokens", parseNumber(e.target.value))} /></Field> : null}</div></div>;
+  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Mode</FieldLabel><Select value={mode} onValueChange={(value) => update("mode", value === "default" ? undefined : value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">Engine default</SelectItem><SelectItem value="disabled">Disabled</SelectItem><SelectItem value="providerTriggered">Provider triggered</SelectItem><SelectItem value="providerStandalone">Provider standalone</SelectItem></SelectContent></Select></Field>{mode === "providerTriggered" || mode === "providerStandalone" ? <Field><FieldLabel>Compact threshold tokens</FieldLabel><Input type="number" min="0" value={numberString(compaction.compactThresholdTokens)} onChange={(e) => update("compactThresholdTokens", parseNumber(e.target.value))} /></Field> : null}{mode === "providerStandalone" ? <Field><FieldLabel>Target tokens</FieldLabel><Input type="number" min="0" value={numberString(compaction.targetTokens)} onChange={(e) => update("targetTokens", parseNumber(e.target.value))} /></Field> : null}</div>;
 }
 
 function FeaturePanel({
@@ -1458,13 +1486,11 @@ function WebFields({
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
   const id = useId();
-  const [open, setOpen] = useState(false);
   const search = record(feature.search);
   const allowedCount = stringList(search.allowedDomains).length;
   const blockedCount = stringList(search.blockedDomains).length;
   const fetchEnabled = "fetch" in feature;
   const searchEnabled = "search" in feature;
-  useEffect(() => { if (!searchEnabled) setOpen(false); }, [searchEnabled]);
   const exclusiveDomainFilters = apiKind === "anthropic:messages";
   const setSubfeature = (name: "fetch" | "search", enabled: boolean) => patch((next) => {
     if (enabled) next[name] = {};
@@ -1480,60 +1506,57 @@ function WebFields({
         <Label className="gap-2 font-normal"><Checkbox checked={searchEnabled} onCheckedChange={(checked) => setSubfeature("search", checked === true)} />Search the web</Label>
       </div>
       {searchEnabled && (
-        <button
-          type="button"
-          aria-label="Customize search domains"
-          aria-expanded={open}
-          aria-controls={`${id}-domains`}
-          onClick={() => setOpen((value) => !value)}
-          className="w-fit cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+        <SettingsDisclosure
+          summary={allowedCount > 0 || blockedCount > 0
+            ? [allowedCount > 0 && `${allowedCount} allowed`, blockedCount > 0 && `${blockedCount} blocked`].filter(Boolean).join(", ")
+            : "All domains"}
+          action="Customize domains"
+          label="Customize search domains"
+          forceOpen={exclusiveDomainFilters && allowedCount > 0 && blockedCount > 0}
+          contentClassName="gap-3"
         >
-          {(allowedCount > 0 || blockedCount > 0) && <>{[allowedCount > 0 && `${allowedCount} allowed`, blockedCount > 0 && `${blockedCount} blocked`].filter(Boolean).join(", ")} · </>}
-          {open ? "Hide domains" : "Customize domains"}
-        </button>
-      )}
-      {searchEnabled && open && (
-        <div id={`${id}-domains`} className="grid gap-3 sm:grid-cols-2">
-          <Field>
-            <FieldLabel htmlFor={`${id}-allowed`}>Allowed domains</FieldLabel>
-            <Input
-              id={`${id}-allowed`}
-              value={commaList(search.allowedDomains)}
-              onChange={(e) => patch((next) => {
-                const domains = listFromInput(e.target.value);
-                const item = record(next.search);
-                if (domains.length) item.allowedDomains = domains;
-                else delete item.allowedDomains;
-                if (exclusiveDomainFilters && domains.length) delete item.blockedDomains;
-                next.search = item;
-              })}
-              placeholder="All domains"
-            />
-            <FieldDescription className="text-xs">Comma-separated domains. Empty allows all.</FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`${id}-blocked`}>Blocked domains</FieldLabel>
-            <Input
-              id={`${id}-blocked`}
-              value={commaList(search.blockedDomains)}
-              onChange={(e) => patch((next) => {
-                const domains = listFromInput(e.target.value);
-                const item = record(next.search);
-                if (domains.length) item.blockedDomains = domains;
-                else delete item.blockedDomains;
-                if (exclusiveDomainFilters && domains.length) delete item.allowedDomains;
-                next.search = item;
-              })}
-              placeholder="None"
-            />
-            <FieldDescription className="text-xs">Comma-separated domains. Empty blocks none.</FieldDescription>
-          </Field>
-        </div>
-      )}
-      {searchEnabled && open && exclusiveDomainFilters && (
-        <FieldDescription className="text-xs">
-          Anthropic accepts either an allowed-domain list or a blocked-domain list, not both.
-        </FieldDescription>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field>
+              <FieldLabel htmlFor={`${id}-allowed`}>Allowed domains</FieldLabel>
+              <Input
+                id={`${id}-allowed`}
+                value={commaList(search.allowedDomains)}
+                onChange={(e) => patch((next) => {
+                  const domains = listFromInput(e.target.value);
+                  const item = record(next.search);
+                  if (domains.length) item.allowedDomains = domains;
+                  else delete item.allowedDomains;
+                  if (exclusiveDomainFilters && domains.length) delete item.blockedDomains;
+                  next.search = item;
+                })}
+                placeholder="All domains"
+              />
+              <FieldDescription className="text-xs">Comma-separated domains. Empty allows all.</FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${id}-blocked`}>Blocked domains</FieldLabel>
+              <Input
+                id={`${id}-blocked`}
+                value={commaList(search.blockedDomains)}
+                onChange={(e) => patch((next) => {
+                  const domains = listFromInput(e.target.value);
+                  const item = record(next.search);
+                  if (domains.length) item.blockedDomains = domains;
+                  else delete item.blockedDomains;
+                  if (exclusiveDomainFilters && domains.length) delete item.allowedDomains;
+                  next.search = item;
+                })}
+                placeholder="None"
+              />
+              <FieldDescription className="text-xs">Comma-separated domains. Empty blocks none.</FieldDescription>
+            </Field>
+          </div>
+          {exclusiveDomainFilters && (
+            <FieldDescription className="text-xs">
+              Anthropic accepts either an allowed-domain list or a blocked-domain list, not both.
+            </FieldDescription>
+          )}
+        </SettingsDisclosure>
       )}
     </div>
   );
@@ -1549,7 +1572,6 @@ function SubagentFields({
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
   const id = useId();
-  const [open, setOpen] = useState(false);
   const agents = subagentProfileIds(feature.agents);
   const limits = [
     { key: "maxDepth", label: "Max depth", placeholder: "2", hint: "How deep sub-agents may nest below this session." },
@@ -1574,18 +1596,13 @@ function SubagentFields({
           The agent menu. Every listed profile must exist; the model sees ids and descriptions in its sub-agent catalog.
         </FieldDescription>
       </Field>
-      <button
-        type="button"
-        aria-label="Customize sub-agent limits"
-        aria-expanded={open}
-        aria-controls={`${id}-limits`}
-        onClick={() => setOpen((value) => !value)}
-        className="w-fit cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring sm:col-span-2"
+      <SettingsDisclosure
+        className="sm:col-span-2"
+        contentClassName="sm:grid-cols-2"
+        summary={customLimits > 0 ? `${customLimits} custom ${customLimits === 1 ? "limit" : "limits"}` : "Default limits"}
+        action="Customize limits"
+        label="Customize sub-agent limits"
       >
-        {customLimits > 0 && <>{customLimits} custom {customLimits === 1 ? "limit" : "limits"} · </>}
-        {open ? "Hide limits" : "Customize limits"}
-      </button>
-      {open && <div id={`${id}-limits`} className="grid gap-4 sm:col-span-2 sm:grid-cols-2">
         {limits.map((limit) => (
           <Field key={limit.key}>
             <FieldLabel htmlFor={`${id}-${limit.key}`}>{limit.label}</FieldLabel>
@@ -1604,7 +1621,7 @@ function SubagentFields({
             <FieldDescription className="text-xs">{limit.hint}</FieldDescription>
           </Field>
         ))}
-      </div>}
+      </SettingsDisclosure>
     </div>
   );
 }
@@ -1674,38 +1691,33 @@ function WorkingDirectoryField({ environment, feature, patch }: {
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
   const id = useId();
-  const [open, setOpen] = useState(false);
   const directory = string(feature.workingDirectory);
+  const field = (
+    <Field>
+      <FieldLabel htmlFor={id}>Working directory</FieldLabel>
+      <Input id={id} aria-label={`${environment ? "Environment" : "VFS"} working directory`}
+        className="font-mono" value={directory} placeholder={environment ? "Environment default" : "/"}
+        onChange={(event) => patch((next) => {
+          if (event.target.value) next.workingDirectory = event.target.value;
+          else delete next.workingDirectory;
+        })} />
+      <FieldDescription className="text-xs">{environment
+        ? "Absolute machine directory for file tools, commands, jobs, and discovery. Empty uses the environment default."
+        : "Absolute attached VFS directory for relative file paths. Empty uses /. Source discovery still searches every workspace attachment."}</FieldDescription>
+    </Field>
+  );
+  if (!environment) return <div className="grid min-w-0 gap-3">{field}</div>;
   return (
-    <div className="grid min-w-0 gap-3">
-      {environment && (
-        <button
-          type="button"
-          aria-label="Configure Environment working directory"
-          aria-expanded={open}
-          aria-controls={`${id}-settings`}
-          onClick={() => setOpen((value) => !value)}
-          className="flex min-w-0 max-w-full w-fit items-center gap-1 cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {directory && <><span className="truncate font-mono">{directory}</span><span>·</span></>}
-          <span className="shrink-0">{open ? "Hide working directory" : directory ? "Edit working directory" : "Customize working directory"}</span>
-        </button>
-      )}
-      {(!environment || open) && (
-        <Field id={`${id}-settings`}>
-          <FieldLabel htmlFor={id}>Working directory</FieldLabel>
-          <Input id={id} aria-label={`${environment ? "Environment" : "VFS"} working directory`}
-            className="font-mono" value={directory} placeholder={environment ? "Environment default" : "/"}
-            onChange={(event) => patch((next) => {
-              if (event.target.value) next.workingDirectory = event.target.value;
-              else delete next.workingDirectory;
-            })} />
-          <FieldDescription className="text-xs">{environment
-            ? "Absolute machine directory for file tools, commands, jobs, and discovery. Empty uses the environment default."
-            : "Absolute attached VFS directory for relative file paths. Empty uses /. Source discovery still searches every workspace attachment."}</FieldDescription>
-        </Field>
-      )}
-    </div>
+    <SettingsDisclosure
+      summary={directory
+        ? <>Working directory <span className="font-mono">{directory}</span></>
+        : "Default working directory"}
+      action="Change"
+      label="Configure Environment working directory"
+      forceOpen={Boolean(directory) && !directory.startsWith("/")}
+    >
+      {field}
+    </SettingsDisclosure>
   );
 }
 
@@ -1721,8 +1733,9 @@ function SourceDiscoveryFields({ source, feature, patch }: {
   const enabled = feature[configKey] != null;
   const settings = record(feature[configKey]);
   const roots = stringList(settings.roots);
-  const [open, setOpen] = useState(false);
-  useEffect(() => { if (!enabled) setOpen(false); }, [enabled]);
+  const attachments = environment ? [] : workspaceAttachmentsFromConfig({ features: { vfs: feature } });
+  const rootsInvalid = !environment
+    && roots.some((root) => !isCanonicalAbsolutePath(root) || !insideWorkspaceAttachment(root, attachments));
   const domain = environment ? "Environment" : "VFS";
   const switchLabel = `${domain} ${prompts ? "prompt loading" : "skill discovery"}`;
   const update = (key: string, value: unknown) => patch((next) => {
@@ -1738,19 +1751,6 @@ function SourceDiscoveryFields({ source, feature, patch }: {
           <p className="text-xs text-muted-foreground">
             {prompts ? "Load .md and .txt files as instructions." : "Let the agent discover and read available skills."}
           </p>
-          {enabled && (
-            <button
-              type="button"
-              aria-label={`Configure ${switchLabel}`}
-              aria-expanded={open}
-              aria-controls={`${id}-settings`}
-              onClick={() => setOpen((value) => !value)}
-              className="w-fit cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {roots.length > 0 && <>{roots.length} custom {roots.length === 1 ? "root" : "roots"} · </>}
-              {open ? "Hide root settings" : roots.length ? "Edit roots" : "Customize roots"}
-            </button>
-          )}
         </div>
         <Switch id={id} aria-label={switchLabel}
           checked={enabled}
@@ -1760,8 +1760,14 @@ function SourceDiscoveryFields({ source, feature, patch }: {
           })}
         />
       </div>
-      {enabled && open && (
-        <div id={`${id}-settings`} className="grid gap-3 border-t pt-3">
+      {enabled && (
+        <SettingsDisclosure
+          summary={roots.length > 0 ? `${roots.length} custom ${roots.length === 1 ? "root" : "roots"}` : "Default roots"}
+          action="Customize roots"
+          label={`Configure ${switchLabel}`}
+          forceOpen={rootsInvalid}
+          contentClassName="gap-3"
+        >
           <p className="text-xs text-muted-foreground">
             {prompts ? `Load direct .md and .txt files from ${domain} prompt roots in alphabetical order. Number prefixes are optional; subfolders are ignored.` : `Advertise ${domain} skills for the agent to read when relevant.`}
           </p>
@@ -1780,7 +1786,7 @@ function SourceDiscoveryFields({ source, feature, patch }: {
                 : "Comma-separated overrides replace all defaults and must be absolute paths inside workspace attachments."}
             </FieldDescription>
           </Field>
-        </div>
+        </SettingsDisclosure>
       )}
     </div>
   );

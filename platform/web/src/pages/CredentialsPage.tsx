@@ -3,7 +3,7 @@ import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, KeyRound, Plus, ShieldOff } from "lucide-react";
+import { ChevronRight, KeyRound, Plus, ShieldOff } from "lucide-react";
 import {
   api,
   type GitHubApp,
@@ -26,11 +26,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -46,6 +41,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { SettingsDisclosure } from "@/components/ui/settings-disclosure";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -471,7 +467,6 @@ function PasteCredentialDialog({
   const [kind, setKind] = useState<SecretKind>("environment");
   const [displayName, setDisplayName] = useState("");
   const [grantId, setGrantId] = useState("");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [secret, setSecret] = useState("");
   const [retrievable, setRetrievable] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -480,7 +475,6 @@ function PasteCredentialDialog({
     setKind("environment");
     setDisplayName("");
     setGrantId("");
-    setAdvancedOpen(false);
     setSecret("");
     setRetrievable(false);
     setError(null);
@@ -519,10 +513,13 @@ function PasteCredentialDialog({
     onError: (reason) => setError(reason.message),
   });
 
+  const idConflict = existingGrants.find(
+    (candidate) => candidate.grantId === grantId.trim(),
+  );
+
   const changeKind = (nextKind: SecretKind) => {
     setKind(nextKind);
     setGrantId("");
-    setAdvancedOpen(false);
     setSecret("");
     setRetrievable(false);
     setError(null);
@@ -534,11 +531,8 @@ function PasteCredentialDialog({
       setError("a secret value is required");
       return;
     }
-    const existingGrant = existingGrants.find(
-      (candidate) => candidate.grantId === grantId.trim(),
-    );
-    if (existingGrant) {
-      setError(credentialIdConflictMessage(existingGrant));
+    if (idConflict) {
+      setError(credentialIdConflictMessage(idConflict));
       return;
     }
     create.mutate();
@@ -608,33 +602,32 @@ function PasteCredentialDialog({
               autoFocus
             />
           </Field>
-            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <CollapsibleTrigger className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
-                Advanced options
-                <ChevronDown
-                  className={`size-3.5 transition-transform ${advancedOpen ? "rotate-180" : ""}`}
-                />
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <Field className="mt-2 rounded-lg border bg-muted/15 p-3">
-                  <FieldLabel htmlFor="secret-grant-id">Custom credential ID</FieldLabel>
-                  <Input
-                    id="secret-grant-id"
-                    value={grantId}
-                    onChange={(event) => {
-                      setGrantId(event.target.value);
-                      setError(null);
-                    }}
-                    placeholder="Generated automatically when blank"
-                    className="font-mono"
-                  />
-                  <FieldDescription>
-                    Useful for automation and stable references. It must be unique and cannot be
-                    changed or reused after this credential is revoked.
-                  </FieldDescription>
-                </Field>
-              </CollapsibleContent>
-            </Collapsible>
+          {/* Keyed by type: changing the type clears the ID and closes its field. */}
+          <SettingsDisclosure
+            key={kind}
+            summary={grantId.trim() ? `Credential ID ${grantId.trim()}` : "Generated credential ID"}
+            action="Change"
+            label="Change credential ID"
+            forceOpen={Boolean(error) && idConflict !== undefined}
+          >
+            <Field>
+              <FieldLabel htmlFor="secret-grant-id">Custom credential ID</FieldLabel>
+              <Input
+                id="secret-grant-id"
+                value={grantId}
+                onChange={(event) => {
+                  setGrantId(event.target.value);
+                  setError(null);
+                }}
+                placeholder="Generated automatically when blank"
+                className="font-mono"
+              />
+              <FieldDescription>
+                Useful for automation and stable references. It must be unique and cannot be
+                changed or reused after this credential is revoked.
+              </FieldDescription>
+            </Field>
+          </SettingsDisclosure>
           <Field>
             <FieldLabel htmlFor="secret-value">Secret value</FieldLabel>
             {kind === "environment" ? (

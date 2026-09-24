@@ -5,6 +5,7 @@ beforeEach(() => {
   for (const name of [
     "LIGHTSPEED_PLATFORM_DATABASE_URL",
     "LIGHTSPEED_PLATFORM_AUTH_SECRET",
+    "LIGHTSPEED_PLATFORM_DEV_SEED",
     "LIGHTSPEED_PLATFORM_BASE_URL",
     "LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS",
     "LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID",
@@ -37,6 +38,7 @@ describe("platform environment", () => {
     expect(env.baseUrl).toBe("https://platform.example");
     expect(env.trustedOrigins).toEqual(["https://app.example", "https://admin.example"]);
     expect(env.configuratorMcpAllowPrivateNetwork).toBe(false);
+    expect(env.devSeed).toBe(false);
     expect(env.configuratorMcpInternalTrustedHeader).toBe(false);
   });
 

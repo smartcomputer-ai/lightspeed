@@ -1,7 +1,7 @@
 import { PrivilegedReadMarker } from "@/components/access/privileged-read";
 import { AccessButton } from "@/components/access/access-dialog";
 import { ExecutionLabel, RestrictedMarker } from "@/components/access/shared";
-import { CreationAccessFields, creationAccessInput, defaultCreationAccess } from "@/components/access/creation";
+import { CreationAccessSummary, creationAccessInput, defaultCreationAccess } from "@/components/access/creation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   type InfiniteData,
@@ -1073,7 +1073,6 @@ function NewSessionDialog({
                   The profile is resolved at creation; later profile edits do not change this session.
                 </FieldDescription>
               </Field>
-              <CreationAccessFields universeId={universeId} value={creationAccess} onChange={setCreationAccess} enabled={open} />
               <Button
                 type="button"
                 variant="outline"
@@ -1082,6 +1081,13 @@ function NewSessionDialog({
               >
                 {inlineProfile ? "Edit customized setup" : "Customize setup…"}
               </Button>
+              <CreationAccessSummary
+                audience="read"
+                universeId={universeId}
+                value={creationAccess}
+                onChange={setCreationAccess}
+                enabled={open}
+              />
               {selectedProfile.error && (
                 <p className="text-sm text-destructive">{selectedProfile.error.message}</p>
               )}

@@ -244,6 +244,9 @@ function createPlan(profile, sourceEnv) {
     LIGHTSPEED_PLATFORM_ADMIN_PASSWORD:
       sourceEnv.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD ??
       "lightspeed-dev-password",
+    LIGHTSPEED_PLATFORM_DEV_SEED:
+      sourceEnv.LIGHTSPEED_PLATFORM_DEV_SEED ??
+      (profile === "full" && runtimeAuthMode === "authenticated" ? "true" : "false"),
     LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL:
       configuratorMcpUrl,
     LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK:
@@ -744,6 +747,7 @@ function printPlan(plan) {
   }
   console.log(`connectors: ${plan.connectors.length > 0 ? plan.connectors.join(", ") : "none"}`);
   console.log(`runtime auth: ${plan.env.LIGHTSPEED_AUTH_MODE}`);
+  console.log(`development fixtures: ${plan.env.LIGHTSPEED_PLATFORM_DEV_SEED}`);
   console.log(
     `environment daemon: ${plan.envd ? `${plan.envd.endpoint} (workspace ${plan.envd.workspace})` : "off"}`,
   );
@@ -765,6 +769,10 @@ function printRunning(plan) {
     console.log(
       `  login         ${plan.env.LIGHTSPEED_PLATFORM_ADMIN_EMAIL} / ${plan.env.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD}`,
     );
+    if (plan.env.LIGHTSPEED_PLATFORM_DEV_SEED === "true") {
+      console.log("  Test logins   operator@lightspeed.dev, contributor@lightspeed.dev, viewer@lightspeed.dev");
+      console.log("  initial password  same as Admin (existing passwords are preserved)");
+    }
   }
   if (plan.profile === "demo") {
     console.log("  demo web      http://localhost:5175/demo/  (in-browser backend, scripted data, no sign-in)");

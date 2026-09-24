@@ -41,8 +41,8 @@ const SETTINGS_NAV: UniverseNavItem[] = [
   { path: "settings/templates", label: "Templates", icon: PackageOpen, action: "configure_resource" },
 ];
 
-/// The work itself, the resources agents use, who has access and with what,
-/// and the universe's settings. A group renders only when one of its items
+/// The work itself, the resources agents use, access (model providers,
+/// credentials, keys and members), and the universe's settings. A group renders only when one of its items
 /// is visible.
 export const UNIVERSE_NAV: UniverseNavGroup[] = [
   {
@@ -51,13 +51,12 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
       { path: "bots", label: "Bots", icon: BotFaceIcon, action: "read" },
       { path: "sessions", label: "Sessions", icon: MessagesSquare, action: "read" },
       { path: "profiles", label: "Profiles", icon: SlidersHorizontal, action: "read" },
+      { path: "workspaces", label: "Workspaces", icon: FolderGit2, action: "read" },
     ],
   },
   {
     label: "Resources",
     items: [
-      { path: "models", label: "Models", icon: BrainCircuit, action: "read" },
-      { path: "workspaces", label: "Workspaces", icon: FolderGit2, action: "read" },
       { path: "environments", label: "Environments", icon: Boxes, action: "read" },
       { path: "mcp-servers", label: "MCP servers", icon: Server, action: "read" },
     ],
@@ -65,9 +64,10 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
   {
     label: "Access",
     items: [
-      { path: "members", label: "Members", icon: Users, action: "read" },
-      { path: "api-keys", label: "API keys", icon: KeyRound, action: "read" },
+      { path: "models", label: "Models", icon: BrainCircuit, action: "read" },
       { path: "credentials", label: "Credentials", icon: LockKeyhole, action: "configure_resource" },
+      { path: "api-keys", label: "API keys", icon: KeyRound, action: "read" },
+      { path: "members", label: "Members", icon: Users, action: "read" },
     ],
   },
   { label: "Settings", items: SETTINGS_NAV },

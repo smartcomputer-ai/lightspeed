@@ -1,4 +1,4 @@
-import { CreationAccessFields, creationAccessInput, defaultCreationAccess } from "@/components/access/creation";
+import { CreationAccessSummary, creationAccessInput, defaultCreationAccess } from "@/components/access/creation";
 import { defaultEnvironmentAttachment } from "@/lib/sessions/resource-features";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -475,7 +475,6 @@ function Wizard({
                     </FieldDescription>
                   </Field>
                 </div>
-                <CreationAccessFields universeId={universeId} value={creationAccess} onChange={setCreationAccess} enabled={open} />
                 <Field>
                   <FieldLabel htmlFor="new-bot-brief">Brief</FieldLabel>
                   <Textarea
@@ -738,6 +737,14 @@ function Wizard({
                     <Switch id="new-bot-self-config" checked={selfConfig} onCheckedChange={setSelfConfig} />
                   </div>
                 </div>
+                {/* Access is decided last, next to Create. */}
+                <CreationAccessSummary
+                  audience="read"
+                  universeId={universeId}
+                  value={creationAccess}
+                  onChange={setCreationAccess}
+                  enabled={open}
+                />
               </section>
             )}
           </div>

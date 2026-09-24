@@ -10,6 +10,8 @@ export interface ServerEnv {
   adminEmail: string | null;
   adminPassword: string | null;
   adminPrincipalId?: string | null;
+  /// Explicit local launcher fixtures; disabled in ordinary server startup.
+  devSeed?: boolean;
   github: { clientId: string; clientSecret: string } | null;
   /// Authenticated Lightspeed gateway RPC endpoint.
   lightspeedApiUrl: string | null;
@@ -63,6 +65,7 @@ export function loadEnv(): ServerEnv {
     adminEmail: process.env.LIGHTSPEED_PLATFORM_ADMIN_EMAIL ?? null,
     adminPassword: process.env.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD ?? null,
     adminPrincipalId: process.env.LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID ?? null,
+    devSeed: booleanEnv("LIGHTSPEED_PLATFORM_DEV_SEED", false),
     github,
     lightspeedApiUrl: process.env.LIGHTSPEED_API_URL ?? null,
     lightspeedApiKey,

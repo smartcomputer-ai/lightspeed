@@ -89,6 +89,14 @@ trusts both `http://127.0.0.1:5173` and `http://localhost:5173` for Better Auth;
 additional browser origins must be listed explicitly in
 `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`.
 
+The authenticated full profile also ensures a **Test** universe and Admin,
+Operator, Contributor, and Viewer logins on each startup. The three additional
+emails are `operator@lightspeed.dev`, `contributor@lightspeed.dev`, and
+`viewer@lightspeed.dev`; new accounts use the configured Admin password.
+Existing passwords and universe content are preserved. Set
+`LIGHTSPEED_PLATFORM_DEV_SEED=false` to opt out; see
+[development logins](../../docs/documentation/development/local-development.md#development-logins).
+
 The `full` profile defaults to authenticated runtime access. Without a configured
 `LIGHTSPEED_PLATFORM_API_KEY`, the launcher explicitly initializes a local
 service principal and mints a key, passing the secret to child processes in memory.

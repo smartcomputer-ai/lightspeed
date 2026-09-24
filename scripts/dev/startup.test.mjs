@@ -29,6 +29,26 @@ for (const profile of ["full", "platform"]) {
   });
 }
 
+for (const profile of ["full", "platform", "runtime", "demo", "infra"]) {
+  test(`${profile} scopes development fixtures to the authenticated full profile`, () => {
+    const env = { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "authenticated" };
+    delete env.LIGHTSPEED_PLATFORM_DEV_SEED;
+    const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", profile], {
+      cwd: repoRoot, encoding: "utf8", env,
+    });
+    assert.match(output, new RegExp(`development fixtures: ${profile === "full"}`));
+  });
+}
+
+test("full profile can opt out of development fixtures", () => {
+  const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "full"], {
+    cwd: repoRoot, encoding: "utf8",
+    env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "authenticated",
+      LIGHTSPEED_PLATFORM_DEV_SEED: "false" },
+  });
+  assert.match(output, /development fixtures: false/);
+});
+
 async function runtimeFixture(t) {
   const probed = Promise.withResolvers();
   const state = { ready: false, probes: 0 };

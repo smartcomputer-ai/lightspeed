@@ -1,7 +1,7 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { AccessButton } from "@/components/access/access-dialog";
-import { CreationVisibilityField } from "@/components/access/creation";
+import { CreationAccessSummary } from "@/components/access/creation";
 import { RestrictedMarker } from "@/components/access/shared";
 import type { Visibility } from "@lightspeed-ai/agent-client";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
@@ -46,6 +46,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { SettingsDisclosure } from "@/components/ui/settings-disclosure";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -687,24 +688,35 @@ function NewWorkspaceDialog({
               placeholder="Notes"
               autoFocus
             />
+            {/* The id follows the name until it is edited; it opens on its own
+                when it is missing, invalid or already taken. */}
+            <SettingsDisclosure
+              summary={workspaceId
+                ? <>Id: <code className="font-mono">{workspaceId}</code></>
+                : "Id derived from the display name"}
+              action="Change"
+              label="Change workspace id"
+              forceOpen={Boolean(error) && (!workspaceId || /workspaceId|already exists/.test(error ?? ""))}
+            >
+              <Field>
+                <FieldLabel htmlFor="new-workspace-id">Workspace id</FieldLabel>
+                <Input
+                  id="new-workspace-id"
+                  value={workspaceId}
+                  onChange={(e) => {
+                    setWorkspaceId(e.target.value);
+                    setIdTouched(e.target.value.length > 0);
+                  }}
+                  placeholder="notes"
+                  className="font-mono"
+                />
+                <FieldDescription>
+                  What profile workspace attachments reference — cannot be changed later.
+                </FieldDescription>
+              </Field>
+            </SettingsDisclosure>
           </Field>
-          <Field>
-            <FieldLabel htmlFor="new-workspace-id">Workspace id</FieldLabel>
-            <Input
-              id="new-workspace-id"
-              value={workspaceId}
-              onChange={(e) => {
-                setWorkspaceId(e.target.value);
-                setIdTouched(e.target.value.length > 0);
-              }}
-              placeholder="notes"
-              className="font-mono"
-            />
-            <FieldDescription>
-              What profile workspace attachments reference — cannot be changed later.
-            </FieldDescription>
-          </Field>
-          <CreationVisibilityField label="Who can use" value={visibility} onChange={setVisibility} />
+          <CreationAccessSummary audience="use" value={visibility} onChange={setVisibility} />
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

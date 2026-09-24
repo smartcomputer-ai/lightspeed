@@ -1,4 +1,3 @@
-import { PrivateContentAccess } from "@/components/access/private-content-access";
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
@@ -256,7 +255,6 @@ function EditMemberRoleDialog({ universeId, member, onClose, onDone }: {
               <SelectItem value="admin">admin</SelectItem>
             </SelectContent>
           </Select>
-          <PrivateContentAccess universeId={universeId} member={member} onDone={onDone} />
           {edit.error && <p role="alert" className="text-sm text-destructive">{edit.error.message}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>

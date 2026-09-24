@@ -1,17 +1,13 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { api, type GitHubApp, type GitHubInstallation, type SecretGrant } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { SettingsDisclosure } from "@/components/ui/settings-disclosure";
 import { Textarea } from "@/components/ui/textarea";
 import {
   IdText,
@@ -44,11 +40,12 @@ export function GitHubAppForm({
 }) {
   const [displayName, setDisplayName] = useState("");
   const [appId, setAppId] = useState("");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_GITHUB_API_BASE_URL);
   const [providerId, setProviderId] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const customApiBaseUrl =
+    apiBaseUrl.trim() && apiBaseUrl.trim() !== DEFAULT_GITHUB_API_BASE_URL ? apiBaseUrl.trim() : null;
 
   const create = useMutation<GitHubApp, Error, void>({
     mutationFn: () =>
@@ -57,9 +54,7 @@ export function GitHubAppForm({
         privateKey,
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
         ...(providerId.trim() ? { providerId: providerId.trim() } : {}),
-        ...(apiBaseUrl.trim() && apiBaseUrl.trim() !== DEFAULT_GITHUB_API_BASE_URL
-          ? { apiBaseUrl: apiBaseUrl.trim() }
-          : {}),
+        ...(customApiBaseUrl ? { apiBaseUrl: customApiBaseUrl } : {}),
       }),
     onSuccess: onCreated,
     onError: (reason) => setError(reason.message),
@@ -149,42 +144,41 @@ export function GitHubAppForm({
           <FieldDescription>Or upload the .pem file downloaded from GitHub.</FieldDescription>
         </div>
       </Field>
-      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-        <CollapsibleTrigger className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
-          Advanced options
-          <ChevronDown className={`size-3.5 transition-transform ${advancedOpen ? "rotate-180" : ""}`} />
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className="mt-2 grid gap-4 rounded-lg border bg-muted/15 p-3">
-            <Field>
-              <FieldLabel htmlFor="github-app-api-url">API base URL</FieldLabel>
-              <Input
-                id="github-app-api-url"
-                value={apiBaseUrl}
-                onChange={(event) => setApiBaseUrl(event.target.value)}
-                className="font-mono"
-              />
-              <FieldDescription>
-                Change only for GitHub Enterprise Server, e.g.{" "}
-                <span className="font-mono">https://github.example.com/api/v3</span>.
-              </FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="github-app-provider-id">Custom provider ID</FieldLabel>
-              <Input
-                id="github-app-provider-id"
-                value={providerId}
-                onChange={(event) => setProviderId(event.target.value)}
-                placeholder="github-app:<App ID> when blank"
-                className="font-mono"
-              />
-              <FieldDescription>
-                Stable identifier referenced by installation credentials and automation.
-              </FieldDescription>
-            </Field>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
+      <SettingsDisclosure
+        summary={[
+          customApiBaseUrl ? `API ${customApiBaseUrl}` : "GitHub.com",
+          providerId.trim() ? `provider ID ${providerId.trim()}` : "default provider ID",
+        ].join(" · ")}
+        action="Customize"
+        label="Customize API base URL and provider ID"
+      >
+        <Field>
+          <FieldLabel htmlFor="github-app-api-url">API base URL</FieldLabel>
+          <Input
+            id="github-app-api-url"
+            value={apiBaseUrl}
+            onChange={(event) => setApiBaseUrl(event.target.value)}
+            className="font-mono"
+          />
+          <FieldDescription>
+            Change only for GitHub Enterprise Server, e.g.{" "}
+            <span className="font-mono">https://github.example.com/api/v3</span>.
+          </FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="github-app-provider-id">Custom provider ID</FieldLabel>
+          <Input
+            id="github-app-provider-id"
+            value={providerId}
+            onChange={(event) => setProviderId(event.target.value)}
+            placeholder="github-app:<App ID> when blank"
+            className="font-mono"
+          />
+          <FieldDescription>
+            Stable identifier referenced by installation credentials and automation.
+          </FieldDescription>
+        </Field>
+      </SettingsDisclosure>
       {error && <p className="text-sm text-destructive">{error}</p>}
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel}>

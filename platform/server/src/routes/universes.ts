@@ -418,21 +418,6 @@ export function universeRoutes(ctx: AppContext) {
     return c.json(result.result, 201);
   }));
 
-  app.put("/:id/members/:memberId/private-content-access", (c) => withGateway(c, async () => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access || access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
-    const body = await parseBody(c, z.object({ enabled: z.boolean() }).strict());
-    if (!body.ok) return body.response;
-    const [kind, id, role, extra] = c.req.param("memberId").split(":");
-    const parsed = z.object({ kind: z.literal("principal"), id: z.string().uuid(), role: universeRoleSchema }).safeParse({ kind, id, role });
-    if (!parsed.success || extra !== undefined) return c.json({ error: "a user principal is required" }, 400);
-    await deploymentClientFor(ctx).call("deployment/identity/apply", {
-      operation: body.data.enabled ? "assign_capability" : "revoke_capability",
-      assignment: { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, principalId: parsed.data.id, capability: "read_private_content" },
-    });
-    return c.json({ enabled: body.data.enabled });
-  }));
-
   app.patch("/:id/members/:memberId", (c) => withGateway(c, async () => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access || access.role !== "admin") return c.json({ error: "universe admin required" }, 403);

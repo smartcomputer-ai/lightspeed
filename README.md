@@ -75,6 +75,8 @@ When the readiness checks pass, open
 [http://localhost:5173/app/](http://localhost:5173/app/) and sign in with the
 development account printed by the launcher. The defaults are
 `admin@lightspeed.dev` and `lightspeed-dev-password`.
+Startup also ensures a **Test** universe with Admin, Operator, Contributor, and
+Viewer accounts; see [development logins](docs/documentation/development/local-development.md#development-logins).
 
 The launcher installs dependencies, starts local infrastructure and application
 processes, applies migrations, and waits until the product is ready.

@@ -34,14 +34,11 @@ function setup(role = "admin", failure = false) {
   const edit = (memberId: string, role: string) => app.request(`/platform-universe/members/${memberId}`, {
     method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ role }),
   });
-  const capability = (memberId: string, enabled: boolean) => app.request(`/platform-universe/members/${memberId}/private-content-access`, {
-    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }),
-  });
   const add = () => app.request("/platform-universe/members", {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ groupId: subjectId, role: "viewer" }),
   });
   const remove = (memberId: string) => app.request(`/platform-universe/members/${memberId}`, { method: "DELETE" });
-  return { edit, changes, capability, add, remove };
+  return { edit, changes, add, remove };
 }
 
 it.each(["principal", "group"])("replaces a %s grant in one attributed core operation", async (kind) => {
@@ -78,15 +75,6 @@ it("returns the core conflict without attempting a fallback grant", async () => 
   expect(changes).toHaveLength(1);
 });
 
-it.each([true, false])("changes private-content access through one attributed capability operation (%s)", async (enabled) => {
-  const { capability, changes } = setup();
-  const response = await capability(`principal:${subjectId}:viewer`, enabled);
-  expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ enabled });
-  expect(changes).toEqual([{ operation: enabled ? "assign_capability" : "revoke_capability", assignment: {
-    scope: { kind: "universe", universeId }, principalId: subjectId, capability: "read_private_content",
-  } }]);
-});
 it.each(["viewer", "contributor", "operator"])("does not let a %s add or remove members", async (role) => {
   const { add, remove, changes } = setup(role);
   expect((await add()).status).toBe(403);
@@ -94,19 +82,6 @@ it.each(["viewer", "contributor", "operator"])("does not let a %s add or remove 
   expect(changes).toEqual([]);
 });
 
-it.each(["viewer", "contributor", "operator"])("does not let a %s assign private-content access", async (role) => {
-  const { capability, changes } = setup(role);
-  expect((await capability(`principal:${subjectId}:viewer`, true)).status).toBe(403);
-  expect(changes).toEqual([]);
-});
-it("refuses group capability targets and propagates core refusal", async () => {
-  const group = setup();
-  expect((await group.capability(`group:${subjectId}:viewer`, true)).status).toBe(400);
-  expect(group.changes).toEqual([]);
-  const denied = setup("admin", true);
-  expect((await denied.capability(`principal:${subjectId}:viewer`, true)).status).toBe(409);
-  expect(denied.changes).toHaveLength(1);
-});
 
 const executor = "44444444-4444-4444-8444-444444444444";
 const groupId = "55555555-5555-4555-8555-555555555555";

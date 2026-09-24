@@ -7,6 +7,11 @@ Core contracts, method classification, authenticated request contexts and scoped
 service keys, ownership and action enforcement are implemented. Platform
 identity integration now uses core records. Acceptance criteria remain deferred.
 
+Local development now seeds a Test universe and one login for each human
+universe role through the default authenticated launcher. Seeding reuses the
+bootstrap administrator, creates the other canonical identities through the
+runtime API, and preserves existing passwords and universe content on restart.
+
 Lightspeed is still greenfield. Reshape contracts and replace implicit defaults
 where needed; compatibility with the current authorization model is not a goal.
 

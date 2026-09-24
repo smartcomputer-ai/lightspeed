@@ -246,6 +246,15 @@ function PolicyEditor({
       grants.some(
         (g) => g.subject.kind === "principal" && g.subject.id === agent,
       ));
+  // Under universe visibility everyone already reads a session or bot, and
+  // everyone whose role allows it already uses a resource. Grants are kept for
+  // a later switch back, but the list only offers what still means something:
+  // nothing for resources, control for sessions and bots.
+  const everyone = visibility === "universe";
+  const listed = !(operational && everyone);
+  const canAdd =
+    writable && (!everyone || (!operational && owner && !personal));
+  const addedPermission = operational ? "use" : everyone ? "write" : "read";
   return (
     <div className="grid gap-5">
       {inherited && (
@@ -307,13 +316,25 @@ function PolicyEditor({
         />
       </Field>
       <div className="grid gap-2">
-        <h3 className="text-sm font-medium">Members</h3>
-        {grants.length === 0 && (
+        {listed && <h3 className="text-sm font-medium">Members</h3>}
+        {!listed && (
+          <p className="text-sm text-muted-foreground">
+            Everyone in the universe can use this. Choose &ldquo;Only the owner
+            and members below&rdquo; to pick who.
+          </p>
+        )}
+        {listed && !operational && everyone && (
+          <p className="text-sm text-muted-foreground">
+            Everyone in the universe can already read this.
+            {canAdd && " Add people who should also be able to control it."}
+          </p>
+        )}
+        {listed && grants.length === 0 && (
           <p className="text-sm text-muted-foreground">
             No additional people or groups.
           </p>
         )}
-        {grants.map((grant, index) => {
+        {listed && grants.map((grant, index) => {
           const key = `${grant.subject.kind}:${grant.subject.id}`;
           const canEdit =
             writable && (operational || owner || grant.permission !== "write");
@@ -395,7 +416,7 @@ function PolicyEditor({
           </p>
         )}
       </div>
-      {writable && (
+      {canAdd && (
         <Field>
           <FieldLabel htmlFor="share-search">Add people or groups</FieldLabel>
           <Input
@@ -435,7 +456,7 @@ function PolicyEditor({
                       ...grants,
                       {
                         subject: s.subject,
-                        permission: operational ? "use" : "read",
+                        permission: addedPermission,
                       },
                     ]);
                     setSearch("");

@@ -1,7 +1,7 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { AccessButton } from "@/components/access/access-dialog";
-import { CreationVisibilityField } from "@/components/access/creation";
+import { CreationAccessSummary } from "@/components/access/creation";
 import { RestrictedMarker } from "@/components/access/shared";
 import type { ResourceRef, Visibility } from "@lightspeed-ai/agent-client";
 import { useState } from "react";
@@ -1299,7 +1299,7 @@ function CreateEnvironmentDialog({
               }
               onChange={setIdlePolicy}
             />
-            <CreationVisibilityField label="Who can use" value={visibility} onChange={setVisibility} />
+            <CreationAccessSummary audience="use" value={visibility} onChange={setVisibility} />
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
           <DialogFooter>
@@ -1436,7 +1436,7 @@ function RegisterExternalEnvironmentDialog({
                 placeholder="Local daemon"
               />
             </Field>
-            <CreationVisibilityField label="Who can use" value={visibility} onChange={setVisibility} />
+            <CreationAccessSummary audience="use" value={visibility} onChange={setVisibility} />
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
           <DialogFooter>

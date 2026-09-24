@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { SettingsDisclosure } from "@/components/ui/settings-disclosure";
 import {
   Select,
   SelectContent,
@@ -688,6 +689,8 @@ function NewProfileDialog({
     }
     create.mutate();
   };
+  const sourceName = profiles.find((profile) => profile.profileId === sourceProfileId)?.displayName
+    ?? sourceProfileId;
 
   return (
     <Dialog open={open && canCreate} onOpenChange={onOpenChange}>
@@ -713,52 +716,65 @@ function NewProfileDialog({
               placeholder="Owner"
               autoFocus
             />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="new-profile-id">Profile id</FieldLabel>
-            <Input
-              id="new-profile-id"
-              value={profileId}
-              onChange={(e) => {
-                setProfileId(e.target.value);
-                setIdTouched(e.target.value.length > 0);
-              }}
-              placeholder="owner"
-              className="font-mono"
-            />
-            <FieldDescription>
-              What bots and tooling reference — cannot be changed later.
-            </FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="new-profile-source">Start from</FieldLabel>
-            <Select
-              value={sourceProfileId}
-              onValueChange={(value) => setSourceProfileId((value as string) ?? "")}
+            {/* The id follows the name until it is edited; it opens on its own when missing. */}
+            <SettingsDisclosure
+              summary={profileId
+                ? <>Id: <code className="font-mono">{profileId}</code></>
+                : "Id derived from the display name"}
+              action="Change"
+              label="Change profile id"
+              forceOpen={Boolean(error) && !profileId}
             >
-              <SelectTrigger id="new-profile-source" className="w-full">
-                <SelectValue>
-                  {sourceProfileId
-                    ? (profiles.find((profile) => profile.profileId === sourceProfileId)?.displayName
-                      ?? sourceProfileId)
-                    : "Empty profile"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">Empty profile</SelectItem>
-                {profiles.map((profile) => (
-                  <SelectItem key={profile.profileId} value={profile.profileId}>
-                    {profile.displayName ?? profile.profileId}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <FieldDescription>
-              {sourceProfileId
-                ? "Copies the profile’s current setup once. Later changes to it are not inherited."
-                : "Starts with no profile configuration."}
-            </FieldDescription>
+              <Field>
+                <FieldLabel htmlFor="new-profile-id">Profile id</FieldLabel>
+                <Input
+                  id="new-profile-id"
+                  value={profileId}
+                  onChange={(e) => {
+                    setProfileId(e.target.value);
+                    setIdTouched(e.target.value.length > 0);
+                  }}
+                  placeholder="owner"
+                  className="font-mono"
+                />
+                <FieldDescription>
+                  What bots and tooling reference — cannot be changed later.
+                </FieldDescription>
+              </Field>
+            </SettingsDisclosure>
           </Field>
+          <SettingsDisclosure
+            summary={sourceProfileId ? `Copies ${sourceName}` : "Starts empty"}
+            action="Change"
+            label="Change starting point"
+          >
+            <Field>
+              <FieldLabel htmlFor="new-profile-source">Start from</FieldLabel>
+              <Select
+                value={sourceProfileId}
+                onValueChange={(value) => setSourceProfileId((value as string) ?? "")}
+              >
+                <SelectTrigger id="new-profile-source" className="w-full">
+                  <SelectValue>
+                    {sourceProfileId ? sourceName : "Empty profile"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Empty profile</SelectItem>
+                  {profiles.map((profile) => (
+                    <SelectItem key={profile.profileId} value={profile.profileId}>
+                      {profile.displayName ?? profile.profileId}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                {sourceProfileId
+                  ? "Copies the profile’s current setup once. Later changes to it are not inherited."
+                  : "Starts with no profile configuration."}
+              </FieldDescription>
+            </Field>
+          </SettingsDisclosure>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

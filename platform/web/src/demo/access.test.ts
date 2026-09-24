@@ -80,16 +80,14 @@ it("models privileged reads separately from ordinary reads and sharing", async (
   const member = universe.members.find(
     (m) => m.userId === store.currentUser.id,
   )!;
-  const grant = (enabled: boolean) =>
-    app.request(`${base}/members/${member.id}/private-content-access`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled }),
-    });
+  // The capability is assigned through the identity API, not the web app.
+  const grant = (enabled: boolean) => {
+    member.readPrivateContent = enabled;
+  };
   expect((await app.request(`${base}/sessions/session-flaky-scheduler`)).status).toBe(
     404,
   );
-  expect((await grant(true)).status).toBe(200);
+  grant(true);
   const restricted = await app.request(`${base}/sessions/session-flaky-scheduler`);
   expect(restricted.status).toBe(200);
   expect(restricted.headers.get("x-lightspeed-privileged-read")).toBe("true");
@@ -114,7 +112,7 @@ it("models privileged reads separately from ordinary reads and sharing", async (
     }),
   });
   expect(change.status).toBe(403);
-  expect((await grant(false)).status).toBe(200);
+  grant(false);
   expect((await app.request(`${base}/sessions/session-flaky-scheduler`)).status).toBe(
     404,
   );
