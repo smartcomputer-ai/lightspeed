@@ -592,16 +592,28 @@ fn authorize_request(
         return Decision::Forbidden;
     }
     let writer = owner || access.grant == Some(ResourcePermission::Write);
+    // Personal work runs as its owner, so nobody else works in it or
+    // configures it, whatever its visibility. Governance still applies:
+    // Operators stop it and Admins delete it.
+    let personal = access
+        .anchor
+        .execution
+        .is_some_and(|execution| execution.kind == ExecutionKind::Personal);
+    // Shared work is universe-visible and runs as the universe's agent
+    // identity: every Contributor and above works in it. Viewers were
+    // refused above, since their role denies every such action.
+    let shared = universe_visible && !personal;
     // A bot's sessions follow the bot's managers.
-    let manages_bot =
-        access.anchor.bot.is_some() && rights.universe_action(ManageBot) == RoleDecision::Allowed;
+    let manages_bot = access.anchor.bot.is_some()
+        && !personal
+        && rights.universe_action(ManageBot) == RoleDecision::Allowed;
     let allowed = match action {
         Read => true,
-        ControlSession => writer || manages_bot,
-        StopSession => by_role || writer,
+        ControlSession => writer || shared || manages_bot,
+        StopSession => by_role || writer || shared,
         DeleteSession => owner || manages_bot || rights.has_role(Role::Admin),
-        InvokeBot => (by_role && universe_visible) || writer,
-        ManageBot => owner || (by_role && universe_visible),
+        InvokeBot => writer || (by_role && shared),
+        ManageBot => owner || (by_role && shared),
         ManageProfile => owner || by_role,
         // Profiles stay on role rules and have no audience to share.
         ShareResource => writer && !matches!(access.anchor.resource, ResourceRef::Profile(_)),

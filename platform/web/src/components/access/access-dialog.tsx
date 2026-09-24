@@ -246,15 +246,19 @@ function PolicyEditor({
       grants.some(
         (g) => g.subject.kind === "principal" && g.subject.id === agent,
       ));
-  // Under universe visibility everyone already reads a session or bot, and
-  // everyone whose role allows it already uses a resource. Grants are kept for
-  // a later switch back, but the list only offers what still means something:
-  // nothing for resources, control for sessions and bots.
+  // Under universe visibility grants add nothing: everyone reads a session or
+  // bot and every Contributor works in it (personal work: only its owner), and
+  // everyone whose role allows it uses a resource. Grants are kept for a later
+  // switch back, but only restricted work lists and adds people.
   const everyone = visibility === "universe";
-  const listed = !(operational && everyone);
-  const canAdd =
-    writable && (!everyone || (!operational && owner && !personal));
-  const addedPermission = operational ? "use" : everyone ? "write" : "read";
+  const listed = !everyone;
+  const canAdd = writable && !everyone;
+  const addedPermission = operational ? "use" : "read";
+  const everyoneSentence = operational
+    ? "Everyone in the universe can use this."
+    : personal
+      ? "Everyone in the universe can read this. It runs as its owner, so only the owner works in it."
+      : "Everyone in the universe can read this, and Contributors can work in it.";
   return (
     <div className="grid gap-5">
       {inherited && (
@@ -319,14 +323,13 @@ function PolicyEditor({
         {listed && <h3 className="text-sm font-medium">Members</h3>}
         {!listed && (
           <p className="text-sm text-muted-foreground">
-            Everyone in the universe can use this. Choose &ldquo;Only the owner
-            and members below&rdquo; to pick who.
-          </p>
-        )}
-        {listed && !operational && everyone && (
-          <p className="text-sm text-muted-foreground">
-            Everyone in the universe can already read this.
-            {canAdd && " Add people who should also be able to control it."}
+            {everyoneSentence}
+            {writable && (
+              <>
+                {" "}Choose &ldquo;Only the owner and members below&rdquo; to pick
+                who.
+              </>
+            )}
           </p>
         )}
         {listed && grants.length === 0 && (

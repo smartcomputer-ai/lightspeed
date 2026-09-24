@@ -437,8 +437,9 @@ fn resource_decisions_follow_owner_visibility_grant_and_role() {
     let decide = |rights: &EffectiveAccess, action, resource: &ResourceAccess| {
         authorize(Caller::Request(rights), action, Some(resource))
     };
-    // A universe-visible session: everyone reads, the owner controls,
-    // elevated roles stop, only owner or Admin deletes.
+    // A universe-visible session is shared work: everyone reads, every
+    // Contributor and above works in it and stops it, only the owner or an
+    // Admin deletes it, only the owner or a writer shares it.
     let mine = session(1, Universe, None);
     let theirs = session(7, Universe, None);
     for rights in [&viewer, &contributor, &operator, &admin] {
@@ -446,10 +447,11 @@ fn resource_decisions_follow_owner_visibility_grant_and_role() {
     }
     assert_eq!(decide(&contributor, ControlSession, &mine), Allowed);
     assert_eq!(decide(&contributor, DeleteSession, &mine), Allowed);
-    assert_eq!(decide(&contributor, ControlSession, &theirs), Forbidden);
-    assert_eq!(decide(&operator, ControlSession, &theirs), Forbidden);
-    assert_eq!(decide(&admin, ControlSession, &theirs), Forbidden);
-    assert_eq!(decide(&contributor, StopSession, &theirs), Forbidden);
+    for rights in [&contributor, &operator, &admin] {
+        assert_eq!(decide(rights, ControlSession, &theirs), Allowed);
+        assert_eq!(decide(rights, StopSession, &theirs), Allowed);
+    }
+    assert_eq!(decide(&contributor, DeleteSession, &theirs), Forbidden);
     assert_eq!(decide(&operator, StopSession, &theirs), Allowed);
     assert_eq!(decide(&operator, DeleteSession, &theirs), Forbidden);
     assert_eq!(decide(&admin, DeleteSession, &theirs), Allowed);
@@ -500,7 +502,8 @@ fn resource_decisions_follow_owner_visibility_grant_and_role() {
         ..session(1, Universe, None)
     };
     assert_eq!(decide(&admin, Read, &orphan), Hidden);
-    // A bot's session is controlled by bot managers as well as the owner.
+    // A universe-visible bot's sessions are shared work too; bot managers
+    // also delete them.
     let bot_session = ResourceAccess {
         anchor: anchor(
             ResourceRef::Session("s".into()),
@@ -512,10 +515,8 @@ fn resource_decisions_follow_owner_visibility_grant_and_role() {
     };
     assert_eq!(decide(&operator, ControlSession, &bot_session), Allowed);
     assert_eq!(decide(&operator, DeleteSession, &bot_session), Allowed);
-    assert_eq!(
-        decide(&contributor, ControlSession, &bot_session),
-        Forbidden
-    );
+    assert_eq!(decide(&contributor, ControlSession, &bot_session), Allowed);
+    assert_eq!(decide(&contributor, DeleteSession, &bot_session), Forbidden);
     // Bots: invocation follows the role on a universe-visible root, managing
     // follows ownership or the Operator role on a universe-visible root.
     let bot = ResourceAccess {
@@ -538,6 +539,56 @@ fn resource_decisions_follow_owner_visibility_grant_and_role() {
     };
     assert_eq!(decide(&operator, ManageBot, &private_bot), Forbidden);
     assert_eq!(decide(&contributor, InvokeBot, &private_bot), Allowed);
+    // Personal work runs as its owner: whatever its visibility, only the
+    // owner (or a writer the owner added) works in it or configures it.
+    // Governance stays: Operators stop it, Admins delete it.
+    let personal = |resource: ResourceRef, root: ResourceRef, bot: Option<&str>| ResourceAccess {
+        anchor: ResourceAnchor {
+            execution: Some(Execution {
+                run_as: Uuid::from_u128(7),
+                kind: ExecutionKind::Personal,
+            }),
+            ..anchor(resource, root, bot)
+        },
+        policy: Some(policy(7, Universe)),
+        grant: None,
+    };
+    let personal_session = personal(
+        ResourceRef::Session("p".into()),
+        ResourceRef::Session("p".into()),
+        None,
+    );
+    assert_eq!(decide(&contributor, Read, &personal_session), Allowed);
+    for rights in [&contributor, &operator, &admin] {
+        assert_eq!(decide(rights, ControlSession, &personal_session), Forbidden);
+    }
+    assert_eq!(
+        decide(&contributor, StopSession, &personal_session),
+        Forbidden
+    );
+    assert_eq!(decide(&operator, StopSession, &personal_session), Allowed);
+    assert_eq!(decide(&admin, DeleteSession, &personal_session), Allowed);
+    let personal_bot = personal(
+        ResourceRef::Bot("pb".into()),
+        ResourceRef::Bot("pb".into()),
+        None,
+    );
+    assert_eq!(decide(&contributor, InvokeBot, &personal_bot), Forbidden);
+    assert_eq!(decide(&operator, ManageBot, &personal_bot), Forbidden);
+    let personal_bot_session = personal(
+        ResourceRef::Session("ps".into()),
+        ResourceRef::Bot("pb".into()),
+        Some("pb"),
+    );
+    assert_eq!(
+        decide(&operator, ControlSession, &personal_bot_session),
+        Forbidden
+    );
+    let mut owner = access(Role::Contributor, universe());
+    owner.principal.id = Uuid::from_u128(7);
+    assert_eq!(decide(&owner, ControlSession, &personal_session), Allowed);
+    assert_eq!(decide(&owner, InvokeBot, &personal_bot), Allowed);
+    assert_eq!(decide(&owner, ManageBot, &personal_bot), Allowed);
     // Without a target, only the role decides.
     assert_eq!(
         authorize(Caller::Request(&contributor), CreateSession, None),

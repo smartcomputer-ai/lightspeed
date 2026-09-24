@@ -72,7 +72,11 @@ role evaluation live in `access`; `PgAccessStore` owns transactional persistence
    and profiles, and actor facts for creation, run admission, control, and config
    changes. Contributors control their own sessions. Operator/Admin roles allow
    stopping other users' sessions, while submission/steering requires ownership;
-   they retain normal rights over their own work. Bot-owned sessions follow bot
+   they retain normal rights over their own work. (Corrected 2026-09-24: this
+   ownership requirement was a misreading. Universe-visible work is shared, so
+   every Contributor and above works in it; only restricted and personal work
+   is limited to its owner and grantees. See session access and execution
+   authority.) Bot-owned sessions follow bot
    management; delegated children follow their authorized controller lineage.
    Provenance or a fork relationship alone does not grant control. Shared writers
    arrive with session access policies in the next slice. Actor facts do not

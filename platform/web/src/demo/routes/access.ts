@@ -275,17 +275,26 @@ export function accessRoutes(store: DemoStore): Hono {
         }
         if (service) return { resource, actions: [] };
         const allowed: UniverseAction[] = ["read"];
-        if (
-          resource.kind !== "profile" &&
-          contribute &&
-          demoCanShare(store, universe, policy)
-        )
-          allowed.push("share_resource");
-        if (contribute && demoCanShare(store, universe, policy)) {
-          if (resource.kind === "session")
-            allowed.push("control_session", "stop_session", "delete_session");
-          if (resource.kind === "bot") allowed.push("manage_bot", "invoke_bot");
-          if (resource.kind === "profile") allowed.push("manage_profile");
+        // Mirrors the runtime: universe-visible work that does not run as
+        // its owner is shared, so every Contributor works in it; the owner
+        // or a writer shares it; the owner or an Admin deletes it.
+        const owner = policy.owner === store.currentUser.id;
+        const writer = demoCanShare(store, universe, policy);
+        const personal = policy.execution?.kind === "personal";
+        const shared = policy.visibility === "universe" && !personal;
+        if (contribute) {
+          if (resource.kind === "session") {
+            if (writer || shared) allowed.push("control_session", "stop_session");
+            else if (configure) allowed.push("stop_session");
+            if (owner || role === "admin") allowed.push("delete_session");
+          }
+          if (resource.kind === "bot") {
+            if (writer || shared) allowed.push("invoke_bot");
+            if (owner || (configure && shared)) allowed.push("manage_bot");
+          }
+          if (resource.kind === "profile" && (owner || configure))
+            allowed.push("manage_profile");
+          if (resource.kind !== "profile" && writer) allowed.push("share_resource");
         }
         return { resource, actions: allowed };
       }),

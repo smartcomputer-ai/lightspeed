@@ -253,12 +253,14 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             forbidden(rpc(&endpoint, viewer, "session/start", start.clone()).await);
             success(rpc(&endpoint, alice, "session/start", start.clone()).await);
             success(rpc(&endpoint, alice, "session/start", start.clone()).await);
+            // A universe-visible session is shared work: every Contributor and
+            // above works in it, not only its owner.
             for caller in [bob, operator, universe_admin] {
-                forbidden(rpc(&endpoint, caller, "session/start", start.clone()).await);
-                forbidden(rpc(&endpoint, caller, "session/rename", json!({"sessionId":session,"displayName":"takeover"})).await);
-                forbidden(rpc(&endpoint, caller, "session/runs/start", json!({"sessionId":session,"source":{"type":"input","items":[{"type":"text","text":"takeover"}]}})).await);
-                forbidden(rpc(&endpoint, caller, "session/context/append", json!({"sessionId":session,"entries":[]})).await);
+                success(rpc(&endpoint, caller, "session/rename", json!({"sessionId":session,"displayName":"shared"})).await);
+                success(rpc(&endpoint, caller, "session/context/append", json!({"sessionId":session,"entries":[{"key":"team-note","item":{"type":"text","text":"shared context"}}]})).await);
             }
+            success(rpc(&endpoint, bob, "session/runs/start", json!({"sessionId":session,"source":{"type":"input","items":[{"type":"text","text":"joining in"}]}})).await);
+            forbidden(rpc(&endpoint, viewer, "session/rename", json!({"sessionId":session,"displayName":"viewer"})).await);
             success(rpc(&endpoint, viewer, "session/read", json!({"sessionId":session})).await);
             success(rpc(&endpoint, viewer, "session/list", json!({})).await);
             forbidden(rpc(&endpoint, viewer, "blobs/put", json!({"blobs":[]})).await);
@@ -440,6 +442,16 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             assert_eq!(mine["access"]["execution"], json!({"runAs":alice.record.principal_id,"kind":"personal"}));
             not_found(rpc(&endpoint, bob, "session/read", json!({"sessionId":mine_id})).await);
             assert_eq!(rpc(&endpoint, alice, "access/policy/put", json!({"resource":{"kind":"session","id":mine_id},"visibility":"restricted","owner":bob.record.principal_id})).await["error"]["data"]["kind"], "invalid_request");
+            // Personal work runs as its owner: made universe-visible, others read
+            // it but only the owner works in it; Operators may still stop it.
+            success(rpc(&endpoint, alice, "access/policy/put", json!({"resource":{"kind":"session","id":mine_id},"visibility":"universe"})).await);
+            success(rpc(&endpoint, bob, "session/read", json!({"sessionId":mine_id})).await);
+            for caller in [bob, operator, universe_admin] {
+                forbidden(rpc(&endpoint, caller, "session/rename", json!({"sessionId":mine_id,"displayName":"not yours"})).await);
+                forbidden(rpc(&endpoint, caller, "session/runs/start", json!({"sessionId":mine_id,"source":{"type":"input","items":[{"type":"text","text":"not yours"}]}})).await);
+            }
+            success(rpc(&endpoint, alice, "session/rename", json!({"sessionId":mine_id,"displayName":"still mine"})).await);
+            success(rpc(&endpoint, alice, "access/policy/put", json!({"resource":{"kind":"session","id":mine_id},"visibility":"restricted"})).await);
             // A root created without a choice runs as the execution service.
             let member = success(rpc(&endpoint, bob, "session/read", json!({"sessionId":team_session})).await)["session"].clone();
             assert_eq!(member["access"]["execution"]["runAs"], json!(service_principal));
@@ -578,9 +590,9 @@ async fn authenticated_roles_ownership_and_direct_service_boundaries() -> anyhow
             // A real run is accepted and completes through the worker's fake model.
             let run = success(rpc(&endpoint, alice, "session/runs/start", json!({"sessionId":session,"source":{"type":"input","items":[{"type":"text","text":"hello"}]}})).await);
             assert!(run["run"]["id"].is_string(), "{run}");
-            // Elevated roles can stop; only the owner or an Admin deletes someone else's session.
-            forbidden(rpc(&endpoint, bob, "session/close", json!({"sessionId":session,"force":true})).await);
-            success(rpc(&endpoint, operator, "session/close", json!({"sessionId":session,"force":true})).await);
+            // Anyone working in shared work may stop it; only the owner or an
+            // Admin deletes someone else's session.
+            success(rpc(&endpoint, bob, "session/close", json!({"sessionId":session,"force":true})).await);
             forbidden(rpc(&endpoint, bob, "session/delete", json!({"sessionId":session})).await);
             forbidden(rpc(&endpoint, operator, "session/delete", json!({"sessionId":session})).await);
             success(rpc(&endpoint, universe_admin, "session/delete", json!({"sessionId":session})).await);

@@ -158,9 +158,13 @@ session starts with only its owner in that audience.
 
 ```text
 Read session = universe access AND (universe-visible OR explicit read access)
-Run/control = universe access AND session action permission
+Run/control = universe access AND (Contributor or above on universe-visible
+              team work, OR owner, OR explicit control grant)
               AND permission to run as its execution identity
 ```
+
+Lightspeed is multiplayer: universe-visible team work is worked on together,
+so every Contributor and above controls it. Grants matter on restricted work.
 
 Personal/team experiences are policy presets over the same session model:
 
@@ -168,9 +172,10 @@ Personal/team experiences are policy presets over the same session model:
   default only that user may submit or steer work. Nobody else controls the
   session under the user's authority unless the owner explicitly adds them as a
   writer; configuration changes never grant it.
-- **Team:** runs as a service principal, universe-visible by default, and explicitly
-  authorized writers/controllers. Service-bound sessions may also be restricted.
-  Requests remain attributable to individuals.
+- **Team:** runs as a service principal and is universe-visible by default, so
+  every Contributor and above can work in it. Restricted team work is limited
+  to explicitly authorized writers/controllers. Requests remain attributable to
+  individuals.
 
 A session writer may share read access with existing universe users/groups or
 make the session universe-visible. Readers cannot change sharing. Sharing never

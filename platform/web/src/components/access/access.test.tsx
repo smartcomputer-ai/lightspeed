@@ -346,28 +346,27 @@ it("lists nobody on a universe-visible resource but keeps its grants", async () 
     grants: [{ subject: { kind: "principal", id: "writer" }, permission: "use" }],
   });
 });
-it("lets the owner of a universe-visible session add people to control it", async () => {
+it("lists nobody on a universe-visible session: Contributors already work in it", async () => {
   policy.root = child;
   policy.visibility = "universe";
   await show();
   expect(document.body.textContent).toContain(
-    "Everyone in the universe can already read this. Add people who should also be able to control it.",
+    "Everyone in the universe can read this, and Contributors can work in it.",
   );
-  await act(async () => button("readerAdd")!.click());
-  await act(async () => button("Save")!.click());
-  await settle();
-  expect(putBody()?.grants).toContainEqual({
-    subject: { kind: "principal", id: "reader" },
-    permission: "write",
-  });
+  expect(document.querySelector("#share-search")).toBeNull();
+  expect(document.querySelector('[aria-label="Remove writer"]')).toBeNull();
+  await chooseVisibility("Who can read", "restricted");
+  expect(document.querySelector("#share-search")).not.toBeNull();
+  expect(document.querySelector('[aria-label="Remove writer"]')).not.toBeNull();
 });
-it("offers a writer nothing to add on a universe-visible session", async () => {
+it("says only the owner works in universe-visible personal work", async () => {
   policy.root = child;
   policy.visibility = "universe";
-  actor = "writer";
+  policy.execution = { kind: "personal", runAs: "owner" };
   await show();
-  expect(document.body.textContent).toContain("Everyone in the universe can already read this.");
-  expect(document.body.textContent).not.toContain("Add people who should also");
+  expect(document.body.textContent).toContain(
+    "Everyone in the universe can read this. It runs as its owner, so only the owner works in it.",
+  );
   expect(document.querySelector("#share-search")).toBeNull();
 });
 

@@ -192,15 +192,25 @@ included. Permission vocabularies are per resource kind and validated in
 `access`; this slice defines `read` and `write` for sessions and collections
 with one meaning: `read` sees the tree, `write` controls it.
 
+Correction (2026-09-24): universe-visible work is shared work. Lightspeed is
+multiplayer, so every Contributor and above works in a universe-visible
+session or bot that runs as the universe's agent identity; grants matter only
+on restricted work. Personal work runs as its owner and stays the owner's to
+work in whatever its visibility. The matrix below reflects the correction;
+the earlier text made control owner-only, which was never intended.
+
 ```text
 owner             = the root's current owner, for every resource in the tree
+shared            = root universe-visible AND not personal execution
 Read              = Read allowed AND (root universe OR owner OR grant on root OR privileged)
-Control session   = owner OR write grant on root OR (managing bot AND ManageBot allowed)
+Control session   = owner OR write grant on root OR (shared AND Contributor or above)
+                    OR (managing bot AND ManageBot allowed AND not personal)
 Create in root    = owner OR write grant on root; a bot's worker, in its collection
-Invoke bot        = InvokeBot allowed (universe collection) OR owner OR write grant
-Manage bot        = owner, OR ManageBot allowed when the collection is universe-visible
+Invoke bot        = owner OR write grant OR (shared AND InvokeBot allowed)
+Manage bot        = owner, OR ManageBot allowed when shared
 Manage collection = owner, OR ConfigureResource allowed when universe-visible
 Stop              = StopSession allowed (Operator/Admin) OR owner OR write grant
+                    OR (shared AND Contributor or above)
 Delete / close    = owner OR Admin OR (managing bot AND ManageBot allowed)
 Delete collection = owner OR Admin, once empty
 Hand off owner    = owner, only under service execution; moves the whole tree
