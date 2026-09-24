@@ -1,6 +1,7 @@
 # P177 — Session access and execution authority
 
-**Status:** Proposed. Second slice of
+**Status:** Implemented, 2026-09-24 (collections were built here and removed again
+by the third slice). Second slice of
 [enterprise authorization and identity](later/pNNN-enterprise-authorization.md),
 building on [identity foundation and universe authorization](p176-identity-and-universe-authorization.md).
 Includes the hardening items left open by that slice's review where they fit.

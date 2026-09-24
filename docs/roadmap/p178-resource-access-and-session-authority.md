@@ -1,13 +1,14 @@
 # P178 — Resource access and session authority
 
-**Status:** Proposed, 2026-09-23; rewritten the same day after review. Third
+**Status:** Implemented, 2026-09-24; proposed 2026-09-23 and rewritten the same
+day after review. Third
 slice of [enterprise authorization](later/pNNN-enterprise-authorization.md),
 building on [identity and universe authorization](p176-identity-and-universe-authorization.md),
 [session access and execution authority](p177-session-access-and-execution-authority.md)
 and [session config attachments](p173-session-config-attachments.md). Together
 with those two slices it is the version 0.1 permissions system: the point at
 which the `permissions` branch merges and production work starts depending on
-the model. Nothing below is implemented.
+the model.
 
 Lightspeed is greenfield. Migrations are edited in place and contracts reshaped
 where the model needs it. Keep the vocabulary small and enforce it on every
@@ -300,23 +301,23 @@ Edited in place; schema revision advances once with the release metadata.
 
 Each step ships on its own; the order is by dependency.
 
-0. [ ] Hardening: reauthorize policy replacement and hand-off under the row
+0. [x] Hardening: reauthorize policy replacement and hand-off under the row
        lock (decision 8), with a deterministic revoke-versus-put test.
-1. [ ] Remove collections: methods, `access.root`, the kind, evaluator arms,
+1. [x] Remove collections: methods, `access.root`, the kind, evaluator arms,
        store paths, table, web fixtures and documentation. The `audience_root`
        mechanism stays for delegated children and bot sessions.
-2. [ ] Executor: role, system assignment at execution-principal creation,
+2. [x] Executor: role, system assignment at execution-principal creation,
        refusal in identity changes and key issuance, contract regeneration,
        Members and execution-settings UI, matrix tests.
-3. [ ] Kinds: anchors and policy rows for workspaces, environments and MCP
+3. [x] Kinds: anchors and policy rows for workspaces, environments and MCP
        servers written at creation; `use`; evaluator arms with the full
        role × visibility × grant matrix in unit tests; `access/policy/*` and
        `access/read` on the kinds; list filtering; `CreateWorkspace` for
        Contributors.
-4. [ ] Enforcement: attachment admission on every installing path and on bot
+4. [x] Enforcement: attachment admission on every installing path and on bot
        exec polls; `admit_run` and the turn check over attachments; direct API
        reclassification from decision 6; typed refusals.
-5. [ ] Configure and manage-access rules, the credential-binding rule, Access
+5. [x] Configure and manage-access rules, the credential-binding rule, Access
        dialogs on the three pages, pickers with reasons, demo fixtures, user
        documentation, and the merge of the `permissions` branch.
 
