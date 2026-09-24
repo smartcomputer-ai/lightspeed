@@ -1024,7 +1024,7 @@ pub struct BotCreateParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AccessInput>,
     /// Execution identity of the bot and every session it creates; absent
-    /// means the universe's execution service. Refused with `access.root`.
+    /// means the universe's execution service.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<ExecutionInput>,
 }

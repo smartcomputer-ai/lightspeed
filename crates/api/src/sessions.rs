@@ -55,7 +55,7 @@ pub struct SessionStartParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AccessInput>,
     /// Execution identity of the new session; absent means the universe's
-    /// execution service. Refused with `access.root`.
+    /// execution service.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<ExecutionInput>,
 }

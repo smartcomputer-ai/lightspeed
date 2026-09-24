@@ -48,37 +48,6 @@ pub trait AgentApiService: Send + Sync {
     ) -> Result<AgentApiOutcome<AccessExecutionUpdateResponse>, AgentApiError> {
         Err(AgentApiError::internal("execution policy is unavailable"))
     }
-    async fn create_collection(
-        &self,
-        _params: CollectionCreateParams,
-    ) -> Result<AgentApiOutcome<CollectionCreateResponse>, AgentApiError> {
-        Err(AgentApiError::internal("collections are unavailable"))
-    }
-    async fn read_collection(
-        &self,
-        _params: CollectionReadParams,
-    ) -> Result<AgentApiOutcome<CollectionReadResponse>, AgentApiError> {
-        Err(AgentApiError::internal("collections are unavailable"))
-    }
-    async fn list_collections(
-        &self,
-        _params: CollectionListParams,
-    ) -> Result<AgentApiOutcome<CollectionListResponse>, AgentApiError> {
-        Err(AgentApiError::internal("collections are unavailable"))
-    }
-    async fn update_collection(
-        &self,
-        _params: CollectionUpdateParams,
-    ) -> Result<AgentApiOutcome<CollectionUpdateResponse>, AgentApiError> {
-        Err(AgentApiError::internal("collections are unavailable"))
-    }
-    async fn delete_collection(
-        &self,
-        _params: CollectionDeleteParams,
-    ) -> Result<AgentApiOutcome<CollectionDeleteResponse>, AgentApiError> {
-        Err(AgentApiError::internal("collections are unavailable"))
-    }
-
     async fn initialize(
         &self,
         params: InitializeParams,

@@ -72,8 +72,33 @@ describe("action permission previews", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(preview);
   });
+  it("decides resources for the default agent identity when asked", async () => {
+    const fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const rpc = JSON.parse(String(init.body));
+      expect(rpc.params).toEqual({
+        resources: [{ kind: "environment", id: "production" }],
+        as: "execution_service",
+      });
+      return Response.json({
+        id: rpc.id,
+        result: { result: { actions: [], resources: [] }, notifications: [] },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const response = await app().request("/universe/access", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        resources: [{ kind: "environment", id: "production" }],
+        as: "execution_service",
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it.each([
     { principalId: "another-user" },
+    { as: "someone-else" },
     { resources: [{ kind: "session", id: "" }] },
     {
       resources: Array.from({ length: 101 }, () => ({
@@ -243,4 +268,105 @@ it("forwards privileged-read provenance and isolates concurrent ordinary request
   ]);
   expect(privateRead.headers.get("x-lightspeed-privileged-read")).toBe("true");
   expect(ordinaryRead.headers.has("x-lightspeed-privileged-read")).toBe(false);
+});
+
+describe("operational resource creation", () => {
+  const restricted = { visibility: "restricted" };
+  function capture(result: unknown) {
+    const calls: { method: string; params: Record<string, unknown> }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: RequestInit) => {
+        const rpc = JSON.parse(String(init.body));
+        calls.push(rpc);
+        return Response.json({
+          id: rpc.id,
+          result: { result, notifications: [] },
+        });
+      }),
+    );
+    return calls;
+  }
+  async function post(path: string, body: unknown, method = "POST") {
+    return app().request(path, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+  it("forwards the audience of a new workspace", async () => {
+    const calls = capture({ workspace: { workspaceId: "notes" } });
+    const response = await post("/universe/workspaces", {
+      workspaceId: "notes",
+      access: restricted,
+    });
+    expect(response.status).toBe(201);
+    expect(calls[0]).toMatchObject({
+      method: "vfs/workspaces/create",
+      params: { workspaceId: "notes", access: restricted },
+    });
+  });
+  it("forwards the audience of provisioned and external environments", async () => {
+    const calls = capture({ environment: { environmentId: "env" } });
+    expect(
+      (
+        await post("/universe/environments", {
+          requestId: "req",
+          bindingId: "incus",
+          templateId: "ubuntu",
+          access: restricted,
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await post("/universe/environments/external", {
+          endpoint: "wss://envd.example.com/ws",
+          access: restricted,
+        })
+      ).status,
+    ).toBe(201);
+    expect(calls.map((call) => [call.method, call.params.access])).toEqual([
+      ["environments/create", restricted],
+      ["environments/external/create", restricted],
+    ]);
+  });
+  it("passes an MCP server's audience beside the record, never inside it", async () => {
+    const calls = capture({ server: { serverId: "github" } });
+    const document = {
+      serverId: "github",
+      serverUrl: "https://mcp.example.com/mcp",
+      defaultServerLabel: "github",
+    };
+    expect(
+      (await post("/universe/mcp-servers", { ...document, access: restricted }))
+        .status,
+    ).toBe(201);
+    // A replaced document may echo the view's summary; it is not input.
+    const summary = {
+      root: { kind: "mcp_server", id: "github" },
+      owner: "11111111-1111-4111-8111-111111111111",
+      visibility: "universe",
+    };
+    expect(
+      (
+        await post(
+          "/universe/mcp-servers/github",
+          { ...document, revision: 2, access: summary },
+          "PUT",
+        )
+      ).status,
+    ).toBe(200);
+    expect(calls[0]?.params).toEqual({ server: document, access: restricted });
+    expect(calls[1]?.params).toEqual({ server: document, expectedRevision: 2 });
+  });
+  it("rejects an unknown audience before calling the runtime", async () => {
+    const calls = capture({});
+    const response = await post("/universe/workspaces", {
+      workspaceId: "notes",
+      access: { visibility: "private" },
+    });
+    expect(response.status).toBe(400);
+    expect(calls).toEqual([]);
+  });
 });

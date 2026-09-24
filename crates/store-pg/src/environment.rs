@@ -816,51 +816,11 @@ impl EnvironmentStore for PgStore {
         &self,
         request: ListEnvironments,
     ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
-        let mut query =
-            format!("SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1");
-        let mut next = 2;
-        if request.provider_id.is_some() {
-            query.push_str(&format!(" AND e.provider_id = ${next}"));
-            next += 1;
-        }
-        if request.binding_id.is_some() {
-            query.push_str(&format!(" AND e.binding_id = ${next}"));
-            next += 1;
-        }
-        if request.status.is_some() {
-            query.push_str(&format!(" AND e.status = ${next}"));
-            next += 1;
-        }
-        if request.registration_key_id.is_some() {
-            query.push_str(&format!(" AND e.registration_key_id = ${next}"));
-            next += 1;
-        }
-        // Appended only when present so containment can use the GIN index.
-        if !request.metadata.is_empty() {
-            query.push_str(&format!(" AND e.metadata_json @> ${next}"));
-        }
-        query.push_str(" ORDER BY e.environment_id");
-        let mut sql = sqlx::query(&query).bind(self.config.universe_id);
-        if let Some(id) = request.provider_id {
-            sql = sql.bind(id.to_string());
-        }
-        if let Some(id) = request.binding_id {
-            sql = sql.bind(id.to_string());
-        }
-        if let Some(status) = request.status {
-            sql = sql.bind(environment_status_to_str(status));
-        }
-        if let Some(id) = request.registration_key_id {
-            sql = sql.bind(id.to_string());
-        }
-        if !request.metadata.is_empty() {
-            sql = sql.bind(metadata_filter_json(&request.metadata));
-        }
-        let rows = sql
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| sql_error("list environments", error))?;
-        rows.iter().map(environment_from_row).collect()
+        self.environment_rows(None, request)
+            .await?
+            .iter()
+            .map(environment_from_row)
+            .collect()
     }
 
     async fn list_environments_needing_reconcile(
@@ -1125,6 +1085,104 @@ impl EnvironmentCredentialStore for PgStore {
                 )
             })?;
         credential_from_row(&row)
+    }
+}
+
+impl PgStore {
+    /// `list_environments` for one reader: only environments the reader may
+    /// see, decided in SQL by their access policy, each with the access
+    /// summary its view carries. An environment without an anchor is never
+    /// listed.
+    pub async fn list_environments_for(
+        &self,
+        reader: &crate::Reader,
+        request: ListEnvironments,
+    ) -> Result<Vec<(EnvironmentRecord, ::access::ResourceAccessSummary)>, EnvironmentRegistryError>
+    {
+        self.environment_rows(Some(reader), request)
+            .await?
+            .iter()
+            .map(|row| {
+                Ok((
+                    environment_from_row(row)?,
+                    crate::resources::summary_from_list_row(row).map_err(|error| {
+                        store_message(format!("decode environment access: {error}"))
+                    })?,
+                ))
+            })
+            .collect()
+    }
+
+    /// Every environment matching the request, or with a reader only those
+    /// it may see, joined with their access summary.
+    async fn environment_rows(
+        &self,
+        reader: Option<&crate::Reader>,
+        request: ListEnvironments,
+    ) -> Result<Vec<sqlx::postgres::PgRow>, EnvironmentRegistryError> {
+        let (access_columns, access_join, filter) = match reader {
+            Some(reader) => (
+                format!(", {}", crate::resources::SUMMARY_COLUMNS),
+                crate::resources::summary_join("environment", "e", "environment_id"),
+                crate::resources::operational_filter(
+                    reader,
+                    "environment",
+                    "e",
+                    "environment_id",
+                    2,
+                ),
+            ),
+            None => (String::new(), String::new(), "TRUE".to_owned()),
+        };
+        let mut query = format!(
+            "SELECT {ENVIRONMENT_COLUMNS}{access_columns} {ENVIRONMENT_JOIN} {access_join} WHERE e.universe_id = $1 AND {filter}"
+        );
+        let mut next = 5;
+        if request.provider_id.is_some() {
+            query.push_str(&format!(" AND e.provider_id = ${next}"));
+            next += 1;
+        }
+        if request.binding_id.is_some() {
+            query.push_str(&format!(" AND e.binding_id = ${next}"));
+            next += 1;
+        }
+        if request.status.is_some() {
+            query.push_str(&format!(" AND e.status = ${next}"));
+            next += 1;
+        }
+        if request.registration_key_id.is_some() {
+            query.push_str(&format!(" AND e.registration_key_id = ${next}"));
+            next += 1;
+        }
+        // Appended only when present so containment can use the GIN index.
+        if !request.metadata.is_empty() {
+            query.push_str(&format!(" AND e.metadata_json @> ${next}"));
+        }
+        query.push_str(" ORDER BY e.environment_id");
+        let (principal, root_kind, root_id) = reader.map(crate::Reader::binds).unwrap_or_default();
+        let mut sql = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(principal)
+            .bind(root_kind)
+            .bind(root_id);
+        if let Some(id) = request.provider_id {
+            sql = sql.bind(id.to_string());
+        }
+        if let Some(id) = request.binding_id {
+            sql = sql.bind(id.to_string());
+        }
+        if let Some(status) = request.status {
+            sql = sql.bind(environment_status_to_str(status));
+        }
+        if let Some(id) = request.registration_key_id {
+            sql = sql.bind(id.to_string());
+        }
+        if !request.metadata.is_empty() {
+            sql = sql.bind(metadata_filter_json(&request.metadata));
+        }
+        sql.fetch_all(&self.pool)
+            .await
+            .map_err(|error| sql_error("list environments", error))
     }
 }
 

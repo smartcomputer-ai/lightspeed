@@ -2,6 +2,7 @@ import { PrivateContentAccess } from "@/components/access/private-content-access
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { api, type Member } from "@/api";
@@ -64,10 +65,10 @@ export function MembersPage({ admin: _admin }: { admin: boolean }) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <MemberList universeId={universe.id} writable={permissions.can("manage_access")} />;
+  return <MemberList universeId={universe.id} slug={slug} writable={permissions.can("manage_access")} />;
 }
 
-function MemberList({ universeId, writable }: { universeId: string; writable: boolean }) {
+function MemberList({ universeId, slug, writable }: { universeId: string; slug: string | undefined; writable: boolean }) {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
@@ -124,8 +125,19 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
                 <TableRow key={member.id}>
                   <TableCell>{member.name}</TableCell>
                   <TableCell>{member.email}</TableCell>
-                  <TableCell>{member.role}{member.readPrivateContent && <span className="mt-1 block text-xs text-muted-foreground">Private-content access</span>}</TableCell>
-                  {writable && (
+                  {member.system ? (
+                    <TableCell>
+                      Executor
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        Every session and bot that runs as the Default agent identity uses its access.{" "}
+                        <Link className="underline underline-offset-2" to={`/u/${slug}/settings/general`}>Execution settings</Link>
+                      </span>
+                    </TableCell>
+                  ) : (
+                    <TableCell>{member.role}{member.readPrivateContent && <span className="mt-1 block text-xs text-muted-foreground">Private-content access</span>}</TableCell>
+                  )}
+                  {writable && member.system && <TableCell />}
+                  {writable && !member.system && (
                     <TableActionsCell>
                       <Button
                         variant="ghost"

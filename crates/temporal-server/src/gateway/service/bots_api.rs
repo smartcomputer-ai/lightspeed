@@ -295,6 +295,25 @@ impl GatewayAgentApi {
                 })?;
         }
         self.validate_trigger_grants(&input.document).await?;
+        // An exec poll naming its environment runs there as the bot's
+        // execution identity; one taken from the profile's default is
+        // admitted with the profile, and every fire is decided again.
+        if let BotTriggerSpec::Poll {
+            source:
+                PollSource::Exec {
+                    environment_id: Some(environment_id),
+                    ..
+                },
+            ..
+        } = &input.document.spec
+        {
+            self.require_execution_use(
+                &ResourceRef::Bot(bot_id.as_str().to_owned()),
+                &[ResourceRef::Environment(environment_id.as_str().to_owned())],
+                store_pg::UseCheck::Admission,
+            )
+            .await?;
+        }
 
         let mut secrets = existing
             .as_ref()
@@ -392,7 +411,10 @@ impl GatewayAgentApi {
         .await?;
         let store = self.store();
         let previous = self.read_bot_record(&input.bot_id).await?;
-        self.require_profile(&input.document.profile_id).await?;
+        let profile = self.require_profile(&input.document.profile_id).await?;
+        if previous.document.profile_id != input.document.profile_id {
+            self.admit_bot_profile(&input.bot_id, &profile).await?;
+        }
         let record = store
             .put_bot(
                 input.bot_id.clone(),
@@ -439,18 +461,42 @@ impl GatewayAgentApi {
         Ok(())
     }
 
-    async fn require_profile(&self, profile_id: &ProfileId) -> Result<(), AgentApiError> {
+    async fn require_profile(&self, profile_id: &ProfileId) -> Result<AgentProfile, AgentApiError> {
         let profiles: &dyn ::profiles::ProfileStore = self.store().as_ref();
         profiles
             .read_agent_profile(profile_id)
             .await
-            .map(|_| ())
             .map_err(|error| match error {
                 ::profiles::ProfileError::NotFound { .. } => {
                     AgentApiError::invalid_request(format!("unknown profile: {profile_id}"))
                 }
                 other => AgentApiError::internal(other.to_string()),
             })
+    }
+
+    /// A bot's sessions take its profile's attachments, so the bot's
+    /// execution identity must be able to use them when the profile is
+    /// chosen; every session start admits them again. A configuration that
+    /// does not translate is refused when a session applies it.
+    async fn admit_bot_profile(
+        &self,
+        bot_id: &BotId,
+        profile: &AgentProfile,
+    ) -> Result<(), AgentApiError> {
+        let Some(config) = profile.document.config.clone() else {
+            return Ok(());
+        };
+        let Ok(config) =
+            super::api_config::engine_session_config_from_api(config, self.default_model.clone())
+        else {
+            return Ok(());
+        };
+        self.require_execution_use(
+            &ResourceRef::Bot(bot_id.as_str().to_owned()),
+            &temporal_workflow::attached_resources(&config.features),
+            store_pg::UseCheck::Admission,
+        )
+        .await
     }
 
     /// Terminal close: the row first (admission refuses on it), then every
@@ -831,21 +877,15 @@ impl GatewayAgentApi {
     ) -> Result<BotCreateResponse, AgentApiError> {
         let store = self.store();
         let BotInput { bot_id, document } = params.bot;
-        self.require_profile(&document.profile_id).await?;
-        // A bot created into a collection is a member of it, its sessions
-        // included; otherwise the bot is its own root and its sessions
-        // follow it. Either way its sessions carry its audience.
+        let profile = self.require_profile(&document.profile_id).await?;
+        // A bot is its own root and its sessions follow it, carrying its
+        // audience and execution identity.
         let resource = ResourceRef::Bot(bot_id.as_str().to_owned());
-        let root = params
-            .access
-            .as_ref()
-            .and_then(|access| access.root.clone());
-        let execution = self
-            .execution_for_new_root(root.as_ref(), params.execution)
-            .await?;
-        self.reserve_resource(resource.clone(), root.as_ref(), execution)
+        let execution = self.resolve_execution(params.execution).await?;
+        self.reserve_resource(resource.clone(), Some(execution))
             .await?;
         self.apply_creation_access(&resource, params.access).await?;
+        self.admit_bot_profile(&bot_id, &profile).await?;
         let bot = store
             .create_bot(bot_id.clone(), document, bot_now_ms())
             .await

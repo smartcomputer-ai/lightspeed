@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AccessChange, AccessDirectory } from "@lightspeed-ai/agent-client";
+import { universeRoleSchema } from "@lightspeed/platform-shared";
 import { api, type Universe } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,7 +67,7 @@ export function AdminGroupsPage() {
             {universes.data?.map((u) => <option key={u.id} value={u.lightspeedUniverseId}>{u.name}</option>)}
           </select>
           {universeId && <select aria-label="Universe role" className={selectClass} value={role} onChange={(e) => setRole(e.target.value as AccessRole)}>
-            {["viewer", "contributor", "operator", "admin"].map((r) => <option key={r}>{r}</option>)}
+            {universeRoleSchema.options.map((r) => <option key={r}>{r}</option>)}
           </select>}
           <Button disabled={change.isPending} onClick={() => change.mutate({ operation: "assign_role", assignment: {
             subject: { kind: "group", id: groupId }, scope: universeId ? { kind: "universe", universeId } : { kind: "deployment" }, role: universeId ? role : "deployment_admin",

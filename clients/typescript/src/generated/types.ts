@@ -92,10 +92,17 @@ export type AccessScope =
  */
 export type PrincipalStatus = "active" | "disabled";
 /**
+ * A role in a universe, or `deployment_admin` in the deployment. `executor`
+ * is the role of agent identities: it sees universe-visible resources and
+ * uses resources, nothing else. The runtime assigns it to a universe's
+ * execution principal; identity administration never assigns or revokes
+ * it, and its holders never get a key.
+ *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "Role".
  */
-export type Role = "viewer" | "contributor" | "operator" | "admin" | "deployment_admin";
+export type Role =
+  "viewer" | "contributor" | "operator" | "admin" | "deployment_admin" | "executor";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "Subject".
@@ -123,13 +130,21 @@ export type Capability =
     )
   | "read_private_content";
 /**
- * One permission a grant confers on a root. `Read` sees the tree; `Write`
- * also controls it.
+ * One permission a grant confers on a root. On sessions and bots `Read`
+ * sees the tree and `Write` also controls it; on workspaces, environments
+ * and MCP servers `Use` is the only permission.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ResourcePermission".
  */
-export type ResourcePermission = "read" | "write";
+export type ResourcePermission = "read" | "write" | "use";
+/**
+ * Who may see a root's tree without a grant.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "Visibility".
+ */
+export type Visibility = "universe" | "restricted";
 /**
  * Durable control facts, distinct from an agent's execution credentials.
  *
@@ -151,15 +166,16 @@ export type ResourceRef =
     }
   | {
       id: string;
-      kind: "collection";
+      kind: "workspace";
+    }
+  | {
+      id: string;
+      kind: "environment";
+    }
+  | {
+      id: string;
+      kind: "mcp_server";
     };
-/**
- * Who may see a root's tree without a grant.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "Visibility".
- */
-export type Visibility = "universe" | "restricted";
 /**
  * Under whose authority a root's work runs: the universe's execution
  * service, or the person who created it.
@@ -183,6 +199,13 @@ export type ActionActor =
       kind: "internal";
     };
 /**
+ * The identity `access/read` decides resource actions for.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AccessReadAs".
+ */
+export type AccessReadAs = "caller" | "execution_service";
+/**
  * Actions are independent of RPC spelling. Ownership and resource policy are
  * evaluated by the service that resolves the target, not from client claims.
  *
@@ -201,14 +224,12 @@ export type UniverseAction =
       | "create_bot"
       | "manage_bot"
       | "invoke_bot"
-      | "use_resource"
-      | "configure_resource"
       | "manage_access"
-      | "create_collection"
-      | "manage_collection"
-      | "delete_collection"
     )
-  | "share_resource";
+  | "use_resource"
+  | "configure_resource"
+  | "share_resource"
+  | "create_workspace";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolKindView".
@@ -2038,16 +2059,11 @@ export interface AccessGrantInput {
  */
 export interface AccessInput {
   /**
-   * Readers and writers of the root. Each subject must currently hold a
-   * role in the universe.
+   * Grants on the root: `read` or `write` on a session or bot, `use` on
+   * a workspace, environment or MCP server. Each subject must currently
+   * hold a role in the universe.
    */
   grants?: AccessGrantInput[];
-  /**
-   * Create the resource as a member of this collection, which the caller
-   * must be able to write to. A member shares the collection's audience
-   * and takes no `visibility` or `grants` of its own.
-   */
-  root?: ResourceRef | null;
   /**
    * `universe` lets every member read; `restricted` limits reading to the
    * owner and the grants below. Absent means `universe`.
@@ -2055,9 +2071,11 @@ export interface AccessInput {
   visibility?: Visibility | null;
 }
 /**
- * Replace a root's visibility and grant set. Only the owner may grant
- * `write`; writers may share `read` and change visibility; readers change
- * nothing.
+ * Replace a root's visibility and grant set. On a session or bot only the
+ * owner may add or remove `write`; writers may share `read` and change
+ * visibility; readers change nothing. On a workspace, environment or MCP
+ * server only the owner or an Admin changes access, and `use` is the only
+ * grant.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AccessPolicyPutParams".
@@ -2093,7 +2111,8 @@ export interface AccessPolicyPutResponse {
  */
 export interface AccessPolicyView {
   /**
-   * Who the root's work runs as; absent for a profile.
+   * Who the root's work runs as; absent for kinds that run nothing:
+   * profiles, workspaces, environments and MCP servers.
    */
   execution?: Execution | null;
   grants: ResourceGrant[];
@@ -2158,8 +2177,14 @@ export interface AccessPolicyReadResponse {
  */
 export interface AccessReadParams {
   /**
-   * Up to 100 existing sessions, bots, profiles or collections in the selected universe.
-   * Missing resources return no actions.
+   * Whose resource actions to report. Universe-level `actions` are always
+   * the caller's.
+   */
+  as?: AccessReadAs & string;
+  /**
+   * Up to 100 existing sessions, bots, profiles, workspaces, environments
+   * or MCP servers in the selected universe. Missing resources return no
+   * actions.
    */
   resources?: ResourceRef[];
   /**
@@ -4681,103 +4706,6 @@ export interface ChannelPairingListResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfCollectionCreateResponse".
- */
-export interface AgentApiOutcomeOfCollectionCreateResponse {
-  notifications?: AgentNotification[];
-  result: CollectionCreateResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CollectionCreateResponse".
- */
-export interface CollectionCreateResponse {
-  collection: CollectionView;
-}
-/**
- * A collection: a root with a name that gives the sessions and bots in it
- * one audience. It routes nothing and runs nothing.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CollectionView".
- */
-export interface CollectionView {
-  access: ResourceAccessSummary;
-  collectionId: string;
-  createdAtMs: number;
-  displayName: string;
-  /**
-   * Advances with every update; pass it as `expectedRevision`.
-   */
-  revision: number;
-  updatedAtMs: number;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfCollectionDeleteResponse".
- */
-export interface AgentApiOutcomeOfCollectionDeleteResponse {
-  notifications?: AgentNotification[];
-  result: CollectionDeleteResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CollectionDeleteResponse".
- */
-export interface CollectionDeleteResponse {
-  collection: CollectionView;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfCollectionListResponse".
- */
-export interface AgentApiOutcomeOfCollectionListResponse {
-  notifications?: AgentNotification[];
-  result: CollectionListResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CollectionListResponse".
- */
-export interface CollectionListResponse {
-  collections: CollectionView[];
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfCollectionReadResponse".
- */
-export interface AgentApiOutcomeOfCollectionReadResponse {
-  notifications?: AgentNotification[];
-  result: CollectionReadResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CollectionReadResponse".
- */
-export interface CollectionReadResponse {
-  collection: CollectionView;
-  /**
-   * Sessions and bots whose audience this collection is.
-   */
-  members: ResourceRef[];
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfCollectionUpdateResponse".
- */
-export interface AgentApiOutcomeOfCollectionUpdateResponse {
-  notifications?: AgentNotification[];
-  result: CollectionUpdateResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CollectionUpdateResponse".
- */
-export interface CollectionUpdateResponse {
-  collection: CollectionView;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfContextAppendResponse".
  */
 export interface AgentApiOutcomeOfContextAppendResponse {
@@ -5002,6 +4930,11 @@ export interface DeploymentEnvironmentAdoptResponse {
  * via the `definition` "EnvironmentView".
  */
 export interface EnvironmentView {
+  /**
+   * The environment's owner and visibility; an environment runs no work
+   * of its own, so `execution` is absent.
+   */
+  access: ResourceAccessSummary;
   createdAtMs: number;
   /**
    * Lightspeed-owned power intent; `status` is the observed state.
@@ -5927,6 +5860,11 @@ export interface McpServerDeleteResponse {
  * via the `definition` "McpServerView".
  */
 export interface McpServerView {
+  /**
+   * The server's owner and visibility; a server runs no work of its own,
+   * so `execution` is absent.
+   */
+  access: ResourceAccessSummary;
   allowPrivateNetwork: boolean;
   allowedTools?: string[] | null;
   approval: RemoteMcpApprovalPolicy;
@@ -6709,6 +6647,11 @@ export interface VfsWorkspaceCreateResponse {
  * via the `definition` "VfsWorkspaceView".
  */
 export interface VfsWorkspaceView {
+  /**
+   * The workspace's owner and visibility; a workspace runs nothing, so
+   * `execution` is absent.
+   */
+  access: ResourceAccessSummary;
   baseSnapshotRef?: string | null;
   /**
    * Total byte size of the head snapshot.
@@ -7032,11 +6975,12 @@ export interface BlobPutParams {
 export interface BlobReadParams {
   blobRef: string;
   /**
-   * The session, bot or collection the blob is read through: the caller
+   * The session or bot the blob is read through: the caller
    * must be able to read it and the blob must be admitted content of it.
    * Without a resource only a blob the caller uploaded is readable. A
    * resource that does not authorize the read is a refusal, not a prompt
-   * to try another.
+   * to try another. Workspaces, environments and MCP servers are refused
+   * here; read a workspace's files with `vfs/workspaces/files/read`.
    */
   resource?: ResourceRef | null;
 }
@@ -7060,7 +7004,7 @@ export interface BotCreateParams {
   bot: BotInput;
   /**
    * Execution identity of the bot and every session it creates; absent
-   * means the universe's execution service. Refused with `access.root`.
+   * means the universe's execution service.
    */
   execution?: ExecutionInput | null;
   /**
@@ -7454,57 +7398,6 @@ export interface ClientInfo {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CollectionCreateParams".
- */
-export interface CollectionCreateParams {
-  /**
-   * Audience of the collection; `root` is not accepted here.
-   */
-  access?: AccessInput | null;
-  /**
-   * Client-chosen id (same form as a session id); absent allocates one.
-   */
-  collectionId?: string | null;
-  displayName: string;
-  /**
-   * Execution identity of the collection and everything created in it;
-   * absent means the universe's execution service.
-   */
-  execution?: ExecutionInput | null;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CollectionDeleteParams".
- */
-export interface CollectionDeleteParams {
-  collectionId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CollectionListParams".
- */
-export interface CollectionListParams {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CollectionReadParams".
- */
-export interface CollectionReadParams {
-  collectionId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CollectionUpdateParams".
- */
-export interface CollectionUpdateParams {
-  collectionId: string;
-  displayName: string;
-  /**
-   * The revision from `collection/read`; absent replaces unconditionally.
-   */
-  expectedRevision?: number | null;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextAppendEntry".
  */
 export interface ContextAppendEntry {
@@ -7703,6 +7596,13 @@ export interface EnvironmentCloseParams {
  * via the `definition` "EnvironmentCreateParams".
  */
 export interface EnvironmentCreateParams {
+  /**
+   * Who may see and use the new environment, set atomically with its
+   * creation; the caller owns it. Absent means universe-visible. Grants
+   * take the `use` permission only. A retried `requestId` returns the
+   * environment it created before and ignores this.
+   */
+  access?: AccessInput | null;
   bindingId: string;
   displayName?: string | null;
   /**
@@ -7750,6 +7650,11 @@ export interface EnvironmentCredentialUnbindParams {
  * via the `definition` "EnvironmentExternalCreateParams".
  */
 export interface EnvironmentExternalCreateParams {
+  /**
+   * Who may see and use the new environment, as for
+   * `environments/create`.
+   */
+  access?: AccessInput | null;
   /**
    * Connection to an envd instance reachable from Lightspeed.
    */
@@ -8095,6 +8000,13 @@ export interface McpServerListParams {
  * via the `definition` "McpServerPutParams".
  */
 export interface McpServerPutParams {
+  /**
+   * Who may see and use a server this call creates; the caller owns it.
+   * Absent means universe-visible. Grants take the `use` permission only.
+   * Refused when the server already exists: change its access with
+   * `access/policy/put`.
+   */
+  access?: AccessInput | null;
   /**
    * Checked only when the server already exists; absent replaces (or
    * creates) unconditionally.
@@ -8472,7 +8384,7 @@ export interface SessionStartParams {
   displayName?: string | null;
   /**
    * Execution identity of the new session; absent means the universe's
-   * execution service. Refused with `access.root`.
+   * execution service.
    */
   execution?: ExecutionInput | null;
   /**
@@ -8515,12 +8427,25 @@ export interface VfsSnapshotCommitParams {
  */
 export interface VfsSnapshotReadParams {
   snapshotRef: string;
+  /**
+   * The workspace the snapshot is read through: the caller must be able
+   * to see it, and the snapshot must be its current head or base.
+   * Without a workspace only a snapshot the caller committed or uploaded
+   * is readable. A snapshot reference alone confers nothing.
+   */
+  workspaceId?: string | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceCreateParams".
  */
 export interface VfsWorkspaceCreateParams {
+  /**
+   * Who may see and use the new workspace, set atomically with its
+   * creation; the caller owns it. Absent means universe-visible. Grants
+   * take the `use` permission only.
+   */
+  access?: AccessInput | null;
   displayName?: string | null;
   /**
    * Snapshot to seed the workspace from. Absent starts the workspace from
@@ -8537,8 +8462,9 @@ export interface VfsWorkspaceDeleteParams {
   workspaceId: string;
 }
 /**
- * Read a file from a workspace's current head. Workspaces remain universe
- * resources; this does not authorize arbitrary blobs or snapshot references.
+ * Read a file from a workspace's current head. The caller must be able to
+ * see the workspace; this does not authorize arbitrary blobs or snapshot
+ * references.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceFileReadParams".
@@ -8564,8 +8490,15 @@ export interface VfsWorkspaceReadParams {
  * via the `definition` "VfsWorkspaceUpdateParams".
  */
 export interface VfsWorkspaceUpdateParams {
+  /**
+   * Renames the workspace, which requires configuring it; absent keeps
+   * the current name.
+   */
   displayName?: string | null;
   expectedRevision?: number | null;
+  /**
+   * The new head; moving it requires use of the workspace.
+   */
   snapshotRef: string;
   workspaceId: string;
 }

@@ -37,7 +37,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub use access::{LOCAL_DEVELOPMENT_PRINCIPAL, PgAccessStore};
-pub use resources::{CollectionRecord, PolicyReplacement, Reader, ResourcePolicyRecord};
+pub use resources::{Reader, ResourcePolicyRecord, UseCheck, UseRefusal};
 
 /// A session page for one reader: each record with the access summary its
 /// view carries.

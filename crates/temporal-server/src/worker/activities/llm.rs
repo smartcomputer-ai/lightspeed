@@ -3,7 +3,6 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use access::AccessStore as _;
 use engine::{CoreAgentIoError, LlmGenerationResult, LlmUsage, SessionId};
 use temporalio_sdk::activities::ActivityError;
 
@@ -19,15 +18,19 @@ pub(super) async fn generate(
     attempt: u32,
     request: LlmGenerateActivityRequest,
 ) -> Result<LlmGenerationResult, ActivityError> {
-    let request = request.request;
+    let LlmGenerateActivityRequest {
+        request,
+        attached_resources,
+    } = request;
     let session_id = request.session_id.clone();
     // The turn boundary: the run's execution authority must still hold
     // before the model is called. The turn that was authorized completes;
     // this one does not begin.
     if let Some((access, universe_id)) = &deps.access
-        && !authority_holds(access, *universe_id, &session_id).await?
+        && let Some(revoked) =
+            revoked_authority(access, *universe_id, &session_id, &attached_resources).await?
     {
-        return revoked_generation_result(deps.blobs.as_ref(), request).await;
+        return revoked_generation_result(deps.blobs.as_ref(), request, &revoked).await;
     }
     let started = std::time::Instant::now();
     match deps.llm.generate(request.clone()).await {
@@ -127,55 +130,49 @@ fn observe_prompt_cache(session_id: &SessionId, usage: &LlmUsage) {
     }
 }
 
-/// Whether the session's execution principal is still active with resource
-/// use in the universe. A personal root runs as its owner, so one statement
-/// covers both the identity and the universe membership.
-async fn authority_holds(
-    access: &store_pg::PgAccessStore,
+/// Why a model call for the session may not begin, or `None` while its
+/// execution principal is active with resource use in the universe and may
+/// use every resource the session has attached that still exists. A
+/// personal root runs as its owner, so the identity's rights cover both the
+/// identity and its membership. The turn check and compaction both ask it.
+pub(super) async fn revoked_authority(
+    store: &store_pg::PgAccessStore,
     universe_id: uuid::Uuid,
     session_id: &engine::SessionId,
-) -> Result<bool, ActivityError> {
-    let anchor = access
-        .anchor(
+    attached: &[access::ResourceRef],
+) -> Result<Option<String>, ActivityError> {
+    let refusal = store
+        .execution_use(
             universe_id,
             &access::ResourceRef::Session(session_id.as_str().to_owned()),
+            attached,
+            store_pg::UseCheck::Continuation,
         )
         .await
         .map_err(|error| {
-            activity_error(anyhow::Error::new(error).context("read session authority"))
+            activity_error(anyhow::Error::new(error).context("resolve run authority"))
         })?;
-    let Some(execution) = anchor.and_then(|anchor| anchor.execution) else {
-        return Ok(false);
-    };
-    let rights = match access
-        .effective_access(
-            execution.run_as,
-            access::AccessScope::Universe { universe_id },
-        )
-        .await
-    {
-        Ok(rights) => rights,
-        Err(access::AccessError::NotFound) => return Ok(false),
-        Err(error) => {
-            return Err(activity_error(
-                anyhow::Error::new(error).context("resolve run authority"),
-            ));
+    Ok(refusal.map(|refusal| match refusal {
+        store_pg::UseRefusal::Identity => {
+            "the session's execution identity is disabled or may no longer use resources".to_owned()
         }
-    };
-    Ok(
-        rights.universe_action(access::UniverseAction::UseResource)
-            == access::RoleDecision::Allowed,
-    )
+        store_pg::UseRefusal::Resource { resource, .. } => format!(
+            "the session's execution identity may no longer use {} {}",
+            resource.label(),
+            resource.id()
+        ),
+    }))
 }
 
 async fn revoked_generation_result(
     blobs: &dyn engine::storage::BlobStore,
     request: engine::LlmGenerationRequest,
+    reason: &str,
 ) -> Result<LlmGenerationResult, ActivityError> {
     let failure_ref = super::common::write_error_blob(
         blobs,
         format!(
-            "run authority revoked before the model call\nrun_id={}\nturn_id={}\n",
+            "run authority revoked before the model call: {reason}\nrun_id={}\nturn_id={}\n",
             request.run_id, request.turn_id
         ),
     )

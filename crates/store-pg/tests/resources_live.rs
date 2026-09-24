@@ -149,10 +149,10 @@ async fn exercise(pool: &sqlx::PgPool) {
                     &record.0,
                     &alice_actor,
                     &record.1,
-                    None,
                     (!matches!(&record.0, ResourceRef::Profile(_))
                         && matches!(&record.1, ResourceController::Principal(_)))
                     .then_some(service),
+                    None,
                     5,
                 )
                 .await
@@ -273,8 +273,8 @@ async fn exercise(pool: &sqlx::PgPool) {
             &race,
             &alice_actor,
             &principal,
-            None,
             Some(service),
+            None,
             5
         ),
         store.reserve_resource(
@@ -282,8 +282,8 @@ async fn exercise(pool: &sqlx::PgPool) {
             &race,
             &bob_actor,
             &bob_controller,
-            None,
             Some(service),
+            None,
             5
         )
     );
@@ -312,7 +312,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                 &ResourceController::Session("missing".into()),
                 None,
                 None,
-                5,
+                5
             )
             .await
             .unwrap_err(),
@@ -327,8 +327,8 @@ async fn exercise(pool: &sqlx::PgPool) {
             &fork,
             &bob_actor,
             &bob_controller,
-            None,
             Some(service),
+            None,
             5,
         )
         .await
@@ -571,90 +571,6 @@ async fn exercise(pool: &sqlx::PgPool) {
     );
     assert_eq!(controller(Read, &personal).await, Some(Decision::Hidden));
 
-    // A collection is a root; a member created in it resolves to its policy
-    // and takes none of its own; it cannot go while members remain.
-    let collection = ResourceRef::Collection("team".into());
-    store
-        .reserve_resource(
-            universe,
-            &collection,
-            &alice_actor,
-            &principal,
-            None,
-            Some(service),
-            11,
-        )
-        .await
-        .unwrap();
-    store
-        .create_collection(universe, "team", "Team", 11)
-        .await
-        .unwrap();
-    let member = ResourceRef::Session("team-session".into());
-    let stored = store
-        .reserve_resource(
-            universe,
-            &member,
-            &bob_actor,
-            &bob_controller,
-            Some(&collection),
-            None,
-            12,
-        )
-        .await
-        .unwrap();
-    assert_eq!(stored.audience_root, collection);
-    assert_eq!(
-        stored.execution,
-        Some(service),
-        "a member runs as its collection"
-    );
-    let member_access = store
-        .resource_access(universe, Some(alice.principal.id), &member)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(member_access.policy.unwrap().owner, alice.principal.id);
-    assert_eq!(
-        store.collection_members(universe, "team").await.unwrap(),
-        vec![member.clone()]
-    );
-    assert_eq!(
-        store.delete_collection(universe, "team").await.unwrap_err(),
-        AccessError::Conflict
-    );
-    // Only a collection can be a root, and a bot's session never names one.
-    assert!(matches!(
-        store
-            .reserve_resource(
-                universe,
-                &ResourceRef::Session("x".into()),
-                &bob_actor,
-                &bob_controller,
-                Some(&personal),
-                None,
-                12
-            )
-            .await
-            .unwrap_err(),
-        AccessError::Invalid(_)
-    ));
-    assert!(matches!(
-        store
-            .reserve_resource(
-                universe,
-                &ResourceRef::Session("y".into()),
-                &alice_actor,
-                &ResourceController::Bot("assistant".into()),
-                Some(&collection),
-                None,
-                12
-            )
-            .await
-            .unwrap_err(),
-        AccessError::Invalid(_)
-    ));
-
     // Deleting content releases its anchor, policy and grants: the id is free
     // for anyone, and the reservation of a never-created id is not adopted.
     sqlx::query("DELETE FROM sessions WHERE universe_id=$1 AND session_id='fork'")
@@ -683,13 +599,665 @@ async fn exercise(pool: &sqlx::PgPool) {
             &personal,
             &bob_actor,
             &bob_controller,
-            None,
             Some(service),
+            None,
             10,
         )
         .await
         .unwrap();
     assert_eq!(reused.created_by, bob_actor);
+
+    // Workspaces, environments and MCP servers are roots created by a
+    // principal, anchored before their record, running nothing.
+    let workspace = ResourceRef::Workspace("shared-notes".into());
+    for (controller, execution) in [
+        (principal.clone(), Some(service)),
+        (ResourceController::Session("bot-session".into()), None),
+    ] {
+        assert!(matches!(
+            store
+                .reserve_resource(
+                    universe,
+                    &workspace,
+                    &alice_actor,
+                    &controller,
+                    execution,
+                    None,
+                    11
+                )
+                .await,
+            Err(AccessError::Invalid(_))
+        ));
+    }
+    let anchored = store
+        .reserve_resource(
+            universe,
+            &workspace,
+            &alice_actor,
+            &principal,
+            None,
+            Some(Visibility::Restricted),
+            11,
+        )
+        .await
+        .unwrap();
+    assert!(anchored.is_root());
+    assert_eq!(anchored.execution, None);
+    // An operational id is reserved once, even by its owner: a repeated
+    // create is a conflict and never rewrites the live resource's access.
+    assert!(matches!(
+        store
+            .reserve_resource(
+                universe,
+                &workspace,
+                &alice_actor,
+                &principal,
+                None,
+                Some(Visibility::Universe),
+                12,
+            )
+            .await,
+        Err(AccessError::Conflict)
+    ));
+    // Restricted: its owner and Admin see and use it, nobody else.
+    for (caller, expected) in [
+        (alice, Decision::Allowed),
+        (universe_admin, Decision::Allowed),
+        (bob, Decision::Hidden),
+        (operator, Decision::Hidden),
+        (viewer, Decision::Hidden),
+    ] {
+        assert_eq!(
+            store
+                .decide(Caller::Request(caller), UseResource, &workspace)
+                .await
+                .unwrap(),
+            Some(expected),
+            "{:?}",
+            caller.roles
+        );
+    }
+    // Without an anchor it is hidden from everyone, Admin included.
+    assert_eq!(
+        store
+            .decide(
+                Caller::Request(universe_admin),
+                Read,
+                &ResourceRef::Environment("unanchored".into())
+            )
+            .await
+            .unwrap(),
+        Some(Decision::Hidden)
+    );
+    // A `use` grant lets its holder use the resource, not configure or share it.
+    let grant_use = |grants: Vec<(Subject, ResourcePermission)>| PolicyReplacement {
+        visibility: Visibility::Restricted,
+        grants,
+        owner: None,
+    };
+    let bob_subject = Subject::Principal(bob.principal.id);
+    store
+        .put_policy(
+            universe,
+            alice.principal.id,
+            &workspace,
+            &grant_use(vec![(bob_subject, ResourcePermission::Use)]),
+            None,
+            12,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .decide(Caller::Request(bob), UseResource, &workspace)
+            .await
+            .unwrap(),
+        Some(Decision::Allowed)
+    );
+    assert_eq!(
+        store
+            .decide(Caller::Request(bob), ConfigureResource, &workspace)
+            .await
+            .unwrap(),
+        Some(Decision::Forbidden)
+    );
+    assert!(matches!(
+        store
+            .put_policy(
+                universe,
+                alice.principal.id,
+                &workspace,
+                &grant_use(vec![(bob_subject, ResourcePermission::Read)]),
+                None,
+                13
+            )
+            .await,
+        Err(AccessError::Invalid(_))
+    ));
+    assert_eq!(
+        store
+            .put_policy(
+                universe,
+                bob.principal.id,
+                &workspace,
+                &grant_use(vec![]),
+                None,
+                13
+            )
+            .await
+            .unwrap_err(),
+        AccessError::Denied
+    );
+    // Internal work is decided as its execution principal.
+    for (execution_principal, expected) in [
+        (Some(bob.principal.id), Decision::Allowed),
+        (Some(viewer.principal.id), Decision::Hidden),
+        (None, Decision::Forbidden),
+    ] {
+        let context = ControllerContext {
+            execution_principal,
+            ..worker.clone()
+        };
+        assert_eq!(
+            store
+                .decide(Caller::Controller(&context), UseResource, &workspace)
+                .await
+                .unwrap(),
+            Some(expected)
+        );
+    }
+    // An anchor whose record was never created is released; the id is free.
+    assert!(store.release_resource(universe, &workspace).await.unwrap());
+    assert!(store.anchor(universe, &workspace).await.unwrap().is_none());
+
+    // Lists show only what the reader may see, and deleting a record
+    // releases its anchor; an anchor whose record exists is never released.
+    use mcp::McpRegistryStore as _;
+    let server = |id: &str| mcp::PutMcpServerRecord {
+        server_id: mcp::McpServerId::new(id),
+        display_name: None,
+        server_url: format!("https://{id}.example.com/mcp"),
+        transport: mcp::RemoteMcpTransport::StreamableHttp,
+        default_server_label: id.to_owned(),
+        description: None,
+        allowed_tools: None,
+        execution: mcp::McpExecution::Provider,
+        exposure: mcp::McpExposure::Inject,
+        approval: mcp::McpApprovalPolicy::Never,
+        defer_loading: None,
+        allow_private_network: false,
+        auth_policy: mcp::McpServerAuthPolicy::None,
+        auth_grant_id: None,
+        status: mcp::McpServerStatus::Active,
+        now_ms: 14,
+    };
+    for (id, visibility) in [
+        ("open", Visibility::Universe),
+        ("closed", Visibility::Restricted),
+    ] {
+        store
+            .reserve_resource(
+                universe,
+                &ResourceRef::McpServer(id.into()),
+                &alice_actor,
+                &principal,
+                None,
+                Some(visibility),
+                14,
+            )
+            .await
+            .unwrap();
+        pg.put_server(server(id), None).await.unwrap();
+    }
+    pg.put_server(server("unanchored"), None).await.unwrap();
+    let listed = |reader: store_pg::Reader| {
+        let pg = pg.clone();
+        async move {
+            pg.list_servers_for(&reader, mcp::ListMcpServers::default())
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|(record, access)| {
+                    assert_eq!(access.owner, alice.principal.id);
+                    assert_eq!(access.execution, None);
+                    record.server_id.to_string()
+                })
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        listed(store_pg::Reader::Principal(alice.principal.id)).await,
+        ["closed", "open"]
+    );
+    assert_eq!(
+        listed(store_pg::Reader::Principal(bob.principal.id)).await,
+        ["open"]
+    );
+    assert_eq!(
+        listed(store_pg::Reader::Everything).await,
+        ["closed", "open"]
+    );
+    assert_eq!(
+        pg.list_servers(mcp::ListMcpServers::default())
+            .await
+            .unwrap()
+            .len(),
+        3
+    );
+
+    // One check decides what a root's execution identity may use: the
+    // identity first, then every resource in one statement, in order, the
+    // first refusal reported.
+    let bob_work = ResourceRef::Session("bob-work".into());
+    let viewer_work = ResourceRef::Session("viewer-work".into());
+    for (root, owner) in [(&bob_work, bob), (&viewer_work, viewer)] {
+        let id = owner.principal.id;
+        store
+            .reserve_resource(
+                universe,
+                root,
+                &ActionActor::Principal { id },
+                &ResourceController::Principal(id),
+                Some(Execution {
+                    run_as: id,
+                    kind: ExecutionKind::Personal,
+                }),
+                None,
+                14,
+            )
+            .await
+            .unwrap();
+    }
+    let open = ResourceRef::McpServer("open".into());
+    let closed = ResourceRef::McpServer("closed".into());
+    let unanchored_server = ResourceRef::McpServer("unanchored".into());
+    let never_created = ResourceRef::McpServer("never-created".into());
+    let uses = |root: &ResourceRef, resources: &[ResourceRef], check| {
+        let store = store.clone();
+        let root = root.clone();
+        let resources = resources.to_vec();
+        async move {
+            store
+                .execution_use(universe, &root, &resources, check)
+                .await
+                .unwrap()
+        }
+    };
+    let refused = |resource: &ResourceRef, run_as: &EffectiveAccess, decision| {
+        Some(store_pg::UseRefusal::Resource {
+            execution: Execution {
+                run_as: run_as.principal.id,
+                kind: ExecutionKind::Personal,
+            },
+            resource: resource.clone(),
+            decision,
+        })
+    };
+    use store_pg::UseCheck::{Admission, Continuation};
+    assert_eq!(
+        uses(&bob_work, std::slice::from_ref(&open), Admission).await,
+        None
+    );
+    assert_eq!(
+        uses(&bob_work, &[open.clone(), closed.clone()], Admission).await,
+        refused(&closed, bob, Decision::Hidden)
+    );
+    store
+        .put_policy(
+            universe,
+            alice.principal.id,
+            &closed,
+            &grant_use(vec![(bob_subject, ResourcePermission::Use)]),
+            None,
+            14,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        uses(&bob_work, &[open.clone(), closed.clone()], Continuation).await,
+        None
+    );
+    // An identity that may not use resources at all is refused as such;
+    // admitting nothing reads no identity, continuing work always does.
+    assert_eq!(
+        uses(&viewer_work, std::slice::from_ref(&open), Admission).await,
+        Some(store_pg::UseRefusal::Identity)
+    );
+    assert_eq!(uses(&viewer_work, &[], Admission).await, None);
+    assert_eq!(
+        uses(&viewer_work, &[], Continuation).await,
+        Some(store_pg::UseRefusal::Identity)
+    );
+    // A record without an anchor fails closed whenever it is checked.
+    for check in [Admission, Continuation] {
+        assert_eq!(
+            uses(&bob_work, std::slice::from_ref(&unanchored_server), check).await,
+            refused(&unanchored_server, bob, Decision::Hidden)
+        );
+    }
+    // A missing resource cannot be attached, but one that is gone revokes
+    // nothing: work that attached it continues without it.
+    assert_eq!(
+        uses(&bob_work, &[never_created.clone(), open.clone()], Admission).await,
+        refused(&never_created, bob, Decision::Hidden)
+    );
+    assert_eq!(
+        uses(
+            &bob_work,
+            &[never_created.clone(), open.clone()],
+            Continuation
+        )
+        .await,
+        None
+    );
+    assert!(!store.release_resource(universe, &closed).await.unwrap());
+    pg.delete_server(&mcp::McpServerId::new("closed"))
+        .await
+        .unwrap();
+    assert!(store.anchor(universe, &closed).await.unwrap().is_none());
+    assert_eq!(
+        uses(&bob_work, std::slice::from_ref(&closed), Continuation).await,
+        None
+    );
+    assert_eq!(
+        uses(&bob_work, std::slice::from_ref(&closed), Admission).await,
+        refused(&closed, bob, Decision::Hidden)
+    );
+
+    // A writer revoked after reading the policy cannot commit a replacement
+    // restoring its grant, with or without the revision it read.
+    let shared = ResourceRef::Session("shared".into());
+    store
+        .reserve_resource(
+            universe,
+            &shared,
+            &alice_actor,
+            &principal,
+            Some(service),
+            None,
+            15,
+        )
+        .await
+        .unwrap();
+    let session_policy =
+        |visibility, grants: Vec<(Subject, ResourcePermission)>| PolicyReplacement {
+            visibility,
+            grants,
+            owner: None,
+        };
+    let bob_writes = vec![(bob_subject, ResourcePermission::Write)];
+    let granted = store
+        .put_policy(
+            universe,
+            alice.principal.id,
+            &shared,
+            &session_policy(Visibility::Restricted, bob_writes.clone()),
+            None,
+            16,
+        )
+        .await
+        .unwrap();
+    store
+        .put_policy(
+            universe,
+            alice.principal.id,
+            &shared,
+            &session_policy(Visibility::Restricted, vec![]),
+            None,
+            17,
+        )
+        .await
+        .unwrap();
+    for expected_revision in [None, Some(granted.policy.revision)] {
+        assert_eq!(
+            store
+                .put_policy(
+                    universe,
+                    bob.principal.id,
+                    &shared,
+                    &session_policy(Visibility::Restricted, bob_writes.clone()),
+                    expected_revision,
+                    18,
+                )
+                .await
+                .unwrap_err(),
+            AccessError::Denied
+        );
+    }
+    // The same holds when the revocation is still in flight: a writer's
+    // replacement that waits on the owner's lock decides from what the
+    // owner committed, not from what it read before waiting.
+    store
+        .put_policy(
+            universe,
+            alice.principal.id,
+            &shared,
+            &session_policy(Visibility::Restricted, bob_writes.clone()),
+            None,
+            18,
+        )
+        .await
+        .unwrap();
+    let mut revocation = pool.begin().await.unwrap();
+    sqlx::query("UPDATE access_resource_policies SET revision=revision+1 WHERE universe_id=$1 AND resource_kind='session' AND resource_id='shared'")
+        .bind(universe).execute(&mut *revocation).await.unwrap();
+    sqlx::query("DELETE FROM access_resource_grants WHERE universe_id=$1 AND resource_kind='session' AND resource_id='shared'")
+        .bind(universe).execute(&mut *revocation).await.unwrap();
+    let replacement = session_policy(Visibility::Universe, bob_writes.clone());
+    let write = store.put_policy(universe, bob.principal.id, &shared, &replacement, None, 19);
+    let revoke = async {
+        // Commit only once the writer waits on the policy row.
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database()
+                   AND wait_event_type = 'Lock' AND query LIKE '%access_resource_policies%FOR UPDATE%')",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if waiting {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        revocation.commit().await.unwrap();
+    };
+    let (written, ()) = tokio::join!(write, revoke);
+    assert_eq!(written.unwrap_err(), AccessError::Denied);
+    assert!(
+        store
+            .read_policy(universe, &shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .grants
+            .is_empty()
+    );
+
+    // The default agent identity reads and uses, and never gets a key.
+    let execution = store.universe_execution_policy(universe, 19).await.unwrap();
+    let agent = store
+        .effective_access(execution.execution_principal_id, scope)
+        .await
+        .unwrap();
+    assert_eq!(agent.principal.display_name, "Default agent identity");
+    assert_eq!(
+        agent.roles,
+        std::collections::BTreeSet::from([Role::Executor])
+    );
+    use auth::ApiKeyStore as _;
+    assert_eq!(
+        store_pg::PgApiKeyStore::new(pool.clone())
+            .create_api_key(auth::CreateApiKey {
+                authority_scope: scope,
+                key_hash: "0".repeat(64),
+                record: auth::ApiKeyRecord {
+                    key_prefix: "lsk_agent".into(),
+                    scope,
+                    principal_id: agent.principal.id,
+                    created_by: universe_admin.principal.id,
+                    display_name: None,
+                    created_at_ms: 19,
+                    revoked_at_ms: None,
+                    last_used_at_ms: None,
+                },
+            })
+            .await
+            .unwrap_err(),
+        auth::ApiKeyError::Denied
+    );
+    assert!(matches!(
+        store
+            .apply(
+                admin,
+                AccessChange::RevokeRole {
+                    assignment: RoleAssignment {
+                        scope,
+                        subject: Subject::Principal(agent.principal.id),
+                        role: Role::Executor,
+                    },
+                },
+                20,
+            )
+            .await,
+        Err(AccessError::Invalid(_))
+    ));
+    // It holds Executor and nothing else: no role, group or capability is
+    // ever added to it, whoever asks.
+    let agent_id = agent.principal.id;
+    let group = Uuid::new_v4();
+    store
+        .apply(
+            admin,
+            AccessChange::CreateGroup {
+                id: group,
+                display_name: "Agents".into(),
+            },
+            20,
+        )
+        .await
+        .unwrap();
+    for change in [
+        AccessChange::AssignRole {
+            assignment: RoleAssignment {
+                scope,
+                subject: Subject::Principal(agent_id),
+                role: Role::Contributor,
+            },
+        },
+        AccessChange::PutMembership {
+            membership: Membership {
+                group_id: group,
+                principal_id: agent_id,
+            },
+        },
+        AccessChange::AssignCapability {
+            assignment: CapabilityAssignment {
+                scope,
+                principal_id: agent_id,
+                capability: Capability::LeaseCredentials,
+            },
+        },
+    ] {
+        assert!(
+            matches!(
+                store.apply(admin, change.clone(), 21).await,
+                Err(AccessError::Invalid(_))
+            ),
+            "{change:?}"
+        );
+    }
+    assert_eq!(
+        store.effective_access(agent_id, scope).await.unwrap().roles,
+        std::collections::BTreeSet::from([Role::Executor])
+    );
+    // It uses resources through `use` grants; it never owns a root or
+    // reads or controls one.
+    let agent_subject = Subject::Principal(agent_id);
+    for (resource, replacement) in [
+        (
+            &shared,
+            session_policy(
+                Visibility::Restricted,
+                vec![(agent_subject, ResourcePermission::Read)],
+            ),
+        ),
+        (
+            &shared,
+            session_policy(
+                Visibility::Restricted,
+                vec![(agent_subject, ResourcePermission::Write)],
+            ),
+        ),
+        (
+            &shared,
+            PolicyReplacement {
+                owner: Some(agent_id),
+                ..session_policy(Visibility::Restricted, vec![])
+            },
+        ),
+    ] {
+        assert!(matches!(
+            store
+                .put_policy(
+                    universe,
+                    alice.principal.id,
+                    resource,
+                    &replacement,
+                    None,
+                    22
+                )
+                .await,
+            Err(AccessError::Invalid(_))
+        ));
+    }
+    store
+        .put_policy(
+            universe,
+            alice.principal.id,
+            &open,
+            &grant_use(vec![(agent_subject, ResourcePermission::Use)]),
+            None,
+            22,
+        )
+        .await
+        .unwrap();
+    // Disabling it is how an Admin stops everything that runs as it.
+    let agent_work = ResourceRef::Session("agent-work".into());
+    store
+        .reserve_resource(
+            universe,
+            &agent_work,
+            &alice_actor,
+            &principal,
+            Some(Execution {
+                run_as: agent_id,
+                kind: ExecutionKind::Service,
+            }),
+            None,
+            23,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        uses(&agent_work, std::slice::from_ref(&open), Continuation).await,
+        None
+    );
+    store
+        .apply(
+            admin,
+            AccessChange::SetPrincipalStatus {
+                id: agent_id,
+                status: PrincipalStatus::Disabled,
+            },
+            24,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        uses(&agent_work, std::slice::from_ref(&open), Continuation).await,
+        Some(store_pg::UseRefusal::Identity)
+    );
 
     let audit_events: i64 =
         sqlx::query_scalar("SELECT count(*) FROM access_audit_events WHERE universe_id=$1")

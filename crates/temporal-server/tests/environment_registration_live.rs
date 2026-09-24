@@ -40,7 +40,8 @@ use temporal_server::{
     DeploymentStores, GatewayAuthMode, UniverseRuntime,
     gateway::{
         DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayAgentApi, GatewayDeploymentApi, GatewayRoutes,
-        GatewayState, gateway_router,
+        GatewayState, authentication::local_context, gateway_router,
+        principal::with_request_context as calling,
     },
 };
 use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
@@ -86,11 +87,31 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
         stores,
     )?);
     let operator = GatewayDeploymentApi::new(runtime.clone());
-    operator
-        .create_universe(DeploymentUniverseCreateParams {
+    // Direct service calls carry an explicit caller. A store-level home
+    // universe gives the local identity deployment administration; it
+    // becomes Admin of the universe it then creates, and the owner of every
+    // environment its registration keys admit.
+    let pool = sqlx::PgPool::connect(&std::env::var("LIGHTSPEED_POSTGRES_URL")?).await?;
+    let home_universe = Uuid::new_v4();
+    store_pg::create_universe(&pool, home_universe).await?;
+    let access = store_pg::PgAccessStore::new(pool);
+    let local = access
+        .initialize_local_development(home_universe, 1)
+        .await?
+        .id;
+    calling(
+        local_context(&access, local, access::AccessScope::Deployment).await?,
+        operator.create_universe(DeploymentUniverseCreateParams {
             universe_id: universe_id.to_string(),
-        })
-        .await?;
+        }),
+    )
+    .await?;
+    let caller = local_context(
+        &access,
+        local,
+        access::AccessScope::Universe { universe_id },
+    )
+    .await?;
     let state = Arc::new(GatewayState::multi(
         GatewayAuthMode::Single { universe_id },
         runtime.clone(),
@@ -160,13 +181,17 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
     let api = runtime.state_for(universe_id, false).await?.api.clone();
     let sandbox = tempfile::tempdir()?;
 
-    let result = scenario(
-        &runtime,
-        &api,
-        universe_id,
-        &base_url,
-        &connect_url,
-        sandbox.path(),
+    let result = calling(
+        caller,
+        scenario(
+            &runtime,
+            &api,
+            universe_id,
+            local,
+            &base_url,
+            &connect_url,
+            sandbox.path(),
+        ),
     )
     .await;
     reconciler.abort();
@@ -178,6 +203,7 @@ async fn scenario(
     runtime: &Arc<UniverseRuntime>,
     api: &Arc<GatewayAgentApi>,
     universe_id: Uuid,
+    key_creator: Uuid,
     base_url: &str,
     connect_url: &str,
     sandbox: &Path,
@@ -223,6 +249,14 @@ async fn scenario(
     assert_eq!(registration_key_id, &key_id);
     assert_eq!(*identity_mode, EnvironmentIdentityModeView::Ephemeral);
     assert!(daemon_id.starts_with("daemon_"));
+    // A registered environment belongs to whoever minted the key that
+    // admitted it, and is visible to the universe unless they restrict it.
+    assert_eq!(environment_a.access.owner, key_creator);
+    assert_eq!(
+        environment_a.access.visibility,
+        access::Visibility::Universe
+    );
+    assert!(environment_a.access.execution.is_none());
     assert!(environment_a.last_seen_at_ms.is_some());
     assert_eq!(
         environment_a
@@ -439,6 +473,70 @@ async fn scenario(
     assert_eq!(
         key_view.status,
         api::EnvironmentRegistrationKeyStatusView::Revoked
+    );
+
+    // Closing what a key admitted needs configure access to every one of
+    // those environments: an Operator who may not configure a restricted
+    // one is refused, learns nothing about it, and nothing is closed.
+    api.put_access_policy(api::AccessPolicyPutParams {
+        resource: access::ResourceRef::Environment(environment_b.environment_id.clone()),
+        visibility: access::Visibility::Restricted,
+        grants: Vec::new(),
+        owner: None,
+        expected_revision: None,
+    })
+    .await?;
+    let identities = store_pg::PgAccessStore::new(
+        sqlx::PgPool::connect(&std::env::var("LIGHTSPEED_POSTGRES_URL")?).await?,
+    );
+    let operator = Uuid::new_v4();
+    let scope = access::AccessScope::Universe { universe_id };
+    for change in [
+        access::AccessChange::CreatePrincipal {
+            id: operator,
+            kind: access::PrincipalKind::User,
+            display_name: "Registration operator".to_owned(),
+            management_scope: access::AccessScope::Deployment,
+        },
+        access::AccessChange::AssignRole {
+            assignment: access::RoleAssignment {
+                scope,
+                subject: access::Subject::Principal(operator),
+                role: access::Role::Operator,
+            },
+        },
+    ] {
+        access::AccessStore::apply(&identities, key_creator, change, 2).await?;
+    }
+    let refused = calling(
+        local_context(&identities, operator, scope).await?,
+        api.revoke_environment_registration_key(EnvironmentRegistrationKeyRevokeParams {
+            registration_key_id: key_id.clone(),
+            close_environments: true,
+        }),
+    )
+    .await;
+    let Err(refused) = refused else {
+        anyhow::bail!("an Operator closed another owner's restricted environment");
+    };
+    assert_eq!(
+        refused.kind,
+        api::AgentApiErrorKind::Forbidden,
+        "{refused:?}"
+    );
+    assert!(
+        !refused.message.contains(&environment_b.environment_id),
+        "{refused:?}"
+    );
+    assert_eq!(
+        api.read_environment(EnvironmentReadParams {
+            environment_id: environment_b.environment_id.clone(),
+        })
+        .await?
+        .result
+        .environment
+        .status,
+        EnvironmentLifecycleStatusView::Ready
     );
 
     daemon_b.abort();

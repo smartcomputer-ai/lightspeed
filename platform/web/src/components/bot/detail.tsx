@@ -315,7 +315,7 @@ export function BotDetail({
         description="Identity, job, triggers, session profile, collaborators, guardrails, and lifecycle."
         contentClassName="sm:max-w-4xl"
       >
-        <BotSetup universeId={universeId} slug={slug} bot={bot} state={state} manage={manage} />
+        <BotSetup universeId={universeId} slug={slug} bot={bot} execution={access?.execution?.kind} state={state} manage={manage} />
       </BotEditorDialog>
     </div>
   );

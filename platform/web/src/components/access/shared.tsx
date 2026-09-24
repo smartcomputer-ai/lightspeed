@@ -1,6 +1,7 @@
 import { usePermissionIdentity } from "@/lib/permissions";
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 import type {
+  AccessExecutionReadResponse,
   AccessSubjectsResponse,
   ResourceRef,
   ResourceAccessSummary,
@@ -71,6 +72,35 @@ export function useAccessSubjects(
   });
 }
 
+/// The name people see for the universe's execution service: the identity
+/// sessions and bots run as unless they run as their owner.
+export const DEFAULT_AGENT_IDENTITY = "Default agent identity";
+
+export function useExecutionPolicy(universeId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["execution-policy", universeId],
+    enabled,
+    queryFn: () =>
+      api<AccessExecutionReadResponse>(
+        "GET",
+        `/api/v1/universes/${universeId}/access/execution`,
+      ),
+    retry: false,
+  });
+}
+
+/// Workspaces, environments and MCP servers: roots that run nothing and
+/// carry one grant, `use`.
+export type OperationalKind = "workspace" | "environment" | "mcp_server";
+export function isOperational(kind: ResourceRef["kind"]): kind is OperationalKind {
+  return kind === "workspace" || kind === "environment" || kind === "mcp_server";
+}
+export const operationalNoun: Record<OperationalKind, string> = {
+  workspace: "workspace",
+  environment: "environment",
+  mcp_server: "MCP server",
+};
+
 export function RestrictedMarker({
   access,
 }: {
@@ -103,7 +133,7 @@ export function ExecutionLabel({
   if (!execution) return null;
   const name =
     execution.kind === "service"
-      ? "universe service"
+      ? DEFAULT_AGENT_IDENTITY
       : (subjects.data?.subjects.find((s) => s.subject.id === execution.runAs)
           ?.displayName ?? execution.runAs);
   return (
@@ -139,6 +169,10 @@ export async function invalidateAccess(
       "bots",
       "bot",
       "bot-state",
+      "workspaces",
+      "workspace-tree",
+      "environments",
+      "mcp-servers",
     ].map((name) =>
       client.invalidateQueries({
         predicate: (query) =>

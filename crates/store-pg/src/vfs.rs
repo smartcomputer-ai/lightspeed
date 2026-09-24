@@ -168,20 +168,11 @@ impl VfsWorkspaceStore for PgStore {
     }
 
     async fn list_workspaces(&self) -> Result<Vec<VfsWorkspaceRecord>, VfsCatalogError> {
-        let rows = sqlx::query(&format!(
-            r#"
-            SELECT {WORKSPACE_COLUMNS}
-            FROM vfs_workspaces
-            WHERE universe_id = $1
-            ORDER BY updated_at_ms DESC, workspace_id
-            "#
-        ))
-        .bind(self.config.universe_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| catalog_sql_error("list vfs workspaces", error))?;
-
-        rows.iter().map(workspace_record_from_row).collect()
+        self.workspace_rows(None)
+            .await?
+            .iter()
+            .map(workspace_record_from_row)
+            .collect()
     }
 
     async fn compare_and_set_head(
@@ -271,6 +262,11 @@ impl VfsWorkspaceStore for PgStore {
         self.ensure_universe()
             .await
             .map_err(|error| catalog_store_error("ensure universe", error))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| catalog_sql_error("begin vfs workspace delete", error))?;
         let row = sqlx::query(&format!(
             r#"
             DELETE FROM vfs_workspaces
@@ -280,7 +276,7 @@ impl VfsWorkspaceStore for PgStore {
         ))
         .bind(self.config.universe_id)
         .bind(workspace_id.as_str())
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|error| catalog_sql_error("delete vfs workspace", error))?;
 
@@ -290,7 +286,76 @@ impl VfsWorkspaceStore for PgStore {
                 id: workspace_id.to_string(),
             });
         };
+        // The anchor goes with the workspace, so the id is free again.
+        sqlx::query("DELETE FROM access_resources WHERE universe_id = $1 AND resource_kind = 'workspace' AND resource_id = $2")
+            .bind(self.config.universe_id)
+            .bind(workspace_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| catalog_sql_error("release vfs workspace anchor", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| catalog_sql_error("commit vfs workspace delete", error))?;
         workspace_record_from_row(&row)
+    }
+}
+
+impl PgStore {
+    /// `list_workspaces` for one reader: only workspaces the reader may see,
+    /// decided in SQL by their access policy, each with the access summary
+    /// its view carries. A workspace without an anchor is never listed.
+    pub async fn list_workspaces_for(
+        &self,
+        reader: &crate::Reader,
+    ) -> Result<Vec<(VfsWorkspaceRecord, ::access::ResourceAccessSummary)>, VfsCatalogError> {
+        self.workspace_rows(Some(reader))
+            .await?
+            .iter()
+            .map(|row| {
+                Ok((
+                    workspace_record_from_row(row)?,
+                    crate::resources::summary_from_list_row(row).map_err(|error| {
+                        VfsCatalogError::Store {
+                            message: format!("decode vfs workspace access: {error}"),
+                        }
+                    })?,
+                ))
+            })
+            .collect()
+    }
+
+    /// Every workspace, or with a reader only those it may see, joined with
+    /// their access summary.
+    async fn workspace_rows(
+        &self,
+        reader: Option<&crate::Reader>,
+    ) -> Result<Vec<sqlx::postgres::PgRow>, VfsCatalogError> {
+        let columns = crate::resources::qualify_columns(WORKSPACE_COLUMNS, "w");
+        let (access_columns, access_join, filter) = match reader {
+            Some(reader) => (
+                format!(", {}", crate::resources::SUMMARY_COLUMNS),
+                crate::resources::summary_join("workspace", "w", "workspace_id"),
+                crate::resources::operational_filter(reader, "workspace", "w", "workspace_id", 2),
+            ),
+            None => (String::new(), String::new(), "TRUE".to_owned()),
+        };
+        let (principal, root_kind, root_id) = reader.map(crate::Reader::binds).unwrap_or_default();
+        sqlx::query(&format!(
+            r#"
+            SELECT {columns}{access_columns}
+            FROM vfs_workspaces w
+            {access_join}
+            WHERE w.universe_id = $1 AND {filter}
+            ORDER BY w.updated_at_ms DESC, w.workspace_id
+            "#
+        ))
+        .bind(self.config.universe_id)
+        .bind(principal)
+        .bind(root_kind)
+        .bind(root_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| catalog_sql_error("list vfs workspaces", error))
     }
 }
 

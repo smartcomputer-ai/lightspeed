@@ -13,6 +13,7 @@ import type { DemoResponder, DemoStore, DemoToolCall, DemoTurn, SessionRecord, U
 import {
   BOT_TOOLS,
   DAY_MS,
+  demoAccess,
   EMIT_TOOL,
   GPT,
   HOUR_MS,
@@ -865,6 +866,7 @@ function seedWorkspaces(store: DemoStore, universe: UniverseState): void {
 function seedEnvironments(universe: UniverseState): void {
   const macMini: Environment = {
     environmentId: ENV_MAC_MINI,
+    access: demoAccess("environment", ENV_MAC_MINI),
     requestId: `req-${hex("ada-mac-mini", 12)}`,
     source: {
       type: "external",
@@ -910,6 +912,7 @@ function seedEnvironments(universe: UniverseState): void {
   const laptopDaemonId = `daemon_${hex("ada-laptop-daemon", 64)}`;
   universe.environments.set("env-ada-laptop", {
     environmentId: "env-ada-laptop",
+    access: demoAccess("environment", "env-ada-laptop"),
     requestId: `daemon:${laptopDaemonId}`,
     source: {
       type: "registered",

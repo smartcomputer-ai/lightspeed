@@ -8,6 +8,7 @@ import {
   memberUpdateSchema,
   slugify,
   universeCreateSchema,
+  universeRoleSchema,
   universeUpdateSchema,
 } from "@lightspeed/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
@@ -20,6 +21,12 @@ type UniverseRow = typeof universes.$inferSelect;
 
 export function highestRole(roles: string[]): string | null {
   return ["admin", "operator", "contributor", "viewer"].find((r) => roles.includes(r)) ?? null;
+}
+
+/// Principals holding the system-assigned `executor` role: agent identities.
+/// They are listed as read-only members and never hold keys.
+function executorPrincipals(roles: { subject: { kind: string; id: string }; role: string }[]): Set<string> {
+  return new Set(roles.filter((r) => r.role === "executor" && r.subject.kind === "principal").map((r) => r.subject.id));
 }
 
 async function universeForSession(
@@ -202,10 +209,13 @@ export function universeRoutes(ctx: AppContext) {
       const principals = [self.result.access.principal];
       if (self.result.access.roles.includes("admin")) {
         const directory = await client.call("deployment/identity/directory", { scope });
+        // An execution identity never gets a key.
+        const executors = executorPrincipals(directory.result.roles);
         principals.push(...directory.result.principals.filter((principal) =>
           principal.kind === "service" && principal.status === "active"
           && principal.managementScope.kind === "universe"
-          && principal.managementScope.universeId === scope.universeId,
+          && principal.managementScope.universeId === scope.universeId
+          && !executors.has(principal.id),
         ));
       }
       return c.json(principals.map(({ id, displayName, kind }) => ({ id, displayName, kind })));
@@ -369,15 +379,19 @@ export function universeRoutes(ctx: AppContext) {
       scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
     });
     const accounts = await ctx.db.select().from(user);
-    return c.json(directory.result.roles.map((r) => {
+    // The universe's execution identity holds the system `executor` role. It
+    // is listed so admins see what every default session runs as, but it is
+    // `system`: identity administration never changes it.
+    const roles = directory.result.roles;
+    return c.json(roles.map((r) => {
       const account = r.subject.kind === "principal" ? accounts.find((u) => u.corePrincipalId === r.subject.id) : undefined;
       const subject = r.subject.kind === "principal" ? directory.result.principals.find((p) => p.id === r.subject.id) : directory.result.groups.find((g) => g.id === r.subject.id);
       return { id: `${r.subject.kind}:${r.subject.id}:${r.role}`, userId: account?.id ?? r.subject.id,
         subject: r.subject,
         principalKind: r.subject.kind === "principal" ? directory.result.principals.find((p) => p.id === r.subject.id)?.kind : undefined,
         readPrivateContent: r.subject.kind === "principal" && directory.result.capabilities.some((capability) => capability.principalId === r.subject.id && capability.capability === "read_private_content"),
-        role: r.role, name: account?.name ?? subject?.displayName ?? r.subject.id,
-        email: account?.email ?? (r.subject.kind === "group" ? "Group" : "Core principal"), createdAt: account?.createdAt ?? null };
+        role: r.role, system: r.role === "executor", name: account?.name ?? subject?.displayName ?? r.subject.id,
+        email: account?.email ?? (r.subject.kind === "group" ? "Group" : r.role === "executor" ? "Agent identity" : "Core principal"), createdAt: account?.createdAt ?? null };
     }));
   }));
 
@@ -405,7 +419,7 @@ export function universeRoutes(ctx: AppContext) {
     const body = await parseBody(c, z.object({ enabled: z.boolean() }).strict());
     if (!body.ok) return body.response;
     const [kind, id, role, extra] = c.req.param("memberId").split(":");
-    const parsed = z.object({ kind: z.literal("principal"), id: z.string().uuid(), role: z.enum(["viewer", "contributor", "operator", "admin"]) }).safeParse({ kind, id, role });
+    const parsed = z.object({ kind: z.literal("principal"), id: z.string().uuid(), role: universeRoleSchema }).safeParse({ kind, id, role });
     if (!parsed.success || extra !== undefined) return c.json({ error: "a user principal is required" }, 400);
     await deploymentClientFor(ctx).call("deployment/identity/apply", {
       operation: body.data.enabled ? "assign_capability" : "revoke_capability",
@@ -420,7 +434,7 @@ export function universeRoutes(ctx: AppContext) {
     const body = await parseBody(c, memberUpdateSchema);
     if (!body.ok) return body.response;
     const [kind, id, role, extra] = c.req.param("memberId").split(":");
-    const parsed = z.object({ kind: z.enum(["principal", "group"]), id: z.string().uuid(), role: z.enum(["viewer", "contributor", "operator", "admin"]) }).safeParse({ kind, id, role });
+    const parsed = z.object({ kind: z.enum(["principal", "group"]), id: z.string().uuid(), role: universeRoleSchema }).safeParse({ kind, id, role });
     if (!parsed.success || extra !== undefined) return c.json({ error: "invalid assignment" }, 400);
     const result = await deploymentClientFor(ctx).call("deployment/identity/apply", {
       operation: "replace_role", assignment: { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, subject: { kind: parsed.data.kind, id: parsed.data.id }, role: parsed.data.role },
@@ -433,7 +447,7 @@ export function universeRoutes(ctx: AppContext) {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access || access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
     const [kind, id, role] = c.req.param("memberId").split(":");
-    const parsed = z.object({ kind: z.enum(["principal", "group"]), id: z.string().uuid(), role: z.enum(["viewer", "contributor", "operator", "admin"]) }).safeParse({ kind, id, role });
+    const parsed = z.object({ kind: z.enum(["principal", "group"]), id: z.string().uuid(), role: universeRoleSchema }).safeParse({ kind, id, role });
     if (!parsed.success) return c.json({ error: "invalid assignment" }, 400);
     const result = await deploymentClientFor(ctx).call("deployment/identity/apply", {
       operation: "revoke_role", assignment: { scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, subject: { kind: parsed.data.kind, id: parsed.data.id }, role: parsed.data.role },

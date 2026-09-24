@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS access_role_assignments (
     role text NOT NULL,
     CHECK ((principal_id IS NULL) <> (group_id IS NULL)),
     CHECK ((universe_id IS NULL AND role = 'deployment_admin') OR
-           (universe_id IS NOT NULL AND role IN ('viewer', 'contributor', 'operator', 'admin')))
+           (universe_id IS NOT NULL AND role IN ('viewer', 'contributor', 'operator', 'admin', 'executor')))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS access_roles_principal_idx ON access_role_assignments
     (COALESCE(universe_id, '00000000-0000-0000-0000-000000000000'::uuid), principal_id, role)
@@ -86,3 +86,8 @@ CREATE INDEX authenticated_keys_universe_idx ON api_keys(universe_id);
 ALTER TABLE universes
     ADD COLUMN execution_principal_id uuid REFERENCES access_principals (principal_id),
     ADD COLUMN personal_execution_enabled boolean NOT NULL DEFAULT false;
+
+-- Who minted an environment registration key: environments the key admits
+-- are owned by that principal. A key without one registers nothing.
+ALTER TABLE environment_registration_keys
+    ADD COLUMN created_by_principal_id uuid REFERENCES access_principals (principal_id);

@@ -27,10 +27,14 @@ pub(super) async fn call_llm_generate(
 ) -> anyhow::Result<control::Raced<engine::LlmGenerationResult>> {
     let run_id = request.run_id;
     let turn_id = request.turn_id;
+    let attached_resources = attached_resources(drive);
     let activity_ctx = ctx.clone();
     let activity = activity_ctx.start_activity(
         WorkflowActivities::llm_generate,
-        LlmGenerateActivityRequest { request },
+        LlmGenerateActivityRequest {
+            request,
+            attached_resources,
+        },
         crate::llm_activity_options(),
     );
     let raced = control::race_activity_with_admissions(ctx, drive, activity, |state| {
@@ -69,8 +73,22 @@ pub(super) async fn call_llm_generate(
     }
 }
 
+/// What the session has attached, for the authority check before a model
+/// call. Derived from replayed state, so the input is the same on every
+/// replay.
+fn attached_resources(drive: &CoreAgentDrive) -> Vec<api::ResourceRef> {
+    drive
+        .state()
+        .lifecycle
+        .config
+        .as_ref()
+        .map(|config| crate::attached_resources(&config.features))
+        .unwrap_or_default()
+}
+
 pub(super) async fn call_context_compact(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    drive: &CoreAgentDrive,
     request: engine::ContextCompactionRequest,
 ) -> anyhow::Result<engine::ContextCompactionResult> {
     let session_id = request.session_id.clone();
@@ -78,7 +96,10 @@ pub(super) async fn call_context_compact(
     match ctx
         .start_activity(
             WorkflowActivities::context_compact,
-            crate::ContextCompactActivityRequest { request },
+            crate::ContextCompactActivityRequest {
+                request,
+                attached_resources: attached_resources(drive),
+            },
             crate::llm_activity_options(),
         )
         .await

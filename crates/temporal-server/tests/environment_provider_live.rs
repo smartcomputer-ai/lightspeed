@@ -146,6 +146,7 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
         let created = calling(
             caller_a.clone(),
             state_a.api.create_environment(EnvironmentCreateParams {
+                access: None,
                 request_id: format!("create-{suffix}"),
                 binding_id: "primary-a".to_owned(),
                 template_id: "rust-v1".to_owned(),
@@ -160,6 +161,7 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
         let create_retry = calling(
             caller_a.clone(),
             state_a.api.create_environment(EnvironmentCreateParams {
+                access: None,
                 request_id: format!("create-{suffix}"),
                 binding_id: "primary-a".to_owned(),
                 template_id: "rust-v1".to_owned(),
@@ -421,6 +423,7 @@ async fn run_environment_power_live_client(
     };
     let created = api
         .create_environment(api::EnvironmentCreateParams {
+            access: None,
             request_id: format!("power-{suffix}"),
             binding_id: binding_id.clone(),
             template_id: "rust-v1".to_owned(),
@@ -678,6 +681,7 @@ async fn run_environment_power_live_client(
     // External environments have no power control.
     let external = api
         .create_external_environment(api::EnvironmentExternalCreateParams {
+            access: None,
             request_id: format!("power-external-{suffix}"),
             connection: api::EnvironmentConnectionView {
                 endpoint: format!("ws://127.0.0.1:1/{suffix}"),

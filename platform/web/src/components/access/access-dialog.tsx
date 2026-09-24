@@ -27,47 +27,67 @@ import {
 import { ReadError } from "@/components/read-error";
 import {
   AccessSelect,
+  DEFAULT_AGENT_IDENTITY,
   ExecutionLabel,
   invalidateAccess,
+  isOperational,
+  operationalNoun,
+  type OperationalKind,
   RestrictedMarker,
   resourceHref,
   useAccessSubjects,
+  useExecutionPolicy,
 } from "./shared";
+
+/// What `use` covers on each operational kind; configuring stays with the
+/// owner, Operators and Admins.
+const useCovers: Record<OperationalKind, string> = {
+  workspace: "Can use lets a person or session read and change its files.",
+  environment:
+    "Can use covers its files, commands, jobs and the credentials bound to it.",
+  mcp_server: "Can use lets a person or session call its allowed tools.",
+};
 
 export function AccessButton({
   universeId,
   slug,
   resource,
   access,
+  compact = false,
 }: {
   universeId: string;
   slug: string;
   resource: ResourceRef;
   access?: ResourceAccessSummary;
+  /** Icon only, for dense rows. */
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button
         variant="ghost"
-        size="sm"
+        size={compact ? "icon-sm" : "sm"}
         className="shrink-0 text-muted-foreground"
         onClick={() => setOpen(true)}
         aria-label="Access and sharing"
+        title={compact ? "Access" : undefined}
       >
         {access?.visibility === "restricted" ? (
           <RestrictedMarker access={access} />
         ) : (
           <Users />
         )}
-        <span className="hidden sm:inline">Access</span>
+        {!compact && <span className="hidden sm:inline">Access</span>}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Access</DialogTitle>
             <DialogDescription>
-              Who can read this work, who can control it, and who it runs as.
+              {isOperational(resource.kind)
+                ? `Who can see and use this ${operationalNoun[resource.kind]}, and who owns it.`
+                : "Who can read this work, who can control it, and who it runs as."}
             </DialogDescription>
           </DialogHeader>
           {open && (
@@ -173,6 +193,10 @@ function PolicyEditor({
   const owner = directory.data?.principalId === policy.owner;
   const writable = permissions.can("share_resource", policy.root);
   const personal = policy.execution?.kind === "personal";
+  const kind = policy.root.kind;
+  const operational = isOperational(kind);
+  const executionPolicy = useExecutionPolicy(universeId);
+  const agent = executionPolicy.data?.policy.executionPrincipalId;
   const [visibility, setVisibility] = useState(policy.visibility);
   const [grants, setGrants] = useState<AccessGrantInput[]>(
     policy.grants.map(({ subject, permission }) => ({ subject, permission })),
@@ -213,6 +237,15 @@ function PolicyEditor({
   const conflict = save.error instanceof ApiError && save.error.status === 409;
   const choices =
     (query ? matches.data?.subjects : directory.data?.subjects) ?? [];
+  // Granting the default agent identity, or leaving the resource visible to
+  // the universe, lets every session running as it use the resource.
+  const agentUses =
+    operational &&
+    agent !== undefined &&
+    (visibility === "universe" ||
+      grants.some(
+        (g) => g.subject.kind === "principal" && g.subject.id === agent,
+      ));
   return (
     <div className="grid gap-5">
       {inherited && (
@@ -261,9 +294,9 @@ function PolicyEditor({
         />
       )}
       <Field>
-        <FieldLabel>Who can read</FieldLabel>
+        <FieldLabel>{operational ? "Who can use" : "Who can read"}</FieldLabel>
         <AccessSelect
-          label="Who can read"
+          label={operational ? "Who can use" : "Who can read"}
           value={visibility}
           disabled={!writable || save.isPending}
           onChange={(v) => setVisibility(v as typeof visibility)}
@@ -282,7 +315,8 @@ function PolicyEditor({
         )}
         {grants.map((grant, index) => {
           const key = `${grant.subject.kind}:${grant.subject.id}`;
-          const canEdit = writable && (owner || grant.permission !== "write");
+          const canEdit =
+            writable && (operational || owner || grant.permission !== "write");
           return (
             <div
               key={key}
@@ -295,10 +329,14 @@ function PolicyEditor({
                 <p className="text-xs text-muted-foreground">
                   {grant.subject.kind === "group"
                     ? "Group"
-                    : "Person or service"}
+                    : grant.subject.id === agent
+                      ? "Agent identity"
+                      : "Person or service"}
                 </p>
               </div>
-              {canEdit && owner && !personal ? (
+              {operational ? (
+                <span className="text-xs text-muted-foreground">Can use</span>
+              ) : canEdit && owner && !personal ? (
                 <div className="w-28">
                   <AccessSelect
                     label={`Permission for ${labels.get(key) ?? grant.subject.id}`}
@@ -344,6 +382,18 @@ function PolicyEditor({
             </div>
           );
         })}
+        {agentUses && (
+          <p className="text-sm text-muted-foreground">
+            Every session and bot running as {DEFAULT_AGENT_IDENTITY} can use
+            this.
+          </p>
+        )}
+        {operational && (
+          <p className="text-xs text-muted-foreground">
+            {useCovers[kind]} Configuring it stays with its owner, Operators
+            and Admins.
+          </p>
+        )}
       </div>
       {writable && (
         <Field>
@@ -361,6 +411,9 @@ function PolicyEditor({
               .filter(
                 (s) =>
                   s.subject.id !== policy.owner &&
+                  // The agent identity only ever uses resources; it never
+                  // reads or controls sessions and bots.
+                  (operational || s.subject.id !== agent) &&
                   !grants.some(
                     (g) =>
                       g.subject.kind === s.subject.kind &&
@@ -380,7 +433,10 @@ function PolicyEditor({
                     });
                     setGrants([
                       ...grants,
-                      { subject: s.subject, permission: "read" },
+                      {
+                        subject: s.subject,
+                        permission: operational ? "use" : "read",
+                      },
                     ]);
                     setSearch("");
                   }}
@@ -405,11 +461,13 @@ function PolicyEditor({
               prefix="Member search unavailable"
             />
           )}
-          <FieldDescription>
-            {personal
-              ? "Personal work is shared as read-only here."
-              : "Can control allows starting runs under this work's execution identity."}
-          </FieldDescription>
+          {!operational && (
+            <FieldDescription>
+              {personal
+                ? "Personal work is shared as read-only here."
+                : "Can control allows starting runs under this work's execution identity."}
+            </FieldDescription>
+          )}
         </Field>
       )}
       {owner && !personal && writable && (
@@ -429,15 +487,16 @@ function PolicyEditor({
                   .filter(
                     (s) =>
                       s.subject.kind === "principal" &&
-                      s.subject.id !== policy.owner,
+                      s.subject.id !== policy.owner &&
+                      s.subject.id !== agent,
                   )
                   .map((s) => ({ value: s.subject.id, label: s.displayName })),
               ]}
             />
             <p className="text-xs text-muted-foreground">
-              Ownership changes for everything sharing this access. You retain only
-              explicit grants. Execution stays unchanged. Search above to find
-              another member.
+              {operational
+                ? "You retain only explicit grants. Search above to find another member."
+                : "Ownership changes for everything sharing this access. You retain only explicit grants. Execution stays unchanged. Search above to find another member."}
             </p>
           </div>
         </details>

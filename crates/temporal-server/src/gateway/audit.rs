@@ -18,7 +18,6 @@ const TARGET_FIELDS: &[&str] = &[
     "runId",
     "approvalId",
     "botId",
-    "collectionId",
     "triggerId",
     "profileId",
     "serverId",

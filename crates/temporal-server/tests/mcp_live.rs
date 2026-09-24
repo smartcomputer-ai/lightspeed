@@ -621,6 +621,7 @@ async fn put_fixture_server(
     approval: RemoteMcpApprovalPolicy,
 ) -> anyhow::Result<()> {
     api.put_mcp_server(McpServerPutParams {
+        access: None,
         server: McpServerInput {
             server_id: server_id.to_owned(),
             display_name: Some(format!("MCP fixture {server_id}")),
@@ -1533,6 +1534,7 @@ async fn run_native_mcp_live_client(
     let selected_tool = "lightspeed_models_list";
     assert!(expected_configurator_tool_names()?.contains(selected_tool));
     api.put_mcp_server(McpServerPutParams {
+        access: None,
         server: McpServerInput {
             server_id: server_id.clone(),
             display_name: Some("Native Configurator".to_owned()),
@@ -1649,6 +1651,7 @@ async fn run_mcp_live_client(
 
     let created = api
         .put_mcp_server(McpServerPutParams {
+            access: None,
             server: McpServerInput {
                 server_id: server_id.clone(),
                 display_name: Some("CRM".to_owned()),
@@ -2201,6 +2204,7 @@ async fn run_mixed_batch_live_client(
     let selected_tool = "lightspeed_models_list";
     assert!(expected_configurator_tool_names()?.contains(selected_tool));
     api.put_mcp_server(McpServerPutParams {
+        access: None,
         server: McpServerInput {
             server_id: server_id.clone(),
             display_name: Some("Native Mixed Configurator".to_owned()),

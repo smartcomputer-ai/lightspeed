@@ -49,17 +49,21 @@ import type { McpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 export type SessionConfig = Record<string, unknown>;
 type FeatureName = "vfs" | "web" | "subagents" | "timers" | "environments" | "mcp";
 
+/// `unusable` names why the identity the session runs as may not use the
+/// resource; such options are offered disabled and kept visible when saved.
 export type McpServerOption = {
   serverId: string;
   displayName?: string | null;
   status?: "active" | "needsAuthConfig" | "unverified" | "disabled";
   allowedTools?: string[] | null;
   revision?: number;
+  unusable?: string;
 };
 
 export type WorkspaceOption = {
   workspaceId: string;
   displayName?: string | null;
+  unusable?: string;
 };
 
 export type ModelOption = {
@@ -85,6 +89,7 @@ export type EnvironmentOption = {
   environmentId: string;
   displayName?: string | null;
   status?: string;
+  unusable?: string;
 };
 
 type Props = {
@@ -1307,7 +1312,7 @@ function VfsFields({
               {
                 path: nextPath,
                 access: "edit",
-                workspaceId: workspaces[0]?.workspaceId ?? "",
+                workspaceId: workspaces.find((workspace) => !workspace.unusable)?.workspaceId ?? "",
               },
             ])}
           >
@@ -1353,12 +1358,19 @@ function VfsFields({
                         </SelectTrigger>
                         <SelectContent>
                           {options.map((workspace) => (
-                            <SelectItem key={workspace.workspaceId} value={workspace.workspaceId}>
-                              {workspace.displayName
-                                ? `${workspace.displayName} (${workspace.workspaceId})`
-                                : workspaces.some((item) => item.workspaceId === workspace.workspaceId)
-                                  ? workspace.workspaceId
-                                  : `${workspace.workspaceId} (unavailable)`}
+                            <SelectItem
+                              key={workspace.workspaceId}
+                              value={workspace.workspaceId}
+                              disabled={Boolean(workspace.unusable)}
+                            >
+                              {withUnusable(
+                                workspace.displayName
+                                  ? `${workspace.displayName} (${workspace.workspaceId})`
+                                  : workspaces.some((item) => item.workspaceId === workspace.workspaceId)
+                                    ? workspace.workspaceId
+                                    : `${workspace.workspaceId} (unavailable)`,
+                                workspace.unusable,
+                              )}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1373,6 +1385,7 @@ function VfsFields({
                         placeholder="workspace id"
                       />
                     )}
+                    <UnusableNote reason={workspaceOptions.get(string(attachment.workspaceId))?.unusable} />
                   </Field>
                 )}
                 <Field>
@@ -1811,6 +1824,7 @@ function EnvironmentFields({
             patch((next) => {
               const environment = selectableEnvironments(environments).find(
                 (candidate) =>
+                  !candidate.unusable &&
                   !attachments.some((item) => item.environmentId === candidate.environmentId),
               );
               next.environments = [
@@ -1874,17 +1888,26 @@ function EnvironmentFields({
                       </SelectItem>
                     )}
                     {options.map((environment) => (
-                      <SelectItem key={environment.environmentId} value={environment.environmentId}>
-                        {environment.displayName
-                          ? `${environment.displayName} (${environment.environmentId})`
-                          : environment.environmentId}
-                        {environment.status && environment.status !== "ready"
-                          ? ` (${environment.status})`
-                          : ""}
+                      <SelectItem
+                        key={environment.environmentId}
+                        value={environment.environmentId}
+                        disabled={Boolean(environment.unusable)}
+                      >
+                        {withUnusable(
+                          `${environment.displayName
+                            ? `${environment.displayName} (${environment.environmentId})`
+                            : environment.environmentId}${environment.status && environment.status !== "ready"
+                            ? ` (${environment.status})`
+                            : ""}`,
+                          environment.unusable,
+                        )}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {!inherited && (
+                  <UnusableNote reason={options.find((candidate) => candidate.environmentId === id)?.unusable} />
+                )}
                 {inherited && (
                   <FieldDescription className="text-xs">
                     Uses the parent’s active environment captured when the sub-agent starts.
@@ -2052,7 +2075,7 @@ function McpFields({
                       <SelectItem
                         key={server.serverId}
                         value={server.serverId}
-                        disabled={server.status !== undefined && server.status !== "active"}
+                        disabled={(server.status !== undefined && server.status !== "active") || Boolean(server.unusable)}
                       >
                         {mcpServerOptionLabel(server)}
                       </SelectItem>
@@ -2066,6 +2089,7 @@ function McpFields({
                   onChange={(e) => updateAttachment(index, (next) => { next.serverId = e.target.value; delete next.tools; })}
                 />
               )}
+              <UnusableNote reason={options.get(string(attachment.serverId))?.unusable} />
             </Field>
             <div className="mt-3">
               <McpToolPicker
@@ -2099,7 +2123,7 @@ function McpFields({
 }
 
 function firstUsableMcpServerId(servers: McpServerOption[]): string {
-  return servers.find((server) => server.status === undefined || server.status === "active")
+  return servers.find((server) => (server.status === undefined || server.status === "active") && !server.unusable)
     ?.serverId ?? "";
 }
 
@@ -2107,5 +2131,19 @@ function mcpServerOptionLabel(server: McpServerOption): string {
   const name = server.displayName
     ? `${server.displayName} (${server.serverId})`
     : server.serverId;
-  return server.status && server.status !== "active" ? `${name} — ${server.status}` : name;
+  return withUnusable(server.status && server.status !== "active" ? `${name} — ${server.status}` : name, server.unusable);
+}
+
+function withUnusable(label: string, unusable: string | undefined): string {
+  return unusable ? `${label} — ${unusable}` : label;
+}
+
+/// Shown under an attachment whose resource the session's identity may not
+/// use: the saved choice stays visible, and admission will refuse it.
+function UnusableNote({ reason }: { reason: string | undefined }) {
+  return reason ? (
+    <FieldDescription className="text-xs text-destructive">
+      {reason}. Ask its owner for access or remove it.
+    </FieldDescription>
+  ) : null;
 }

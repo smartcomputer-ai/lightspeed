@@ -249,11 +249,87 @@ pub fn verify_register_request(
         })
 }
 
+/// Access anchors of the environments registration creates. The principal
+/// that minted the admitting key owns them.
+#[async_trait::async_trait]
+pub trait RegistrationAnchors: Send + Sync {
+    /// Reserve the anchor of a new environment before its row exists.
+    async fn reserve(
+        &self,
+        registration_key_id: &environments::EnvironmentRegistrationKeyId,
+        environment_id: &environments::EnvironmentId,
+    ) -> Result<(), RegistrationRejection>;
+    /// Release an anchor under which no environment was created.
+    async fn release(&self, environment_id: &environments::EnvironmentId);
+}
+
+/// Anchors in a universe's access store.
+pub(crate) struct PgRegistrationAnchors {
+    pub store: Arc<store_pg::PgStore>,
+    pub universe_id: Uuid,
+}
+
+#[async_trait::async_trait]
+impl RegistrationAnchors for PgRegistrationAnchors {
+    async fn reserve(
+        &self,
+        registration_key_id: &environments::EnvironmentRegistrationKeyId,
+        environment_id: &environments::EnvironmentId,
+    ) -> Result<(), RegistrationRejection> {
+        let owner = self
+            .store
+            .registration_key_creator(registration_key_id)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(|| {
+                RegistrationRejection::new(
+                    RegistrationRejectionCode::InvalidRegistrationKey,
+                    "registration key records no creator to own its environments; issue a new key",
+                )
+            })?;
+        store_pg::PgAccessStore::new(self.store.pool().clone())
+            .reserve_resource(
+                self.universe_id,
+                &access::ResourceRef::Environment(environment_id.to_string()),
+                &access::ActionActor::Internal {
+                    component: "registration".into(),
+                    cause: registration_key_id.to_string(),
+                },
+                &access::ResourceController::Principal(owner),
+                None,
+                None,
+                u64::try_from(now_ms()).unwrap_or_default(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                tracing::warn!(target: "temporal_server", %error, "registration anchor failed");
+                RegistrationRejection::new(
+                    RegistrationRejectionCode::Unavailable,
+                    "registration is temporarily unavailable",
+                )
+            })
+    }
+
+    async fn release(&self, environment_id: &environments::EnvironmentId) {
+        let released = store_pg::PgAccessStore::new(self.store.pool().clone())
+            .release_resource(
+                self.universe_id,
+                &access::ResourceRef::Environment(environment_id.to_string()),
+            )
+            .await;
+        if let Err(error) = released {
+            tracing::warn!(target: "temporal_server", %error, "releasing a registration anchor failed");
+        }
+    }
+}
+
 /// Admit a verified register request inside its universe: reconnect a known
 /// daemon identity, or create an environment for a new one through its
 /// registration key. Every refusal is typed and leaves no rows behind.
 pub async fn admit_registration<S>(
     store: &S,
+    anchors: &dyn RegistrationAnchors,
     params: &RegisterParams,
     now_ms: i64,
 ) -> Result<Admission, RegistrationRejection>
@@ -307,20 +383,31 @@ where
         )
         .metadata(),
     );
-    let environment = store
+    let environment_id = super::service::allocate_environment_id_public();
+    anchors
+        .reserve(&key.registration_key_id, &environment_id)
+        .await?;
+    let created = store
         .create_registered_environment(CreateRegisteredEnvironment {
             registration_key_id: key.registration_key_id.clone(),
-            environment_id: super::service::allocate_environment_id_public(),
+            environment_id: environment_id.clone(),
             incarnation_id: super::service::allocate_incarnation_id_public(),
             daemon_public_key: params.daemon_public_key.clone(),
             display_name: params.display_name.clone(),
             metadata,
             created_at_ms: now_ms,
         })
-        .await
-        .map_err(map_registry_error)?;
+        .await;
+    // A concurrent registration of the same daemon resolves to the
+    // environment it created, under that one's own anchor.
+    if !created
+        .as_ref()
+        .is_ok_and(|environment| environment.environment_id == environment_id)
+    {
+        anchors.release(&environment_id).await;
+    }
     Ok(Admission {
-        environment,
+        environment: created.map_err(map_registry_error)?,
         created: true,
     })
 }
@@ -637,7 +724,11 @@ async fn control_session(
         }
     };
     let store = api.store().clone();
-    let admission = match admit_registration(store.as_ref(), &register, now_ms()).await {
+    let anchors = PgRegistrationAnchors {
+        store: store.clone(),
+        universe_id,
+    };
+    let admission = match admit_registration(store.as_ref(), &anchors, &register, now_ms()).await {
         Ok(admission) => admission,
         Err(rejection) => {
             if matches!(
@@ -920,6 +1011,36 @@ mod tests {
         (store, minted.secret.expose().to_owned())
     }
 
+    /// Anchors recorded instead of stored: which environment ids were
+    /// reserved and which released again.
+    #[derive(Default)]
+    struct RecordingAnchors {
+        reserved: std::sync::Mutex<Vec<String>>,
+        released: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RegistrationAnchors for RecordingAnchors {
+        async fn reserve(
+            &self,
+            _registration_key_id: &EnvironmentRegistrationKeyId,
+            environment_id: &environments::EnvironmentId,
+        ) -> Result<(), RegistrationRejection> {
+            self.reserved
+                .lock()
+                .unwrap()
+                .push(environment_id.to_string());
+            Ok(())
+        }
+
+        async fn release(&self, environment_id: &environments::EnvironmentId) {
+            self.released
+                .lock()
+                .unwrap()
+                .push(environment_id.to_string());
+        }
+    }
+
     fn policy(mode: RegisteredIdentityMode) -> RegistrationKeyPolicy {
         RegistrationKeyPolicy {
             display_name: "pool".to_owned(),
@@ -967,18 +1088,30 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn admission_creates_once_reconnects_by_identity_and_spends_closed_identities() {
         let (store, secret) = store_with_key("rk", policy(RegisteredIdentityMode::Ephemeral)).await;
+        let anchors = RecordingAnchors::default();
         let key = daemon(3);
         let nonce = [1u8; 32];
-        let unknown = admit_registration(&store, &register(&key, &nonce, None), 2_000)
+        let unknown = admit_registration(&store, &anchors, &register(&key, &nonce, None), 2_000)
             .await
             .unwrap_err();
         assert_eq!(unknown.code, RegistrationRejectionCode::UnknownDaemon);
 
-        let created = admit_registration(&store, &register(&key, &nonce, Some(&secret)), 2_000)
-            .await
-            .expect("created");
+        let created = admit_registration(
+            &store,
+            &anchors,
+            &register(&key, &nonce, Some(&secret)),
+            2_000,
+        )
+        .await
+        .expect("created");
         assert!(created.created);
         assert_eq!(created.environment.status, EnvironmentStatus::Ready);
+        // The environment was anchored before it was created, and kept.
+        assert_eq!(
+            *anchors.reserved.lock().unwrap(),
+            vec![created.environment.environment_id.to_string()]
+        );
+        assert!(anchors.released.lock().unwrap().is_empty());
         assert_eq!(
             created
                 .environment
@@ -1005,10 +1138,14 @@ mod tests {
         );
 
         // Reconnects ignore the key entirely, even a wrong one.
-        let reconnected =
-            admit_registration(&store, &register(&key, &nonce, Some("lsrk_wrong")), 3_000)
-                .await
-                .expect("reconnect");
+        let reconnected = admit_registration(
+            &store,
+            &anchors,
+            &register(&key, &nonce, Some("lsrk_wrong")),
+            3_000,
+        )
+        .await
+        .expect("reconnect");
         assert!(!reconnected.created);
         assert_eq!(
             reconnected.environment.environment_id,
@@ -1022,9 +1159,14 @@ mod tests {
             })
             .await
             .expect("close");
-        let closing = admit_registration(&store, &register(&key, &nonce, Some(&secret)), 4_100)
-            .await
-            .unwrap_err();
+        let closing = admit_registration(
+            &store,
+            &anchors,
+            &register(&key, &nonce, Some(&secret)),
+            4_100,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(closing.code, RegistrationRejectionCode::EnvironmentClosed);
         store
             .finish_close_environment(FinishCloseEnvironment {
@@ -1033,9 +1175,14 @@ mod tests {
             })
             .await
             .expect("finish");
-        let closed = admit_registration(&store, &register(&key, &nonce, Some(&secret)), 4_300)
-            .await
-            .unwrap_err();
+        let closed = admit_registration(
+            &store,
+            &anchors,
+            &register(&key, &nonce, Some(&secret)),
+            4_300,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(closed.code, RegistrationRejectionCode::EnvironmentClosed);
         assert!(closed.code.is_terminal());
     }
@@ -1050,18 +1197,34 @@ mod tests {
             },
         )
         .await;
+        let anchors = RecordingAnchors::default();
         let nonce = [2u8; 32];
-        admit_registration(&store, &register(&daemon(4), &nonce, Some(&secret)), 2_000)
-            .await
-            .expect("first");
-        let full = admit_registration(&store, &register(&daemon(5), &nonce, Some(&secret)), 2_100)
-            .await
-            .unwrap_err();
+        admit_registration(
+            &store,
+            &anchors,
+            &register(&daemon(4), &nonce, Some(&secret)),
+            2_000,
+        )
+        .await
+        .expect("first");
+        let full = admit_registration(
+            &store,
+            &anchors,
+            &register(&daemon(5), &nonce, Some(&secret)),
+            2_100,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(full.code, RegistrationRejectionCode::CapacityExhausted);
         assert!(!full.code.is_terminal());
+        // A refused creation releases the anchor it reserved.
+        let reserved = anchors.reserved.lock().unwrap().clone();
+        assert_eq!(reserved.len(), 2);
+        assert_eq!(*anchors.released.lock().unwrap(), reserved[1..].to_vec());
 
         let bad = admit_registration(
             &store,
+            &anchors,
             &register(&daemon(6), &nonce, Some("lsrk_nope")),
             2_200,
         )
@@ -1076,18 +1239,23 @@ mod tests {
             })
             .await
             .expect("revoke");
-        let revoked =
-            admit_registration(&store, &register(&daemon(7), &nonce, Some(&secret)), 3_100)
-                .await
-                .unwrap_err();
+        let revoked = admit_registration(
+            &store,
+            &anchors,
+            &register(&daemon(7), &nonce, Some(&secret)),
+            3_100,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(
             revoked.code,
             RegistrationRejectionCode::RegistrationKeyRevoked
         );
         // The already registered daemon still reconnects after revocation.
-        let reconnect = admit_registration(&store, &register(&daemon(4), &nonce, None), 3_200)
-            .await
-            .expect("reconnect");
+        let reconnect =
+            admit_registration(&store, &anchors, &register(&daemon(4), &nonce, None), 3_200)
+                .await
+                .expect("reconnect");
         assert!(!reconnect.created);
 
         let (expired_store, expired_secret) = store_with_key(
@@ -1100,6 +1268,7 @@ mod tests {
         .await;
         let expired = admit_registration(
             &expired_store,
+            &anchors,
             &register(&daemon(8), &nonce, Some(&expired_secret)),
             2_000,
         )

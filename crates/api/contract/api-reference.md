@@ -20,7 +20,7 @@ Returns up to 100 matching active principals and groups with a role in the selec
 
 **Read a workspace file**
 
-Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.
+Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.
 
 - Access: `{"kind":"universe","requirement":"read"}`
 - Params: `VfsWorkspaceFileReadParams`
@@ -30,7 +30,7 @@ Reads bytes at a path in the current workspace head. Workspaces are universe-vis
 
 **Read current action permissions**
 
-Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
+Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.
 
 - Access: `{"kind":"universe","requirement":"read"}`
 - Params: `AccessReadParams`
@@ -40,7 +40,7 @@ Returns the current caller's universe actions and ownership-aware permissions fo
 
 **Read a resource's access policy**
 
-Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.
+Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.
 
 - Access: `{"kind":"universe","requirement":"read"}`
 - Params: `AccessPolicyReadParams`
@@ -50,7 +50,7 @@ Returns the owner, visibility, grants and revision of the root governing a sessi
 
 **Replace a resource's access policy**
 
-Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.
+Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.
 
 - Access: `{"kind":"universe","requirement":"share_resource"}`
 - Params: `AccessPolicyPutParams`
@@ -75,56 +75,6 @@ Enables or disables personal execution. Existing roots keep the execution identi
 - Access: `{"kind":"universe","requirement":"manage_access"}`
 - Params: `AccessExecutionUpdateParams`
 - Result: `AgentApiOutcome<AccessExecutionUpdateResponse>`
-
-### `collection/create`
-
-**Create a collection**
-
-Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.
-
-- Access: `{"kind":"universe","requirement":"create_collection"}`
-- Params: `CollectionCreateParams`
-- Result: `AgentApiOutcome<CollectionCreateResponse>`
-
-### `collection/read`
-
-**Read a collection**
-
-Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.
-
-- Access: `{"kind":"universe","requirement":"read"}`
-- Params: `CollectionReadParams`
-- Result: `AgentApiOutcome<CollectionReadResponse>`
-
-### `collection/list`
-
-**List collections**
-
-Returns the collections the caller may read.
-
-- Access: `{"kind":"universe","requirement":"read"}`
-- Params: `CollectionListParams`
-- Result: `AgentApiOutcome<CollectionListResponse>`
-
-### `collection/update`
-
-**Rename a collection**
-
-Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.
-
-- Access: `{"kind":"universe","requirement":"manage_collection"}`
-- Params: `CollectionUpdateParams`
-- Result: `AgentApiOutcome<CollectionUpdateResponse>`
-
-### `collection/delete`
-
-**Delete an empty collection**
-
-Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.
-
-- Access: `{"kind":"universe","requirement":"delete_collection"}`
-- Params: `CollectionDeleteParams`
-- Result: `AgentApiOutcome<CollectionDeleteResponse>`
 
 ### `initialize`
 
@@ -360,7 +310,7 @@ Applies a named or inline profile's config, instructions, and environment setup 
 
 **Activate a session environment**
 
-Selects an allowed, live universe environment for environment-targeted tools while the session is idle.
+Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.
 
 - Access: `{"kind":"universe","requirement":"control_session"}`
 - Params: `SessionEnvironmentActivateParams`
@@ -380,7 +330,7 @@ Clears active environment selection without changing or closing the universe env
 
 **Bind a credential into an environment**
 
-Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. The response exposes only the source handle, never secret material.
+Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.
 
 - Access: `{"kind":"universe","requirement":"configure_resource"}`
 - Params: `EnvironmentCredentialBindParams`
@@ -410,7 +360,7 @@ Removes one variable-to-credential mapping without deleting the underlying grant
 
 **Create an environment**
 
-Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.
+Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.
 
 - Access: `{"kind":"universe","requirement":"configure_resource"}`
 - Params: `EnvironmentCreateParams`
@@ -430,7 +380,7 @@ Returns the durable universe resource, source binding, logical lifecycle state, 
 
 **List environments**
 
-Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.
+Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.
 
 - Access: `{"kind":"universe","requirement":"read"}`
 - Params: `EnvironmentListParams`
@@ -450,7 +400,7 @@ Records an asynchronous idempotent close intent. Provider cleanup is resumed by 
 
 **Register an external environment**
 
-Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.
+Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.
 
 - Access: `{"kind":"universe","requirement":"configure_resource"}`
 - Params: `EnvironmentExternalCreateParams`
@@ -700,7 +650,7 @@ Validates and stores an immutable filesystem manifest. Upload referenced file bl
 
 **Read a VFS snapshot**
 
-Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.
+Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.
 
 - Access: `{"kind":"universe","requirement":"read"}`
 - Params: `VfsSnapshotReadParams`
@@ -710,9 +660,9 @@ Returns an immutable snapshot manifest and aggregate file/byte counts; file bodi
 
 **Create a mutable VFS workspace**
 
-Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.
+Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","requirement":"create_workspace"}`
 - Params: `VfsWorkspaceCreateParams`
 - Result: `AgentApiOutcome<VfsWorkspaceCreateResponse>`
 
@@ -730,7 +680,7 @@ Returns workspace metadata, current head snapshot, and revision for safe updates
 
 **List VFS workspaces**
 
-Lists mutable universe workspaces with head snapshots, sizes, and revisions.
+Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.
 
 - Access: `{"kind":"universe","requirement":"read"}`
 - Params: `VfsWorkspaceListParams`
@@ -740,9 +690,9 @@ Lists mutable universe workspaces with head snapshots, sizes, and revisions.
 
 **Update a VFS workspace**
 
-Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.
+Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","requirement":"use_resource"}`
 - Params: `VfsWorkspaceUpdateParams`
 - Result: `AgentApiOutcome<VfsWorkspaceUpdateResponse>`
 
@@ -760,7 +710,7 @@ Deletes the mutable workspace record; immutable snapshots and blobs remain conte
 
 **Create or replace an MCP server record**
 
-Stores the complete universe catalog document, including its optional universe auth-grant credential. Use expectedRevision when replacing; token material is never accepted or returned.
+Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.
 
 - Access: `{"kind":"universe","requirement":"configure_resource"}`
 - Params: `McpServerPutParams`
@@ -800,7 +750,7 @@ Returns one catalog document with defaults, auth policy, non-secret grant bindin
 
 **List MCP server records**
 
-Lists universe catalog entries, optionally filtered by lifecycle/configuration status.
+Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.
 
 - Access: `{"kind":"universe","requirement":"read"}`
 - Params: `McpServerListParams`

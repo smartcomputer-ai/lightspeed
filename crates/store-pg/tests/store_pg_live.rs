@@ -245,6 +245,7 @@ async fn pg_live_session_list_pages_newest_first_and_rename_persists() {
         .expect("create other-universe session");
 
     for (name, created_at_ms) in [("list-a", 10), ("list-b", 20), ("list-c", 30)] {
+        anchor_session(&store, &SessionId::new(name)).await;
         store
             .create_session(CreateSession {
                 metadata: Default::default(),
@@ -431,6 +432,7 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
         profile_revision: 3,
         limits,
     };
+    anchor_session(&store, &SessionId::new("child-1")).await;
     let child = store
         .create_session(CreateSession {
             metadata: Default::default(),
@@ -2988,6 +2990,7 @@ async fn pg_live_session_metadata_filters_by_containment_and_put_replaces() {
         ),
         ("meta-none", BTreeMap::new(), 30),
     ] {
+        anchor_session(&store, &SessionId::new(name)).await;
         store
             .create_session(CreateSession {
                 session_id: SessionId::new(name),
@@ -3091,6 +3094,35 @@ async fn pg_live_session_metadata_filters_by_containment_and_put_replaces() {
             .await,
         Err(SessionStoreError::SessionNotFound { .. })
     ));
+}
+
+/// A person who owns the sessions these fixtures anchor.
+const FIXTURE_OWNER: Uuid = Uuid::from_u128(0x5e55_1017_0000_4000_8000_0000_0000_0001);
+
+/// Reserve the access anchor of a session before creating it, as the
+/// runtime does: listings show only sessions whose anchor and root policy
+/// exist.
+async fn anchor_session(store: &PgStore, session_id: &SessionId) {
+    sqlx::query("INSERT INTO access_principals (principal_id, kind, status, display_name, created_at_ms) VALUES ($1, 'user', 'active', 'Store fixture owner', 0) ON CONFLICT DO NOTHING")
+        .bind(FIXTURE_OWNER)
+        .execute(store.pool())
+        .await
+        .expect("create fixture owner");
+    store_pg::PgAccessStore::new(store.pool().clone())
+        .reserve_resource(
+            store.config().universe_id,
+            &access::ResourceRef::Session(session_id.as_str().to_owned()),
+            &access::ActionActor::Principal { id: FIXTURE_OWNER },
+            &access::ResourceController::Principal(FIXTURE_OWNER),
+            Some(access::Execution {
+                run_as: FIXTURE_OWNER,
+                kind: access::ExecutionKind::Personal,
+            }),
+            None,
+            1,
+        )
+        .await
+        .expect("reserve session anchor");
 }
 
 async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {

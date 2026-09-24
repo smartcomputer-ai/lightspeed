@@ -1,8 +1,13 @@
 use super::*;
 
 impl GatewayAgentApi {
+    /// The configuration a new session starts with. Its attachments are
+    /// admitted for the session's execution identity before anything
+    /// resolves them, so no later error describes a resource the caller
+    /// may not see.
     pub(super) async fn session_config_for_start(
         &self,
+        session: &SessionId,
         api_config: Option<api::SessionConfig>,
     ) -> Result<SessionConfig, AgentApiError> {
         let config = engine_session_config_from_api(
@@ -12,6 +17,7 @@ impl GatewayAgentApi {
         config
             .validate()
             .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+        self.admit_attachments(session, &config.features).await?;
         self.validate_workspace_attachment_targets(&config.features)
             .await?;
         self.validate_subagent_agents(&config.features).await?;

@@ -1220,6 +1220,7 @@ async fn run_agent_run_inherit_environment_live_client(
 
     let independent_environment = api
         .create_environment(api::EnvironmentCreateParams {
+            access: None,
             request_id: format!("inherit-env-{suffix}"),
             binding_id: binding_id.clone(),
             template_id: "rust-v1".into(),

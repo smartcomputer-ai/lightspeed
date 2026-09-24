@@ -99,6 +99,7 @@ async fn run_profile_environment_selection_live_client(
 
     let environment = api
         .create_environment(api::EnvironmentCreateParams {
+            access: None,
             request_id: format!("independent-{suffix}"),
             binding_id: binding_id.clone(),
             template_id: "rust-v1".into(),
@@ -252,6 +253,7 @@ async fn run_profiles_live_client(
     let server_id = format!("profile_crm_{}", uuid::Uuid::new_v4().simple());
 
     api.put_mcp_server(McpServerPutParams {
+        access: None,
         server: McpServerInput {
             server_id: server_id.clone(),
             display_name: Some("Profile CRM".to_owned()),

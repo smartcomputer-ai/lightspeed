@@ -455,30 +455,52 @@ impl DeploymentApiService for GatewayDeploymentApi {
             })?;
         validate_adoption_source(&params.source_target)?;
         let store = self.runtime.stores().store_for(universe_id);
-        let environment = EnvironmentStore::adopt_environment(
-            store.as_ref(),
-            AdoptEnvironment {
-                request_id,
-                environment_id: EnvironmentId::new(format!(
-                    "environment_{}",
-                    Uuid::new_v4().simple()
-                )),
-                incarnation_id: EnvironmentIncarnationId::new(format!(
-                    "incarnation_{}",
-                    Uuid::new_v4().simple()
-                )),
-                binding_id,
-                source_target: params.source_target,
-                display_name: params.display_name,
-                metadata: params.metadata,
-                created_at_ms: i64::try_from(current_time_ms()?)
-                    .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?,
+        let environment_id = EnvironmentId::new(format!(
+            "environment_{}",
+            Uuid::new_v4().simple()
+        ));
+        let created_at_ms = i64::try_from(current_time_ms()?)
+            .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?;
+        // The adopting deployment administrator owns what it adopted.
+        let owner = super::principal::request_context()?.acting_principal().id;
+        let environment = super::service::authorization::OperationalAnchor {
+            resource: access::ResourceRef::Environment(environment_id.to_string()),
+            created_by: access::ActionActor::Principal { id: owner },
+            owner,
+            visibility: None,
+        }
+        .create(
+            &store_pg::PgAccessStore::new(self.pool().clone()),
+            universe_id,
+            async {
+                EnvironmentStore::adopt_environment(
+                    store.as_ref(),
+                    AdoptEnvironment {
+                        request_id,
+                        environment_id: environment_id.clone(),
+                        incarnation_id: EnvironmentIncarnationId::new(format!(
+                            "incarnation_{}",
+                            Uuid::new_v4().simple()
+                        )),
+                        binding_id,
+                        source_target: params.source_target,
+                        display_name: params.display_name,
+                        metadata: params.metadata,
+                        created_at_ms,
+                    },
+                )
+                .await
+                .map_err(super::service::environment_providers::map_environments_error)
             },
+            |environment| environment.environment_id == environment_id,
         )
-        .await
-        .map_err(super::service::environment_providers::map_environments_error)?;
+        .await?;
         Ok(AgentApiOutcome::new(DeploymentEnvironmentAdoptResponse {
-            environment: super::service::environment_providers::environment_view(&environment),
+            environment: super::service::environment_providers::load_environment_view(
+                &store,
+                &environment,
+            )
+            .await?,
         }))
         }).await
     }

@@ -126,6 +126,11 @@ describe("MCP OAuth completion", () => {
       revision: 3,
       createdAtMs: 1_000,
       updatedAtMs: 2_000,
+      access: {
+        root: { kind: "mcp_server", id: "github" },
+        owner: "11111111-1111-4111-8111-111111111111",
+        visibility: "universe",
+      },
     }, "authgrant_1");
 
     expect(input).toMatchObject({

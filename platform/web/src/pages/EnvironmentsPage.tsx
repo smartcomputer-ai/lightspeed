@@ -1,5 +1,9 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
+import { AccessButton } from "@/components/access/access-dialog";
+import { CreationVisibilityField } from "@/components/access/creation";
+import { RestrictedMarker } from "@/components/access/shared";
+import type { ResourceRef, Visibility } from "@lightspeed-ai/agent-client";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
@@ -87,12 +91,12 @@ export function EnvironmentsPage({ admin: _admin }: { admin: boolean }) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <ProviderList universeId={universe.id} />;
+  return <ProviderList universeId={universe.id} slug={universe.slug} />;
 }
 
 const REFRESH_MS = 10_000;
 
-function ProviderList({ universeId }: { universeId: string }) {
+function ProviderList({ universeId, slug }: { universeId: string; slug: string }) {
   const writable = useActionPermissions(universeId).can("configure_resource");
   const bindings = useQuery({
     queryKey: ["environment-provider-bindings", universeId],
@@ -155,6 +159,9 @@ function ProviderList({ universeId }: { universeId: string }) {
   const environmentRows = (environments.data ?? [])
     .slice()
     .sort((a, b) => environmentName(a).localeCompare(environmentName(b)));
+  // One lookup for every card: configuring an environment is decided per
+  // environment, not from the universe role alone.
+  const decisions = useActionPermissions(universeId, environmentRows.map(environmentRef));
   const enabledBindings = new Set(
     bindingRows.filter((binding) => binding.status === "enabled").map((binding) => binding.bindingId),
   );
@@ -244,7 +251,10 @@ function ProviderList({ universeId }: { universeId: string }) {
             <EnvironmentCard
               key={environment.environmentId}
               universeId={universeId}
+              slug={slug}
               environment={environment}
+              configurable={decisions.can("configure_resource", environmentRef(environment))}
+              operator={writable}
               template={undefined}
               registrationKey={group.key}
               secrets={secrets.data}
@@ -257,7 +267,10 @@ function ProviderList({ universeId }: { universeId: string }) {
           <EnvironmentCard
             key={environment.environmentId}
             universeId={universeId}
+            slug={slug}
             environment={environment}
+            configurable={decisions.can("configure_resource", environmentRef(environment))}
+            operator={writable}
             template={templateRows.find((candidate) =>
               candidate.bindingId === provisionedBindingId(environment)
               && candidate.templateId === environment.incarnation.templateId
@@ -273,22 +286,33 @@ function ProviderList({ universeId }: { universeId: string }) {
   );
 }
 
+function environmentRef(environment: Environment): ResourceRef {
+  return { kind: "environment", id: environment.environmentId };
+}
+
 function EnvironmentCard({
   universeId,
+  slug,
   environment,
+  configurable,
+  operator,
   template,
   registrationKey,
   secrets,
 }: {
   universeId: string;
+  slug: string;
   environment: Environment;
+  /** Configuring this environment: power, idle policy, ingress, close. */
+  configurable: boolean;
+  /** Universe-wide configuration; publishing secrets into a machine also needs it. */
+  operator: boolean;
   template: EnvironmentTemplate | undefined;
   registrationKey: EnvironmentRegistrationKey | undefined;
   secrets: SecretsInventory | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [policyOpen, setPolicyOpen] = useState(false);
-  const writable = useActionPermissions(universeId).can("configure_resource");
   const source = environment.source;
   const gone = ["closing", "closed", "failed"].includes(environment.status);
   const registered = source.type === "registered";
@@ -298,8 +322,9 @@ function EnvironmentCard({
       <section className="rounded-xl border">
         <div className="flex flex-wrap items-center gap-4 px-4 py-4 md:px-5">
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-sm font-semibold">
-              {environmentName(environment)}
+            <h2 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+              <span className="truncate">{environmentName(environment)}</span>
+              <RestrictedMarker access={environment.access} />
             </h2>
             <p className="mt-1 truncate text-sm text-muted-foreground">
               {source.type === "provisioned"
@@ -317,6 +342,12 @@ function EnvironmentCard({
             </p>
           </div>
           <EnvironmentStatusBadge environment={environment} />
+          <AccessButton
+            universeId={universeId}
+            slug={slug}
+            resource={environmentRef(environment)}
+            access={environment.access}
+          />
           <CollapsibleTrigger className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
             Details
             <ChevronDown className={`size-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
@@ -368,8 +399,9 @@ function EnvironmentCard({
               environment={environment}
               secrets={secrets}
               enabled={open}
+              writable={configurable && operator}
             />
-            {writable && source.type === "provisioned" && (
+            {configurable && source.type === "provisioned" && (
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
                 <EnvironmentPowerControls universeId={universeId} environment={environment} />
                 {!gone && (
@@ -383,7 +415,7 @@ function EnvironmentCard({
                 <CloseEnvironmentButton universeId={universeId} environment={environment} />
               </div>
             )}
-            {writable && registered && !gone && (
+            {configurable && registered && !gone && (
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
                 <CloseEnvironmentButton universeId={universeId} environment={environment} />
                 <span className="text-xs text-muted-foreground">
@@ -391,7 +423,7 @@ function EnvironmentCard({
                 </span>
               </div>
             )}
-            {writable && source.type === "provisioned" && !gone && (
+            {configurable && source.type === "provisioned" && !gone && (
               <EnvironmentIdlePolicyDialog
                 key={`${environment.environmentId}:${policyOpen ? "open" : "closed"}`}
                 universeId={universeId}
@@ -412,14 +444,15 @@ function EnvironmentCredentials({
   environment,
   secrets,
   enabled,
+  writable,
 }: {
   universeId: string;
   environment: Environment;
   secrets: SecretsInventory | undefined;
   enabled: boolean;
+  writable: boolean;
 }) {
   const queryClient = useQueryClient();
-  const writable = useActionPermissions(universeId).can("configure_resource");
   const credentials = useQuery({
     queryKey: ["environment-credentials", universeId, environment.environmentId],
     queryFn: () =>
@@ -1171,6 +1204,7 @@ function CreateEnvironmentDialog({
   const [templateKey, setTemplateKey] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [idlePolicy, setIdlePolicy] = useState<IdlePolicy | undefined>(undefined);
+  const [visibility, setVisibility] = useState<Visibility>("universe");
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const [error, setError] = useState<string | null>(null);
   const selectedTemplate = templates.find((template) =>
@@ -1185,6 +1219,7 @@ function CreateEnvironmentDialog({
         templateId: selectedTemplate.templateId,
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
         ...(idlePolicy ? { idlePolicy } : {}),
+        access: { visibility },
       });
     },
     onSuccess: async () => {
@@ -1192,6 +1227,7 @@ function CreateEnvironmentDialog({
       setOpen(false);
       setDisplayName("");
       setIdlePolicy(undefined);
+      setVisibility("universe");
       setRequestId(crypto.randomUUID());
       setError(null);
     },
@@ -1263,6 +1299,7 @@ function CreateEnvironmentDialog({
               }
               onChange={setIdlePolicy}
             />
+            <CreationVisibilityField label="Who can use" value={visibility} onChange={setVisibility} />
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
           <DialogFooter>
@@ -1328,12 +1365,14 @@ function RegisterExternalEnvironmentDialog({
   const [open, setOpen] = useState(false);
   const [endpoint, setEndpoint] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [visibility, setVisibility] = useState<Visibility>("universe");
   const [error, setError] = useState<string | null>(null);
   const register = useMutation({
     mutationFn: () =>
       api<Environment>("POST", `/api/v1/universes/${universeId}/environments/external`, {
         endpoint: endpoint.trim(),
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+        access: { visibility },
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["environments", universeId] });
@@ -1351,6 +1390,7 @@ function RegisterExternalEnvironmentDialog({
         onClick={() => {
           setEndpoint(suggestedEndpoint && !alreadyRegistered ? suggestedEndpoint : "");
           setDisplayName(suggestedEndpoint && !alreadyRegistered ? "Local daemon" : "");
+          setVisibility("universe");
           setError(null);
           setOpen(true);
         }}
@@ -1396,6 +1436,7 @@ function RegisterExternalEnvironmentDialog({
                 placeholder="Local daemon"
               />
             </Field>
+            <CreationVisibilityField label="Who can use" value={visibility} onChange={setVisibility} />
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
           <DialogFooter>

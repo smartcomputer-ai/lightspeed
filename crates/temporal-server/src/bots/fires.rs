@@ -73,6 +73,10 @@ pub(crate) enum FireRefusal {
     PollFailed,
     /// The streak reached its cap and the trigger disabled itself.
     PollDisabled,
+    /// The bot's execution identity may not use the exec poll's
+    /// environment; a decision, not a failure, so the streak does not count
+    /// it.
+    EnvironmentRefused,
 }
 
 impl FireRefusal {
@@ -85,6 +89,7 @@ impl FireRefusal {
             Self::BreakerTripped => "breaker_tripped",
             Self::PollFailed => "poll_failed",
             Self::PollDisabled => "poll_disabled",
+            Self::EnvironmentRefused => "environment_refused",
         }
     }
 }
@@ -278,6 +283,8 @@ enum PollFetchError {
     /// The exec environment is waking; the activity retry absorbs it and
     /// the streak does not count it.
     EnvironmentNotReady(String),
+    /// The bot's execution identity may not use the exec environment.
+    Refused(String),
     /// A failed fire: counted on the cursor.
     Failed(String),
 }
@@ -433,6 +440,16 @@ pub async fn poll_trigger(
                     "poll trigger {} waits for its environment: {message}",
                     trigger.trigger_id
                 )));
+            }
+            Err(PollFetchError::Refused(message)) => {
+                tracing::warn!(
+                    target: "temporal_server",
+                    bot_id = %bot.bot_id,
+                    trigger_id = %trigger.trigger_id,
+                    message = %message,
+                    "poll fire refused its environment"
+                );
+                return Ok(refused(FireRefusal::EnvironmentRefused));
             }
             Err(PollFetchError::Failed(message)) => {
                 return note_poll_failure(api, &bot, &trigger, &message).await;
@@ -742,12 +759,18 @@ async fn resolve_bot_profile_environment(
 }
 
 /// A job API error: a waking environment propagates for the activity
-/// retry; anything else is a failed fire.
+/// retry; a refusal of the environment to the bot's execution identity
+/// (the job methods decide a bot as that identity) refuses the fire;
+/// anything else is a failed fire.
 fn map_job_api_error(context: &str, error: AgentApiError) -> PollFetchError {
-    if error.kind == AgentApiErrorKind::EnvironmentNotReady {
-        PollFetchError::EnvironmentNotReady(error.message)
-    } else {
-        PollFetchError::Failed(format!("{context}: {}", error.message))
+    match error.kind {
+        AgentApiErrorKind::EnvironmentNotReady => {
+            PollFetchError::EnvironmentNotReady(error.message)
+        }
+        AgentApiErrorKind::Forbidden => {
+            PollFetchError::Refused(format!("{context}: {}", error.message))
+        }
+        _ => PollFetchError::Failed(format!("{context}: {}", error.message)),
     }
 }
 
@@ -1003,6 +1026,10 @@ mod tests {
         assert_eq!(FireRefusal::BreakerTripped.reason(), "breaker_tripped");
         assert_eq!(FireRefusal::PollFailed.reason(), "poll_failed");
         assert_eq!(FireRefusal::PollDisabled.reason(), "poll_disabled");
+        assert_eq!(
+            FireRefusal::EnvironmentRefused.reason(),
+            "environment_refused"
+        );
     }
 
     #[test]
@@ -1213,7 +1240,7 @@ mod tests {
     }
 
     #[test]
-    fn job_api_errors_split_waking_environments_from_failures() {
+    fn job_api_errors_split_waking_environments_refusals_and_failures() {
         let waking = map_job_api_error(
             "start poll command",
             AgentApiError::environment_not_ready("booting"),
@@ -1221,6 +1248,11 @@ mod tests {
         assert_eq!(
             waking,
             PollFetchError::EnvironmentNotReady("booting".to_owned())
+        );
+        let refused = map_job_api_error("start poll command", AgentApiError::forbidden());
+        assert_eq!(
+            refused,
+            PollFetchError::Refused("start poll command: request is not authorized".to_owned())
         );
         let failed =
             map_job_api_error("start poll command", AgentApiError::rejected("no such env"));

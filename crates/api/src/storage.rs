@@ -35,11 +35,12 @@ pub struct BlobPutResponse {
 #[serde(rename_all = "camelCase")]
 pub struct BlobReadParams {
     pub blob_ref: String,
-    /// The session, bot or collection the blob is read through: the caller
+    /// The session or bot the blob is read through: the caller
     /// must be able to read it and the blob must be admitted content of it.
     /// Without a resource only a blob the caller uploaded is readable. A
     /// resource that does not authorize the read is a refusal, not a prompt
-    /// to try another.
+    /// to try another. Workspaces, environments and MCP servers are refused
+    /// here; read a workspace's files with `vfs/workspaces/files/read`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource: Option<ResourceRef>,
 }
@@ -118,6 +119,12 @@ pub struct VfsSnapshotCommitResponse {
 #[serde(rename_all = "camelCase")]
 pub struct VfsSnapshotReadParams {
     pub snapshot_ref: String,
+    /// The workspace the snapshot is read through: the caller must be able
+    /// to see it, and the snapshot must be its current head or base.
+    /// Without a workspace only a snapshot the caller committed or uploaded
+    /// is readable. A snapshot reference alone confers nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -140,6 +147,11 @@ pub struct VfsWorkspaceCreateParams {
     pub snapshot_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// Who may see and use the new workspace, set atomically with its
+    /// creation; the caller owns it. Absent means universe-visible. Grants
+    /// take the `use` permission only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<AccessInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -154,8 +166,9 @@ pub struct VfsWorkspaceReadParams {
     pub workspace_id: String,
 }
 
-/// Read a file from a workspace's current head. Workspaces remain universe
-/// resources; this does not authorize arbitrary blobs or snapshot references.
+/// Read a file from a workspace's current head. The caller must be able to
+/// see the workspace; this does not authorize arbitrary blobs or snapshot
+/// references.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VfsWorkspaceFileReadParams {
@@ -175,7 +188,10 @@ pub struct VfsWorkspaceUpdateParams {
     pub workspace_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
+    /// The new head; moving it requires use of the workspace.
     pub snapshot_ref: String,
+    /// Renames the workspace, which requires configuring it; absent keeps
+    /// the current name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
 }
@@ -214,6 +230,9 @@ pub struct VfsWorkspaceView {
     pub revision: u64,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    /// The workspace's owner and visibility; a workspace runs nothing, so
+    /// `execution` is absent.
+    pub access: ResourceAccessSummary,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

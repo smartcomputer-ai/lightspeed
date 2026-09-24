@@ -161,13 +161,33 @@ pub struct IdentitySelfResponse {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AccessReadParams {
-    /// Up to 100 existing sessions, bots, profiles or collections in the selected universe.
-    /// Missing resources return no actions.
+    /// Up to 100 existing sessions, bots, profiles, workspaces, environments
+    /// or MCP servers in the selected universe. Missing resources return no
+    /// actions.
     #[serde(default)]
     pub resources: Vec<ResourceRef>,
     /// Include every retention descendant when previewing session deletion.
     #[serde(default)]
     pub session_delete_cascade: bool,
+    /// Whose resource actions to report. Universe-level `actions` are always
+    /// the caller's.
+    #[serde(default, rename = "as")]
+    pub decide_as: AccessReadAs,
+}
+
+/// The identity `access/read` decides resource actions for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessReadAs {
+    /// The caller itself.
+    #[default]
+    Caller,
+    /// The universe's execution service, the default agent identity that
+    /// sessions and bots run as unless they run as their owner. Only
+    /// resources the caller may see are decided; the others return no
+    /// actions. Session setup uses it to show what the default agent
+    /// identity may use.
+    ExecutionService,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -220,15 +240,11 @@ pub struct AccessInput {
     /// owner and the grants below. Absent means `universe`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visibility: Option<Visibility>,
-    /// Readers and writers of the root. Each subject must currently hold a
-    /// role in the universe.
+    /// Grants on the root: `read` or `write` on a session or bot, `use` on
+    /// a workspace, environment or MCP server. Each subject must currently
+    /// hold a role in the universe.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<AccessGrantInput>,
-    /// Create the resource as a member of this collection, which the caller
-    /// must be able to write to. A member shares the collection's audience
-    /// and takes no `visibility` or `grants` of its own.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root: Option<ResourceRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -255,7 +271,8 @@ pub struct AccessPolicyView {
     pub root: ResourceRef,
     pub owner: Uuid,
     pub visibility: Visibility,
-    /// Who the root's work runs as; absent for a profile.
+    /// Who the root's work runs as; absent for kinds that run nothing:
+    /// profiles, workspaces, environments and MCP servers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<Execution>,
     pub grants: Vec<ResourceGrant>,
@@ -271,9 +288,11 @@ pub struct AccessPolicyReadResponse {
     pub policy: AccessPolicyView,
 }
 
-/// Replace a root's visibility and grant set. Only the owner may grant
-/// `write`; writers may share `read` and change visibility; readers change
-/// nothing.
+/// Replace a root's visibility and grant set. On a session or bot only the
+/// owner may add or remove `write`; writers may share `read` and change
+/// visibility; readers change nothing. On a workspace, environment or MCP
+/// server only the owner or an Admin changes access, and `use` is the only
+/// grant.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AccessPolicyPutParams {
@@ -294,94 +313,6 @@ pub struct AccessPolicyPutParams {
 #[serde(rename_all = "camelCase")]
 pub struct AccessPolicyPutResponse {
     pub policy: AccessPolicyView,
-}
-
-/// A collection: a root with a name that gives the sessions and bots in it
-/// one audience. It routes nothing and runs nothing.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CollectionView {
-    pub collection_id: String,
-    pub display_name: String,
-    /// Advances with every update; pass it as `expectedRevision`.
-    pub revision: u64,
-    pub access: ResourceAccessSummary,
-    pub created_at_ms: u64,
-    pub updated_at_ms: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CollectionCreateParams {
-    /// Client-chosen id (same form as a session id); absent allocates one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub collection_id: Option<String>,
-    pub display_name: String,
-    /// Audience of the collection; `root` is not accepted here.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub access: Option<AccessInput>,
-    /// Execution identity of the collection and everything created in it;
-    /// absent means the universe's execution service.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub execution: Option<ExecutionInput>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CollectionCreateResponse {
-    pub collection: CollectionView,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CollectionReadParams {
-    pub collection_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CollectionReadResponse {
-    pub collection: CollectionView,
-    /// Sessions and bots whose audience this collection is.
-    pub members: Vec<ResourceRef>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CollectionListParams {}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CollectionListResponse {
-    pub collections: Vec<CollectionView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CollectionUpdateParams {
-    pub collection_id: String,
-    pub display_name: String,
-    /// The revision from `collection/read`; absent replaces unconditionally.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_revision: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CollectionUpdateResponse {
-    pub collection: CollectionView,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CollectionDeleteParams {
-    pub collection_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CollectionDeleteResponse {
-    pub collection: CollectionView,
 }
 
 /// Requested execution identity of a new root. `service` runs as the

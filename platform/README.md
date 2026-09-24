@@ -172,12 +172,20 @@ The runtime still authorizes every operation independently.
 Sessions and bots expose a shared **Access** dialog with visibility, people and
 group grants, ownership, and links to the bot or parent session when access is
 inherited. Writers can share read access; owners can also grant control and
-transfer service-backed work. Creation offers universe-service or enabled
-personal execution and an audience for the new session or bot. Bot conversations
-and delegated sessions inherit access and execution. Collection APIs remain
-available, but collection creation and management are deferred in the web app.
-Personal execution is configured in universe settings; workspace and environment
-attachments retain their independent visibility.
+transfer service-backed work. Creation offers **Default agent identity** (the
+universe's execution service) or enabled personal execution and an audience for
+the new session or bot. Bot conversations and delegated sessions inherit access
+and execution. Personal execution is configured in universe settings.
+Workspaces, environments and MCP servers use the same dialog with one grant,
+**Can use**; their owner or an Admin changes access, and configuring them stays
+with the owner, Operators and Admins. Their creation dialogs choose universe or
+restricted visibility, and restricted ones carry the lock marker. Session, bot
+and profile setup pickers disable attachments the chosen execution identity may
+not use (`access/read` with `as: "execution_service"` for the default identity)
+and keep such saved choices visible with the reason. The Configurator template
+registers its MCP server restricted to the installing Admin. Members lists never
+show the execution identity, which holds the system `executor` role and never
+gets a key.
 Content reads name the session or resolve a file through its workspace path.
 Member role editing has a separate private-content capability control for people.
 Successful reads that use it carry a runtime response marker through Platform;

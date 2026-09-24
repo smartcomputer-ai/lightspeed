@@ -2074,6 +2074,7 @@ async fn vfs_snapshot_api_helpers_commit_and_read_manifest() {
     let read = read_vfs_snapshot(
         &store,
         VfsSnapshotReadParams {
+            workspace_id: None,
             snapshot_ref: committed.snapshot_ref,
         },
     )
@@ -2780,5 +2781,77 @@ fn environment_access_ladder_derives_the_union_tool_surface() {
             {"environmentId":"env_b","access":"exec"}
         ])),
         Some(engine::EnvironmentAccess::Exec),
+    );
+}
+
+#[test]
+fn use_refusals_name_the_resource_and_identity_or_look_missing() {
+    use super::authorization::use_refusal;
+    let refused = |resource: ResourceRef, kind| store_pg::UseRefusal::Resource {
+        execution: access::Execution {
+            run_as: uuid::Uuid::from_u128(9),
+            kind,
+        },
+        resource,
+        decision: access::Decision::Hidden,
+    };
+    let session = ResourceRef::Session("session_1".into());
+    let environment = ResourceRef::Environment("prod-1".into());
+    let error = use_refusal(
+        &session,
+        refused(environment.clone(), access::ExecutionKind::Service),
+        true,
+    );
+    assert_eq!(error.kind, AgentApiErrorKind::Forbidden);
+    assert_eq!(
+        error.message,
+        "environment prod-1 is not available to Default agent identity"
+    );
+    let error = use_refusal(
+        &ResourceRef::Bot("triage".into()),
+        refused(
+            ResourceRef::McpServer("crm".into()),
+            access::ExecutionKind::Personal,
+        ),
+        true,
+    );
+    assert_eq!(error.kind, AgentApiErrorKind::Forbidden);
+    assert_eq!(
+        error.message,
+        "MCP server crm is not available to the bot owner"
+    );
+    let error = use_refusal(
+        &session,
+        refused(
+            ResourceRef::Workspace("repo".into()),
+            access::ExecutionKind::Personal,
+        ),
+        true,
+    );
+    assert_eq!(
+        error.message,
+        "workspace repo is not available to the session owner"
+    );
+    // Whoever may not see the resource learns only that the id it supplied
+    // names nothing, in the text every not-found uses.
+    let hidden = use_refusal(
+        &session,
+        refused(environment.clone(), access::ExecutionKind::Service),
+        false,
+    );
+    assert_eq!(hidden.kind, AgentApiErrorKind::NotFound);
+    assert_eq!(hidden.message, "environment not found: prod-1");
+    assert_eq!(
+        super::authorization::not_found(&ResourceRef::McpServer("crm".into())).message,
+        "MCP server not found: crm"
+    );
+    // Without a caller, the identity's own view decides.
+    assert!(!refused(environment.clone(), access::ExecutionKind::Service).visible_to_identity());
+    // An identity that may not run work at all is refused as such.
+    let identity = use_refusal(&session, store_pg::UseRefusal::Identity, true);
+    assert_eq!(identity.kind, AgentApiErrorKind::Forbidden);
+    assert_eq!(
+        identity.message,
+        "the session's execution identity is disabled or may not use resources"
     );
 }

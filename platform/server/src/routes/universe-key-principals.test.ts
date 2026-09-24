@@ -18,11 +18,14 @@ it.each(["viewer", "admin"])("offers only issuable principal choices to a univer
     const result = rpc.method === "deployment/identity/self" ? { access: rights, universes: [] } : {
       principals: [me,
         { ...me, id: "service", kind: "service", displayName: "Universe bot", managementScope: scope },
+        { ...me, id: "executor", kind: "service", displayName: "Default agent identity", managementScope: scope },
         { ...me, id: "disabled", kind: "service", status: "disabled", managementScope: scope },
         { ...me, id: "deployment-service", kind: "service" },
         { ...me, id: "foreign-service", kind: "service", managementScope: { kind: "universe", universeId: "other" } },
         { ...me, id: "another-user" },
-      ], groups: [], memberships: [], roles: [], capabilities: [], policyRevision: 1,
+      ], groups: [], memberships: [], capabilities: [], policyRevision: 1,
+      // An execution identity never gets a key.
+      roles: [{ scope, subject: { kind: "principal", id: "executor" }, role: "executor" }],
     };
     return Response.json({ id: rpc.id, result: { result, notifications: [] } });
   }));

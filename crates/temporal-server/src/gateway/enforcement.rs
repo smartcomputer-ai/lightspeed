@@ -53,6 +53,8 @@ mod tests {
                 format!("authorize_method({constant},"),
                 format!("authorize_method({constant})"),
                 format!("authorize_method(api::{constant},"),
+                format!("authorize_view({constant},"),
+                format!("authorize_client_change({constant},"),
                 format!("admitted({constant},"),
                 format!("admitted(api::{constant},"),
             ]

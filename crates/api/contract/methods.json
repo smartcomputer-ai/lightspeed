@@ -27,7 +27,7 @@
         "kind": "universe",
         "requirement": "read"
       },
-      "description": "Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.",
+      "description": "Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.",
       "method": "vfs/workspaces/files/read",
       "params": {
         "schema": {
@@ -49,7 +49,7 @@
         "kind": "universe",
         "requirement": "read"
       },
-      "description": "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
+      "description": "Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.",
       "method": "access/read",
       "params": {
         "schema": {
@@ -71,7 +71,7 @@
         "kind": "universe",
         "requirement": "read"
       },
-      "description": "Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.",
+      "description": "Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.",
       "method": "access/policy/read",
       "params": {
         "schema": {
@@ -93,7 +93,7 @@
         "kind": "universe",
         "requirement": "share_resource"
       },
-      "description": "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.",
+      "description": "Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.",
       "method": "access/policy/put",
       "params": {
         "schema": {
@@ -153,116 +153,6 @@
       },
       "scope": "universe",
       "summary": "Update the universe execution policy"
-    },
-    {
-      "access": {
-        "kind": "universe",
-        "requirement": "create_collection"
-      },
-      "description": "Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.",
-      "method": "collection/create",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/CollectionCreateParams"
-        },
-        "type": "CollectionCreateParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfCollectionCreateResponse"
-        },
-        "type": "AgentApiOutcome<CollectionCreateResponse>"
-      },
-      "scope": "universe",
-      "summary": "Create a collection"
-    },
-    {
-      "access": {
-        "kind": "universe",
-        "requirement": "read"
-      },
-      "description": "Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.",
-      "method": "collection/read",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/CollectionReadParams"
-        },
-        "type": "CollectionReadParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfCollectionReadResponse"
-        },
-        "type": "AgentApiOutcome<CollectionReadResponse>"
-      },
-      "scope": "universe",
-      "summary": "Read a collection"
-    },
-    {
-      "access": {
-        "kind": "universe",
-        "requirement": "read"
-      },
-      "description": "Returns the collections the caller may read.",
-      "method": "collection/list",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/CollectionListParams"
-        },
-        "type": "CollectionListParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfCollectionListResponse"
-        },
-        "type": "AgentApiOutcome<CollectionListResponse>"
-      },
-      "scope": "universe",
-      "summary": "List collections"
-    },
-    {
-      "access": {
-        "kind": "universe",
-        "requirement": "manage_collection"
-      },
-      "description": "Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.",
-      "method": "collection/update",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/CollectionUpdateParams"
-        },
-        "type": "CollectionUpdateParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfCollectionUpdateResponse"
-        },
-        "type": "AgentApiOutcome<CollectionUpdateResponse>"
-      },
-      "scope": "universe",
-      "summary": "Rename a collection"
-    },
-    {
-      "access": {
-        "kind": "universe",
-        "requirement": "delete_collection"
-      },
-      "description": "Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.",
-      "method": "collection/delete",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/CollectionDeleteParams"
-        },
-        "type": "CollectionDeleteParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfCollectionDeleteResponse"
-        },
-        "type": "AgentApiOutcome<CollectionDeleteResponse>"
-      },
-      "scope": "universe",
-      "summary": "Delete an empty collection"
     },
     {
       "access": {
@@ -775,7 +665,7 @@
         "kind": "universe",
         "requirement": "control_session"
       },
-      "description": "Selects an allowed, live universe environment for environment-targeted tools while the session is idle.",
+      "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.",
       "method": "session/environments/activate",
       "params": {
         "schema": {
@@ -819,7 +709,7 @@
         "kind": "universe",
         "requirement": "configure_resource"
       },
-      "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. The response exposes only the source handle, never secret material.",
+      "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
       "method": "environments/credentials/bind",
       "params": {
         "schema": {
@@ -885,7 +775,7 @@
         "kind": "universe",
         "requirement": "configure_resource"
       },
-      "description": "Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.",
+      "description": "Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.",
       "method": "environments/create",
       "params": {
         "schema": {
@@ -929,7 +819,7 @@
         "kind": "universe",
         "requirement": "read"
       },
-      "description": "Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.",
+      "description": "Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.",
       "method": "environments/list",
       "params": {
         "schema": {
@@ -973,7 +863,7 @@
         "kind": "universe",
         "requirement": "configure_resource"
       },
-      "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.",
+      "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.",
       "method": "environments/external/create",
       "params": {
         "schema": {
@@ -1523,7 +1413,7 @@
         "kind": "universe",
         "requirement": "read"
       },
-      "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
+      "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.",
       "method": "vfs/snapshots/read",
       "params": {
         "schema": {
@@ -1543,9 +1433,9 @@
     {
       "access": {
         "kind": "universe",
-        "requirement": "configure_resource"
+        "requirement": "create_workspace"
       },
-      "description": "Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.",
+      "description": "Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.",
       "method": "vfs/workspaces/create",
       "params": {
         "schema": {
@@ -1589,7 +1479,7 @@
         "kind": "universe",
         "requirement": "read"
       },
-      "description": "Lists mutable universe workspaces with head snapshots, sizes, and revisions.",
+      "description": "Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.",
       "method": "vfs/workspaces/list",
       "params": {
         "schema": {
@@ -1609,9 +1499,9 @@
     {
       "access": {
         "kind": "universe",
-        "requirement": "configure_resource"
+        "requirement": "use_resource"
       },
-      "description": "Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.",
+      "description": "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
       "method": "vfs/workspaces/update",
       "params": {
         "schema": {
@@ -1655,7 +1545,7 @@
         "kind": "universe",
         "requirement": "configure_resource"
       },
-      "description": "Stores the complete universe catalog document, including its optional universe auth-grant credential. Use expectedRevision when replacing; token material is never accepted or returned.",
+      "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.",
       "method": "mcp/servers/put",
       "params": {
         "schema": {
@@ -1743,7 +1633,7 @@
         "kind": "universe",
         "requirement": "read"
       },
-      "description": "Lists universe catalog entries, optionally filtered by lifecycle/configuration status.",
+      "description": "Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.",
       "method": "mcp/servers/list",
       "params": {
         "schema": {

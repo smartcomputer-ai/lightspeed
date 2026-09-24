@@ -18,6 +18,9 @@ const SERVER_ID = "lightspeed-configurator";
 const PROFILE_ID = "lightspeed-configurator";
 const KEY_DISPLAY_NAME = "Lightspeed Configurator service credential";
 const INSTALL_LEASE_MS = 5 * 60 * 1_000;
+const CONFIGURATOR_DESCRIPTION =
+  "Creates a dedicated credential, registers the Configurator MCP server, and adds a ready-to-use profile for managing this universe. " +
+  "The server starts restricted to you. Granting it to Default agent identity hands Operator actions to every session and bot running as Default agent identity.";
 
 type Installation = typeof schema.universeSetupInstallations.$inferSelect;
 type Universe = typeof schema.universes.$inferSelect;
@@ -92,7 +95,7 @@ function setupView(ctx: AppContext, installation: Installation | null): Universe
   return {
     id: SETUP_ID,
     name: "Configurator",
-    description: "Creates a dedicated credential, registers the Configurator MCP server, and adds a ready-to-use profile for managing this universe.",
+    description: CONFIGURATOR_DESCRIPTION,
     version: SETUP_VERSION,
     available,
     status: installation
@@ -294,7 +297,7 @@ async function ensureCredential(
   });
 }
 
-async function ensureMcpServer(
+export async function ensureMcpServer(
   ctx: AppContext,
   installationId: string,
   client: LightspeedClient,
@@ -326,9 +329,14 @@ async function ensureMcpServer(
     ...auth,
     status: "active",
   };
+  // The server acts with an Operator key, so whoever may use it holds
+  // Operator actions. It starts restricted and owned by the installing
+  // Admin; a repair leaves the access someone chose since untouched.
   await client.call("mcp/servers/put", {
     server,
-    ...(existing ? { expectedRevision: existing.revision } : {}),
+    ...(existing
+      ? { expectedRevision: existing.revision }
+      : { access: { visibility: "restricted" } }),
   });
   return await persistState(ctx, installationId, { ...state, serverId: SERVER_ID });
 }

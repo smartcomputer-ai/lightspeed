@@ -50,6 +50,7 @@ const child: ResourceRef = { kind: "session", id: "child" };
 let policy: AccessPolicyView;
 let actor: string;
 let writable: boolean;
+let resource: ResourceRef;
 let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
@@ -59,6 +60,7 @@ beforeEach(() => {
   vi.stubGlobal("PointerEvent", MouseEvent);
   actor = "owner";
   writable = true;
+  resource = child;
   policy = {
     resource: child,
     root: rootResource,
@@ -97,10 +99,23 @@ beforeEach(() => {
         if (path.includes("/subjects"))
           return {
             principalId: actor,
-            subjects: ["owner", "reader", "writer"].map((id) => ({
-              subject: { kind: "principal", id },
-              displayName: id,
-            })),
+            subjects: [
+              ...["owner", "reader", "writer"].map((id) => ({
+                subject: { kind: "principal", id },
+                displayName: id,
+              })),
+              {
+                subject: { kind: "principal", id: "agent" },
+                displayName: "Default agent identity",
+              },
+            ],
+          };
+        if (path.endsWith("/execution"))
+          return {
+            policy: {
+              executionPrincipalId: "agent",
+              personalExecutionEnabled: false,
+            },
           };
         if (method === "PUT")
           throw new ApiError(409, { error: "revision conflict" });
@@ -132,7 +147,7 @@ async function show() {
       <QueryClientProvider client={client}>
         <PermissionIdentityProvider userId={actor}>
           <MemoryRouter>
-            <AccessButton universeId="universe" slug="test" resource={child} />
+            <AccessButton universeId="universe" slug="test" resource={resource} />
           </MemoryRouter>
         </PermissionIdentityProvider>
       </QueryClientProvider>,
@@ -164,7 +179,7 @@ it.each(["bot", "session"] as const)("shows inherited %s access to readers witho
       `a[href="/u/test/${kind === "bot" ? "bots" : "sessions"}/research"]`,
     ),
   ).not.toBeNull();
-  expect(document.body.textContent).toContain("Running as universe service");
+  expect(document.body.textContent).toContain("Running as Default agent identity");
   expect(document.querySelector('[id="share-search"]')).toBeNull();
   expect(button("Save")).toBeUndefined();
 });
@@ -216,6 +231,97 @@ it("edits a standalone session's own policy", async () => {
   expect(put?.[2].resource).toEqual(child);
 });
 
+function operational(kind: "workspace" | "environment" | "mcp_server") {
+  resource = { kind, id: "production" };
+  policy = {
+    resource,
+    root: resource,
+    owner: "owner",
+    visibility: "restricted",
+    revision: 3,
+    grants: [
+      {
+        subject: { kind: "principal", id: "writer" },
+        permission: "use",
+        grantedBy: "owner",
+        grantedAtMs: 0,
+      },
+    ],
+    updatedAtMs: 0,
+    updatedBy: { kind: "principal", id: "owner" },
+  };
+}
+it.each([
+  ["workspace", "read and change its files"],
+  ["environment", "files, commands, jobs and the credentials bound to it"],
+  ["mcp_server", "call its allowed tools"],
+] as const)("shares a %s with use as its only permission", async (kind, covers) => {
+  operational(kind);
+  await show();
+  expect(document.body.textContent).toContain("Who can use");
+  expect(document.body.textContent).toContain(covers);
+  expect(document.body.textContent).toContain(
+    "Configuring it stays with its owner, Operators and Admins.",
+  );
+  expect(document.body.textContent).not.toContain("Running as");
+  // No read/control choice: every grant reads "Can use".
+  expect(document.querySelector('[aria-label="Permission for writer"]')).toBeNull();
+  expect(document.body.textContent).toContain("Can use");
+  await act(async () => button("readerAdd")!.click());
+  await act(async () => button("Save")!.click());
+  await settle();
+  const put = mocks.api.mock.calls.find(([method]) => method === "PUT");
+  expect(put?.[2]).toEqual({
+    resource,
+    visibility: "restricted",
+    expectedRevision: 3,
+    grants: [
+      { subject: { kind: "principal", id: "writer" }, permission: "use" },
+      { subject: { kind: "principal", id: "reader" }, permission: "use" },
+    ],
+  });
+});
+it("explains what granting the default agent identity means", async () => {
+  operational("environment");
+  const sentence =
+    "Every session and bot running as Default agent identity can use this.";
+  await show();
+  expect(document.body.textContent).not.toContain(sentence);
+  await act(async () => button("Default agent identityAdd")!.click());
+  expect(document.body.textContent).toContain(sentence);
+  expect(document.body.textContent).toContain("Agent identity");
+  await act(async () =>
+    document
+      .querySelector<HTMLButtonElement>(
+        '[aria-label="Remove Default agent identity"]',
+      )!
+      .click(),
+  );
+  expect(document.body.textContent).not.toContain(sentence);
+  const visibility = document.querySelector<HTMLSelectElement>(
+    '[aria-label="Who can use"]',
+  )!;
+  await act(async () => {
+    visibility.value = "universe";
+    visibility.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(document.body.textContent).toContain(sentence);
+});
+it("never offers the default agent identity as a new owner", async () => {
+  operational("workspace");
+  await show();
+  const owners = [
+    ...document.querySelectorAll('[aria-label="New owner"] option'),
+  ].map((option) => option.textContent);
+  expect(owners).toContain("reader");
+  expect(owners).not.toContain("Default agent identity");
+});
+it("never offers the default agent identity as a session grantee", async () => {
+  await show();
+  expect(button("readerAdd")).toBeTruthy();
+  expect(button("Default agent identityAdd")).toBeFalsy();
+});
+
 it.each([
   ["service", "universe"],
   ["personal", "restricted"],
@@ -251,19 +357,17 @@ async function showCreation(personalExecutionEnabled = false) {
   );
   await settle();
 }
-it("offers direct access settings without collection discovery", async () => {
+it("offers direct access settings for a new root", async () => {
   await showCreation();
-  expect(document.querySelector('[aria-label="Collection"]')).toBeNull();
   expect(document.querySelector('[aria-label="Running as"]')).not.toBeNull();
   expect(document.querySelector('[aria-label="Who can read"]')).not.toBeNull();
-  expect(mocks.api.mock.calls.some(([, path]) => path.includes("/collections"))).toBe(false);
 });
-it("offers only universe service while personal execution is disabled", async () => {
+it("offers only the default agent identity while personal execution is disabled", async () => {
   await showCreation();
   const options = [
     ...document.querySelectorAll('[aria-label="Running as"] option'),
   ].map((option) => option.textContent);
-  expect(options).toContain("Universe service");
+  expect(options).toContain("Default agent identity");
   expect(options).not.toContain("Me");
 });
 it("defaults personal execution to restricted access", async () => {

@@ -223,7 +223,7 @@ function Wizard({
     queryKey: ["bots", universeId],
     queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
   });
-  const options = useSessionConfigEditorOptions(universeId, step === "profile" || step === "wakeups");
+  const options = useSessionConfigEditorOptions(universeId, step === "profile" || step === "wakeups", creationAccess.kind);
   const defaultEnvironmentId = defaultEnvironmentAttachment(config)?.environmentId;
 
   const env: BotEnvStatus =

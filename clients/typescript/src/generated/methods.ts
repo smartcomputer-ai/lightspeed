@@ -12,11 +12,6 @@ export const METHODS = [
   "access/policy/put",
   "access/execution/read",
   "access/execution/update",
-  "collection/create",
-  "collection/read",
-  "collection/list",
-  "collection/update",
-  "collection/delete",
   "initialize",
   "session/start",
   "session/managed/start",
@@ -161,25 +156,25 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"kind":"universe","requirement":"read"},
     summary: "Read a workspace file",
-    description: "Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.",
+    description: "Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.",
   },
   "access/read": {
     scope: "universe",
     access: {"kind":"universe","requirement":"read"},
     summary: "Read current action permissions",
-    description: "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
+    description: "Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.",
   },
   "access/policy/read": {
     scope: "universe",
     access: {"kind":"universe","requirement":"read"},
     summary: "Read a resource's access policy",
-    description: "Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.",
+    description: "Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.",
   },
   "access/policy/put": {
     scope: "universe",
     access: {"kind":"universe","requirement":"share_resource"},
     summary: "Replace a resource's access policy",
-    description: "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.",
+    description: "Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.",
   },
   "access/execution/read": {
     scope: "universe",
@@ -192,36 +187,6 @@ export const METHOD_INFO = {
     access: {"kind":"universe","requirement":"manage_access"},
     summary: "Update the universe execution policy",
     description: "Enables or disables personal execution. Existing roots keep the execution identity they were created with.",
-  },
-  "collection/create": {
-    scope: "universe",
-    access: {"kind":"universe","requirement":"create_collection"},
-    summary: "Create a collection",
-    description: "Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.",
-  },
-  "collection/read": {
-    scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
-    summary: "Read a collection",
-    description: "Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.",
-  },
-  "collection/list": {
-    scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
-    summary: "List collections",
-    description: "Returns the collections the caller may read.",
-  },
-  "collection/update": {
-    scope: "universe",
-    access: {"kind":"universe","requirement":"manage_collection"},
-    summary: "Rename a collection",
-    description: "Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.",
-  },
-  "collection/delete": {
-    scope: "universe",
-    access: {"kind":"universe","requirement":"delete_collection"},
-    summary: "Delete an empty collection",
-    description: "Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.",
   },
   "initialize": {
     scope: "universe",
@@ -365,7 +330,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"kind":"universe","requirement":"control_session"},
     summary: "Activate a session environment",
-    description: "Selects an allowed, live universe environment for environment-targeted tools while the session is idle.",
+    description: "Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.",
   },
   "session/environments/deactivate": {
     scope: "universe",
@@ -377,7 +342,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"kind":"universe","requirement":"configure_resource"},
     summary: "Bind a credential into an environment",
-    description: "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. The response exposes only the source handle, never secret material.",
+    description: "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
   },
   "environments/credentials/list": {
     scope: "universe",
@@ -395,7 +360,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"kind":"universe","requirement":"configure_resource"},
     summary: "Create an environment",
-    description: "Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.",
+    description: "Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.",
   },
   "environments/read": {
     scope: "universe",
@@ -407,7 +372,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"kind":"universe","requirement":"read"},
     summary: "List environments",
-    description: "Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.",
+    description: "Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.",
   },
   "environments/close": {
     scope: "universe",
@@ -419,7 +384,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"kind":"universe","requirement":"configure_resource"},
     summary: "Register an external environment",
-    description: "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.",
+    description: "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.",
   },
   "environments/ingress/put": {
     scope: "universe",
@@ -569,13 +534,13 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"kind":"universe","requirement":"read"},
     summary: "Read a VFS snapshot",
-    description: "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
+    description: "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.",
   },
   "vfs/workspaces/create": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"kind":"universe","requirement":"create_workspace"},
     summary: "Create a mutable VFS workspace",
-    description: "Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.",
+    description: "Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.",
   },
   "vfs/workspaces/read": {
     scope: "universe",
@@ -587,13 +552,13 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"kind":"universe","requirement":"read"},
     summary: "List VFS workspaces",
-    description: "Lists mutable universe workspaces with head snapshots, sizes, and revisions.",
+    description: "Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.",
   },
   "vfs/workspaces/update": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"kind":"universe","requirement":"use_resource"},
     summary: "Update a VFS workspace",
-    description: "Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.",
+    description: "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
   },
   "vfs/workspaces/delete": {
     scope: "universe",
@@ -605,7 +570,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"kind":"universe","requirement":"configure_resource"},
     summary: "Create or replace an MCP server record",
-    description: "Stores the complete universe catalog document, including its optional universe auth-grant credential. Use expectedRevision when replacing; token material is never accepted or returned.",
+    description: "Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.",
   },
   "mcp/servers/auth/discover": {
     scope: "universe",
@@ -629,7 +594,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"kind":"universe","requirement":"read"},
     summary: "List MCP server records",
-    description: "Lists universe catalog entries, optionally filtered by lifecycle/configuration status.",
+    description: "Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.",
   },
   "mcp/servers/delete": {
     scope: "universe",
@@ -1036,7 +1001,7 @@ export interface MethodMap {
   /**
    * Read a workspace file
    *
-   * Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.
+   * Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.
    */
   "vfs/workspaces/files/read": {
     params: Api.VfsWorkspaceFileReadParams;
@@ -1045,7 +1010,7 @@ export interface MethodMap {
   /**
    * Read current action permissions
    *
-   * Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
+   * Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.
    */
   "access/read": {
     params: Api.AccessReadParams;
@@ -1054,7 +1019,7 @@ export interface MethodMap {
   /**
    * Read a resource's access policy
    *
-   * Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.
+   * Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.
    */
   "access/policy/read": {
     params: Api.AccessPolicyReadParams;
@@ -1063,7 +1028,7 @@ export interface MethodMap {
   /**
    * Replace a resource's access policy
    *
-   * Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.
+   * Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.
    */
   "access/policy/put": {
     params: Api.AccessPolicyPutParams;
@@ -1086,51 +1051,6 @@ export interface MethodMap {
   "access/execution/update": {
     params: Api.AccessExecutionUpdateParams;
     result: Api.AgentApiOutcomeOfAccessExecutionUpdateResponse;
-  };
-  /**
-   * Create a collection
-   *
-   * Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.
-   */
-  "collection/create": {
-    params: Api.CollectionCreateParams;
-    result: Api.AgentApiOutcomeOfCollectionCreateResponse;
-  };
-  /**
-   * Read a collection
-   *
-   * Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.
-   */
-  "collection/read": {
-    params: Api.CollectionReadParams;
-    result: Api.AgentApiOutcomeOfCollectionReadResponse;
-  };
-  /**
-   * List collections
-   *
-   * Returns the collections the caller may read.
-   */
-  "collection/list": {
-    params: Api.CollectionListParams;
-    result: Api.AgentApiOutcomeOfCollectionListResponse;
-  };
-  /**
-   * Rename a collection
-   *
-   * Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.
-   */
-  "collection/update": {
-    params: Api.CollectionUpdateParams;
-    result: Api.AgentApiOutcomeOfCollectionUpdateResponse;
-  };
-  /**
-   * Delete an empty collection
-   *
-   * Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.
-   */
-  "collection/delete": {
-    params: Api.CollectionDeleteParams;
-    result: Api.AgentApiOutcomeOfCollectionDeleteResponse;
   };
   /**
    * Inspect the Lightspeed protocol
@@ -1342,7 +1262,7 @@ export interface MethodMap {
   /**
    * Activate a session environment
    *
-   * Selects an allowed, live universe environment for environment-targeted tools while the session is idle.
+   * Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.
    */
   "session/environments/activate": {
     params: Api.SessionEnvironmentActivateParams;
@@ -1360,7 +1280,7 @@ export interface MethodMap {
   /**
    * Bind a credential into an environment
    *
-   * Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. The response exposes only the source handle, never secret material.
+   * Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.
    */
   "environments/credentials/bind": {
     params: Api.EnvironmentCredentialBindParams;
@@ -1387,7 +1307,7 @@ export interface MethodMap {
   /**
    * Create an environment
    *
-   * Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.
+   * Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.
    */
   "environments/create": {
     params: Api.EnvironmentCreateParams;
@@ -1405,7 +1325,7 @@ export interface MethodMap {
   /**
    * List environments
    *
-   * Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.
+   * Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.
    */
   "environments/list": {
     params: Api.EnvironmentListParams;
@@ -1423,7 +1343,7 @@ export interface MethodMap {
   /**
    * Register an external environment
    *
-   * Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.
+   * Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.
    */
   "environments/external/create": {
     params: Api.EnvironmentExternalCreateParams;
@@ -1648,7 +1568,7 @@ export interface MethodMap {
   /**
    * Read a VFS snapshot
    *
-   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.
+   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.
    */
   "vfs/snapshots/read": {
     params: Api.VfsSnapshotReadParams;
@@ -1657,7 +1577,7 @@ export interface MethodMap {
   /**
    * Create a mutable VFS workspace
    *
-   * Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.
+   * Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.
    */
   "vfs/workspaces/create": {
     params: Api.VfsWorkspaceCreateParams;
@@ -1675,7 +1595,7 @@ export interface MethodMap {
   /**
    * List VFS workspaces
    *
-   * Lists mutable universe workspaces with head snapshots, sizes, and revisions.
+   * Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.
    */
   "vfs/workspaces/list": {
     params: Api.VfsWorkspaceListParams;
@@ -1684,7 +1604,7 @@ export interface MethodMap {
   /**
    * Update a VFS workspace
    *
-   * Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.
+   * Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.
    */
   "vfs/workspaces/update": {
     params: Api.VfsWorkspaceUpdateParams;
@@ -1702,7 +1622,7 @@ export interface MethodMap {
   /**
    * Create or replace an MCP server record
    *
-   * Stores the complete universe catalog document, including its optional universe auth-grant credential. Use expectedRevision when replacing; token material is never accepted or returned.
+   * Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.
    */
   "mcp/servers/put": {
     params: Api.McpServerPutParams;
@@ -1738,7 +1658,7 @@ export interface MethodMap {
   /**
    * List MCP server records
    *
-   * Lists universe catalog entries, optionally filtered by lifecycle/configuration status.
+   * Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.
    */
   "mcp/servers/list": {
     params: Api.McpServerListParams;
@@ -2332,7 +2252,7 @@ export const rpc = {
   /**
    * Read a workspace file
    *
-   * Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.
+   * Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.
    */
   vfsWorkspacesFilesRead(client: RpcCaller, params: Api.VfsWorkspaceFileReadParams): Promise<Api.AgentApiOutcomeOfBlobReadResponse> {
     return client.call("vfs/workspaces/files/read", params);
@@ -2340,7 +2260,7 @@ export const rpc = {
   /**
    * Read current action permissions
    *
-   * Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.
+   * Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.
    */
   accessRead(client: RpcCaller, params: Api.AccessReadParams): Promise<Api.AgentApiOutcomeOfAccessReadResponse> {
     return client.call("access/read", params);
@@ -2348,7 +2268,7 @@ export const rpc = {
   /**
    * Read a resource's access policy
    *
-   * Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.
+   * Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.
    */
   accessPolicyRead(client: RpcCaller, params: Api.AccessPolicyReadParams): Promise<Api.AgentApiOutcomeOfAccessPolicyReadResponse> {
     return client.call("access/policy/read", params);
@@ -2356,7 +2276,7 @@ export const rpc = {
   /**
    * Replace a resource's access policy
    *
-   * Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.
+   * Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.
    */
   accessPolicyPut(client: RpcCaller, params: Api.AccessPolicyPutParams): Promise<Api.AgentApiOutcomeOfAccessPolicyPutResponse> {
     return client.call("access/policy/put", params);
@@ -2376,46 +2296,6 @@ export const rpc = {
    */
   accessExecutionUpdate(client: RpcCaller, params: Api.AccessExecutionUpdateParams): Promise<Api.AgentApiOutcomeOfAccessExecutionUpdateResponse> {
     return client.call("access/execution/update", params);
-  },
-  /**
-   * Create a collection
-   *
-   * Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.
-   */
-  collectionCreate(client: RpcCaller, params: Api.CollectionCreateParams): Promise<Api.AgentApiOutcomeOfCollectionCreateResponse> {
-    return client.call("collection/create", params);
-  },
-  /**
-   * Read a collection
-   *
-   * Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.
-   */
-  collectionRead(client: RpcCaller, params: Api.CollectionReadParams): Promise<Api.AgentApiOutcomeOfCollectionReadResponse> {
-    return client.call("collection/read", params);
-  },
-  /**
-   * List collections
-   *
-   * Returns the collections the caller may read.
-   */
-  collectionList(client: RpcCaller, params: Api.CollectionListParams): Promise<Api.AgentApiOutcomeOfCollectionListResponse> {
-    return client.call("collection/list", params);
-  },
-  /**
-   * Rename a collection
-   *
-   * Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.
-   */
-  collectionUpdate(client: RpcCaller, params: Api.CollectionUpdateParams): Promise<Api.AgentApiOutcomeOfCollectionUpdateResponse> {
-    return client.call("collection/update", params);
-  },
-  /**
-   * Delete an empty collection
-   *
-   * Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.
-   */
-  collectionDelete(client: RpcCaller, params: Api.CollectionDeleteParams): Promise<Api.AgentApiOutcomeOfCollectionDeleteResponse> {
-    return client.call("collection/delete", params);
   },
   /**
    * Inspect the Lightspeed protocol
@@ -2604,7 +2484,7 @@ export const rpc = {
   /**
    * Activate a session environment
    *
-   * Selects an allowed, live universe environment for environment-targeted tools while the session is idle.
+   * Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.
    */
   sessionEnvironmentsActivate(client: RpcCaller, params: Api.SessionEnvironmentActivateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentActivateResponse> {
     return client.call("session/environments/activate", params);
@@ -2620,7 +2500,7 @@ export const rpc = {
   /**
    * Bind a credential into an environment
    *
-   * Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. The response exposes only the source handle, never secret material.
+   * Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.
    */
   environmentsCredentialsBind(client: RpcCaller, params: Api.EnvironmentCredentialBindParams): Promise<Api.AgentApiOutcomeOfEnvironmentCredentialBindResponse> {
     return client.call("environments/credentials/bind", params);
@@ -2644,7 +2524,7 @@ export const rpc = {
   /**
    * Create an environment
    *
-   * Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.
+   * Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.
    */
   environmentsCreate(client: RpcCaller, params: Api.EnvironmentCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentCreateResponse> {
     return client.call("environments/create", params);
@@ -2660,7 +2540,7 @@ export const rpc = {
   /**
    * List environments
    *
-   * Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.
+   * Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.
    */
   environmentsList(client: RpcCaller, params: Api.EnvironmentListParams): Promise<Api.AgentApiOutcomeOfEnvironmentListResponse> {
     return client.call("environments/list", params);
@@ -2676,7 +2556,7 @@ export const rpc = {
   /**
    * Register an external environment
    *
-   * Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.
+   * Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.
    */
   environmentsExternalCreate(client: RpcCaller, params: Api.EnvironmentExternalCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentExternalCreateResponse> {
     return client.call("environments/external/create", params);
@@ -2876,7 +2756,7 @@ export const rpc = {
   /**
    * Read a VFS snapshot
    *
-   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.
+   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.
    */
   vfsSnapshotsRead(client: RpcCaller, params: Api.VfsSnapshotReadParams): Promise<Api.AgentApiOutcomeOfVfsSnapshotReadResponse> {
     return client.call("vfs/snapshots/read", params);
@@ -2884,7 +2764,7 @@ export const rpc = {
   /**
    * Create a mutable VFS workspace
    *
-   * Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.
+   * Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.
    */
   vfsWorkspacesCreate(client: RpcCaller, params: Api.VfsWorkspaceCreateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceCreateResponse> {
     return client.call("vfs/workspaces/create", params);
@@ -2900,7 +2780,7 @@ export const rpc = {
   /**
    * List VFS workspaces
    *
-   * Lists mutable universe workspaces with head snapshots, sizes, and revisions.
+   * Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.
    */
   vfsWorkspacesList(client: RpcCaller, params: Api.VfsWorkspaceListParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceListResponse> {
     return client.call("vfs/workspaces/list", params);
@@ -2908,7 +2788,7 @@ export const rpc = {
   /**
    * Update a VFS workspace
    *
-   * Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.
+   * Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.
    */
   vfsWorkspacesUpdate(client: RpcCaller, params: Api.VfsWorkspaceUpdateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceUpdateResponse> {
     return client.call("vfs/workspaces/update", params);
@@ -2924,7 +2804,7 @@ export const rpc = {
   /**
    * Create or replace an MCP server record
    *
-   * Stores the complete universe catalog document, including its optional universe auth-grant credential. Use expectedRevision when replacing; token material is never accepted or returned.
+   * Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.
    */
   mcpServersPut(client: RpcCaller, params: Api.McpServerPutParams): Promise<Api.AgentApiOutcomeOfMcpServerPutResponse> {
     return client.call("mcp/servers/put", params);
@@ -2956,7 +2836,7 @@ export const rpc = {
   /**
    * List MCP server records
    *
-   * Lists universe catalog entries, optionally filtered by lifecycle/configuration status.
+   * Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.
    */
   mcpServersList(client: RpcCaller, params: Api.McpServerListParams): Promise<Api.AgentApiOutcomeOfMcpServerListResponse> {
     return client.call("mcp/servers/list", params);

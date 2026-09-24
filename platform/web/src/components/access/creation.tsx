@@ -1,17 +1,15 @@
-import { useQuery } from "@tanstack/react-query";
 import type {
-  AccessExecutionReadResponse,
   AccessInput,
   ExecutionInput,
+  Visibility,
 } from "@lightspeed-ai/agent-client";
-import { api } from "@/api";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { ReadError } from "@/components/read-error";
-import { AccessSelect } from "./shared";
+import { AccessSelect, DEFAULT_AGENT_IDENTITY, useExecutionPolicy } from "./shared";
 
 export type CreationAccess = {
   kind: "service" | "personal";
-  visibility: "universe" | "restricted";
+  visibility: Visibility;
 };
 export const defaultCreationAccess = (): CreationAccess => ({
   kind: "service",
@@ -38,16 +36,7 @@ export function CreationAccessFields({
   onChange: (value: CreationAccess) => void;
   enabled?: boolean;
 }) {
-  const policy = useQuery({
-    queryKey: ["execution-policy", universeId],
-    enabled,
-    queryFn: () =>
-      api<AccessExecutionReadResponse>(
-        "GET",
-        `/api/v1/universes/${universeId}/access/execution`,
-      ),
-    retry: false,
-  });
+  const policy = useExecutionPolicy(universeId, enabled);
   return (
     <div className="grid gap-4">
       <Field>
@@ -63,7 +52,7 @@ export function CreationAccessFields({
             })
           }
           options={[
-            { value: "service", label: "Universe service" },
+            { value: "service", label: DEFAULT_AGENT_IDENTITY },
             ...(policy.data?.policy.personalExecutionEnabled ||
             value.kind === "personal"
               ? [{ value: "personal", label: "Me" }]
@@ -81,26 +70,42 @@ export function CreationAccessFields({
           />
         )}
       </Field>
-      <Field>
-        <FieldLabel>Who can read</FieldLabel>
-        <AccessSelect
-          label="Who can read"
-          value={value.visibility}
-          onChange={(visibility) =>
-            onChange({
-              ...value,
-              visibility: visibility as CreationAccess["visibility"],
-            })
-          }
-          options={[
-            { value: "universe", label: "Universe members" },
-            {
-              value: "restricted",
-              label: "Only me and people I share with",
-            },
-          ]}
-        />
-      </Field>
+      <CreationVisibilityField
+        label="Who can read"
+        value={value.visibility}
+        onChange={(visibility) => onChange({ ...value, visibility })}
+      />
     </div>
+  );
+}
+
+/// The audience of a new root. Grants are edited afterwards in the Access
+/// dialog. Workspaces, environments and MCP servers pass their "Who can use"
+/// label.
+export function CreationVisibilityField({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: Visibility;
+  onChange: (value: Visibility) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Field>
+      <FieldLabel>{label}</FieldLabel>
+      <AccessSelect
+        label={label}
+        value={value}
+        disabled={disabled}
+        onChange={(visibility) => onChange(visibility as Visibility)}
+        options={[
+          { value: "universe", label: "Universe members" },
+          { value: "restricted", label: "Only me and people I share with" },
+        ]}
+      />
+    </Field>
   );
 }

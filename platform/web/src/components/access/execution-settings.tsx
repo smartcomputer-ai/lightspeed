@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ReadError } from "@/components/read-error";
+import { DEFAULT_AGENT_IDENTITY } from "./shared";
 
 export function ExecutionSettings({ universeId }: { universeId: string }) {
   const client = useQueryClient();
@@ -36,9 +37,9 @@ export function ExecutionSettings({ universeId }: { universeId: string }) {
       <CardHeader>
         <CardTitle>Execution</CardTitle>
         <CardDescription>
-          Allow people to create work that runs under their own authority.
-          Existing sessions and bots keep their execution
-          identity.
+          Sessions and bots run as {DEFAULT_AGENT_IDENTITY} unless personal
+          execution lets people run them as themselves. Existing sessions and
+          bots keep their execution identity.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid justify-items-start gap-3">

@@ -1,5 +1,9 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
+import { AccessButton } from "@/components/access/access-dialog";
+import { CreationVisibilityField } from "@/components/access/creation";
+import { RestrictedMarker } from "@/components/access/shared";
+import type { ResourceRef, Visibility } from "@lightspeed-ai/agent-client";
 import { McpToolPicker } from "@/components/mcp/tool-picker";
 import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -72,7 +76,6 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TableTitleCell,
 } from "@/components/ui/table";
 import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
 import { ProgressSteps } from "@/components/ui/progress-steps";
@@ -100,12 +103,18 @@ export function McpServersPage({ admin: _admin }: { admin: boolean }) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <ServerList universeId={universe.id} />;
+  return <ServerList universeId={universe.id} slug={universe.slug} />;
+}
+
+function serverRef(server: McpServer): ResourceRef {
+  return { kind: "mcp_server", id: server.serverId };
 }
 
 const APPROVALS = ["always", "never"] as const;
 
-function ServerList({ universeId }: { universeId: string }) {
+function ServerList({ universeId, slug }: { universeId: string; slug: string }) {
+  // Adding servers and changing credentials are universe configuration;
+  // everything else on a row is decided for that server.
   const writable = useActionPermissions(universeId).can("configure_resource");
   const queryClient = useQueryClient();
   const servers = useQuery({
@@ -133,6 +142,11 @@ function ServerList({ universeId }: { universeId: string }) {
   const rows = (servers.data ?? [])
     .slice()
     .sort((a, b) => a.serverId.localeCompare(b.serverId));
+  const decisions = useActionPermissions(universeId, rows.map(serverRef));
+  const configurable = (server: McpServer) => decisions.can("configure_resource", serverRef(server));
+  // Open dialogs follow current permissions, like the controls that open them.
+  const editable = editing && configurable(editing) ? editing : null;
+  const connectable = oauthServer && writable && configurable(oauthServer) ? oauthServer : null;
   const grantLabels = new Map(
     (authGrants.data ?? []).map((grant) => [grant.grantId, authGrantLabel(grant)]),
   );
@@ -176,10 +190,15 @@ function ServerList({ universeId }: { universeId: string }) {
             <TableBody>
               {rows.map((server) => (
                 <TableRow key={server.serverId}>
-                  <TableTitleCell
-                    title={server.displayName ?? server.serverId}
-                    subtitle={server.serverId}
-                  />
+                  <TableCell className="max-w-72">
+                    <div className="grid min-w-0 gap-0.5">
+                      <span className="flex min-w-0 items-center gap-1.5 font-medium">
+                        <span className="truncate">{server.displayName ?? server.serverId}</span>
+                        <RestrictedMarker access={server.access} />
+                      </span>
+                      <IdText className="text-muted-foreground">{server.serverId}</IdText>
+                    </div>
+                  </TableCell>
                   <TableCell className="max-w-64">
                     <IdText className="text-muted-foreground">{server.serverUrl}</IdText>
                   </TableCell>
@@ -200,71 +219,80 @@ function ServerList({ universeId }: { universeId: string }) {
                     <div className="flex items-center gap-2">
                       <StatusBadge status={server.status} />
                       {/* The one thing to do on a row that needs auth is right here, not behind an icon. */}
-                      {writable && isOAuthPolicy(server.authPolicy.type) && !server.credential && (
+                      {writable && configurable(server) && isOAuthPolicy(server.authPolicy.type) && !server.credential && (
                         <Button variant="outline" size="xs" onClick={() => setOAuthServer(server)}>
                           <LogIn data-icon="inline-start" /> Connect
                         </Button>
                       )}
                     </div>
                   </TableCell>
-                  {writable && (
-                    <TableActionsCell>
-                      {isOAuthPolicy(server.authPolicy.type) && server.credential && (
+                  <TableActionsCell>
+                    <AccessButton
+                      compact
+                      universeId={universeId}
+                      slug={slug}
+                      resource={serverRef(server)}
+                      access={server.access}
+                    />
+                    {configurable(server) && (
+                      <>
+                        {writable && isOAuthPolicy(server.authPolicy.type) && server.credential && (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Reconnect ${server.serverId} with OAuth`}
+                            title="Sign in again"
+                            onClick={() => setOAuthServer(server)}
+                          >
+                            <LogIn />
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          aria-label={`Reconnect ${server.serverId} with OAuth`}
-                          title="Sign in again"
-                          onClick={() => setOAuthServer(server)}
+                          aria-label={`Edit ${server.serverId}`}
+                          onClick={() => setEditing(server)}
                         >
-                          <LogIn />
+                          <Pencil />
                         </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`Edit ${server.serverId}`}
-                        onClick={() => setEditing(server)}
-                      >
-                        <Pencil />
-                      </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-destructive"
-                              aria-label={`Delete ${server.serverId}`}
-                            />
-                          }
-                        >
-                          <Trash2 />
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              Delete {server.displayName ?? server.serverId}?
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Profiles referencing{" "}
-                              <span className="font-mono text-xs">{server.serverId}</span>{" "}
-                              will fail to link it into new sessions.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              className="bg-destructive text-white hover:bg-destructive/90"
-                              onClick={() => remove.mutate(server.serverId)}
-                            >
-                              Delete
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </TableActionsCell>
-                  )}
+                        <AlertDialog>
+                          <AlertDialogTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                className="text-destructive"
+                                aria-label={`Delete ${server.serverId}`}
+                              />
+                            }
+                          >
+                            <Trash2 />
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                Delete {server.displayName ?? server.serverId}?
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Profiles referencing{" "}
+                                <span className="font-mono text-xs">{server.serverId}</span>{" "}
+                                will fail to link it into new sessions.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-destructive text-white hover:bg-destructive/90"
+                                onClick={() => remove.mutate(server.serverId)}
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </>
+                    )}
+                  </TableActionsCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -277,51 +305,49 @@ function ServerList({ universeId }: { universeId: string }) {
         universe credential after you approve access.
       </p>
       {writable && (
-        <>
-          <ServerDialog
-            key={createOpen ? "create-open" : "create-closed"}
-            universeId={universeId}
-            open={createOpen}
-            server={null}
-            authGrants={authGrants.data ?? []}
-            authGrantsLoading={authGrants.isLoading}
-            onOpenChange={setCreateOpen}
-            onDone={(server, connectOAuth) => {
-              invalidate();
-              if (connectOAuth) setOAuthServer(server);
-            }}
-          />
-          <ServerDialog
-            key={`edit-${editing?.serverId ?? "closed"}`}
-            universeId={universeId}
-            open={editing !== null}
-            server={editing}
-            authGrants={authGrants.data ?? []}
-            authGrantsLoading={authGrants.isLoading}
-            onOpenChange={(open) => {
-              if (!open) {
-                setEditing(null);
-              }
-            }}
-            onDone={(server, connectOAuth) => {
-              invalidate();
-              if (connectOAuth) setOAuthServer(server);
-            }}
-          />
-          <OAuthDialog
-            key={oauthServer?.serverId ?? "closed"}
-            universeId={universeId}
-            server={oauthServer}
-            onOpenChange={(open) => {
-              if (!open) setOAuthServer(null);
-            }}
-            onDone={() => {
-              invalidate();
-              queryClient.invalidateQueries({ queryKey: ["auth-grants", universeId] });
-            }}
-          />
-        </>
+        <ServerDialog
+          key={createOpen ? "create-open" : "create-closed"}
+          universeId={universeId}
+          open={createOpen}
+          server={null}
+          authGrants={authGrants.data ?? []}
+          authGrantsLoading={authGrants.isLoading}
+          onOpenChange={setCreateOpen}
+          onDone={(server, connectOAuth) => {
+            invalidate();
+            if (connectOAuth) setOAuthServer(server);
+          }}
+        />
       )}
+      <ServerDialog
+        key={`edit-${editable?.serverId ?? "closed"}`}
+        universeId={universeId}
+        open={editable !== null}
+        server={editable}
+        authGrants={authGrants.data ?? []}
+        authGrantsLoading={authGrants.isLoading}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditing(null);
+          }
+        }}
+        onDone={(server, connectOAuth) => {
+          invalidate();
+          if (connectOAuth) setOAuthServer(server);
+        }}
+      />
+      <OAuthDialog
+        key={connectable?.serverId ?? "closed"}
+        universeId={universeId}
+        server={connectable}
+        onOpenChange={(open) => {
+          if (!open) setOAuthServer(null);
+        }}
+        onDone={() => {
+          invalidate();
+          queryClient.invalidateQueries({ queryKey: ["auth-grants", universeId] });
+        }}
+      />
     </>
   );
 }
@@ -422,6 +448,7 @@ function ServerDialog({
     server?.credential?.grantId ?? "",
   );
   const [status, setStatus] = useState<McpServer["status"]>(server?.status ?? "active");
+  const [visibility, setVisibility] = useState<Visibility>("universe");
   const [discovery, setDiscovery] = useState<McpServerAuthDiscovery | null>(null);
   const [lastProbedUrl, setLastProbedUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -514,6 +541,7 @@ function ServerDialog({
           displayName: displayName.trim(),
           ...(description.trim() ? { description: description.trim() } : {}),
           allowedTools: null,
+          access: { visibility },
         });
       }
       return api<McpServer>(
@@ -820,6 +848,10 @@ function ServerDialog({
                   onChange={setCredentialGrantId}
                   emptyCopy="Create a bearer credential on the Secrets page, then return here."
                 />
+              )}
+
+              {!editing && (
+                <CreationVisibilityField label="Who can use" value={visibility} onChange={setVisibility} />
               )}
 
               <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>

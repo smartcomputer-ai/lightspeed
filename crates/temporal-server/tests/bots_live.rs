@@ -27,7 +27,7 @@ use api::{
     ProfileCreateParams, ProfileDocument, ProfileId, ProfileInstructions, SessionReadParams,
     SessionStatus, WebhookVerification,
 };
-use bots::ids::{bot_main_session_id, bot_schedule_id};
+use bots::ids::{bot_controller_workflow_id, bot_main_session_id, bot_schedule_id};
 use engine::{CoreAgentLlm, CoreAgentTools, storage::BlobStore};
 use support::live::{
     LIVE_TEST_LOCK, live_universe_id, openai_live_model, require_openai_live_env,
@@ -43,7 +43,7 @@ use temporal_server::{
     },
 };
 use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
-use temporalio_client::Client;
+use temporalio_client::{Client, WorkflowDescribeOptions};
 use temporalio_common::worker::WorkerTaskTypes;
 
 const WAIT: Duration = Duration::from_secs(90);
@@ -266,6 +266,44 @@ where
             anyhow::bail!("timed out waiting for bot {bot_id} controller state; last: {state:#?}");
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// Wait until the bot's controller shows `applied` and has nothing in
+/// flight: no activity pending and no workflow task scheduled. A test that
+/// ends right after a configuration change waits for this, or the session
+/// reconcile the change caused is still talking to the session worker when
+/// the workers shut down.
+async fn wait_for_controller_settled<F>(
+    api: &GatewayAgentApi,
+    client: &Client,
+    bot_id: &BotId,
+    applied: F,
+) -> anyhow::Result<()>
+where
+    F: Fn(&api::BotControllerSnapshot) -> bool,
+{
+    wait_for_controller(api, bot_id, |controller| controller.is_some_and(&applied)).await?;
+    let handle = client.get_workflow_handle::<temporal_workflow::BotControllerWorkflow>(
+        bot_controller_workflow_id(live_universe_id()?, bot_id),
+    );
+    let started = Instant::now();
+    loop {
+        let description = handle
+            .describe(WorkflowDescribeOptions::default())
+            .await?
+            .raw_description;
+        if description.pending_activities.is_empty() && description.pending_workflow_task.is_none()
+        {
+            return Ok(());
+        }
+        if started.elapsed() > WAIT {
+            anyhow::bail!(
+                "bot {bot_id} controller never settled: {} pending activities",
+                description.pending_activities.len()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -701,6 +739,10 @@ async fn bots_live_schedule_trigger_reconciles_temporal_schedule() -> anyhow::Re
             handle.describe().await.is_err(),
             "schedule deleted with the trigger"
         );
+        // Disabling reconciles the main session; let it finish before the
+        // workers stop.
+        wait_for_controller_settled(&api, &client, &bot_id, |controller| !controller.enabled)
+            .await?;
         Ok(())
     })
     .await
@@ -774,7 +816,7 @@ async fn bots_live_close_and_delete_tear_down() -> anyhow::Result<()> {
             .await;
         assert!(refused.is_err(), "closed bots refuse events");
 
-        // A bot created without a collection is its own root; its sessions follow it.
+        // A bot is its own root; its sessions follow it.
         let policy = api
             .read_access_policy(AccessPolicyReadParams {
                 resource: access::ResourceRef::Session(main_session.as_str().to_owned()),

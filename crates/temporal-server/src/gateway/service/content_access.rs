@@ -49,6 +49,21 @@ fn supplied_refs(value: &serde_json::Value) -> std::collections::BTreeSet<BlobRe
     refs
 }
 
+/// The references a replacement document supplies that the document it
+/// replaces did not already hold.
+fn refs_not_held(
+    document: &serde_json::Value,
+    replaced: Option<&serde_json::Value>,
+) -> std::collections::BTreeSet<BlobRef> {
+    let mut refs = supplied_refs(document);
+    if let Some(replaced) = replaced {
+        for held in supplied_refs(replaced) {
+            refs.remove(&held);
+        }
+    }
+    refs
+}
+
 impl GatewayAgentApi {
     /// Whether the current caller may read `blob_ref`; `Hidden` when the
     /// named resource itself is not visible to the caller.
@@ -57,6 +72,16 @@ impl GatewayAgentApi {
         resource: Option<&ResourceRef>,
         blob_ref: &BlobRef,
     ) -> Result<Decision, AgentApiError> {
+        // A workspace's files are read by path from its current head, never
+        // by digest; environments and MCP servers hold no content here.
+        if let Some(resource) = resource
+            && resource.is_operational()
+        {
+            return Err(AgentApiError::invalid_request(format!(
+                "blobs are not read through a {}; read workspace files with vfs/workspaces/files/read",
+                resource.label()
+            )));
+        }
         if engine::storage::engine_blob_refs().contains(blob_ref) {
             return Ok(Decision::Allowed);
         }
@@ -99,7 +124,9 @@ impl GatewayAgentApi {
                 crate::gateway::principal::mark_privileged();
                 Ok(())
             }
-            Decision::Hidden => Err(AgentApiError::not_found("resource not found")),
+            Decision::Hidden => {
+                Err(resource.map_or_else(AgentApiError::forbidden, authorization::not_found))
+            }
             Decision::Forbidden => Err(AgentApiError::forbidden()),
         }
     }
@@ -209,6 +236,31 @@ impl GatewayAgentApi {
             .await
     }
 
+    /// A stored document the caller replaces (a profile): references the
+    /// replaced revision already held stay admitted, so editing one field
+    /// keeps what others supplied; every new reference must be the
+    /// caller's own.
+    pub(super) async fn authorize_replacement_document(
+        &self,
+        document: &impl serde::Serialize,
+        replaced: Option<&impl serde::Serialize>,
+    ) -> Result<(), AgentApiError> {
+        if self.current_controller().is_some() {
+            return Ok(());
+        }
+        let encode =
+            |error: serde_json::Error| AgentApiError::internal(format!("encode input: {error}"));
+        let replaced = replaced
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(encode)?;
+        let refs = refs_not_held(
+            &serde_json::to_value(document).map_err(encode)?,
+            replaced.as_ref(),
+        );
+        self.authorize_supplied_refs(None, refs).await
+    }
+
     /// Blobs the gateway stored from the caller's own bytes (inline text,
     /// base64 media) while converting `supplied` into `derived` are the
     /// caller's uploads: every ref in the derived document that the caller
@@ -248,5 +300,42 @@ impl GatewayAgentApi {
             .record_blob_uploads(self.universe_id(), principal, &digests, now_ms()? as u64)
             .await
             .map_err(|error| AgentApiError::internal(error.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(snapshot: &BlobRef, instructions: &BlobRef) -> serde_json::Value {
+        serde_json::json!({
+            "profileId": "reviewer",
+            "instructions": { "kind": "textRef", "blobRef": instructions.as_str() },
+            "config": { "features": { "vfs": { "workspaces": [
+                { "path": "/pinned", "snapshotRef": snapshot.as_str(), "access": "read" }
+            ] } } },
+            "metadata": { "note": BlobRef::from_bytes(b"text is not content").as_str() },
+        })
+    }
+
+    #[test]
+    fn a_replacement_supplies_only_references_its_predecessor_did_not_hold() {
+        let snapshot = BlobRef::from_bytes(b"someone else's snapshot");
+        let instructions = BlobRef::from_bytes(b"old instructions");
+        let edited = BlobRef::from_bytes(b"new instructions");
+        let stored = profile(&snapshot, &instructions);
+        // A new profile supplies every content reference, never free text.
+        assert_eq!(
+            refs_not_held(&stored, None),
+            [snapshot.clone(), instructions.clone()]
+                .into_iter()
+                .collect()
+        );
+        // Editing the instructions keeps the snapshot someone else admitted.
+        assert_eq!(
+            refs_not_held(&profile(&snapshot, &edited), Some(&stored)),
+            [edited].into_iter().collect()
+        );
+        assert!(refs_not_held(&stored, Some(&stored)).is_empty());
     }
 }

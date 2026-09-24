@@ -189,8 +189,32 @@ pub(crate) fn environment_template_view(
     }
 }
 
-pub(crate) fn environment_view(record: &EnvironmentRecord) -> EnvironmentView {
+/// The view of an environment with the access summary of its anchor, which
+/// every environment has from before its row existed.
+pub(crate) async fn load_environment_view(
+    store: &PgStore,
+    record: &EnvironmentRecord,
+) -> Result<EnvironmentView, AgentApiError> {
+    let resource = access::ResourceRef::Environment(record.environment_id.to_string());
+    let access = store_pg::PgAccessStore::new(store.pool().clone())
+        .access_summary(store.config().universe_id, &resource)
+        .await
+        .map_err(|error| AgentApiError::internal(error.to_string()))?
+        .ok_or_else(|| {
+            AgentApiError::internal(format!(
+                "environment {} has no access policy",
+                record.environment_id
+            ))
+        })?;
+    Ok(environment_view(record, access))
+}
+
+pub(crate) fn environment_view(
+    record: &EnvironmentRecord,
+    access: access::ResourceAccessSummary,
+) -> EnvironmentView {
     EnvironmentView {
+        access,
         environment_id: record.environment_id.to_string(),
         request_id: record.request_id.to_string(),
         source: match &record.source {

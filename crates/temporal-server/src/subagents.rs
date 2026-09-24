@@ -681,8 +681,9 @@ fn is_not_found(error: &AgentApiError) -> bool {
     matches!(error.kind, api::AgentApiErrorKind::NotFound)
 }
 
-/// Errors that describe the request rather than the runtime: surfaced to
-/// the parent as a rejected delegation instead of retried.
+/// Errors that describe the request rather than the runtime, a resource
+/// the child's identity may not use included: surfaced to the parent as a
+/// rejected delegation instead of retried.
 fn is_caller_error(error: &AgentApiError) -> bool {
     matches!(
         error.kind,
@@ -690,6 +691,7 @@ fn is_caller_error(error: &AgentApiError) -> bool {
             | api::AgentApiErrorKind::InvalidRequest
             | api::AgentApiErrorKind::Rejected
             | api::AgentApiErrorKind::Conflict
+            | api::AgentApiErrorKind::Forbidden
     )
 }
 

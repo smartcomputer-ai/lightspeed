@@ -88,3 +88,20 @@ it("deduplicates targets, separates cascade queries and batches long lists", asy
   await show("user", Array.from({ length: 201 }, (_, index) => ({ kind: "session", id: String(index) })));
   expect(mocks.api.mock.calls.map((call) => call[2].resources.length)).toEqual([100, 100, 1]);
 });
+it("asks for the default agent identity's resource decisions in a separate query", async () => {
+  function ServiceProbe() {
+    current = useActionPermissions("universe", [own], { as: "execution_service" });
+    return null;
+  }
+  await show("user", [own]);
+  await act(async () => root.render(
+    <QueryClientProvider client={client}>
+      <PermissionIdentityProvider userId="user"><ServiceProbe /></PermissionIdentityProvider>
+    </QueryClientProvider>,
+  ));
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(mocks.api).toHaveBeenLastCalledWith("POST", "/api/v1/universes/universe/access", {
+    resources: [own], sessionDeleteCascade: false, as: "execution_service",
+  });
+  expect(mocks.api).toHaveBeenCalledTimes(2);
+});

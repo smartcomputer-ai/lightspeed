@@ -20,12 +20,17 @@ export const universeUpdateSchema = z.object({
 });
 export type UniverseUpdateInput = z.infer<typeof universeUpdateSchema>;
 
+/// Universe roles identity administration may assign. The runtime assigns
+/// `executor` to agent identities itself; it is never offered here.
+export const universeRoleSchema = z.enum(["viewer", "contributor", "operator", "admin"]);
+export type UniverseRole = z.infer<typeof universeRoleSchema>;
+
 export const memberAddSchema = z
   .object({
     userId: z.string().min(1).optional(),
     email: z.email().optional(),
     groupId: z.string().uuid().optional(),
-    role: z.enum(["viewer", "contributor", "operator", "admin"]).default("contributor"),
+    role: universeRoleSchema.default("contributor"),
   })
   .refine((value) => !!value.userId || !!value.email || !!value.groupId, {
     message: "userId, email or groupId is required",
@@ -34,7 +39,7 @@ export const memberAddSchema = z
 export type MemberAddInput = z.infer<typeof memberAddSchema>;
 
 export const memberUpdateSchema = z.object({
-  role: z.enum(["viewer", "contributor", "operator", "admin"]),
+  role: universeRoleSchema,
 });
 export type MemberUpdateInput = z.infer<typeof memberUpdateSchema>;
 

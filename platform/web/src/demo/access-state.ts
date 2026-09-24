@@ -1,7 +1,6 @@
 import type {
   AccessInput,
   AccessPolicyView,
-  CollectionView,
   ExecutionInput,
   ResourceAccessSummary,
   ResourceRef,
@@ -12,19 +11,24 @@ const states = new WeakMap<
   UniverseState,
   {
     policies: Map<string, AccessPolicyView>;
-    roots: Map<string, ResourceRef>;
-    collections: Map<string, CollectionView>;
     personal: boolean;
   }
 >();
 export const resourceKey = (r: ResourceRef) => `${r.kind}:${r.id}`;
+/// Workspaces, environments and MCP servers: roots that run nothing and
+/// carry one grant, `use`.
+export const isOperational = (kind: ResourceRef["kind"]) =>
+  kind === "workspace" || kind === "environment" || kind === "mcp_server";
+/// The universe's execution service, which people see as the default agent
+/// identity. It holds the system `executor` role.
+export const executionPrincipal = (universe: UniverseState) =>
+  `execution-${universe.universe.id}`;
+export const DEFAULT_AGENT_IDENTITY = "Default agent identity";
 export function accessState(universe: UniverseState) {
   let state = states.get(universe);
   if (!state) {
     state = {
       policies: new Map(),
-      roots: new Map(),
-      collections: new Map(),
       personal: false,
     };
     states.set(universe, state);
@@ -37,8 +41,8 @@ export function demoPolicy(
   resource: ResourceRef,
 ): AccessPolicyView {
   const state = accessState(universe);
-  let root = state.roots.get(resourceKey(resource));
-  if (!root && resource.kind === "session") {
+  let root: ResourceRef | undefined;
+  if (resource.kind === "session") {
     const session = universe.sessions.get(resource.id);
     const parent = session?.view.origin?.parentSessionId;
     if (parent)
@@ -64,10 +68,14 @@ export function demoPolicy(
       visibility: "universe",
       grants: [],
       revision: 1,
-      execution: {
-        kind: "service",
-        runAs: `execution-${universe.universe.id}`,
-      },
+      ...(root.kind === "session" || root.kind === "bot"
+        ? {
+            execution: {
+              kind: "service" as const,
+              runAs: executionPrincipal(universe),
+            },
+          }
+        : {}),
       updatedBy: { kind: "principal", id: store.currentUser.id },
       updatedAtMs: Date.now(),
     };
@@ -94,21 +102,18 @@ export function demoCreateAccess(
   access?: AccessInput,
   execution?: ExecutionInput,
 ) {
-  if (access?.root) {
-    accessState(universe).roots.set(resourceKey(resource), access.root);
-    return;
-  }
   const policy = demoPolicy(store, universe, resource);
   policy.visibility =
     access?.visibility ??
     (execution?.kind === "personal" ? "restricted" : "universe");
-  policy.execution = {
-    kind: execution?.kind ?? "service",
-    runAs:
-      execution?.kind === "personal"
-        ? store.currentUser.id
-        : `execution-${universe.universe.id}`,
-  };
+  if (!isOperational(resource.kind))
+    policy.execution = {
+      kind: execution?.kind ?? "service",
+      runAs:
+        execution?.kind === "personal"
+          ? store.currentUser.id
+          : executionPrincipal(universe),
+    };
   policy.grants = (access?.grants ?? []).map((g) => ({
     ...g,
     grantedAtMs: Date.now(),
@@ -116,14 +121,22 @@ export function demoCreateAccess(
   }));
   accessState(universe).policies.set(resourceKey(policy.root), policy);
 }
-export function demoOrdinaryRead(store: DemoStore, policy: AccessPolicyView) {
+const isAdmin = (universe: UniverseState) => universe.universe.role === "admin";
+
+export function demoOrdinaryRead(
+  store: DemoStore,
+  universe: UniverseState,
+  policy: AccessPolicyView,
+) {
   return (
     policy.visibility === "universe" ||
     policy.owner === store.currentUser.id ||
     policy.grants.some(
       (g) =>
         g.subject.kind === "principal" && g.subject.id === store.currentUser.id,
-    )
+    ) ||
+    // Admins see every workspace, environment and MCP server.
+    (isOperational(policy.root.kind) && isAdmin(universe))
   );
 }
 export function demoPrivilegedRead(
@@ -132,7 +145,8 @@ export function demoPrivilegedRead(
   policy: AccessPolicyView,
 ) {
   return (
-    !demoOrdinaryRead(store, policy) &&
+    !isOperational(policy.root.kind) &&
+    !demoOrdinaryRead(store, universe, policy) &&
     universe.members.some(
       (member) =>
         member.userId === store.currentUser.id &&
@@ -146,11 +160,19 @@ export function demoCanRead(
   policy: AccessPolicyView,
 ) {
   return (
-    demoOrdinaryRead(store, policy) ||
+    demoOrdinaryRead(store, universe, policy) ||
     demoPrivilegedRead(store, universe, policy)
   );
 }
-export function demoCanShare(store: DemoStore, policy: AccessPolicyView) {
+/// On sessions and bots the owner and writers share; on workspaces,
+/// environments and MCP servers only the owner or an Admin.
+export function demoCanShare(
+  store: DemoStore,
+  universe: UniverseState,
+  policy: AccessPolicyView,
+) {
+  if (isOperational(policy.root.kind))
+    return policy.owner === store.currentUser.id || isAdmin(universe);
   return (
     policy.owner === store.currentUser.id ||
     policy.grants.some(
@@ -161,22 +183,25 @@ export function demoCanShare(store: DemoStore, policy: AccessPolicyView) {
     )
   );
 }
-export function demoMembers(
-  store: DemoStore,
-  universe: UniverseState,
-  id: string,
-): ResourceRef[] {
-  return [
-    ...[...universe.sessions.keys()].map((id): ResourceRef => ({
-      kind: "session",
-      id,
-    })),
-    ...[...universe.bots.keys()].map((id): ResourceRef => ({
-      kind: "bot",
-      id,
-    })),
-  ].filter((resource) => {
-    const root = demoPolicy(store, universe, resource).root;
-    return root.kind === "collection" && root.id === id;
-  });
+/// Whether `principal`, holding `role` in the universe, may use an
+/// operational resource: an eligible role, and universe visibility,
+/// ownership, a `use` grant or Admin.
+export function demoCanUse(
+  policy: AccessPolicyView,
+  principal: string,
+  role: string | null | undefined,
+) {
+  if (!role || !["contributor", "operator", "admin", "executor"].includes(role))
+    return false;
+  return (
+    policy.visibility === "universe" ||
+    policy.owner === principal ||
+    role === "admin" ||
+    policy.grants.some(
+      (g) =>
+        g.subject.kind === "principal" &&
+        g.subject.id === principal &&
+        g.permission === "use",
+    )
+  );
 }

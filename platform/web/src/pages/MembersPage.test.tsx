@@ -125,3 +125,17 @@ it("keeps the original member role and explains a rejected edit", async () => {
   await settle();
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
+
+it("shows the agent identity read-only", async () => {
+  actions.push("manage_access");
+  const agent = { id: "principal:agent:executor", userId: "agent", name: "Default agent identity", email: "Agent identity", role: "executor", system: true, createdAt: "" };
+  const implementation = mocks.api.getMockImplementation()!;
+  mocks.api.mockImplementation(async (method, path, body) =>
+    path.endsWith("/members") ? [...members, agent] : implementation(method, path, body));
+  await show(<MembersPage admin={false} />);
+  const row = [...container.querySelectorAll("tbody tr")].find((tr) => tr.textContent?.includes("Default agent identity"))!;
+  expect(row.textContent).toContain("Executor");
+  expect(row.querySelector("a")?.getAttribute("href")).toBe("/u/test/settings/general");
+  expect(row.querySelector("button")).toBeNull();
+  expect(container.querySelector('[aria-label="Edit role for Alice"]')).not.toBeNull();
+});

@@ -399,22 +399,11 @@
         "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
         "properties": {
           "grants": {
-            "description": "Readers and writers of the root. Each subject must currently hold a\nrole in the universe.",
+            "description": "Grants on the root: `read` or `write` on a session or bot, `use` on\na workspace, environment or MCP server. Each subject must currently\nhold a role in the universe.",
             "items": {
               "$ref": "#/components/schemas/AccessGrantInput"
             },
             "type": "array"
-          },
-          "root": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ResourceRef"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Create the resource as a member of this collection, which the caller\nmust be able to write to. A member shares the collection's audience\nand takes no `visibility` or `grants` of its own."
           },
           "visibility": {
             "anyOf": [
@@ -432,7 +421,7 @@
       },
       "AccessPolicyPutParams": {
         "additionalProperties": false,
-        "description": "Replace a root's visibility and grant set. Only the owner may grant\n`write`; writers may share `read` and change visibility; readers change\nnothing.",
+        "description": "Replace a root's visibility and grant set. On a session or bot only the\nowner may add or remove `write`; writers may share `read` and change\nvisibility; readers change nothing. On a workspace, environment or MCP\nserver only the owner or an Admin changes access, and `use` is the only\ngrant.",
         "properties": {
           "expectedRevision": {
             "description": "The revision from `access/policy/read`; absent replaces unconditionally.",
@@ -516,7 +505,7 @@
                 "type": "null"
               }
             ],
-            "description": "Who the root's work runs as; absent for a profile."
+            "description": "Who the root's work runs as; absent for kinds that run nothing:\nprofiles, workspaces, environments and MCP servers."
           },
           "grants": {
             "items": {
@@ -569,13 +558,37 @@
         ],
         "type": "object"
       },
+      "AccessReadAs": {
+        "description": "The identity `access/read` decides resource actions for.",
+        "oneOf": [
+          {
+            "const": "caller",
+            "description": "The caller itself.",
+            "type": "string"
+          },
+          {
+            "const": "execution_service",
+            "description": "The universe's execution service, the default agent identity that\nsessions and bots run as unless they run as their owner. Only\nresources the caller may see are decided; the others return no\nactions. Session setup uses it to show what the default agent\nidentity may use.",
+            "type": "string"
+          }
+        ]
+      },
       "AccessReadParams": {
         "additionalProperties": false,
         "description": "Current caller's action permissions. This is an advisory snapshot: mutations\nalways authorize again, and runtime prerequisites still apply.",
         "properties": {
+          "as": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AccessReadAs"
+              }
+            ],
+            "default": "caller",
+            "description": "Whose resource actions to report. Universe-level `actions` are always\nthe caller's."
+          },
           "resources": {
             "default": [],
-            "description": "Up to 100 existing sessions, bots, profiles or collections in the selected universe.\nMissing resources return no actions.",
+            "description": "Up to 100 existing sessions, bots, profiles, workspaces, environments\nor MCP servers in the selected universe. Missing resources return no\nactions.",
             "items": {
               "$ref": "#/components/schemas/ResourceRef"
             },
@@ -1728,91 +1741,6 @@
           },
           "result": {
             "$ref": "#/components/schemas/ChannelPairingListResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfCollectionCreateResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/CollectionCreateResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfCollectionDeleteResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/CollectionDeleteResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfCollectionListResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/CollectionListResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfCollectionReadResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/CollectionReadResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfCollectionUpdateResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/CollectionUpdateResponse"
           }
         },
         "required": [
@@ -4802,7 +4730,7 @@
                 "type": "null"
               }
             ],
-            "description": "The session, bot or collection the blob is read through: the caller\nmust be able to read it and the blob must be admitted content of it.\nWithout a resource only a blob the caller uploaded is readable. A\nresource that does not authorize the read is a refusal, not a prompt\nto try another."
+            "description": "The session or bot the blob is read through: the caller\nmust be able to read it and the blob must be admitted content of it.\nWithout a resource only a blob the caller uploaded is readable. A\nresource that does not authorize the read is a refusal, not a prompt\nto try another. Workspaces, environments and MCP servers are refused\nhere; read a workspace's files with `vfs/workspaces/files/read`."
           }
         },
         "required": [
@@ -5113,7 +5041,7 @@
                 "type": "null"
               }
             ],
-            "description": "Execution identity of the bot and every session it creates; absent\nmeans the universe's execution service. Refused with `access.root`."
+            "description": "Execution identity of the bot and every session it creates; absent\nmeans the universe's execution service."
           },
           "triggers": {
             "description": "Triggers created with the bot in one go; a failure rolls the bot\nback.",
@@ -8023,205 +7951,6 @@
         ],
         "type": "object"
       },
-      "CollectionCreateParams": {
-        "additionalProperties": false,
-        "properties": {
-          "access": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AccessInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Audience of the collection; `root` is not accepted here."
-          },
-          "collectionId": {
-            "description": "Client-chosen id (same form as a session id); absent allocates one.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "execution": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ExecutionInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Execution identity of the collection and everything created in it;\nabsent means the universe's execution service."
-          }
-        },
-        "required": [
-          "displayName"
-        ],
-        "type": "object"
-      },
-      "CollectionCreateResponse": {
-        "properties": {
-          "collection": {
-            "$ref": "#/components/schemas/CollectionView"
-          }
-        },
-        "required": [
-          "collection"
-        ],
-        "type": "object"
-      },
-      "CollectionDeleteParams": {
-        "additionalProperties": false,
-        "properties": {
-          "collectionId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "collectionId"
-        ],
-        "type": "object"
-      },
-      "CollectionDeleteResponse": {
-        "properties": {
-          "collection": {
-            "$ref": "#/components/schemas/CollectionView"
-          }
-        },
-        "required": [
-          "collection"
-        ],
-        "type": "object"
-      },
-      "CollectionListParams": {
-        "additionalProperties": false,
-        "type": "object"
-      },
-      "CollectionListResponse": {
-        "properties": {
-          "collections": {
-            "items": {
-              "$ref": "#/components/schemas/CollectionView"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "collections"
-        ],
-        "type": "object"
-      },
-      "CollectionReadParams": {
-        "additionalProperties": false,
-        "properties": {
-          "collectionId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "collectionId"
-        ],
-        "type": "object"
-      },
-      "CollectionReadResponse": {
-        "properties": {
-          "collection": {
-            "$ref": "#/components/schemas/CollectionView"
-          },
-          "members": {
-            "description": "Sessions and bots whose audience this collection is.",
-            "items": {
-              "$ref": "#/components/schemas/ResourceRef"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "collection",
-          "members"
-        ],
-        "type": "object"
-      },
-      "CollectionUpdateParams": {
-        "additionalProperties": false,
-        "properties": {
-          "collectionId": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "expectedRevision": {
-            "description": "The revision from `collection/read`; absent replaces unconditionally.",
-            "format": "uint64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "collectionId",
-          "displayName"
-        ],
-        "type": "object"
-      },
-      "CollectionUpdateResponse": {
-        "properties": {
-          "collection": {
-            "$ref": "#/components/schemas/CollectionView"
-          }
-        },
-        "required": [
-          "collection"
-        ],
-        "type": "object"
-      },
-      "CollectionView": {
-        "description": "A collection: a root with a name that gives the sessions and bots in it\none audience. It routes nothing and runs nothing.",
-        "properties": {
-          "access": {
-            "$ref": "#/components/schemas/ResourceAccessSummary"
-          },
-          "collectionId": {
-            "type": "string"
-          },
-          "createdAtMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "revision": {
-            "description": "Advances with every update; pass it as `expectedRevision`.",
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "updatedAtMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "collectionId",
-          "displayName",
-          "revision",
-          "access",
-          "createdAtMs",
-          "updatedAtMs"
-        ],
-        "type": "object"
-      },
       "CompactionPolicy": {
         "oneOf": [
           {
@@ -9911,6 +9640,17 @@
       },
       "EnvironmentCreateParams": {
         "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who may see and use the new environment, set atomically with its\ncreation; the caller owns it. Absent means universe-visible. Grants\ntake the `use` permission only. A retried `requestId` returns the\nenvironment it created before and ignores this."
+          },
           "bindingId": {
             "type": "string"
           },
@@ -10157,6 +9897,17 @@
       },
       "EnvironmentExternalCreateParams": {
         "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who may see and use the new environment, as for\n`environments/create`."
+          },
           "connection": {
             "allOf": [
               {
@@ -11159,6 +10910,14 @@
       },
       "EnvironmentView": {
         "properties": {
+          "access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ResourceAccessSummary"
+              }
+            ],
+            "description": "The environment's owner and visibility; an environment runs no work\nof its own, so `execution` is absent."
+          },
           "createdAtMs": {
             "format": "int64",
             "type": "integer"
@@ -11239,7 +10998,8 @@
           "incarnation",
           "publicIngressEnabled",
           "createdAtMs",
-          "updatedAtMs"
+          "updatedAtMs",
+          "access"
         ],
         "type": "object"
       },
@@ -12536,6 +12296,17 @@
       },
       "McpServerPutParams": {
         "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who may see and use a server this call creates; the caller owns it.\nAbsent means universe-visible. Grants take the `use` permission only.\nRefused when the server already exists: change its access with\n`access/policy/put`."
+          },
           "expectedRevision": {
             "description": "Checked only when the server already exists; absent replaces (or\ncreates) unconditionally.",
             "format": "uint64",
@@ -12661,6 +12432,14 @@
       },
       "McpServerView": {
         "properties": {
+          "access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ResourceAccessSummary"
+              }
+            ],
+            "description": "The server's owner and visibility; a server runs no work of its own,\nso `execution` is absent."
+          },
           "allowPrivateNetwork": {
             "type": "boolean"
           },
@@ -12751,7 +12530,8 @@
           "status",
           "revision",
           "createdAtMs",
-          "updatedAtMs"
+          "updatedAtMs",
+          "access"
         ],
         "type": "object"
       },
@@ -13956,10 +13736,11 @@
         "type": "object"
       },
       "ResourcePermission": {
-        "description": "One permission a grant confers on a root. `Read` sees the tree; `Write`\nalso controls it.",
+        "description": "One permission a grant confers on a root. On sessions and bots `Read`\nsees the tree and `Write` also controls it; on workspaces, environments\nand MCP servers `Use` is the only permission.",
         "enum": [
           "read",
-          "write"
+          "write",
+          "use"
         ],
         "type": "string"
       },
@@ -14015,13 +13796,44 @@
             "type": "object"
           },
           {
-            "description": "A root that gives sessions and bots one audience and, later, one\nexecution identity. It routes nothing and runs nothing.",
             "properties": {
               "id": {
                 "type": "string"
               },
               "kind": {
-                "const": "collection",
+                "const": "workspace",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "environment",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "mcp_server",
                 "type": "string"
               }
             },
@@ -14034,12 +13846,14 @@
         ]
       },
       "Role": {
+        "description": "A role in a universe, or `deployment_admin` in the deployment. `executor`\nis the role of agent identities: it sees universe-visible resources and\nuses resources, nothing else. The runtime assigns it to a universe's\nexecution principal; identity administration never assigns or revokes\nit, and its holders never get a key.",
         "enum": [
           "viewer",
           "contributor",
           "operator",
           "admin",
-          "deployment_admin"
+          "deployment_admin",
+          "executor"
         ],
         "type": "string"
       },
@@ -17101,7 +16915,7 @@
                 "type": "null"
               }
             ],
-            "description": "Execution identity of the new session; absent means the universe's\nexecution service. Refused with `access.root`."
+            "description": "Execution identity of the new session; absent means the universe's\nexecution service."
           },
           "metadata": {
             "additionalProperties": {
@@ -18262,18 +18076,28 @@
               "create_bot",
               "manage_bot",
               "invoke_bot",
-              "use_resource",
-              "configure_resource",
-              "manage_access",
-              "create_collection",
-              "manage_collection",
-              "delete_collection"
+              "manage_access"
             ],
             "type": "string"
           },
           {
+            "const": "use_resource",
+            "description": "Use a workspace, environment or MCP server; without a target, the\neligibility to use resources at all.",
+            "type": "string"
+          },
+          {
+            "const": "configure_resource",
+            "description": "Configure a workspace, environment or MCP server; without a target,\nthe universe's shared configuration.",
+            "type": "string"
+          },
+          {
             "const": "share_resource",
-            "description": "Change who may see or control a root: its visibility and grants.",
+            "description": "Change who may see, control or use a root: its visibility and grants.",
+            "type": "string"
+          },
+          {
+            "const": "create_workspace",
+            "description": "Create a workspace, which its creator owns.",
             "type": "string"
           }
         ]
@@ -18420,6 +18244,13 @@
         "properties": {
           "snapshotRef": {
             "type": "string"
+          },
+          "workspaceId": {
+            "description": "The workspace the snapshot is read through: the caller must be able\nto see it, and the snapshot must be its current head or base.\nWithout a workspace only a snapshot the caller committed or uploaded\nis readable. A snapshot reference alone confers nothing.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -18454,6 +18285,17 @@
       },
       "VfsWorkspaceCreateParams": {
         "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who may see and use the new workspace, set atomically with its\ncreation; the caller owns it. Absent means universe-visible. Grants\ntake the `use` permission only."
+          },
           "displayName": {
             "type": [
               "string",
@@ -18511,7 +18353,7 @@
       },
       "VfsWorkspaceFileReadParams": {
         "additionalProperties": false,
-        "description": "Read a file from a workspace's current head. Workspaces remain universe\nresources; this does not authorize arbitrary blobs or snapshot references.",
+        "description": "Read a file from a workspace's current head. The caller must be able to\nsee the workspace; this does not authorize arbitrary blobs or snapshot\nreferences.",
         "properties": {
           "path": {
             "type": "string"
@@ -18566,6 +18408,7 @@
       "VfsWorkspaceUpdateParams": {
         "properties": {
           "displayName": {
+            "description": "Renames the workspace, which requires configuring it; absent keeps\nthe current name.",
             "type": [
               "string",
               "null"
@@ -18580,6 +18423,7 @@
             ]
           },
           "snapshotRef": {
+            "description": "The new head; moving it requires use of the workspace.",
             "type": "string"
           },
           "workspaceId": {
@@ -18605,6 +18449,14 @@
       },
       "VfsWorkspaceView": {
         "properties": {
+          "access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ResourceAccessSummary"
+              }
+            ],
+            "description": "The workspace's owner and visibility; a workspace runs nothing, so\n`execution` is absent."
+          },
           "baseSnapshotRef": {
             "type": [
               "string",
@@ -18656,7 +18508,8 @@
           "bytes",
           "revision",
           "createdAtMs",
-          "updatedAtMs"
+          "updatedAtMs",
+          "access"
         ],
         "type": "object"
       },
@@ -19218,7 +19071,7 @@
       }
     },
     {
-      "description": "Reads bytes at a path in the current workspace head. Workspaces are universe-visible; an arbitrary blob or snapshot reference cannot be supplied.",
+      "description": "Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.",
       "name": "vfs/workspaces/files/read",
       "paramStructure": "by-name",
       "params": [
@@ -19243,7 +19096,7 @@
       }
     },
     {
-      "description": "Returns the current caller's universe actions and ownership-aware permissions for up to 100 existing sessions, bots, profiles or collections. Missing targets return no actions. Session deletion optionally checks all retention descendants. This advisory snapshot grants no authority; each mutation authorizes again and still applies its runtime prerequisites.",
+      "description": "Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.",
       "name": "access/read",
       "paramStructure": "by-name",
       "params": [
@@ -19268,7 +19121,7 @@
       }
     },
     {
-      "description": "Returns the owner, visibility, grants and revision of the root governing a session, bot or profile. A resource the caller may not read is not found.",
+      "description": "Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.",
       "name": "access/policy/read",
       "paramStructure": "by-name",
       "params": [
@@ -19293,7 +19146,7 @@
       }
     },
     {
-      "description": "Replaces the visibility and the complete grant set of the root governing the resource. Writers share read access or change visibility; only the owner grants write. Every subject must hold a role in the universe. Use expectedRevision from access/policy/read to prevent lost updates; absence replaces unconditionally.",
+      "description": "Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.",
       "name": "access/policy/put",
       "paramStructure": "by-name",
       "params": [
@@ -19365,131 +19218,6 @@
       "x-lightspeed-access": {
         "kind": "universe",
         "requirement": "manage_access"
-      }
-    },
-    {
-      "description": "Creates a root that gives the sessions and bots created in it one audience. The creator owns it; its access is set atomically with creation.",
-      "name": "collection/create",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/CollectionCreateParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfCollectionCreateResponse"
-        }
-      },
-      "summary": "Create a collection",
-      "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "create_collection"
-      }
-    },
-    {
-      "description": "Returns the collection and the sessions and bots in it. A collection the caller may not read is not found.",
-      "name": "collection/read",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/CollectionReadParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfCollectionReadResponse"
-        }
-      },
-      "summary": "Read a collection",
-      "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
-    },
-    {
-      "description": "Returns the collections the caller may read.",
-      "name": "collection/list",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/CollectionListParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfCollectionListResponse"
-        }
-      },
-      "summary": "List collections",
-      "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
-    },
-    {
-      "description": "Replaces the display name. Owners rename their collections; Operators rename universe-visible ones. Use expectedRevision from collection/read to prevent lost updates.",
-      "name": "collection/update",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/CollectionUpdateParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfCollectionUpdateResponse"
-        }
-      },
-      "summary": "Rename a collection",
-      "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_collection"
-      }
-    },
-    {
-      "description": "Removes the collection with its policy and grants. A collection that still holds sessions or bots is refused; delete those first under their own rules. Owners delete their collections; Admin deletes any.",
-      "name": "collection/delete",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/CollectionDeleteParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfCollectionDeleteResponse"
-        }
-      },
-      "summary": "Delete an empty collection",
-      "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "delete_collection"
       }
     },
     {
@@ -20068,7 +19796,7 @@
       }
     },
     {
-      "description": "Selects an allowed, live universe environment for environment-targeted tools while the session is idle.",
+      "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.",
       "name": "session/environments/activate",
       "paramStructure": "by-name",
       "params": [
@@ -20118,7 +19846,7 @@
       }
     },
     {
-      "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. The response exposes only the source handle, never secret material.",
+      "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
       "name": "environments/credentials/bind",
       "paramStructure": "by-name",
       "params": [
@@ -20193,7 +19921,7 @@
       }
     },
     {
-      "description": "Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.",
+      "description": "Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.",
       "name": "environments/create",
       "paramStructure": "by-name",
       "params": [
@@ -20243,7 +19971,7 @@
       }
     },
     {
-      "description": "Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.",
+      "description": "Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.",
       "name": "environments/list",
       "paramStructure": "by-name",
       "params": [
@@ -20293,7 +20021,7 @@
       }
     },
     {
-      "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.",
+      "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.",
       "name": "environments/external/create",
       "paramStructure": "by-name",
       "params": [
@@ -20918,7 +20646,7 @@
       }
     },
     {
-      "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
+      "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.",
       "name": "vfs/snapshots/read",
       "paramStructure": "by-name",
       "params": [
@@ -20943,7 +20671,7 @@
       }
     },
     {
-      "description": "Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.",
+      "description": "Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.",
       "name": "vfs/workspaces/create",
       "paramStructure": "by-name",
       "params": [
@@ -20964,7 +20692,7 @@
       "summary": "Create a mutable VFS workspace",
       "x-lightspeed-access": {
         "kind": "universe",
-        "requirement": "configure_resource"
+        "requirement": "create_workspace"
       }
     },
     {
@@ -20993,7 +20721,7 @@
       }
     },
     {
-      "description": "Lists mutable universe workspaces with head snapshots, sizes, and revisions.",
+      "description": "Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.",
       "name": "vfs/workspaces/list",
       "paramStructure": "by-name",
       "params": [
@@ -21018,7 +20746,7 @@
       }
     },
     {
-      "description": "Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.",
+      "description": "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
       "name": "vfs/workspaces/update",
       "paramStructure": "by-name",
       "params": [
@@ -21039,7 +20767,7 @@
       "summary": "Update a VFS workspace",
       "x-lightspeed-access": {
         "kind": "universe",
-        "requirement": "configure_resource"
+        "requirement": "use_resource"
       }
     },
     {
@@ -21068,7 +20796,7 @@
       }
     },
     {
-      "description": "Stores the complete universe catalog document, including its optional universe auth-grant credential. Use expectedRevision when replacing; token material is never accepted or returned.",
+      "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.",
       "name": "mcp/servers/put",
       "paramStructure": "by-name",
       "params": [
@@ -21168,7 +20896,7 @@
       }
     },
     {
-      "description": "Lists universe catalog entries, optionally filtered by lifecycle/configuration status.",
+      "description": "Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.",
       "name": "mcp/servers/list",
       "paramStructure": "by-name",
       "params": [

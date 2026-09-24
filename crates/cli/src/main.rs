@@ -215,6 +215,19 @@ mod tests {
         ])
         .expect("parse vfs materialize");
         assert!(matches!(cli.command, Command::Vfs(_)));
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "vfs",
+            "materialize",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--workspace",
+            "shared",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "./out",
+        ])
+        .expect("parse vfs materialize through a workspace");
+        assert!(matches!(cli.command, Command::Vfs(_)));
     }
 
     #[test]

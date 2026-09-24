@@ -1,5 +1,10 @@
 import { runtimeReadMetadata } from "../runtime-client.js";
-import { accessInputSchema, executionInputSchema, resourceSchema } from "./access-schemas.js";
+import {
+  accessInputSchema,
+  contentResourceSchema,
+  executionInputSchema,
+  resourceSchema,
+} from "./access-schemas.js";
 import { userClient, actingPrincipal, GatewayUnconfigured } from "../runtime-client.js";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -139,6 +144,7 @@ const environmentCreateSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
   metadata: z.record(z.string(), z.string()).optional(),
   idlePolicy: environmentIdlePolicySchema.optional(),
+  access: accessInputSchema.optional(),
 });
 
 const environmentIngressPutSchema = z.object({
@@ -173,6 +179,7 @@ const externalEnvironmentCreateSchema = z.object({
     .trim()
     .regex(/^wss?:\/\/[^\s]+$/, "endpoint must be a ws:// or wss:// URL"),
   displayName: z.string().trim().min(1).max(200).optional(),
+  access: accessInputSchema.optional(),
 });
 
 /// Registration-key policy as the Environments page submits it. Identity
@@ -329,8 +336,20 @@ const mcpServerDocumentSchema = z
     revision: z.number().int().min(0).optional(),
     createdAtMs: z.number().optional(),
     updatedAtMs: z.number().optional(),
+    /// The view's access summary; read-only here like the timestamps.
+    access: z.unknown().optional(),
   })
   .catchall(z.unknown());
+
+/// Creation also takes the new server's audience. Access of an existing
+/// server changes through `access/policy/put`.
+const mcpServerCreateSchema = mcpServerDocumentSchema.extend({
+  access: accessInputSchema.optional(),
+});
+
+const workspaceCreateBodySchema = workspaceCreateSchema.extend({
+  access: accessInputSchema.optional(),
+});
 
 const mcpOAuthFlowStartSchema = z.object({
   scopes: z.array(z.string().trim().min(1)).optional(),
@@ -364,6 +383,7 @@ export function gatewayRoutes(ctx: AppContext) {
     const body = await parseBody(c, z.object({
       resources: z.array(resourceSchema).max(100).optional(),
       sessionDeleteCascade: z.boolean().optional(),
+      as: z.enum(["caller", "execution_service"]).optional(),
     }).strict());
     if (!body.ok) return body.response;
     return withGateway(c, async () => {
@@ -1338,15 +1358,16 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    const body = await parseBody(c, mcpServerDocumentSchema);
+    const body = await parseBody(c, mcpServerCreateSchema);
     if (!body.ok) {
       return body.response;
     }
-    const { revision, createdAtMs, updatedAtMs, ...input } = body.data;
+    const { revision, createdAtMs, updatedAtMs, access: audience, ...input } = body.data;
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access.universe);
       const response = await client.call("mcp/servers/put", {
         server: input as unknown as McpServerInput,
+        ...(audience ? { access: audience } : {}),
       });
       return c.json(response.result.server, 201);
     });
@@ -1366,7 +1387,7 @@ export function gatewayRoutes(ctx: AppContext) {
     if (body.data.serverId !== c.req.param("serverId")) {
       return c.json({ error: "serverId in document does not match URL" }, 400);
     }
-    const { revision, createdAtMs, updatedAtMs, ...server } = body.data;
+    const { revision, createdAtMs, updatedAtMs, access: _summary, ...server } = body.data;
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access.universe);
       const response = await client.call("mcp/servers/put", {
@@ -1700,6 +1721,7 @@ export function gatewayRoutes(ctx: AppContext) {
         requestId: externalEnvironmentRequestId(body.data.endpoint),
         connection: { endpoint: body.data.endpoint, transport: "webSocket" },
         displayName: body.data.displayName,
+        ...(body.data.access ? { access: body.data.access } : {}),
       };
       const response = await client.call("environments/external/create", params);
       return c.json(response.result.environment, 201);
@@ -1820,6 +1842,7 @@ export function gatewayRoutes(ctx: AppContext) {
       });
       const snapshot = await client.call("vfs/snapshots/read", {
         snapshotRef: workspace.result.workspace.headSnapshotRef,
+        workspaceId: workspace.result.workspace.workspaceId,
       });
       return c.json({
         workspace: workspace.result.workspace,
@@ -1845,7 +1868,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const client = engineClientFor(ctx, access.universe);
       const kind = c.req.query("resourceKind");
       const id = c.req.query("resourceId");
-      const parsed = kind !== undefined || id !== undefined ? resourceSchema.safeParse({ kind, id }) : null;
+      const parsed = kind !== undefined || id !== undefined ? contentResourceSchema.safeParse({ kind, id }) : null;
       if (parsed && !parsed.success) return c.json({ error: "Invalid content resource" }, 400);
       const response = await client.call("blobs/read", {
         blobRef: c.req.param("blobRef"),
@@ -1918,6 +1941,7 @@ export function gatewayRoutes(ctx: AppContext) {
       }
       const snapshot = await client.call("vfs/snapshots/read", {
         snapshotRef: workspace.result.workspace.headSnapshotRef,
+        workspaceId,
       });
       return asManifest(snapshot.result.manifest);
     }
@@ -1944,6 +1968,7 @@ export function gatewayRoutes(ctx: AppContext) {
       }
       const snapshot = await client.call("vfs/snapshots/read", {
         snapshotRef: workspace.result.workspace.headSnapshotRef,
+        workspaceId,
       });
       const manifest = asManifest(snapshot.result.manifest);
       if (!removeFile(manifest, c.req.param("path"))) {
@@ -1958,7 +1983,7 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    const body = await parseBody(c, workspaceCreateSchema);
+    const body = await parseBody(c, workspaceCreateBodySchema);
     if (!body.ok) {
       return body.response;
     }
@@ -1974,6 +1999,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("vfs/workspaces/create", {
         workspaceId,
         displayName: body.data.displayName ?? null,
+        ...(body.data.access ? { access: body.data.access } : {}),
       });
       return c.json(response.result.workspace, 201);
     });

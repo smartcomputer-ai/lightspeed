@@ -40,6 +40,12 @@ pub struct EnvironmentCreateParams {
     /// Optional staged idle policy applied by the power reaper.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle_policy: Option<EnvironmentIdlePolicyView>,
+    /// Who may see and use the new environment, set atomically with its
+    /// creation; the caller owns it. Absent means universe-visible. Grants
+    /// take the `use` permission only. A retried `requestId` returns the
+    /// environment it created before and ignores this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<AccessInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -179,6 +185,10 @@ pub struct EnvironmentExternalCreateParams {
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
+    /// Who may see and use the new environment, as for
+    /// `environments/create`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<AccessInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -414,6 +424,9 @@ pub struct EnvironmentView {
     pub last_seen_at_ms: Option<i64>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    /// The environment's owner and visibility; an environment runs no work
+    /// of its own, so `execution` is absent.
+    pub access: ResourceAccessSummary,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

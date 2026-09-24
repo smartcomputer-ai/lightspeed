@@ -117,6 +117,8 @@ export interface Member {
   subject?: { kind: "principal" | "group"; id: string };
   principalKind?: "user" | "service";
   readPrivateContent?: boolean;
+  /// A system-assigned member (the universe's agent identity): read-only.
+  system?: boolean;
   id: string;
   userId: string;
   role: string;
@@ -330,6 +332,8 @@ export interface GitHubIntegration {
 /// Engine MCP server record (mcp/servers/list view). The optional credential
 /// is a non-secret universe-owned grant reference; token material is never returned.
 export interface McpServer {
+  /// Owner and audience; the runtime returns it on every read.
+  access?: ResourceAccessSummary;
   serverId: string;
   displayName?: string | null;
   serverUrl: string;
@@ -557,6 +561,8 @@ export interface SessionRunApprovalsDecided {
 
 /// Engine workspace view, straight from `vfs/workspaces/list`.
 export interface WorkspaceRow {
+  /// Owner and audience; the runtime returns it on every read.
+  access?: ResourceAccessSummary;
   workspaceId: string;
   displayName?: string | null;
   headSnapshotRef: string;

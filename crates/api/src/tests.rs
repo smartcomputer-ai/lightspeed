@@ -2501,6 +2501,9 @@ impl AgentApiService for TestService {
                 revision: 0,
                 created_at_ms: 10,
                 updated_at_ms: 10,
+                access: test_operational_access(ResourceRef::Workspace(
+                    "workspace_test".to_owned(),
+                )),
             },
         }))
     }
@@ -3142,6 +3145,7 @@ fn test_workspace(workspace_id: String, revision: u64) -> VfsWorkspaceView {
         revision,
         created_at_ms: 10,
         updated_at_ms: 20,
+        access: test_operational_access(ResourceRef::Workspace("workspace_test".to_owned())),
     }
 }
 
@@ -3232,6 +3236,7 @@ fn test_environment_instance() -> EnvironmentView {
         last_seen_at_ms: None,
         created_at_ms: 10,
         updated_at_ms: 10,
+        access: test_operational_access(ResourceRef::Environment("evi_test".to_owned())),
     }
 }
 
@@ -3295,6 +3300,7 @@ fn test_external_environment() -> EnvironmentView {
         last_seen_at_ms: None,
         created_at_ms: 10,
         updated_at_ms: 10,
+        access: test_operational_access(ResourceRef::Environment("evi_test".to_owned())),
     }
 }
 
@@ -3333,6 +3339,7 @@ fn test_mcp_server(server_id: String) -> McpServerView {
         revision: 1,
         created_at_ms: 1,
         updated_at_ms: 1,
+        access: test_operational_access(ResourceRef::McpServer("mcp_test".to_owned())),
     }
 }
 
@@ -3713,6 +3720,15 @@ async fn deployment_dispatch_rejects_universe_scoped_methods_and_vice_versa() {
     )
     .await;
     assert_eq!(response.error.expect("error").code, -32601);
+}
+
+fn test_operational_access(root: ResourceRef) -> ResourceAccessSummary {
+    ResourceAccessSummary {
+        root,
+        owner: uuid::Uuid::nil(),
+        visibility: Visibility::Universe,
+        execution: None,
+    }
 }
 
 fn test_access_summary() -> ResourceAccessSummary {

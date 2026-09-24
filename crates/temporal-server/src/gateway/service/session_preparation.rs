@@ -338,13 +338,50 @@ impl SessionPreparationService {
         Ok(())
     }
 
+    /// Every workspace, environment and MCP server `features` attaches must
+    /// be usable by the session's execution identity. This is the check of
+    /// the workflow's own preparation, which profile application, bot
+    /// sessions and delegated children go through; it has no caller, so a
+    /// resource hidden from the identity is reported missing.
+    async fn admit_session_resources(
+        &self,
+        session: &SessionId,
+        features: &engine::FeaturesConfig,
+    ) -> Result<(), AgentApiError> {
+        let root = ResourceRef::Session(session.as_str().to_owned());
+        match store_pg::PgAccessStore::new(self.store.pool().clone())
+            .execution_use(
+                self.store.config().universe_id,
+                &root,
+                &temporal_workflow::attached_resources(features),
+                store_pg::UseCheck::Admission,
+            )
+            .await
+            .map_err(|error| AgentApiError::internal(error.to_string()))?
+        {
+            None => Ok(()),
+            Some(refusal) => {
+                let visible = refusal.visible_to_identity();
+                Err(authorization::use_refusal(&root, refusal, visible))
+            }
+        }
+    }
+
+    /// The configuration the workflow is about to install on `session`:
+    /// well-formed, its attachments admitted for the session's execution
+    /// identity, and its catalog references resolvable. Admission comes
+    /// first, so nothing below describes a resource the identity may not
+    /// use.
     pub(crate) async fn validate_configuration(
         &self,
+        session: &SessionId,
         config: &SessionConfig,
     ) -> Result<(), AgentApiError> {
         config
             .validate()
             .map_err(|e| AgentApiError::invalid_request(e.to_string()))?;
+        self.admit_session_resources(session, &config.features)
+            .await?;
         self.validate_workspace_attachment_targets(&config.features)
             .await?;
         if let Some(subagents) = &config.features.subagents {
@@ -364,7 +401,8 @@ impl SessionPreparationService {
         &self,
         request: temporal_workflow::SessionProfilePreparationRequest,
     ) -> Result<temporal_workflow::SessionProfilePreparation, AgentApiError> {
-        self.validate_configuration(&request.source.config).await?;
+        self.validate_configuration(&request.session_id, &request.source.config)
+            .await?;
         let mut instructions = BTreeMap::new();
         if let Some(input) = request.instructions {
             let reference = match input {

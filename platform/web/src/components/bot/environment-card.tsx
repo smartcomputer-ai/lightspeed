@@ -34,8 +34,9 @@ export function BotEnvironmentCard({
   universeId: string;
   environmentId: string;
 }) {
-  const permissions = useActionPermissions(universeId);
-  const manage = permissions.can("configure_resource");
+  const target = { kind: "environment" as const, id: environmentId };
+  const permissions = useActionPermissions(universeId, [target]);
+  const manage = permissions.can("configure_resource", target);
   const queryClient = useQueryClient();
   const [policyOpen, setPolicyOpen] = useState(false);
   const environments = useQuery({

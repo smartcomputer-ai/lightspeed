@@ -41,16 +41,14 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
         ConfigureResource,
         ManageAccess,
         ShareResource,
-        CreateCollection,
-        ManageCollection,
-        DeleteCollection,
+        CreateWorkspace,
     ];
     let cases = [
         (
             Role::Viewer,
             vec![
                 Allowed, Denied, Denied, Denied, Denied, Denied, Denied, Denied, Denied, Denied,
-                Denied, Denied, Denied, Denied, Denied, Denied, Denied,
+                Denied, Denied, Denied, Denied, Denied,
             ],
         ),
         (
@@ -67,12 +65,10 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
                 RequiresOwnership,
                 Allowed,
                 Allowed,
-                Denied,
+                RequiresOwnership,
                 Denied,
                 RequiresOwnership,
                 Allowed,
-                RequiresOwnership,
-                RequiresOwnership,
             ],
         ),
         (
@@ -93,8 +89,6 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
                 Denied,
                 RequiresOwnership,
                 Allowed,
-                Allowed,
-                RequiresOwnership,
             ],
         ),
         (
@@ -115,8 +109,14 @@ fn role_matrix_preserves_personal_control_and_operator_scope() {
                 Allowed,
                 RequiresOwnership,
                 Allowed,
-                Allowed,
-                RequiresOwnership,
+            ],
+        ),
+        // An agent identity reads and uses; it is outside the chain above.
+        (
+            Role::Executor,
+            vec![
+                Allowed, Denied, Denied, Denied, Denied, Denied, Denied, Denied, Denied, Denied,
+                Allowed, Denied, Denied, Denied, Denied,
             ],
         ),
     ];
@@ -538,44 +538,6 @@ fn resource_decisions_follow_owner_visibility_grant_and_role() {
     };
     assert_eq!(decide(&operator, ManageBot, &private_bot), Forbidden);
     assert_eq!(decide(&contributor, InvokeBot, &private_bot), Allowed);
-    // Collections: writers create in them (control), owner or Operator on a
-    // visible one manages, owner or Admin deletes, Admin even when hidden.
-    let collection = |owner, visibility, grant| ResourceAccess {
-        anchor: anchor(
-            ResourceRef::Collection("c".into()),
-            ResourceRef::Collection("c".into()),
-            None,
-        ),
-        policy: Some(policy(owner, visibility)),
-        grant,
-    };
-    let shared = collection(7, Universe, None);
-    assert_eq!(decide(&contributor, ControlSession, &shared), Forbidden);
-    assert_eq!(decide(&operator, ControlSession, &shared), Forbidden);
-    assert_eq!(decide(&operator, ManageCollection, &shared), Allowed);
-    assert_eq!(decide(&operator, DeleteCollection, &shared), Forbidden);
-    assert_eq!(decide(&admin, DeleteCollection, &shared), Allowed);
-    let team = collection(7, Restricted, Some(ResourcePermission::Write));
-    assert_eq!(decide(&contributor, ControlSession, &team), Allowed);
-    assert_eq!(decide(&contributor, ManageCollection, &team), Forbidden);
-    assert_eq!(decide(&operator, ManageCollection, &team), Forbidden);
-    let hidden_collection = collection(7, Restricted, None);
-    assert_eq!(
-        decide(&operator, ManageCollection, &hidden_collection),
-        Hidden
-    );
-    assert_eq!(
-        decide(&admin, DeleteCollection, &hidden_collection),
-        Allowed
-    );
-    assert_eq!(
-        decide(
-            &contributor,
-            DeleteCollection,
-            &collection(1, Restricted, None)
-        ),
-        Allowed
-    );
     // Without a target, only the role decides.
     assert_eq!(
         authorize(Caller::Request(&contributor), CreateSession, None),
@@ -763,4 +725,544 @@ fn key_issuance_respects_ceiling_self_service_and_management_scope() {
         &deployment_admin,
         &service(AccessScope::Deployment)
     ));
+}
+
+fn operational(
+    owner: u128,
+    visibility: Visibility,
+    grant: Option<ResourcePermission>,
+) -> ResourceAccess {
+    let id = ResourceRef::Environment("e".into());
+    ResourceAccess {
+        anchor: anchor(id.clone(), id, None),
+        policy: Some(policy(owner, visibility)),
+        grant,
+    }
+}
+
+#[test]
+fn resource_refs_name_their_kind_and_id() {
+    for (resource, kind, operational) in [
+        (ResourceRef::Session("x".into()), "session", false),
+        (ResourceRef::Bot("x".into()), "bot", false),
+        (ResourceRef::Profile("x".into()), "profile", false),
+        (ResourceRef::Workspace("x".into()), "workspace", true),
+        (ResourceRef::Environment("x".into()), "environment", true),
+        (ResourceRef::McpServer("x".into()), "mcp_server", true),
+    ] {
+        assert_eq!(resource.kind(), kind);
+        assert_eq!(resource.id(), "x");
+        assert_eq!(resource.is_operational(), operational);
+        assert_eq!(
+            ResourceRef::from_kind(kind, "x".into()),
+            Some(resource.clone())
+        );
+        // The stored kind is the wire kind.
+        assert_eq!(
+            serde_json::to_value(&resource).unwrap(),
+            serde_json::json!({"kind": kind, "id": "x"})
+        );
+    }
+    assert_eq!(ResourceRef::from_kind("collection", "x".into()), None);
+}
+
+#[test]
+fn grant_permissions_belong_to_their_kinds() {
+    use ResourcePermission::*;
+    for resource in [
+        ResourceRef::Session("s".into()),
+        ResourceRef::Bot("b".into()),
+    ] {
+        assert!(Read.valid_for(&resource) && Write.valid_for(&resource));
+        assert!(!Use.valid_for(&resource));
+    }
+    for resource in [
+        ResourceRef::Workspace("w".into()),
+        ResourceRef::Environment("e".into()),
+        ResourceRef::McpServer("m".into()),
+    ] {
+        assert!(Use.valid_for(&resource));
+        assert!(!Read.valid_for(&resource) && !Write.valid_for(&resource));
+    }
+    let profile = ResourceRef::Profile("p".into());
+    assert!(![Read, Write, Use].iter().any(|p| p.valid_for(&profile)));
+    assert_eq!(serde_json::to_value(Use).unwrap(), "use");
+}
+
+#[test]
+fn executor_is_never_assigned_or_revoked_by_identity_changes() {
+    let executor = RoleAssignment {
+        scope: universe(),
+        subject: Subject::Principal(Uuid::from_u128(1)),
+        role: Role::Executor,
+    };
+    let viewer = RoleAssignment {
+        role: Role::Viewer,
+        ..executor
+    };
+    for change in [
+        AccessChange::AssignRole {
+            assignment: executor,
+        },
+        AccessChange::RevokeRole {
+            assignment: executor,
+        },
+        AccessChange::ReplaceRole {
+            assignment: viewer,
+            role: Role::Executor,
+        },
+        AccessChange::ReplaceRole {
+            assignment: executor,
+            role: Role::Viewer,
+        },
+    ] {
+        assert_eq!(
+            change.validate(),
+            Err(AccessError::Invalid("executor is system-assigned".into()))
+        );
+    }
+    assert!(!Role::Executor.valid_in(AccessScope::Deployment));
+    assert!(Role::Executor.valid_in(universe()));
+    assert_eq!(serde_json::to_value(Role::Executor).unwrap(), "executor");
+}
+
+/// An agent identity holds Executor and nothing else: a role that reached it
+/// anyway, directly or through a group, confers nothing.
+#[test]
+fn executor_alone_decides_for_an_agent_identity() {
+    use UniverseAction::*;
+    let executor = access(Role::Executor, universe());
+    for role in [Role::Viewer, Role::Contributor, Role::Operator, Role::Admin] {
+        let mut agent = executor.clone();
+        agent.roles.insert(role);
+        assert!(!agent.has_role(role), "{role:?}");
+        assert!(agent.has_role(Role::Executor));
+        for action in [
+            Read,
+            CreateSession,
+            ControlSession,
+            StopSession,
+            DeleteSession,
+            CreateProfile,
+            ManageProfile,
+            CreateBot,
+            ManageBot,
+            InvokeBot,
+            UseResource,
+            ConfigureResource,
+            ManageAccess,
+            ShareResource,
+            CreateWorkspace,
+        ] {
+            assert_eq!(
+                agent.universe_action(action),
+                executor.universe_action(action),
+                "{role:?} / {action:?}"
+            );
+        }
+        // Admin's reach over restricted resources does not reach it either.
+        let restricted = operational(7, Visibility::Restricted, None);
+        for action in [Read, UseResource, ConfigureResource, ShareResource] {
+            assert_eq!(
+                authorize(Caller::Request(&agent), action, Some(&restricted)),
+                Decision::Hidden
+            );
+        }
+    }
+}
+
+#[test]
+fn resource_labels_name_kinds_as_people_read_them() {
+    assert_eq!(ResourceRef::McpServer("m".into()).label(), "MCP server");
+    assert_eq!(ResourceRef::Workspace("w".into()).label(), "workspace");
+    assert_eq!(ResourceRef::Environment("e".into()).label(), "environment");
+    assert_eq!(ResourceRef::Session("s".into()).label(), "session");
+}
+
+/// The role defaults on a universe-visible workspace, environment or MCP
+/// server, and their replacement on a restricted one: seeing and using need
+/// ownership, a `use` grant or Admin; configuring and sharing need ownership
+/// or Admin. Roles stay ceilings throughout.
+#[test]
+fn operational_resources_follow_role_visibility_grant_and_ownership() {
+    use Decision::*;
+    use UniverseAction::*;
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Relation {
+        None,
+        UseGrant,
+        Owner,
+    }
+    let expected = |role: Role, visibility: Visibility, relation: Relation, action| {
+        let admin = role == Role::Admin;
+        let owner = relation == Relation::Owner;
+        let universe = visibility == Visibility::Universe;
+        if !(universe || relation != Relation::None || admin) {
+            return Hidden;
+        }
+        let allowed = match action {
+            Read => true,
+            UseResource => role != Role::Viewer,
+            ConfigureResource => match role {
+                Role::Viewer | Role::Executor => false,
+                Role::Contributor => owner,
+                Role::Operator => owner || universe,
+                _ => true,
+            },
+            ShareResource => match role {
+                Role::Viewer | Role::Executor => false,
+                Role::Contributor | Role::Operator => owner,
+                _ => true,
+            },
+            _ => unreachable!(),
+        };
+        if allowed { Allowed } else { Forbidden }
+    };
+    for role in [
+        Role::Viewer,
+        Role::Contributor,
+        Role::Operator,
+        Role::Admin,
+        Role::Executor,
+    ] {
+        let rights = access(role, universe());
+        for visibility in [Visibility::Universe, Visibility::Restricted] {
+            for relation in [Relation::None, Relation::UseGrant, Relation::Owner] {
+                let resource = operational(
+                    if relation == Relation::Owner { 1 } else { 7 },
+                    visibility,
+                    (relation == Relation::UseGrant).then_some(ResourcePermission::Use),
+                );
+                for action in [Read, UseResource, ConfigureResource, ShareResource] {
+                    assert_eq!(
+                        authorize(Caller::Request(&rights), action, Some(&resource)),
+                        expected(role, visibility, relation, action),
+                        "{role:?} {visibility:?} {relation:?} {action:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn operational_resources_have_no_privileged_or_governance_path() {
+    use Decision::*;
+    use UniverseAction::*;
+    let mut viewer = access(Role::Viewer, universe());
+    viewer.capabilities.insert(Capability::ReadPrivateContent);
+    let restricted = operational(7, Visibility::Restricted, None);
+    // Restriction is governance: privileged reading does not reach it.
+    assert_eq!(
+        authorize(Caller::Request(&viewer), Read, Some(&restricted)),
+        Hidden
+    );
+    let operator = access(Role::Operator, universe());
+    for action in [StopSession, DeleteSession, ControlSession, ManageAccess] {
+        assert_eq!(
+            authorize(Caller::Request(&operator), action, Some(&restricted)),
+            Hidden
+        );
+        assert_eq!(
+            authorize(
+                Caller::Request(&operator),
+                action,
+                Some(&operational(7, Visibility::Universe, None))
+            ),
+            Forbidden
+        );
+    }
+    // A missing policy is hidden from everyone, Admin included.
+    let orphan = ResourceAccess {
+        policy: None,
+        ..operational(1, Visibility::Universe, None)
+    };
+    let admin = access(Role::Admin, universe());
+    assert_eq!(
+        authorize(Caller::Request(&admin), Read, Some(&orphan)),
+        Hidden
+    );
+    // A session-kind grant on an operational resource confers no use.
+    let contributor = access(Role::Contributor, universe());
+    assert_eq!(
+        authorize(
+            Caller::Request(&contributor),
+            UseResource,
+            Some(&operational(
+                7,
+                Visibility::Restricted,
+                Some(ResourcePermission::Write)
+            ))
+        ),
+        Forbidden
+    );
+    // Internal work is decided as its execution principal by the store,
+    // never by controller rules.
+    let controller = ControllerContext {
+        universe_id: Uuid::from_u128(2),
+        actor: ResourceRef::Session("s".into()),
+        root: ResourceRef::Session("s".into()),
+        execution_principal: Some(Uuid::from_u128(9)),
+        cause: "test".into(),
+    };
+    for action in [Read, UseResource] {
+        assert_eq!(
+            authorize(
+                Caller::Controller(&controller),
+                action,
+                Some(&operational(7, Visibility::Universe, None))
+            ),
+            Forbidden
+        );
+    }
+    // Creating a workspace is a Contributor's universe action.
+    assert_eq!(
+        authorize(Caller::Request(&contributor), CreateWorkspace, None),
+        Allowed
+    );
+    assert_eq!(
+        authorize(
+            Caller::Request(&access(Role::Executor, universe())),
+            CreateWorkspace,
+            None
+        ),
+        Forbidden
+    );
+}
+
+#[test]
+fn policy_replacement_is_decided_from_the_locked_facts() {
+    use ResourcePermission::*;
+    let facts = |visibility, grants: Vec<(Subject, ResourcePermission)>, owner: Option<u128>| {
+        PolicyReplacement {
+            visibility,
+            grants,
+            owner: owner.map(Uuid::from_u128),
+        }
+    };
+    let grant = |subject: u128, permission| ResourceGrant {
+        subject: Subject::Principal(Uuid::from_u128(subject)),
+        permission,
+        granted_by: Uuid::from_u128(7),
+        granted_at_ms: 0,
+    };
+    let bob = Subject::Principal(Uuid::from_u128(5));
+    let carol = Subject::Principal(Uuid::from_u128(6));
+    let owner = access(Role::Contributor, universe());
+    let writer = access(Role::Contributor, universe());
+    // A session owned by 7, on which the caller (1) is a writer.
+    let written = session(7, Visibility::Restricted, Some(Write));
+    let current = [grant(1, Write), grant(5, Read)];
+    let caller = Subject::Principal(Uuid::from_u128(1));
+    // A writer changes visibility and read grants, keeping every writer.
+    assert_eq!(
+        authorize_policy_replacement(
+            &writer,
+            &written,
+            &current,
+            &facts(
+                Visibility::Universe,
+                vec![(caller, Write), (carol, Read)],
+                None
+            )
+        ),
+        Ok(())
+    );
+    // It neither adds nor removes a writer, itself included.
+    for grants in [
+        vec![(caller, Write), (bob, Write)],
+        vec![(bob, Read)],
+        vec![(caller, Read), (bob, Read)],
+    ] {
+        assert_eq!(
+            authorize_policy_replacement(
+                &writer,
+                &written,
+                &current,
+                &facts(Visibility::Restricted, grants, None)
+            ),
+            Err(AccessError::Denied)
+        );
+    }
+    // A writer whose grant was revoked before the lock cannot restore it.
+    let revoked = session(7, Visibility::Restricted, None);
+    assert_eq!(
+        authorize_policy_replacement(
+            &writer,
+            &revoked,
+            &[grant(5, Read)],
+            &facts(Visibility::Restricted, vec![(caller, Write)], None)
+        ),
+        Err(AccessError::Denied)
+    );
+    // Only the owner hands a root over, and the new owner takes no grant.
+    assert_eq!(
+        authorize_policy_replacement(
+            &writer,
+            &written,
+            &current,
+            &facts(Visibility::Restricted, vec![(caller, Write)], Some(5))
+        ),
+        Err(AccessError::Denied)
+    );
+    let mine = session(1, Visibility::Restricted, None);
+    assert_eq!(
+        authorize_policy_replacement(
+            &owner,
+            &mine,
+            &[],
+            &facts(Visibility::Restricted, vec![(caller, Write)], Some(5))
+        ),
+        Ok(())
+    );
+    assert!(matches!(
+        authorize_policy_replacement(
+            &owner,
+            &mine,
+            &[],
+            &facts(Visibility::Restricted, vec![(bob, Write)], Some(5))
+        ),
+        Err(AccessError::Invalid(_))
+    ));
+    assert!(matches!(
+        authorize_policy_replacement(
+            &owner,
+            &mine,
+            &[],
+            &facts(Visibility::Restricted, vec![(caller, Read)], None)
+        ),
+        Err(AccessError::Invalid(_))
+    ));
+    // Grants are permissions of the root's kind.
+    assert_eq!(
+        authorize_policy_replacement(
+            &owner,
+            &mine,
+            &[],
+            &facts(Visibility::Restricted, vec![(bob, Use)], None)
+        ),
+        Err(AccessError::Invalid("a session takes no use grant".into()))
+    );
+    let environment = operational(1, Visibility::Restricted, None);
+    assert!(matches!(
+        authorize_policy_replacement(
+            &owner,
+            &environment,
+            &[],
+            &facts(Visibility::Restricted, vec![(bob, Read)], None)
+        ),
+        Err(AccessError::Invalid(_))
+    ));
+    assert_eq!(
+        authorize_policy_replacement(
+            &owner,
+            &environment,
+            &[],
+            &facts(Visibility::Restricted, vec![(bob, Use)], None)
+        ),
+        Ok(())
+    );
+    // Admin manages access to any operational resource but never takes it
+    // over; a user with a `use` grant manages nothing.
+    let admin = access(Role::Admin, universe());
+    let theirs = operational(7, Visibility::Restricted, None);
+    assert_eq!(
+        authorize_policy_replacement(
+            &admin,
+            &theirs,
+            &[],
+            &facts(Visibility::Universe, vec![(bob, Use)], None)
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        authorize_policy_replacement(
+            &admin,
+            &theirs,
+            &[],
+            &facts(Visibility::Universe, vec![], Some(1))
+        ),
+        Err(AccessError::Denied)
+    );
+    let user = access(Role::Operator, universe());
+    assert_eq!(
+        authorize_policy_replacement(
+            &user,
+            &operational(7, Visibility::Restricted, Some(Use)),
+            &[grant(1, Use)],
+            &facts(Visibility::Universe, vec![(caller, Use)], None)
+        ),
+        Err(AccessError::Denied)
+    );
+    // Profiles are not shared at all.
+    let profile = ResourceAccess {
+        anchor: anchor(
+            ResourceRef::Profile("p".into()),
+            ResourceRef::Profile("p".into()),
+            None,
+        ),
+        policy: Some(policy(1, Visibility::Universe)),
+        grant: None,
+    };
+    assert_eq!(
+        authorize_policy_replacement(
+            &owner,
+            &profile,
+            &[],
+            &facts(Visibility::Universe, vec![], None)
+        ),
+        Err(AccessError::Denied)
+    );
+}
+
+/// The batch question every session check asks: the first resource the
+/// identity may not use, in the order given, a missing anchor hidden.
+#[test]
+fn first_unusable_reports_the_first_refused_resource_in_order() {
+    let executor = access(Role::Executor, universe());
+    let with_id = |resource: ResourceRef, access: ResourceAccess| ResourceAccess {
+        anchor: anchor(resource.clone(), resource, None),
+        ..access
+    };
+    let open = ResourceRef::Workspace("open".into());
+    let granted = ResourceRef::McpServer("granted".into());
+    let restricted = ResourceRef::Environment("restricted".into());
+    let missing = ResourceRef::Environment("missing".into());
+    let accesses = [
+        with_id(open.clone(), operational(7, Visibility::Universe, None)),
+        with_id(
+            granted.clone(),
+            operational(7, Visibility::Restricted, Some(ResourcePermission::Use)),
+        ),
+        with_id(
+            restricted.clone(),
+            operational(7, Visibility::Restricted, None),
+        ),
+    ];
+    assert_eq!(first_unusable(&executor, &[], &accesses), None);
+    assert_eq!(
+        first_unusable(&executor, &[open.clone(), granted.clone()], &accesses),
+        None
+    );
+    assert_eq!(
+        first_unusable(
+            &executor,
+            &[open.clone(), missing.clone(), restricted.clone()],
+            &accesses
+        ),
+        Some((missing, Decision::Hidden))
+    );
+    assert_eq!(
+        first_unusable(&executor, &[restricted.clone(), open.clone()], &accesses),
+        Some((restricted, Decision::Hidden))
+    );
+    // A Viewer sees what is open but may use none of it.
+    assert_eq!(
+        first_unusable(
+            &access(Role::Viewer, universe()),
+            std::slice::from_ref(&open),
+            &accesses
+        ),
+        Some((open, Decision::Forbidden))
+    );
 }

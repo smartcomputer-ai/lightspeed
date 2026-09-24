@@ -93,6 +93,11 @@ pub enum Subject {
     Group(Uuid),
 }
 
+/// A role in a universe, or `deployment_admin` in the deployment. `executor`
+/// is the role of agent identities: it sees universe-visible resources and
+/// uses resources, nothing else. The runtime assigns it to a universe's
+/// execution principal; identity administration never assigns or revokes
+/// it, and its holders never get a key.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
@@ -103,6 +108,7 @@ pub enum Role {
     Operator,
     Admin,
     DeploymentAdmin,
+    Executor,
 }
 
 impl Role {
@@ -184,14 +190,17 @@ pub enum UniverseAction {
     CreateBot,
     ManageBot,
     InvokeBot,
+    /// Use a workspace, environment or MCP server; without a target, the
+    /// eligibility to use resources at all.
     UseResource,
+    /// Configure a workspace, environment or MCP server; without a target,
+    /// the universe's shared configuration.
     ConfigureResource,
     ManageAccess,
-    /// Change who may see or control a root: its visibility and grants.
+    /// Change who may see, control or use a root: its visibility and grants.
     ShareResource,
-    CreateCollection,
-    ManageCollection,
-    DeleteCollection,
+    /// Create a workspace, which its creator owns.
+    CreateWorkspace,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -222,9 +231,63 @@ pub enum ResourceRef {
     Session(String),
     Bot(String),
     Profile(String),
-    /// A root that gives sessions and bots one audience and, later, one
-    /// execution identity. It routes nothing and runs nothing.
-    Collection(String),
+    Workspace(String),
+    Environment(String),
+    McpServer(String),
+}
+
+impl ResourceRef {
+    /// The stored and wire spelling of the kind.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Session(_) => "session",
+            Self::Bot(_) => "bot",
+            Self::Profile(_) => "profile",
+            Self::Workspace(_) => "workspace",
+            Self::Environment(_) => "environment",
+            Self::McpServer(_) => "mcp_server",
+        }
+    }
+
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Session(id)
+            | Self::Bot(id)
+            | Self::Profile(id)
+            | Self::Workspace(id)
+            | Self::Environment(id)
+            | Self::McpServer(id) => id,
+        }
+    }
+
+    /// Workspaces, environments and MCP servers: roots that sessions use
+    /// and that run nothing of their own.
+    pub fn is_operational(&self) -> bool {
+        matches!(
+            self,
+            Self::Workspace(_) | Self::Environment(_) | Self::McpServer(_)
+        )
+    }
+
+    /// The kind as people read it, in refusals and not-found errors.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::McpServer(_) => "MCP server",
+            other => other.kind(),
+        }
+    }
+
+    pub fn from_kind(kind: &str, id: String) -> Option<Self> {
+        Some(match kind {
+            "session" => Self::Session(id),
+            "bot" => Self::Bot(id),
+            "profile" => Self::Profile(id),
+            "workspace" => Self::Workspace(id),
+            "environment" => Self::Environment(id),
+            "mcp_server" => Self::McpServer(id),
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -255,8 +318,9 @@ pub enum Visibility {
     Restricted,
 }
 
-/// One permission a grant confers on a root. `Read` sees the tree; `Write`
-/// also controls it.
+/// One permission a grant confers on a root. On sessions and bots `Read`
+/// sees the tree and `Write` also controls it; on workspaces, environments
+/// and MCP servers `Use` is the only permission.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
@@ -264,6 +328,29 @@ pub enum Visibility {
 pub enum ResourcePermission {
     Read,
     Write,
+    Use,
+}
+
+impl ResourcePermission {
+    /// The stored and wire spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Use => "use",
+        }
+    }
+
+    /// Whether a grant of this permission exists on the kind of `resource`.
+    /// Profiles take no grants.
+    pub fn valid_for(self, resource: &ResourceRef) -> bool {
+        match self {
+            Self::Use => resource.is_operational(),
+            Self::Read | Self::Write => {
+                matches!(resource, ResourceRef::Session(_) | ResourceRef::Bot(_))
+            }
+        }
+    }
 }
 
 /// Under whose authority a root's work runs: the universe's execution
@@ -300,7 +387,8 @@ pub struct ResourceAnchor {
     pub audience_root: ResourceRef,
     /// The bot whose worker controls this resource, if any.
     pub bot: Option<String>,
-    /// Absent only for kinds that run nothing (profiles).
+    /// Absent only for kinds that run nothing: profiles, workspaces,
+    /// environments and MCP servers.
     pub execution: Option<Execution>,
     pub created_at_ms: u64,
 }
@@ -364,6 +452,19 @@ pub struct ResourceAccess {
     pub grant: Option<ResourcePermission>,
 }
 
+impl ResourceAccess {
+    /// What a view shows of these facts; `None` without a root policy.
+    pub fn summary(&self) -> Option<ResourceAccessSummary> {
+        let policy = self.policy.as_ref()?;
+        Some(ResourceAccessSummary {
+            root: self.anchor.audience_root.clone(),
+            owner: policy.owner,
+            visibility: policy.visibility,
+            execution: self.anchor.execution,
+        })
+    }
+}
+
 /// Authority of the runtime's own work for an admitted bot or delegated
 /// session. It holds no roles and is not a bypass: it reads its own root and
 /// universe-visible content, creates in its own root, and controls only
@@ -405,6 +506,31 @@ impl Decision {
     }
 }
 
+/// The first of `resources` the principal holding `rights` may not use,
+/// with the decision that refused it; `None` when it may use them all.
+/// `accesses` are the loaded facts of those that have an anchor; one
+/// without is hidden. Attachment admission, run admission, the per-turn
+/// check and bot triggers all ask this of an execution identity.
+pub fn first_unusable(
+    rights: &EffectiveAccess,
+    resources: &[ResourceRef],
+    accesses: &[ResourceAccess],
+) -> Option<(ResourceRef, Decision)> {
+    resources.iter().find_map(|resource| {
+        let decision = accesses
+            .iter()
+            .find(|access| &access.anchor.resource == resource)
+            .map_or(Decision::Hidden, |access| {
+                authorize(
+                    Caller::Request(rights),
+                    UniverseAction::UseResource,
+                    Some(access),
+                )
+            });
+        (!decision.allows()).then(|| (resource.clone(), decision))
+    })
+}
+
 /// The one evaluator for resource decisions. Roles decide first; a resource
 /// decision then reads the loaded access facts and never storage.
 pub fn authorize(
@@ -435,6 +561,9 @@ fn authorize_request(
     let Some(policy) = &access.policy else {
         return Decision::Hidden;
     };
+    if access.anchor.resource.is_operational() {
+        return authorize_operational(rights, action, role, access, policy);
+    }
     let owner = policy.owner == rights.principal.id;
     let universe_visible = policy.visibility == Visibility::Universe;
     let readable = rights.universe_action(Read) == RoleDecision::Allowed
@@ -447,7 +576,7 @@ fn authorize_request(
         // audited for it, and is refused, not hidden, for anything else.
         let governs = match action {
             StopSession => by_role,
-            DeleteSession | DeleteCollection => rights.has_role(Role::Admin),
+            DeleteSession => rights.has_role(Role::Admin),
             _ => false,
         };
         let privileged = rights.universe_action(Read) == RoleDecision::Allowed
@@ -468,18 +597,15 @@ fn authorize_request(
         access.anchor.bot.is_some() && rights.universe_action(ManageBot) == RoleDecision::Allowed;
     let allowed = match action {
         Read => true,
-        // Control of a collection is creating in it.
         ControlSession => writer || manages_bot,
         StopSession => by_role || writer,
         DeleteSession => owner || manages_bot || rights.has_role(Role::Admin),
-        ManageCollection => owner || (by_role && universe_visible),
-        DeleteCollection => owner || rights.has_role(Role::Admin),
         InvokeBot => (by_role && universe_visible) || writer,
         ManageBot => owner || (by_role && universe_visible),
         ManageProfile => owner || by_role,
         // Profiles stay on role rules and have no audience to share.
         ShareResource => writer && !matches!(access.anchor.resource, ResourceRef::Profile(_)),
-        CreateSession | CreateProfile | CreateBot | CreateCollection | UseResource
+        CreateSession | CreateProfile | CreateBot | CreateWorkspace | UseResource
         | ConfigureResource | ManageAccess => by_role,
     };
     if allowed {
@@ -487,6 +613,130 @@ fn authorize_request(
     } else {
         Decision::Forbidden
     }
+}
+
+/// Workspaces, environments and MCP servers. Restriction is governance, not
+/// privacy: Admin always sees and may use, configure and share them, and no
+/// privileged read applies. A restricted resource replaces the role
+/// allowance: seeing and using need ownership or a grant, configuring and
+/// sharing need ownership. Roles stay ceilings, so a grant or ownership never
+/// lets a role do what it may not do anywhere.
+fn authorize_operational(
+    rights: &EffectiveAccess,
+    action: UniverseAction,
+    role: RoleDecision,
+    access: &ResourceAccess,
+    policy: &ResourcePolicy,
+) -> Decision {
+    use UniverseAction::*;
+    let admin = rights.has_role(Role::Admin);
+    let owner = policy.owner == rights.principal.id;
+    let universe_visible = policy.visibility == Visibility::Universe;
+    let visible = universe_visible || owner || access.grant.is_some() || admin;
+    if rights.universe_action(Read) != RoleDecision::Allowed || !visible {
+        return Decision::Hidden;
+    }
+    if role == RoleDecision::Denied {
+        return Decision::Forbidden;
+    }
+    let by_role = role == RoleDecision::Allowed;
+    let allowed = match action {
+        Read => true,
+        UseResource => {
+            by_role
+                && (universe_visible
+                    || owner
+                    || access.grant == Some(ResourcePermission::Use)
+                    || admin)
+        }
+        ConfigureResource => owner || admin || (by_role && universe_visible),
+        ShareResource => owner || admin,
+        _ => false,
+    };
+    if allowed {
+        Decision::Allowed
+    } else {
+        Decision::Forbidden
+    }
+}
+
+/// What a replacement of a root's policy asks for: the whole visibility and
+/// grant set, and a new owner when it hands the root over.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PolicyReplacement {
+    pub visibility: Visibility,
+    pub grants: Vec<(Subject, ResourcePermission)>,
+    /// `None`, or the current owner, keeps the owner.
+    pub owner: Option<Uuid>,
+}
+
+/// Whether `rights` may replace a root's policy, decided from the facts the
+/// store loaded under the policy row's lock, so a right revoked after the
+/// request was admitted cannot commit. Sharing must be allowed; every grant
+/// must be a permission of the root's kind; the owner takes no grant; only
+/// the owner hands the root over; and on sessions and bots only the owner
+/// adds or removes a `write` grant, so a writer cannot restore or widen its
+/// own control.
+pub fn authorize_policy_replacement(
+    rights: &EffectiveAccess,
+    current: &ResourceAccess,
+    current_grants: &[ResourceGrant],
+    replacement: &PolicyReplacement,
+) -> Result<(), AccessError> {
+    let Some(policy) = &current.policy else {
+        return Err(AccessError::NotFound);
+    };
+    if authorize(
+        Caller::Request(rights),
+        UniverseAction::ShareResource,
+        Some(current),
+    ) != Decision::Allowed
+    {
+        return Err(AccessError::Denied);
+    }
+    let root = &current.anchor.audience_root;
+    if let Some((_, permission)) = replacement
+        .grants
+        .iter()
+        .find(|(_, permission)| !permission.valid_for(root))
+    {
+        return Err(AccessError::Invalid(format!(
+            "a {} takes no {} grant",
+            root.kind(),
+            permission.as_str()
+        )));
+    }
+    let owner = replacement.owner.unwrap_or(policy.owner);
+    if replacement
+        .grants
+        .iter()
+        .any(|(subject, _)| *subject == Subject::Principal(owner))
+    {
+        return Err(AccessError::Invalid(
+            "the owner holds every permission and takes no grant".into(),
+        ));
+    }
+    let acting_owner = policy.owner == rights.principal.id;
+    if owner != policy.owner && !acting_owner {
+        return Err(AccessError::Denied);
+    }
+    if !root.is_operational() && !acting_owner {
+        let current_writers: BTreeSet<Subject> = current_grants
+            .iter()
+            .filter(|grant| grant.permission == ResourcePermission::Write)
+            .map(|grant| grant.subject)
+            .collect();
+        let requested_writers: BTreeSet<Subject> = replacement
+            .grants
+            .iter()
+            .filter(|(_, permission)| *permission == ResourcePermission::Write)
+            .map(|(subject, _)| *subject)
+            .collect();
+        if current_writers != requested_writers {
+            return Err(AccessError::Denied);
+        }
+    }
+    Ok(())
 }
 
 fn authorize_controller(
@@ -503,6 +753,13 @@ fn authorize_controller(
             _ => Decision::Forbidden,
         };
     };
+    // The store decides a controller's use of a workspace, environment or
+    // MCP server as its execution principal before reaching the evaluator,
+    // so this refusal is never the real decision; it only keeps internal
+    // work from inheriting rights of its own here.
+    if access.anchor.resource.is_operational() {
+        return Decision::Forbidden;
+    }
     let Some(policy) = &access.policy else {
         return Decision::Hidden;
     };
@@ -531,8 +788,14 @@ impl EffectiveAccess {
         self.principal.status == PrincipalStatus::Active
     }
 
+    /// A principal holding Executor is an agent identity, and Executor alone
+    /// decides for it: any other role it was given, directly or through a
+    /// group, confers nothing.
     pub fn has_role(&self, role: Role) -> bool {
-        self.active() && role.valid_in(self.scope) && self.roles.contains(&role)
+        self.active()
+            && role.valid_in(self.scope)
+            && self.roles.contains(&role)
+            && (role == Role::Executor || !self.roles.contains(&Role::Executor))
     }
 
     pub fn has_capability(&self, capability: Capability) -> bool {
@@ -552,20 +815,26 @@ impl EffectiveAccess {
         let operator = admin || self.has_role(Role::Operator);
         let contributor = operator || self.has_role(Role::Contributor);
         let viewer = contributor || self.has_role(Role::Viewer);
+        // Outside the chain: an agent identity reads and uses, nothing more,
+        // and `has_role` gives it no other role.
+        let executor = self.has_role(Role::Executor);
         match action {
-            Read if viewer => Allowed,
-            CreateSession | CreateProfile | CreateBot | CreateCollection | InvokeBot
-            | UseResource
+            Read if viewer || executor => Allowed,
+            UseResource if contributor || executor => Allowed,
+            CreateSession | CreateProfile | CreateBot | CreateWorkspace | InvokeBot
                 if contributor =>
             {
                 Allowed
             }
-            ControlSession | ShareResource | DeleteCollection if contributor => RequiresOwnership,
+            ControlSession | ShareResource if contributor => RequiresOwnership,
             StopSession if operator => Allowed,
             StopSession | DeleteSession if contributor => RequiresOwnership,
-            ManageProfile | ManageBot | ManageCollection if operator => Allowed,
-            ManageProfile | ManageBot | ManageCollection if contributor => RequiresOwnership,
+            ManageProfile | ManageBot if operator => Allowed,
+            ManageProfile | ManageBot if contributor => RequiresOwnership,
             ConfigureResource if operator => Allowed,
+            // A Contributor configures the workspaces, environments and MCP
+            // servers it owns, never anything by role.
+            ConfigureResource if contributor => RequiresOwnership,
             ManageAccess if admin => Allowed,
             _ => Denied,
         }
@@ -668,6 +937,9 @@ impl AccessChange {
                 })?;
                 if !assignment.role.valid_in(assignment.scope) {
                     return Err(AccessError::Invalid("role does not belong to scope".into()));
+                }
+                if assignment.role == Role::Executor {
+                    return Err(AccessError::Invalid("executor is system-assigned".into()));
                 }
                 Ok(())
             }

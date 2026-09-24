@@ -69,6 +69,11 @@ struct MaterializeArgs {
     /// Emit the materialization summary as JSON.
     #[arg(long)]
     json: bool,
+    /// Read the snapshot through this workspace, whose current head or base
+    /// it must be; its files come from the workspace head. Needed for a
+    /// snapshot someone else uploaded.
+    #[arg(long)]
+    workspace: Option<String>,
     /// Snapshot ref to materialize.
     snapshot_ref: String,
     /// Local destination directory.
@@ -302,6 +307,7 @@ async fn workspace_create(args: WorkspaceCreateArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
         .create_vfs_workspace(api::VfsWorkspaceCreateParams {
+            access: None,
             workspace_id: args.workspace_id,
             snapshot_ref: args.snapshot_ref,
             display_name: args.display_name,
@@ -519,6 +525,7 @@ pub(crate) async fn create_workspace_from_snapshot(
 ) -> Result<api::VfsWorkspaceView> {
     Ok(api
         .create_vfs_workspace(api::VfsWorkspaceCreateParams {
+            access: None,
             workspace_id: None,
             snapshot_ref: Some(snapshot_ref),
             display_name: None,
@@ -605,7 +612,8 @@ fn print_workspace_attachment(attachment: &api::WorkspaceAttachment) {
 
 async fn materialize(args: MaterializeArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
-    let summary = materialize_snapshot(&api, args.snapshot_ref, args.destination).await?;
+    let summary =
+        materialize_snapshot(&api, args.snapshot_ref, args.workspace, args.destination).await?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
         return Ok(());

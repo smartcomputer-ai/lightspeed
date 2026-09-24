@@ -7,6 +7,7 @@ import { memberUpdateSchema, slugify } from "@lightspeed/platform-shared";
 import type { EngineUniverse, Member, Universe, UniverseApiKey } from "@/api";
 import type { DemoStore, UniverseState } from "../store";
 import { conflict, badRequest, notFound, nowIso, readBody, universeFor } from "./common";
+import { DEFAULT_AGENT_IDENTITY, executionPrincipal } from "../access-state";
 
 export function platformRoutes(store: DemoStore): Hono {
   const app = new Hono();
@@ -121,10 +122,18 @@ export function platformRoutes(store: DemoStore): Hono {
 
   app.get("/universes/:id/members", (c) => {
     const state = universeFor(store, c);
-    return state ? c.json(state.members.map((member) => ({ ...member,
-      subject: { kind: member.email === "Group" ? "group" : "principal", id: member.userId },
-      principalKind: member.email === "Group" ? undefined : "user",
-    }))) : notFound(c);
+    if (!state) return notFound(c);
+    const agent = executionPrincipal(state);
+    return c.json([
+      ...state.members.map((member) => ({ ...member,
+        subject: { kind: member.email === "Group" ? "group" : "principal", id: member.userId },
+        principalKind: member.email === "Group" ? undefined : "user",
+      })),
+      // The universe's agent identity: listed, never edited.
+      { id: `principal:${agent}:executor`, userId: agent, name: DEFAULT_AGENT_IDENTITY, email: "Agent identity",
+        role: "executor", system: true, createdAt: state.universe.createdAt,
+        subject: { kind: "principal", id: agent }, principalKind: "service" },
+    ]);
   });
 
   app.post("/universes/:id/members", async (c) => {

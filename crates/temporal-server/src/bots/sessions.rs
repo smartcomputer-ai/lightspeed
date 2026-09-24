@@ -65,14 +65,18 @@ pub(super) fn retryable(message: impl std::fmt::Display) -> ActivityError {
     ActivityError::application(ApplicationFailure::new(anyhow::anyhow!("{message}")))
 }
 
-/// Classify a core API error. Invalid requests and missing referents never
-/// heal on retry; a rejection (a busy session), a conflict (a lost race), or
-/// an internal / transport failure may.
+/// Classify a core API error. Invalid requests, missing referents and
+/// refusals (a resource the bot's execution identity may not use) never
+/// heal on retry: the failure is recorded at once. A rejection (a busy
+/// session), a conflict (a lost race), or an internal / transport failure
+/// may heal.
 pub(super) fn activity_error(context: &str, error: AgentApiError) -> ActivityError {
     let message = format!("{context}: {error}");
     if matches!(
         error.kind,
-        AgentApiErrorKind::InvalidRequest | AgentApiErrorKind::NotFound
+        AgentApiErrorKind::InvalidRequest
+            | AgentApiErrorKind::NotFound
+            | AgentApiErrorKind::Forbidden
     ) {
         non_retryable(message)
     } else {
@@ -1015,6 +1019,13 @@ mod tests {
         assert!(is_non_retryable(&activity_error(
             "x",
             AgentApiError::not_found("gone")
+        )));
+        assert!(is_non_retryable(&activity_error(
+            "x",
+            AgentApiError::new(
+                AgentApiErrorKind::Forbidden,
+                "environment prod-1 is not available to Default agent identity"
+            )
         )));
         assert!(!is_non_retryable(&activity_error(
             "x",

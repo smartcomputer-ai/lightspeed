@@ -326,6 +326,7 @@ mod tests {
             1,
             LlmGenerateActivityRequest {
                 request: fake_llm_request(),
+                attached_resources: Vec::new(),
             },
         )
         .await
@@ -386,6 +387,7 @@ mod tests {
             3,
             LlmGenerateActivityRequest {
                 request: fake_llm_request(),
+                attached_resources: Vec::new(),
             },
         )
         .await
@@ -409,11 +411,36 @@ mod tests {
             4,
             LlmGenerateActivityRequest {
                 request: fake_llm_request(),
+                attached_resources: Vec::new(),
             },
         )
         .await
         .expect("post-transient attempt succeeds");
         assert!(!generated.facts.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn model_call_input_recorded_before_the_resource_check_still_decodes() {
+        let request = LlmGenerateActivityRequest {
+            request: fake_llm_request(),
+            attached_resources: vec![access::ResourceRef::Environment("prod-1".into())],
+        };
+        let mut encoded = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            encoded["attached_resources"],
+            serde_json::json!([{ "kind": "environment", "id": "prod-1" }])
+        );
+        let decoded: LlmGenerateActivityRequest = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(decoded, request);
+        // Histories written before the field existed carry no resources and
+        // check the execution identity alone.
+        encoded
+            .as_object_mut()
+            .unwrap()
+            .remove("attached_resources");
+        let decoded: LlmGenerateActivityRequest = serde_json::from_value(encoded).unwrap();
+        assert!(decoded.attached_resources.is_empty());
+        assert_eq!(decoded.request, request.request);
     }
 
     fn fake_llm_request() -> LlmGenerationRequest {
@@ -611,7 +638,9 @@ impl WorkerActivities {
         let state = self.state_for(&ctx).await?;
         let service = preparation_service(&state, &ctx)?;
         if request.validate_configuration
-            && let Err(error) = service.validate_configuration(&request.source.config).await
+            && let Err(error) = service
+                .validate_configuration(&preparing_session(&ctx)?, &request.source.config)
+                .await
         {
             return preparation_activity_result(Err(error));
         }
@@ -764,6 +793,21 @@ fn preparation_activity_result<T>(
         }
         other => Ok(other),
     }
+}
+
+/// The session a toolset preparation prepares: the one whose workflow
+/// scheduled it.
+fn preparing_session(ctx: &ActivityContext) -> Result<engine::SessionId, ActivityError> {
+    ctx.info()
+        .workflow_execution
+        .as_ref()
+        .and_then(|execution| temporal_workflow::split_workflow_id(&execution.workflow_id))
+        .map(|(_, session_id)| session_id)
+        .ok_or_else(|| {
+            ActivityError::application(ApplicationFailure::non_retryable(anyhow::anyhow!(
+                "session preparation runs outside a session workflow"
+            )))
+        })
 }
 
 fn preparation_service(

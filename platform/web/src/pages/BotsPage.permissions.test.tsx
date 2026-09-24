@@ -22,6 +22,7 @@ let client: QueryClient;
 let globalActions: UniverseAction[];
 let botActions: UniverseAction[];
 let sessionActions: UniverseAction[];
+let environmentActions: UniverseAction[];
 let accessError: boolean;
 const bot = { botId: "bot", displayName: "Test bot", profileId: "shared", revision: 1, eventSeq: 0, selfConfig: true, emit: false, enabled: true, createdAtMs: 0, updatedAtMs: 0, triggerCount: 0, pendingCount: 0, lastEvent: null };
 const state = { controller: { mainSessionId: "main", controllerStatus: "idle", setupStatus: "ready", enabled: true, closed: false, sessions: [{ sessionId: "main", label: "main", kind: "main", busy: false, generation: 1 }], activeDeliveries: [] } };
@@ -32,11 +33,12 @@ beforeEach(() => {
   globalActions = ["read", "create_bot", "create_profile"];
   botActions = ["read", "invoke_bot"];
   sessionActions = ["read"];
+  environmentActions = ["read"];
   accessError = false;
   mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: { resources: ResourceRef[] }) => {
     if (path.endsWith("/access")) {
       if (accessError) throw new Error("Permission lookup unavailable");
-      return { actions: globalActions, resources: (body?.resources ?? []).map((resource) => ({ resource, actions: resource.kind === "bot" ? botActions : resource.kind === "session" ? sessionActions : ["read"] })) };
+      return { actions: globalActions, resources: (body?.resources ?? []).map((resource) => ({ resource, actions: resource.kind === "bot" ? botActions : resource.kind === "session" ? sessionActions : resource.kind === "environment" ? environmentActions : ["read"] })) };
     }
     if (method === "POST" && path.endsWith("/messages")) return {};
     if (path.endsWith("/bots")) return { bots: [bot] };
@@ -136,7 +138,12 @@ it("does not turn bot ownership into profile or environment administration", asy
   expect(container.textContent).toContain("Shared environment");
   expect(button("Pause")).toBeUndefined();
   expect(button("Idle policy…")).toBeUndefined();
+  // Configuring the environment is decided for that environment.
   globalActions.push("configure_resource");
+  await act(async () => { await client.invalidateQueries({ queryKey: ["action-permissions"] }); });
+  await settle();
+  expect(button("Pause")).toBeUndefined();
+  environmentActions.push("configure_resource");
   await act(async () => { await client.invalidateQueries({ queryKey: ["action-permissions"] }); });
   await settle();
   expect(button("Pause")).toBeDefined();

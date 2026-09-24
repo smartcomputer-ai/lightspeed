@@ -102,7 +102,7 @@ function LiveSessionSetup({
   enabled: boolean;
 }) {
   const queryClient = useQueryClient();
-  const options = useSessionConfigEditorOptions(universeId, enabled);
+  const options = useSessionConfigEditorOptions(universeId, enabled, session?.access?.execution?.kind ?? "service");
   const instructions = useQuery({
     queryKey: ["session-instructions", universeId, sessionId],
     queryFn: () => api<SessionInstructionState>(

@@ -248,6 +248,40 @@ async fn authorize_change(
     Err(AccessError::Denied)
 }
 
+/// A universe's execution principal is an agent identity holding Executor
+/// and nothing else: identity administration never gives it a role, a group
+/// or a capability. It is identified structurally, by the universe row.
+/// Disabling it stays possible; that is how an Admin stops its work.
+async fn refuse_agent_identity_changes(
+    connection: &mut PgConnection,
+    change: &AccessChange,
+) -> Result<(), AccessError> {
+    let principal = match change {
+        AccessChange::AssignRole { assignment } | AccessChange::ReplaceRole { assignment, .. } => {
+            match assignment.subject {
+                Subject::Principal(id) => id,
+                Subject::Group(_) => return Ok(()),
+            }
+        }
+        AccessChange::PutMembership { membership } => membership.principal_id,
+        AccessChange::AssignCapability { assignment } => assignment.principal_id,
+        _ => return Ok(()),
+    };
+    let agent: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM universes WHERE execution_principal_id = $1)",
+    )
+    .bind(principal)
+    .fetch_one(connection)
+    .await
+    .map_err(db_error)?;
+    if agent {
+        return Err(AccessError::Invalid(
+            "the Default agent identity holds executor and nothing else".into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn put_role(
     connection: &mut PgConnection,
     assignment: RoleAssignment,
@@ -412,6 +446,7 @@ impl AccessStore for PgAccessStore {
             .await
             .map_err(db_error)?;
         authorize_change(&mut transaction, actor, &change).await?;
+        refuse_agent_identity_changes(&mut transaction, &change).await?;
         let before = administered_scopes(&mut transaction).await?;
         let changed = apply_change(&mut transaction, actor, &change, now_ms).await?;
         // Disabling an identity is always possible, even when it or its groups

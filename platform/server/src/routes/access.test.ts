@@ -52,25 +52,39 @@ it.each([
     "PUT",
     "/universe/access/policy",
     {
-      resource: { kind: "collection", id: "team" },
+      resource: { kind: "bot", id: "assistant" },
       visibility: "restricted",
       grants: [],
       expectedRevision: 7,
     },
     "access/policy/put",
     {
-      resource: { kind: "collection", id: "team" },
+      resource: { kind: "bot", id: "assistant" },
       visibility: "restricted",
       grants: [],
       expectedRevision: 7,
     },
   ],
   [
-    "POST",
-    "/universe/collections",
-    { displayName: "Private", execution: { kind: "personal" } },
-    "collection/create",
-    { displayName: "Private", execution: { kind: "personal" } },
+    "PUT",
+    "/universe/access/policy",
+    {
+      resource: { kind: "environment", id: "production" },
+      visibility: "restricted",
+      grants: [
+        { subject: { kind: "principal", id: actor }, permission: "use" },
+      ],
+      expectedRevision: 2,
+    },
+    "access/policy/put",
+    {
+      resource: { kind: "environment", id: "production" },
+      visibility: "restricted",
+      grants: [
+        { subject: { kind: "principal", id: actor }, permission: "use" },
+      ],
+      expectedRevision: 2,
+    },
   ],
 ] as const)(
   "forwards %s %s with current user authority",
@@ -102,7 +116,7 @@ it.each([
           }
         : {}),
     });
-    expect(response.status).toBe(rpcMethod === "collection/create" ? 201 : 200);
+    expect(response.status).toBe(200);
   },
 );
 it.each([

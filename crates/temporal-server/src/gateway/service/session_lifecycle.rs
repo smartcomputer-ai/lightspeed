@@ -286,6 +286,10 @@ impl GatewayAgentApi {
             }
             None => self.allocate_session_id(),
         };
+        // Content the documents name (snapshot attachments, instruction
+        // blobs) must be the caller's own or already the session's.
+        self.authorize_supplied_document(Some(&session_id), &(&config, &profile))
+            .await?;
         let resource = ResourceRef::Session(session_id.as_str().to_owned());
         if self
             .access_store()
@@ -302,11 +306,8 @@ impl GatewayAgentApi {
             self.authorize_method(METHOD_SESSION_CONFIG_PUT, Some(resource))
                 .await?;
         } else {
-            let root = access.as_ref().and_then(|a| a.root.clone());
-            let execution = self
-                .execution_for_new_root(root.as_ref(), execution)
-                .await?;
-            self.reserve_resource(resource.clone(), root.as_ref(), execution)
+            let execution = self.resolve_execution(execution).await?;
+            self.reserve_resource(resource.clone(), Some(execution))
                 .await?;
             self.apply_creation_access(&resource, access).await?;
         }
@@ -356,7 +357,9 @@ impl GatewayAgentApi {
                 .and_then(|profile| profile.config.clone()),
             config,
         );
-        let session_config = self.session_config_for_start(start_config).await?;
+        let session_config = self
+            .session_config_for_start(&session_id, start_config)
+            .await?;
         let setup_environment = profiles::default_environment_id(&session_config.features)?;
 
         if let Some(admitted) = admitted.as_ref() {

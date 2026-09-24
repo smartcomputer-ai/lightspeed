@@ -26,6 +26,8 @@ let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
 let actions: UniverseAction[];
+// Decisions for each named workspace, environment or MCP server.
+let resourceActions: UniverseAction[];
 const workspace = { workspaceId: "docs", displayName: "Documents", files: 1, revision: 1, head: "snapshot" };
 const provider = {
   credentialId: "model-key", providerId: "openai", displayName: "Internal model", config: { type: "modelApiKey" },
@@ -40,8 +42,9 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   actions = ["read"];
-  mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path.endsWith("/access")) return { actions, resources: [] };
+  resourceActions = ["read"];
+  mocks.api.mockReset().mockImplementation(async (_method: string, path: string, body?: { resources?: unknown[] }) => {
+    if (path.endsWith("/access")) return { actions, resources: (body?.resources ?? []).map((resource) => ({ resource, actions: resourceActions })) };
     if (path.endsWith("/workspaces")) return [workspace];
     if (path.endsWith("/tree")) return { workspace, manifest: { root: { entries: { "notes.txt": { kind: "file", blob_ref: "text", size_bytes: 5, media_type: "text/plain" } } } } };
     if (path.endsWith("/workspaces/docs/files/notes.txt")) return { bytesBase64: btoa("hello") };
@@ -88,44 +91,58 @@ function button(label: string) {
   return [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === label);
 }
 
-it("keeps workspace text readable without exposing writes to a resource user", async () => {
-  actions = ["read", "use_resource"];
+it("keeps workspace text read-only when this workspace may not be used", async () => {
+  // A universe-wide right to use resources does not reach a restricted workspace.
+  actions = ["read", "use_resource", "configure_resource"];
   await show(<WorkspacesPage admin />, "/workspaces/docs/files/notes.txt");
   expect(container.querySelector("textarea")?.value).toBe("hello");
   expect(container.querySelector("textarea")?.readOnly).toBe(true);
   expect(container.querySelector('[aria-label="New workspace"]')).toBeNull();
   expect(container.querySelector('[aria-label="Delete file"]')).toBeNull();
   expect(button("New file")).toBeUndefined();
+  expect(container.querySelector('[aria-label="Access and sharing"]')).not.toBeNull();
 });
-it("offers workspace writes only when core allows configuring and using resources", async () => {
-  actions = ["read", "use_resource", "configure_resource"];
+it("offers workspace writes when core allows using that workspace", async () => {
+  actions = ["read", "use_resource", "create_workspace"];
+  resourceActions = ["read", "use_resource"];
   await show(<WorkspacesPage admin />, "/workspaces/docs/files/notes.txt");
   expect(container.querySelector("textarea")?.readOnly).toBe(false);
   expect(container.querySelector('[aria-label="New workspace"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="Delete file"]')).not.toBeNull();
   expect(button("New file")).toBeDefined();
 });
-it("shows MCP status to readers without OAuth or edit controls", async () => {
+it("shows MCP status and access to readers without OAuth or edit controls", async () => {
   await show(<McpServersPage admin />);
   expect(container.textContent).toContain("Research tools");
   expect(button("Connect")).toBeUndefined();
   expect(button("Add server")).toBeUndefined();
   expect(container.querySelector('[aria-label="Edit tools"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Access and sharing"]')).not.toBeNull();
 });
 it("offers MCP connection and editing when configuration is allowed", async () => {
   actions.push("configure_resource");
+  resourceActions = ["read", "configure_resource"];
   await show(<McpServersPage admin />);
   expect(button("Connect")).toBeDefined();
   expect(button("Add server")).toBeDefined();
   expect(container.querySelector('[aria-label="Edit tools"]')).not.toBeNull();
 });
+it("decides MCP row controls per server, not from the universe role", async () => {
+  actions.push("configure_resource");
+  await show(<McpServersPage admin />);
+  expect(button("Add server")).toBeDefined();
+  expect(button("Connect")).toBeUndefined();
+  expect(container.querySelector('[aria-label="Edit tools"]')).toBeNull();
+});
 it("removes an open configuration dialog when current permissions no longer allow editing", async () => {
   actions.push("configure_resource");
+  resourceActions = ["read", "configure_resource"];
   await show(<McpServersPage admin />);
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit tools"]')!.click());
   await settle();
   expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
   actions = ["read"];
+  resourceActions = ["read"];
   await act(async () => { await client.invalidateQueries({ queryKey: ["action-permissions"] }); });
   await settle();
   expect(document.body.querySelector('[role="dialog"]')).toBeNull();
@@ -142,6 +159,15 @@ it("keeps environment details readable without registration, power or credential
   expect(button("Idle policy…")).toBeUndefined();
   expect(button("Assign secret")).toBeUndefined();
   expect(mocks.api.mock.calls.some(([, path]) => path.endsWith("/environment-registration-keys"))).toBe(false);
+});
+it("lets an environment's owner configure it while secrets stay with Operators", async () => {
+  resourceActions = ["read", "use_resource", "configure_resource", "share_resource"];
+  await show(<EnvironmentsPage admin />);
+  expect(container.querySelector('[aria-label="Access and sharing"]')).not.toBeNull();
+  await act(async () => button("Details")!.click());
+  await settle();
+  expect(button("Idle policy…")).toBeDefined();
+  expect(button("Assign secret")).toBeUndefined();
 });
 it("shows channel accounts and secret metadata without modification controls", async () => {
   await show(<ChannelsPage admin />);

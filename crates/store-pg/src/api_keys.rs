@@ -47,6 +47,18 @@ impl ApiKeyStore for PgApiKeyStore {
         ) {
             return Err(ApiKeyError::Denied);
         }
+        // An agent identity is keyless in every scope: its authority is
+        // reached only through the sessions and bots that run as it.
+        let agent_identity: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM access_role_assignments WHERE principal_id = $1 AND role = 'executor')",
+        )
+        .bind(record.principal_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        if agent_identity {
+            return Err(ApiKeyError::Denied);
+        }
         let result = sqlx::query(
             r#"
             INSERT INTO api_keys (

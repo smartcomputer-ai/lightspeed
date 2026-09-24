@@ -11,6 +11,7 @@ import type { DemoResponder, DemoStore, DemoToolCall, DemoTurn, UniverseState } 
 import {
   BOT_TOOLS,
   DAY_MS,
+  demoAccess,
   EMIT_TOOL,
   GPT,
   HOUR_MS,
@@ -713,6 +714,7 @@ function seedEnvironments(universe: UniverseState): void {
   const requestId = `req-${hex("support-tools", 12)}`;
   const environment: Environment = {
     environmentId: ENV_SUPPORT_TOOLS,
+    access: demoAccess("environment", ENV_SUPPORT_TOOLS),
     requestId,
     source: { type: "provisioned", providerId: "incus-eu-1", bindingId: "incus-eu-1" },
     displayName: "Support tools",

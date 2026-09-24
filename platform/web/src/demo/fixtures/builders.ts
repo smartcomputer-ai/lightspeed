@@ -426,6 +426,7 @@ export function workspace(store: DemoStore, universe: UniverseState, init: Works
   };
   universe.workspaces.set(init.id, {
     row: {
+      access: demoAccess("workspace", init.id),
       workspaceId: init.id,
       displayName: init.displayName,
       headSnapshotRef: `snap-${hex(`${init.id}:${init.revision}`, 12)}`,
@@ -492,6 +493,7 @@ export type McpServerInit = Partial<McpServer> &
 
 export function mcpServer(init: McpServerInit): McpServer {
   return {
+    access: demoAccess("mcp_server", init.serverId),
     displayName: null,
     defaultServerLabel: init.serverId,
     description: null,
@@ -1070,7 +1072,10 @@ export function subagentSession(store: DemoStore, universe: UniverseState, init:
 /// The demo universe is one open workspace: every root is universe-visible
 /// and owned by the demo person.
 export const DEMO_OWNER = "00000000-0000-4000-8000-000000000001";
-export function demoAccess(kind: "session" | "bot" | "collection", id: string) {
+export function demoAccess(
+  kind: "session" | "bot" | "workspace" | "environment" | "mcp_server",
+  id: string,
+) {
   return { root: { kind, id }, owner: DEMO_OWNER, visibility: "universe" as const };
 }
 

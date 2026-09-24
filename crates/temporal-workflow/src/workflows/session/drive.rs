@@ -159,7 +159,7 @@ pub(super) async fn drive_until_idle(
                 };
             }
             CoreAgentAction::CompactContext { request } => {
-                let result = call_context_compact(ctx, request).await?;
+                let result = call_context_compact(ctx, drive, request).await?;
                 action = drive.resume_context_compaction(result, workflow_time_ms(ctx))?;
             }
             CoreAgentAction::InvokeTools { request } => {

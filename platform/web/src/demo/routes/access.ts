@@ -8,25 +8,51 @@ import type {
   ResourceRef,
   UniverseAction,
 } from "@lightspeed-ai/agent-client";
-import type { DemoStore } from "../store";
+import type { DemoStore, UniverseState } from "../store";
 import {
   accessState,
+  DEFAULT_AGENT_IDENTITY,
   demoCanRead,
+  demoCanUse,
   demoPrivilegedRead,
   demoCanShare,
   demoCreateAccess,
-  demoMembers,
   demoPolicy,
   demoSummary,
+  executionPrincipal,
+  isOperational,
   resourceKey,
 } from "../access-state";
-import {
-  badRequest,
-  conflict,
-  notFound,
-  readBody,
-  universeFor,
-} from "./common";
+import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
+
+/// Path segments of the operational lists, and the record field naming each item.
+const OPERATIONAL = {
+  workspaces: { kind: "workspace", field: "workspaceId" },
+  environments: { kind: "environment", field: "environmentId" },
+  "mcp-servers": { kind: "mcp_server", field: "serverId" },
+} as const;
+type OperationalSegment = keyof typeof OPERATIONAL;
+/// Sub-paths of the lists that are not record ids.
+const NOT_IDS = new Set(["external", "hints", "discover-auth"]);
+/// Record responses that carry the record itself (or `{ workspace }`).
+const RECORD_SUFFIXES = new Set([undefined, "/tree", "/power", "/idle-policy", "/ingress"]);
+
+function exists(universe: UniverseState, resource: ResourceRef) {
+  switch (resource.kind) {
+    case "session":
+      return universe.sessions.has(resource.id);
+    case "bot":
+      return universe.bots.has(resource.id);
+    case "profile":
+      return universe.profiles.has(resource.id);
+    case "workspace":
+      return universe.workspaces.has(resource.id);
+    case "environment":
+      return universe.environments.has(resource.id);
+    case "mcp_server":
+      return universe.mcpServers.has(resource.id);
+  }
+}
 
 export function accessRoutes(store: DemoStore): Hono {
   const app = new Hono();
@@ -34,8 +60,22 @@ export function accessRoutes(store: DemoStore): Hono {
   app.use("/:id/*", async (c, next) => {
     const universe = universeFor(store, c);
     if (!universe) return next();
+    const operationalPath = c.req.path.match(
+      /\/universes\/[^/]+\/(workspaces|environments|mcp-servers)(?:\/([^/]+))?(\/.*)?$/,
+    );
+    const segment = operationalPath?.[1] as OperationalSegment | undefined;
+    const operational = segment ? OPERATIONAL[segment] : undefined;
+    const operationalId =
+      operationalPath?.[2] && !NOT_IDS.has(operationalPath[2])
+        ? decodeURIComponent(operationalPath[2])
+        : undefined;
+    const operationalRecord =
+      operational && RECORD_SUFFIXES.has(operationalPath?.[3]);
     const creation =
-      c.req.method === "POST" && /\/(sessions|bots)$/.test(c.req.path);
+      c.req.method === "POST" &&
+      /\/(sessions|bots|workspaces|environments|environments\/external|mcp-servers)$/.test(
+        c.req.path,
+      );
     const body = creation
       ? ((await c.req.raw
           .clone()
@@ -45,27 +85,11 @@ export function accessRoutes(store: DemoStore): Hono {
           execution?: ExecutionInput;
         })
       : undefined;
-    if (
-      body?.access?.root &&
-      (!accessState(universe).collections.has(body.access.root.id) ||
-        !demoCanShare(store, demoPolicy(store, universe, body.access.root)))
-    )
-      return notFound(c);
-    if (
-      body?.access?.root &&
-      (body.execution || body.access.visibility || body.access.grants?.length)
-    )
-      return badRequest(c, "A collection member inherits access and execution");
     if (body?.execution?.kind === "personal" && !accessState(universe).personal)
       return c.json({ error: "Personal execution is disabled" }, 403);
-    const target = c.req.path.match(/\/(sessions|bots|collections)\/([^/]+)/);
+    const target = c.req.path.match(/\/(sessions|bots)\/([^/]+)/);
     if (c.req.method === "GET" && target) {
-      const kind =
-        target[1] === "sessions"
-          ? "session"
-          : target[1] === "bots"
-            ? "bot"
-            : "collection";
+      const kind = target[1] === "sessions" ? "session" : "bot";
       if (
         !demoCanRead(
           store,
@@ -78,13 +102,21 @@ export function accessRoutes(store: DemoStore): Hono {
       )
         return notFound(c);
     }
+    if (c.req.method === "GET" && operational && operationalId) {
+      const resource = { kind: operational.kind, id: operationalId };
+      if (
+        exists(universe, resource) &&
+        !demoCanRead(store, universe, demoPolicy(store, universe, resource))
+      )
+        return notFound(c);
+    }
     await next();
     if (
       !c.res.ok ||
       !c.res.headers.get("content-type")?.includes("application/json")
     )
       return;
-    const value = await c.res.clone().json();
+    let value = await c.res.clone().json();
     if (!value || typeof value !== "object") return;
     if (
       value.id &&
@@ -140,16 +172,42 @@ export function accessRoutes(store: DemoStore): Hono {
             demoPolicy(store, universe, { kind: "bot", id: b.botId }),
           ),
         );
+    if (operational && operationalRecord) {
+      const { kind, field } = operational;
+      const decorate = (record: Record<string, unknown>) => {
+        const id = record[field];
+        if (typeof id !== "string") return record;
+        return { ...record, access: demoSummary(store, universe, { kind, id }) };
+      };
+      if (Array.isArray(value)) {
+        // Lists carry only what the caller may see.
+        value = value
+          .filter((record: Record<string, unknown>) => {
+            const id = record[field];
+            return (
+              typeof id !== "string" ||
+              demoCanRead(store, universe, demoPolicy(store, universe, { kind, id }))
+            );
+          })
+          .map(decorate);
+      } else {
+        if (creation && typeof value[field] === "string")
+          demoCreateAccess(
+            store,
+            universe,
+            { kind, id: value[field] },
+            body?.access,
+          );
+        value = value.workspace
+          ? { ...value, workspace: decorate(value.workspace) }
+          : decorate(value);
+      }
+    }
     if (c.req.method === "GET" || c.req.path.endsWith("/access/policy/read")) {
       const resources: ResourceRef[] = [];
       if (target)
         resources.push({
-          kind:
-            target[1] === "sessions"
-              ? "session"
-              : target[1] === "bots"
-                ? "bot"
-                : "collection",
+          kind: target[1] === "sessions" ? "session" : "bot",
           id: decodeURIComponent(target[2]!),
         });
       if (value.policy?.resource) resources.push(value.policy.resource);
@@ -157,8 +215,6 @@ export function accessRoutes(store: DemoStore): Hono {
         resources.push({ kind: "session", id: session.id });
       for (const bot of value.bots ?? [])
         resources.push({ kind: "bot", id: bot.botId });
-      for (const collection of value.collections ?? [])
-        resources.push({ kind: "collection", id: collection.collectionId });
       if (
         resources.some((resource) =>
           demoPrivilegedRead(
@@ -189,43 +245,47 @@ export function accessRoutes(store: DemoStore): Hono {
         "create_session",
         "create_profile",
         "create_bot",
-        "create_collection",
+        "create_workspace",
         "use_resource",
       );
     if (configure) actions.push("configure_resource");
     if (role === "admin") actions.push("manage_access");
+    // `as: execution_service` decides the caller's visible resources for the
+    // default agent identity instead.
+    const service = body.as === "execution_service";
     const response: AccessReadResponse = {
       actions,
       resources: (body.resources ?? []).map((resource) => {
-        const exists =
-          resource.kind === "session"
-            ? universe.sessions.has(resource.id)
-            : resource.kind === "bot"
-              ? universe.bots.has(resource.id)
-              : resource.kind === "collection"
-                ? accessState(universe).collections.has(resource.id)
-                : universe.profiles.has(resource.id);
         const policy = demoPolicy(store, universe, resource);
-        const allowed: UniverseAction[] =
-          exists && demoCanRead(store, universe, policy) ? ["read"] : [];
+        if (!exists(universe, resource) || !demoCanRead(store, universe, policy))
+          return { resource, actions: [] };
+        if (isOperational(resource.kind)) {
+          const allowed: UniverseAction[] = ["read"];
+          const [principal, principalRole] = service
+            ? [executionPrincipal(universe), "executor"]
+            : [store.currentUser.id, role];
+          if (demoCanUse(policy, principal, principalRole))
+            allowed.push("use_resource");
+          if (service) return { resource, actions: allowed };
+          const owner = policy.owner === store.currentUser.id;
+          if (owner || role === "admin" || (configure && policy.visibility === "universe"))
+            allowed.push("configure_resource");
+          if (demoCanShare(store, universe, policy)) allowed.push("share_resource");
+          return { resource, actions: allowed };
+        }
+        if (service) return { resource, actions: [] };
+        const allowed: UniverseAction[] = ["read"];
         if (
-          exists &&
           resource.kind !== "profile" &&
           contribute &&
-          demoCanShare(store, policy)
+          demoCanShare(store, universe, policy)
         )
           allowed.push("share_resource");
-        if (exists && contribute && demoCanShare(store, policy)) {
+        if (contribute && demoCanShare(store, universe, policy)) {
           if (resource.kind === "session")
             allowed.push("control_session", "stop_session", "delete_session");
           if (resource.kind === "bot") allowed.push("manage_bot", "invoke_bot");
           if (resource.kind === "profile") allowed.push("manage_profile");
-          if (resource.kind === "collection")
-            allowed.push(
-              "control_session",
-              "manage_collection",
-              "delete_collection",
-            );
         }
         return { resource, actions: allowed };
       }),
@@ -236,17 +296,19 @@ export function accessRoutes(store: DemoStore): Hono {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
     const query = (c.req.query("q") ?? "").toLowerCase();
+    const agent = executionPrincipal(universe);
     return c.json({
       principalId: store.currentUser.id,
-      subjects: universe.members
+      subjects: [
+        ...universe.members.map((m) => ({ id: m.userId, name: m.name ?? m.userId })),
+        { id: agent, name: DEFAULT_AGENT_IDENTITY },
+      ]
         .filter(
-          (m) =>
-            (m.name ?? m.userId).toLowerCase().includes(query) ||
-            m.userId === query,
+          (m) => m.name.toLowerCase().includes(query) || m.id === query,
         )
         .map((m) => ({
-          subject: { kind: "principal", id: m.userId },
-          displayName: m.name ?? m.userId,
+          subject: { kind: "principal", id: m.id },
+          displayName: m.name,
         }))
         .slice(0, 100),
     });
@@ -265,10 +327,22 @@ export function accessRoutes(store: DemoStore): Hono {
     if (!universe) return notFound(c);
     const body = await readBody<AccessPolicyPutParams>(c);
     const policy = demoPolicy(store, universe, body.resource);
-    if (!demoCanShare(store, policy))
+    if (!demoCanShare(store, universe, policy))
       return c.json({ error: "Forbidden" }, 403);
     if (body.expectedRevision !== policy.revision)
       return conflict(c, "Access revision conflict");
+    const operational = isOperational(policy.root.kind);
+    if (
+      (body.grants ?? []).some((g) =>
+        operational ? g.permission !== "use" : g.permission === "use",
+      )
+    )
+      return badRequest(
+        c,
+        operational
+          ? "Workspaces, environments and MCP servers take only `use` grants"
+          : "Sessions and bots take `read` or `write` grants",
+      );
     const owner = policy.owner === store.currentUser.id;
     const writers = (grants: typeof body.grants) =>
       JSON.stringify(
@@ -307,7 +381,7 @@ export function accessRoutes(store: DemoStore): Hono {
     if (!universe) return notFound(c);
     return c.json({
       policy: {
-        executionPrincipalId: `execution-${universe.universe.id}`,
+        executionPrincipalId: executionPrincipal(universe),
         personalExecutionEnabled: accessState(universe).personal,
       },
     });
@@ -322,137 +396,10 @@ export function accessRoutes(store: DemoStore): Hono {
     ).personalExecutionEnabled;
     return c.json({
       policy: {
-        executionPrincipalId: `execution-${universe.universe.id}`,
+        executionPrincipalId: executionPrincipal(universe),
         personalExecutionEnabled: accessState(universe).personal,
       },
     });
-  });
-  app.get("/:id/collections", (c) => {
-    const universe = universeFor(store, c);
-    if (!universe) return notFound(c);
-    return c.json({
-      collections: [...accessState(universe).collections.values()]
-        .filter((v) =>
-          demoCanRead(
-            store,
-            universe,
-            demoPolicy(store, universe, {
-              kind: "collection",
-              id: v.collectionId,
-            }),
-          ),
-        )
-        .map((v) => ({
-          ...v,
-          access: demoSummary(store, universe, {
-            kind: "collection",
-            id: v.collectionId,
-          }),
-        })),
-    });
-  });
-  app.post("/:id/collections", async (c) => {
-    const universe = universeFor(store, c);
-    if (!universe) return notFound(c);
-    if (
-      !["contributor", "operator", "admin"].includes(
-        universe.universe.role ?? "",
-      )
-    )
-      return c.json({ error: "Forbidden" }, 403);
-    const body = await readBody<{
-      displayName: string;
-      access?: AccessInput;
-      execution?: ExecutionInput;
-    }>(c);
-    if (!body.displayName?.trim() || body.access?.root)
-      return badRequest(c, "A collection needs a name and its own access");
-    if (body.execution?.kind === "personal" && !accessState(universe).personal)
-      return c.json({ error: "Personal execution is disabled" }, 403);
-    const id = store.nextId("collection");
-    demoCreateAccess(
-      store,
-      universe,
-      { kind: "collection", id },
-      body.access,
-      body.execution,
-    );
-    const collection = {
-      collectionId: id,
-      displayName: body.displayName.trim(),
-      revision: 1,
-      createdAtMs: Date.now(),
-      updatedAtMs: Date.now(),
-      access: demoSummary(store, universe, { kind: "collection", id }),
-    };
-    accessState(universe).collections.set(id, collection);
-    return c.json({ collection }, 201);
-  });
-  app.get("/:id/collections/:collectionId", (c) => {
-    const universe = universeFor(store, c);
-    if (!universe) return notFound(c);
-    const id = c.req.param("collectionId");
-    const collection = accessState(universe).collections.get(id);
-    if (
-      !collection ||
-      !demoCanRead(
-        store,
-        universe,
-        demoPolicy(store, universe, { kind: "collection", id }),
-      )
-    )
-      return notFound(c);
-    return c.json({
-      collection: {
-        ...collection,
-        access: demoSummary(store, universe, { kind: "collection", id }),
-      },
-      members: demoMembers(store, universe, id),
-    });
-  });
-  app.put("/:id/collections/:collectionId", async (c) => {
-    const universe = universeFor(store, c);
-    if (!universe) return notFound(c);
-    const id = c.req.param("collectionId");
-    const collection = accessState(universe).collections.get(id);
-    if (!collection) return notFound(c);
-    if (
-      demoPolicy(store, universe, { kind: "collection", id }).owner !==
-        store.currentUser.id &&
-      !(
-        universe.universe.role === "admin" &&
-        collection.access.visibility === "universe"
-      )
-    )
-      return c.json({ error: "Forbidden" }, 403);
-    const body = await readBody<{
-      displayName: string;
-      expectedRevision: number;
-    }>(c);
-    if (body.expectedRevision !== collection.revision)
-      return conflict(c, "Collection revision conflict");
-    if (!body.displayName?.trim()) return badRequest(c, "Name required");
-    collection.displayName = body.displayName.trim();
-    collection.revision += 1;
-    return c.json({ collection });
-  });
-  app.delete("/:id/collections/:collectionId", (c) => {
-    const universe = universeFor(store, c);
-    if (!universe) return notFound(c);
-    const id = c.req.param("collectionId");
-    const collection = accessState(universe).collections.get(id);
-    if (!collection) return notFound(c);
-    if (
-      demoPolicy(store, universe, { kind: "collection", id }).owner !==
-        store.currentUser.id &&
-      universe.universe.role !== "admin"
-    )
-      return c.json({ error: "Forbidden" }, 403);
-    if (demoMembers(store, universe, id).length)
-      return conflict(c, "Collection is not empty");
-    accessState(universe).collections.delete(id);
-    accessState(universe).policies.delete(`collection:${id}`);
-    return c.json({ collection });
   });
   return app;
 }

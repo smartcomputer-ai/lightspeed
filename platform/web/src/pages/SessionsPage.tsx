@@ -945,7 +945,7 @@ function NewSessionDialog({
       api<ProfileDocument>("GET", `/api/v1/universes/${universeId}/profiles/${profileId}`),
     enabled: open && Boolean(profileId),
   });
-  const editorOptions = useSessionConfigEditorOptions(universeId, open && step === "setup");
+  const editorOptions = useSessionConfigEditorOptions(universeId, open && step === "setup", creationAccess.kind);
   const create = useMutation({
     mutationFn: () =>
       api<SessionView>("POST", `/api/v1/universes/${universeId}/sessions`, {
