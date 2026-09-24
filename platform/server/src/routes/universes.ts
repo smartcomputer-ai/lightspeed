@@ -372,25 +372,30 @@ export function universeRoutes(ctx: AppContext) {
     return c.json(directory.result.groups);
   }));
 
+  /// Every member may see who else is in the universe: names, roles and the
+  /// kind of member. Account links, emails and the private-content capability
+  /// are for Admins only.
   app.get("/:id/members", (c) => withGateway(c, async () => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access || access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
+    if (!access) return c.json({ error: "not found" }, 404);
     const directory = await deploymentClientFor(ctx).call("deployment/identity/directory", {
       scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
     });
     const accounts = await ctx.db.select().from(user);
     // The universe's execution identity holds the system `executor` role. It
-    // is listed so admins see what every default session runs as, but it is
+    // is listed so members see what every default session runs as, but it is
     // `system`: identity administration never changes it.
     const roles = directory.result.roles;
     return c.json(roles.map((r) => {
       const account = r.subject.kind === "principal" ? accounts.find((u) => u.corePrincipalId === r.subject.id) : undefined;
       const subject = r.subject.kind === "principal" ? directory.result.principals.find((p) => p.id === r.subject.id) : directory.result.groups.find((g) => g.id === r.subject.id);
-      return { id: `${r.subject.kind}:${r.subject.id}:${r.role}`, userId: account?.id ?? r.subject.id,
+      const row = { id: `${r.subject.kind}:${r.subject.id}:${r.role}`,
         subject: r.subject,
         principalKind: r.subject.kind === "principal" ? directory.result.principals.find((p) => p.id === r.subject.id)?.kind : undefined,
+        role: r.role, system: r.role === "executor", name: account?.name ?? subject?.displayName ?? r.subject.id };
+      if (access.role !== "admin") return row;
+      return { ...row, userId: account?.id ?? r.subject.id,
         readPrivateContent: r.subject.kind === "principal" && directory.result.capabilities.some((capability) => capability.principalId === r.subject.id && capability.capability === "read_private_content"),
-        role: r.role, system: r.role === "executor", name: account?.name ?? subject?.displayName ?? r.subject.id,
         email: account?.email ?? (r.subject.kind === "group" ? "Group" : r.role === "executor" ? "Agent identity" : "Core principal"), createdAt: account?.createdAt ?? null };
     }));
   }));

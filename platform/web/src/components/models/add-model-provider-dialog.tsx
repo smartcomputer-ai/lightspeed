@@ -12,21 +12,20 @@ import {
 } from "@/components/ui/dialog";
 import { subscriptionBinding } from "@/lib/subscriptions";
 import {
-  INTEGRATION_CATALOG,
-  integrationDefinition,
-  type IntegrationKind,
+  MODEL_PROVIDER_CATALOG,
+  modelProviderDefinition,
+  type ModelProviderKind,
 } from "./catalog";
-import { GitHubAppForm } from "./github-app";
 import {
   ModelApiKeyForm,
   OpenAiCompatibleForm,
   ProviderModelList,
 } from "./model-api-key";
 import { SubscriptionForm } from "./subscription";
-import type { ConnectedIntegration } from "./use-integrations";
+import type { ConnectedModelProvider } from "./use-model-providers";
 
-/// Two-step dialog: pick an integration from the catalog, then configure it.
-export function AddIntegrationDialog({
+/// Two-step dialog: pick a model provider from the catalog, then configure it.
+export function AddModelProviderDialog({
   universeId,
   open,
   connected,
@@ -36,23 +35,22 @@ export function AddIntegrationDialog({
 }: {
   universeId: string;
   open: boolean;
-  connected: ConnectedIntegration[];
+  connected: ConnectedModelProvider[];
   /// Pre-select a catalog entry (deep links such as `?add=openAiApiKey`).
-  initialKind?: IntegrationKind | null;
+  initialKind?: ModelProviderKind | null;
   onOpenChange: (open: boolean) => void;
   onAdded: () => void;
 }) {
-  const [selected, setSelected] = useState<IntegrationKind | null>(initialKind);
+  const [selected, setSelected] = useState<ModelProviderKind | null>(initialKind);
   useEffect(() => {
     if (open && initialKind) setSelected(initialKind);
   }, [open, initialKind]);
   const [done, setDone] = useState<
     | { type: "subscription"; result: SubscriptionImportResult }
-    | { type: "github" }
     | { type: "modelKey"; provider: SecretProvider }
     | null
   >(null);
-  const alreadyConnected = (kind: IntegrationKind) =>
+  const alreadyConnected = (kind: ModelProviderKind) =>
     connected.some((c) => c.kind === kind);
 
   const close = () => {
@@ -60,7 +58,7 @@ export function AddIntegrationDialog({
     setSelected(null);
     setDone(null);
   };
-  const definition = selected ? integrationDefinition(selected) : null;
+  const definition = selected ? modelProviderDefinition(selected) : null;
 
   return (
     <Dialog
@@ -88,12 +86,12 @@ export function AddIntegrationDialog({
                 <definition.Logo size={18} /> {definition.name}
               </>
             ) : (
-              "Add integration"
+              "Add model provider"
             )}
           </DialogTitle>
           {!definition && (
             <DialogDescription>
-              Connect a third-party service to this universe. Credentials are
+              Connect a model provider to this universe. Keys and logins are
               encrypted by Lightspeed and never returned.
             </DialogDescription>
           )}
@@ -101,7 +99,7 @@ export function AddIntegrationDialog({
 
         {!definition && (
           <div className="grid gap-2 sm:grid-cols-2">
-            {INTEGRATION_CATALOG.map((entry) => {
+            {MODEL_PROVIDER_CATALOG.map((entry) => {
               const existing = !entry.multiple && alreadyConnected(entry.kind);
               return (
                 <button
@@ -134,12 +132,7 @@ export function AddIntegrationDialog({
 
         {definition && done && (
           <div className="grid gap-3 text-sm">
-            {done.type === "github" ? (
-              <p>
-                GitHub App added. Open it from the list to grant installations
-                once the App is installed on your GitHub accounts.
-              </p>
-            ) : done.type === "modelKey" ? (
+            {done.type === "modelKey" ? (
               <>
                 <p>
                   Provider saved. Sessions using{" "}
@@ -168,7 +161,7 @@ export function AddIntegrationDialog({
                     {subscriptionBinding(done.result.grant)?.envName}
                   </span>
                   {done.result.shape === "codexTokenSet"
-                    ? "; the value is Codex auth.json content — the bootstrap line is shown in the integration's details."
+                    ? "; the value is Codex auth.json content — the bootstrap line is shown in the provider's details."
                     : "."}
                 </p>
               </>
@@ -193,16 +186,6 @@ export function AddIntegrationDialog({
               onCancel={() => setSelected(null)}
             />
           )}
-        {definition && !done && selected === "githubApp" && (
-          <GitHubAppForm
-            universeId={universeId}
-            onCreated={() => {
-              onAdded();
-              setDone({ type: "github" });
-            }}
-            onCancel={() => setSelected(null)}
-          />
-        )}
         {definition && !done && selected === "openAiCompatible" && (
           <OpenAiCompatibleForm
             universeId={universeId}

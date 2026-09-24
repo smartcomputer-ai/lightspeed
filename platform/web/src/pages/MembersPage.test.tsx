@@ -139,3 +139,24 @@ it("shows the agent identity read-only", async () => {
   expect(row.querySelector("button")).toBeNull();
   expect(container.querySelector('[aria-label="Edit role for Alice"]')).not.toBeNull();
 });
+
+it("shows other members names, kinds and roles without emails or controls", async () => {
+  const implementation = mocks.api.getMockImplementation()!;
+  mocks.api.mockImplementation(async (method, path, body) => path.endsWith("/members") ? [
+    // A stray admin-only field never reaches a reader's screen.
+    { id: "principal:alice:contributor", subject: { kind: "principal", id: "alice" }, principalKind: "user", name: "Alice", role: "contributor", readPrivateContent: true, email: "alice@example.test" },
+    { id: "group:team:viewer", subject: { kind: "group", id: "team" }, name: "Team", role: "viewer" },
+    { id: "principal:svc:operator", subject: { kind: "principal", id: "svc" }, principalKind: "service", name: "Configurator", role: "operator" },
+    { id: "principal:agent:executor", subject: { kind: "principal", id: "agent" }, principalKind: "service", name: "Default agent identity", role: "executor", system: true },
+  ] : implementation(method, path, body));
+  await show(<MembersPage admin={false} />);
+  expect([...container.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["Name", "Kind", "Role"]);
+  const rows = [...container.querySelectorAll("tbody tr")].map((tr) => [...tr.querySelectorAll("td")].map((td) => td.textContent));
+  expect(rows.map(([name, kind]) => [name, kind])).toEqual([
+    ["Alice", "Person"], ["Team", "Group"], ["Configurator", "Service"], ["Default agent identity", "Agent identity"],
+  ]);
+  expect(container.textContent).not.toContain("alice@example.test");
+  expect(container.textContent).not.toContain("Private-content access");
+  expect(container.querySelector("tbody a")).toBeNull();
+  expect(container.querySelector("button")).toBeNull();
+});

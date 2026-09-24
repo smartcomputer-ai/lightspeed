@@ -43,9 +43,11 @@ class SetupUnavailable extends Error {}
 export function setupRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
+  /// Operators see what templates exist; installing one stays with Admins
+  /// because it creates a service identity with the Operator role.
   app.get("/:id/setups", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access || access.role !== "admin") {
+    if (!access || (access.role !== "admin" && access.role !== "operator")) {
       return c.json({ error: "not found" }, 404);
     }
     const installation = await findInstallation(ctx, access.universe.id);
@@ -54,8 +56,11 @@ export function setupRoutes(ctx: AppContext) {
 
   app.post("/:id/setups/configurator/install", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access || access.role !== "admin") {
+    if (!access) {
       return c.json({ error: "not found" }, 404);
+    }
+    if (access.role !== "admin") {
+      return c.json({ error: "universe admin required" }, 403);
     }
     const session = c.get("session");
     try {

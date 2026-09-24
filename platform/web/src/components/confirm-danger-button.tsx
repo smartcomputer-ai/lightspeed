@@ -12,7 +12,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 
-/// Destructive action with a confirmation step, shared by integration details.
+/// Destructive action with a confirmation step, shared by model provider and
+/// GitHub App details.
 export function ConfirmDangerButton({
   label,
   title,

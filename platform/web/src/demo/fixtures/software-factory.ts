@@ -209,7 +209,7 @@ function linear(name: string, args: Record<string, unknown>, detail: string, out
   return tool(`linear.${name}`, `linear.${name}`, args, mcpDisplay(`linear.${name}`, args, detail), output, isError);
 }
 
-const LINEAR_401 = "request failed: 401 Unauthorized — the Linear MCP server rejected the workspace token (rotated 2026-08-24). Reconnect the `linear` server on the Integrations page.";
+const LINEAR_401 = "request failed: 401 Unauthorized — the Linear MCP server rejected the workspace token (rotated 2026-08-24). Reconnect the `linear` server on the MCP servers page.";
 
 function closeAt(session: SessionRecord, atMs: number): void {
   closeSession(session, true, atMs);
@@ -1032,7 +1032,7 @@ Humans merge. Nothing in the pipeline pushes to main.
 - A \`run_failed\` on pr-reviewer is usually a provider error; replay the event from
   the Activity tab once the provider recovers.
 - Linear returning 401 stops intake commenting but not the pipeline; the open
-  question lands in the spec instead. Reconnect Linear on the Integrations page.
+  question lands in the spec instead. Reconnect Linear on the MCP servers page.
 `;
 
 const SPECS_README = `# specs
@@ -2274,7 +2274,7 @@ function seedIntake(store: DemoStore, universe: UniverseState): void {
     steps: [
       {
         tools: [linear("list_issues", { filter: { labels: ["ready-for-build"], state: "Todo" } }, "ready-for-build, Todo", LINEAR_401, true)],
-        text: "No digest this week: Linear refused the workspace token with 401 — the key was rotated. Until someone reconnects the `linear` server on the Integrations page I can still write specs from the webhook payload, but I cannot list or comment on issues. Told Marco.",
+        text: "No digest this week: Linear refused the workspace token with 401 — the key was rotated. Until someone reconnects the `linear` server on the MCP servers page I can still write specs from the webhook payload, but I cannot list or comment on issues. Told Marco.",
       },
     ],
   }).id;
@@ -2324,7 +2324,7 @@ function seedIntake(store: DemoStore, universe: UniverseState): void {
         text: [
           `Spec written to \`${SPEC_PATH}\` and handed to planner (their #${SEQ.plannerSpec}). It builds on what is in the repo: the #472 limiter refills on every request, which is exactly the bug that got #482 reverted, so the spec pins refill to whole elapsed intervals and names the \`TakeResult\` type the tasks will share.`,
           "",
-          "One open question I could not ask: whether the limit covers `/api` only or every authenticated route (Stripe retries on `/webhooks/billing` would trip a global one). Linear returned 401 on the comment — the workspace key was rotated on Monday — so the question and the assumption I am proceeding on (`/api` only) are in the spec under *Open questions*. Reconnecting the `linear` server on the Integrations page fixes that for next time.",
+          "One open question I could not ask: whether the limit covers `/api` only or every authenticated route (Stripe retries on `/webhooks/billing` would trip a global one). Linear returned 401 on the comment — the workspace key was rotated on Monday — so the question and the assumption I am proceeding on (`/api` only) are in the spec under *Open questions*. Reconnecting the `linear` server on the MCP servers page fixes that for next time.",
         ].join("\n"),
       },
     ],
@@ -4375,7 +4375,7 @@ function statusReply(turn: number): DemoTurn {
   }
   if (turn === 2) {
     return {
-      text: `Two things would move it: replay pr-reviewer's #${SEQ.reviewerPr493} from its Activity tab now that the provider is back, and reconnect the Linear server on the Integrations page so intake can post the open question. Everything else is a merge button.`,
+      text: `Two things would move it: replay pr-reviewer's #${SEQ.reviewerPr493} from its Activity tab now that the provider is back, and reconnect the Linear server on the MCP servers page so intake can post the open question. Everything else is a merge button.`,
     };
   }
   return { text: "Status unchanged since the last summary. Ask for a specific bot or thread and I'll go into its events." };

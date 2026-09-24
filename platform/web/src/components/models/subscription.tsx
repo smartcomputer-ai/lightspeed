@@ -18,7 +18,7 @@ import {
   subscriptionBinding,
   type SubscriptionProvider,
 } from "@/lib/subscriptions";
-import { ConfirmDangerButton } from "./confirm-danger-button";
+import { ConfirmDangerButton } from "@/components/confirm-danger-button";
 
 const COPY: Record<
   SubscriptionProvider,
@@ -45,12 +45,12 @@ const COPY: Record<
     placeholder: '{ "auth_mode": "chatgpt", "tokens": { … } }  —  or a Codex access token',
     rows: 6,
     namePlaceholder: "Lukas · ChatGPT Pro",
-    apiKeyNote: "Plus/Pro/Team token sets need the auth.json bootstrap line (shown in the integration's details) in the environment.",
+    apiKeyNote: "Plus/Pro/Team token sets need the auth.json bootstrap line (shown in the subscription's details) in the environment.",
   },
 };
 
 /// Paste form for a Claude Code / Codex subscription credential. Rendered
-/// inside the Add-integration dialog.
+/// inside the Add-model-provider dialog.
 export function SubscriptionForm({
   universeId,
   provider,
@@ -94,8 +94,8 @@ export function SubscriptionForm({
     <form onSubmit={submit} className="grid gap-4">
       <p className="text-sm text-muted-foreground">
         {provider === "anthropic"
-          ? "This token is only injected into environments so the Claude Code agent can run there on your subscription. Lightspeed's own sessions keep using API keys from Secrets."
-          : "This credential is only injected into environments so the Codex agent can run there on your ChatGPT subscription. Lightspeed's own sessions keep using API keys from Secrets."}{" "}
+          ? "This token is only injected into environments so the Claude Code agent can run there on your subscription. Lightspeed's own sessions keep using model provider API keys."
+          : "This credential is only injected into environments so the Codex agent can run there on your ChatGPT subscription. Lightspeed's own sessions keep using model provider API keys."}{" "}
         It is sent once to Lightspeed, encrypted, and never returned by an API.
       </p>
       <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
@@ -185,8 +185,8 @@ export function SubscriptionDetails({
       </dl>
       <p className="text-sm text-muted-foreground">
         Used only inside environments (Environments → Assign credential; the variable name above is
-        suggested automatically). Lightspeed's own sessions do not use this credential — model API
-        keys live under Secrets.
+        suggested automatically). Lightspeed's own sessions do not use this credential; they use
+        model provider API keys.
       </p>
       {isCodexTokenSet(grant) && <CodexBootstrapNote />}
       {disconnect.error && <p className="text-sm text-destructive">{disconnect.error.message}</p>}

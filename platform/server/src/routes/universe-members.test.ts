@@ -37,7 +37,11 @@ function setup(role = "admin", failure = false) {
   const capability = (memberId: string, enabled: boolean) => app.request(`/platform-universe/members/${memberId}/private-content-access`, {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }),
   });
-  return { edit, changes, capability };
+  const add = () => app.request("/platform-universe/members", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ groupId: subjectId, role: "viewer" }),
+  });
+  const remove = (memberId: string) => app.request(`/platform-universe/members/${memberId}`, { method: "DELETE" });
+  return { edit, changes, capability, add, remove };
 }
 
 it.each(["principal", "group"])("replaces a %s grant in one attributed core operation", async (kind) => {
@@ -83,6 +87,13 @@ it.each([true, false])("changes private-content access through one attributed ca
     scope: { kind: "universe", universeId }, principalId: subjectId, capability: "read_private_content",
   } }]);
 });
+it.each(["viewer", "contributor", "operator"])("does not let a %s add or remove members", async (role) => {
+  const { add, remove, changes } = setup(role);
+  expect((await add()).status).toBe(403);
+  expect((await remove(`principal:${subjectId}:viewer`)).status).toBe(403);
+  expect(changes).toEqual([]);
+});
+
 it.each(["viewer", "contributor", "operator"])("does not let a %s assign private-content access", async (role) => {
   const { capability, changes } = setup(role);
   expect((await capability(`principal:${subjectId}:viewer`, true)).status).toBe(403);
@@ -97,10 +108,13 @@ it("refuses group capability targets and propagates core refusal", async () => {
   expect(denied.changes).toHaveLength(1);
 });
 
-it("lists the execution identity as a read-only system member", async () => {
-  const executor = "44444444-4444-4444-8444-444444444444";
+const executor = "44444444-4444-4444-8444-444444444444";
+const groupId = "55555555-5555-4555-8555-555555555555";
+const account = { id: "platform-alice", corePrincipalId: subjectId, name: "Alice", email: "alice@example.test", createdAt: "2026-01-01T00:00:00.000Z" };
+
+async function listMembers(role: string) {
   const scope = { kind: "universe", universeId };
-  const rights = { principal: { id: actorId }, roles: ["admin"] } as EffectiveAccess;
+  const rights = { principal: { id: actorId }, roles: [role] } as EffectiveAccess;
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
     const rpc = JSON.parse(String(init.body));
     if (rpc.method === "deployment/identity/self") return Response.json({ id: rpc.id, result: { result: { access: rights, universes: [] }, notifications: [] } });
@@ -110,16 +124,20 @@ it("lists the execution identity as a read-only system member", async () => {
         { id: subjectId, kind: "user", status: "active", displayName: "Alice", managementScope: { kind: "deployment" }, createdAtMs: 0 },
         { id: executor, kind: "service", status: "active", displayName: "Default agent identity", managementScope: scope, createdAtMs: 0 },
       ],
-      groups: [], memberships: [], capabilities: [], policyRevision: 1,
+      groups: [{ id: groupId, displayName: "Research", managementScope: { kind: "deployment" }, createdAtMs: 0 }],
+      memberships: [],
+      capabilities: [{ scope, principalId: subjectId, capability: "read_private_content" }],
+      policyRevision: 1,
       roles: [
         { scope, subject: { kind: "principal", id: subjectId }, role: "contributor" },
+        { scope, subject: { kind: "group", id: groupId }, role: "viewer" },
         { scope, subject: { kind: "principal", id: executor }, role: "executor" },
       ],
     }, notifications: [] } });
   }));
   const universe = { id: "platform-universe", lightspeedUniverseId: universeId, slug: "test", gatewayUrl: null };
   // `select().from(universes).where().limit()` and `await select().from(user)`.
-  const from = () => Object.assign(Promise.resolve([]), { where: () => ({ limit: async () => [universe] }) });
+  const from = () => Object.assign(Promise.resolve([account]), { where: () => ({ limit: async () => [universe] }) });
   const ctx = { db: { select: () => ({ from }) }, env: { lightspeedApiUrl: "https://runtime.example/rpc", lightspeedApiKey: "lsk_fixture" } } as unknown as AppContext;
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => {
@@ -129,10 +147,26 @@ it("lists the execution identity as a read-only system member", async () => {
   app.route("/", universeRoutes(ctx));
   const response = await app.request("/platform-universe/members");
   expect(response.status).toBe(200);
-  const members = await response.json() as { subject: { id: string }; role: string; system: boolean; name: string; email: string }[];
-  expect(members.map((member) => [member.subject.id, member.role, member.system])).toEqual([
+  return await response.json() as Record<string, unknown>[];
+}
+
+it("lists members with emails and capabilities for an Admin, including the execution identity", async () => {
+  const members = await listMembers("admin");
+  expect(members.map((member) => [(member.subject as { id: string }).id, member.role, member.system])).toEqual([
     [subjectId, "contributor", false],
+    [groupId, "viewer", false],
     [executor, "executor", true],
   ]);
-  expect(members[1]).toMatchObject({ name: "Default agent identity", email: "Agent identity" });
+  expect(members[0]).toMatchObject({ name: "Alice", email: "alice@example.test", userId: "platform-alice", readPrivateContent: true, principalKind: "user" });
+  expect(members[1]).toMatchObject({ name: "Research", email: "Group" });
+  expect(members[2]).toMatchObject({ name: "Default agent identity", email: "Agent identity", principalKind: "service" });
+});
+
+it.each(["viewer", "contributor", "operator"])("lists names, roles and kinds without emails for a %s", async (role) => {
+  const members = await listMembers(role);
+  expect(members).toEqual([
+    { id: `principal:${subjectId}:contributor`, subject: { kind: "principal", id: subjectId }, principalKind: "user", role: "contributor", system: false, name: "Alice" },
+    { id: `group:${groupId}:viewer`, subject: { kind: "group", id: groupId }, role: "viewer", system: false, name: "Research" },
+    { id: `principal:${executor}:executor`, subject: { kind: "principal", id: executor }, principalKind: "service", role: "executor", system: true, name: "Default agent identity" },
+  ]);
 });

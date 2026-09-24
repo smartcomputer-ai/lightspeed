@@ -1952,7 +1952,7 @@ export function WebhookFields({
               autoComplete="off"
             />
             <FieldDescription>
-              Active retrievable credential from Secrets; the signing value is leased only during verification.
+              Active retrievable credential from Credentials; the signing value is leased only during verification.
             </FieldDescription>
           </Field>
           {!form.preset && (
@@ -2211,7 +2211,7 @@ export function PollFields({
               autoComplete="off"
             />
             <FieldDescription>
-              Active retrievable credential from Secrets. It is leased into worker memory only when the poll fires.
+              Active retrievable credential from Credentials. It is leased into worker memory only when the poll fires.
             </FieldDescription>
           </Field>
           {form.grantId.trim() && (

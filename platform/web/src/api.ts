@@ -113,6 +113,8 @@ export interface UniverseReconcile {
   orphans: EngineUniverse[];
 }
 
+/// One universe role assignment. Every member may list them; the account
+/// link, email and private-content capability are sent to Admins only.
 export interface Member {
   subject?: { kind: "principal" | "group"; id: string };
   principalKind?: "user" | "service";
@@ -120,11 +122,11 @@ export interface Member {
   /// A system-assigned member (the universe's agent identity): read-only.
   system?: boolean;
   id: string;
-  userId: string;
+  userId?: string;
   role: string;
-  email: string;
+  email?: string;
   name: string;
-  createdAt: string;
+  createdAt?: string | null;
 }
 
 export interface UniverseApiKey {

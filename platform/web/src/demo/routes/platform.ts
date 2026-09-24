@@ -120,20 +120,24 @@ export function platformRoutes(store: DemoStore): Hono {
 
   app.get("/universes/:id/groups", (c) => c.json(directoryFor(store).groups));
 
+  /// Every member may list members; emails, account links and the
+  /// private-content capability are for Admins only.
   app.get("/universes/:id/members", (c) => {
     const state = universeFor(store, c);
-    if (!state) return notFound(c);
+    if (!state || !state.universe.role) return notFound(c);
     const agent = executionPrincipal(state);
-    return c.json([
+    const rows: Member[] = [
       ...state.members.map((member) => ({ ...member,
-        subject: { kind: member.email === "Group" ? "group" : "principal", id: member.userId },
-        principalKind: member.email === "Group" ? undefined : "user",
+        subject: { kind: member.email === "Group" ? "group" as const : "principal" as const, id: member.userId ?? member.id },
+        principalKind: member.email === "Group" ? undefined : "user" as const,
       })),
       // The universe's agent identity: listed, never edited.
       { id: `principal:${agent}:executor`, userId: agent, name: DEFAULT_AGENT_IDENTITY, email: "Agent identity",
         role: "executor", system: true, createdAt: state.universe.createdAt,
         subject: { kind: "principal", id: agent }, principalKind: "service" },
-    ]);
+    ];
+    if (state.universe.role === "admin") return c.json(rows);
+    return c.json(rows.map(({ id, subject, principalKind, role, system, name }) => ({ id, subject, principalKind, role, system, name })));
   });
 
   app.post("/universes/:id/members", async (c) => {

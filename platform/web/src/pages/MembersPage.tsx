@@ -61,7 +61,7 @@ export function MembersPage({ admin: _admin }: { admin: boolean }) {
   if (permissions.error) {
     return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
   }
-  if (!universe || !permissions.can("manage_access")) {
+  if (!universe || !permissions.can("read")) {
     return <UniverseNotFound slug={slug} />;
   }
 
@@ -113,7 +113,7 @@ function MemberList({ universeId, slug, writable }: { universeId: string; slug: 
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
+                <TableHead>{writable ? "Email" : "Kind"}</TableHead>
                 <TableHead>Role</TableHead>
                 {writable && (
                   <TableHead className="w-0" />
@@ -124,17 +124,22 @@ function MemberList({ universeId, slug, writable }: { universeId: string; slug: 
               {members.data.map((member) => (
                 <TableRow key={member.id}>
                   <TableCell>{member.name}</TableCell>
-                  <TableCell>{member.email}</TableCell>
+                  <TableCell>{writable ? member.email : memberKind(member)}</TableCell>
                   {member.system ? (
                     <TableCell>
                       Executor
                       <span className="mt-1 block text-xs text-muted-foreground">
-                        Every session and bot that runs as the Default agent identity uses its access.{" "}
-                        <Link className="underline underline-offset-2" to={`/u/${slug}/settings/general`}>Execution settings</Link>
+                        Every session and bot that runs as the Default agent identity uses its access.
+                        {writable && (
+                          <>
+                            {" "}
+                            <Link className="underline underline-offset-2" to={`/u/${slug}/settings/general`}>Execution settings</Link>
+                          </>
+                        )}
                       </span>
                     </TableCell>
                   ) : (
-                    <TableCell>{member.role}{member.readPrivateContent && <span className="mt-1 block text-xs text-muted-foreground">Private-content access</span>}</TableCell>
+                    <TableCell>{member.role}{writable && member.readPrivateContent && <span className="mt-1 block text-xs text-muted-foreground">Private-content access</span>}</TableCell>
                   )}
                   {writable && member.system && <TableCell />}
                   {writable && !member.system && (
@@ -188,7 +193,6 @@ function MemberList({ universeId, slug, writable }: { universeId: string; slug: 
       {writable && (
         <AddMemberDialog
           universeId={universeId}
-          memberUserIds={(members.data ?? []).map((m) => m.userId)}
           open={createOpen}
           onOpenChange={setCreateOpen}
           onDone={invalidate}
@@ -205,6 +209,14 @@ function MemberList({ universeId, slug, writable }: { universeId: string; slug: 
       )}
     </>
   );
+}
+
+/// What a member is, for readers who do not see emails.
+function memberKind(member: Member): string {
+  if (member.system) return "Agent identity";
+  if (member.subject?.kind === "group") return "Group";
+  if (member.principalKind === "service") return "Service";
+  return "Person";
 }
 
 function EditMemberRoleDialog({ universeId, member, onClose, onDone }: {
@@ -265,7 +277,6 @@ function AddMemberDialog({
   onDone,
 }: {
   universeId: string;
-  memberUserIds: string[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDone: () => void;

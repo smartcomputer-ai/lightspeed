@@ -846,7 +846,7 @@ function ServerDialog({
                   value={credentialGrantId}
                   boundAvailable={boundGrantAvailable}
                   onChange={setCredentialGrantId}
-                  emptyCopy="Create a bearer credential on the Secrets page, then return here."
+                  emptyCopy="Create a bearer credential on the Credentials page, then return here."
                 />
               )}
 

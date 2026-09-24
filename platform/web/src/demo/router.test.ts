@@ -233,6 +233,43 @@ describe("demo router", () => {
     expect((await call("PATCH", path, { role: "deployment_admin" })).status).toBe(400);
   });
 
+  it("lists members to every member, with emails for Admins only", async () => {
+    const { store, call } = await boot();
+    const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const path = `/api/v1/universes/${state.universe.id}/members`;
+    const admin = (await call("GET", path)).json as Record<string, unknown>[];
+    expect(admin.every((member) => typeof member.email === "string")).toBe(true);
+    for (const role of ["viewer", "contributor", "operator"]) {
+      state.universe.role = role;
+      const response = await call("GET", path);
+      expect(response.status).toBe(200);
+      const members = response.json as Record<string, unknown>[];
+      expect(members.map((member) => member.name)).toEqual(admin.map((member) => member.name));
+      for (const member of members) {
+        expect(Object.keys(member).sort()).toEqual(
+          ["id", "name", "role", "subject", ...(member.system ? ["system"] : []), ...(member.principalKind ? ["principalKind"] : [])].sort(),
+        );
+      }
+    }
+    state.universe.role = null;
+    expect((await call("GET", path)).status).toBe(404);
+  });
+
+  it("shows templates to Operators and keeps installing with Admins", async () => {
+    const { store, call } = await boot();
+    const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const base = `/api/v1/universes/${state.universe.id}/setups`;
+    for (const role of ["viewer", "contributor"]) {
+      state.universe.role = role;
+      expect((await call("GET", base)).status, role).toBe(404);
+    }
+    state.universe.role = "operator";
+    expect((await call("GET", base)).json).toMatchObject([{ id: "configurator" }]);
+    expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
+    state.universe.role = "admin";
+    expect((await call("POST", `${base}/configurator/install`)).json).toMatchObject({ status: "installing" });
+  });
+
   it("updates a user's admin-managed account fields and accepts a password reset", async () => {
     const { store, call } = await boot();
     const target = [...store.users.values()].find((user) => user.id !== store.currentUser.id)!;

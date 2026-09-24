@@ -2,9 +2,9 @@ import { useActionPermissions } from "@/lib/permissions";
 import { Link } from "react-router-dom";
 import { KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { addIntegrationHref, useProviderReadiness } from "@/lib/provider-readiness";
+import { addModelProviderHref, useProviderReadiness } from "@/lib/provider-readiness";
 
-/// Nudges toward Integrations when no model provider has a usable credential.
+/// Nudges toward Models when no model provider has a usable credential.
 /// Renders nothing while loading or when at least one provider is ready.
 export function ProviderReadinessBanner({
   universeId,
@@ -30,7 +30,7 @@ export function ProviderReadinessBanner({
           ? "The configured model provider key was rejected. Sessions cannot run until a valid model provider API key is set."
           : "No model provider is configured for this universe. Sessions cannot run until a model provider API key is added."}
       </span>
-      {permissions.can("configure_resource") && <Button size="sm" nativeButton={false} render={<Link to={addIntegrationHref(slug, "openAiApiKey")} />}>
+      {permissions.can("configure_resource") && <Button size="sm" nativeButton={false} render={<Link to={addModelProviderHref(slug, "openAiApiKey")} />}>
         Add API key
       </Button>}
     </div>

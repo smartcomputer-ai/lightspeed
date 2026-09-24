@@ -17,7 +17,7 @@ it.each([
   "/u/team/sessions", "/u/team/sessions/", "/u/team/bots",
   "/u/team/profiles", "/u/team/workspaces",
   "/u/team/workspaces/workspace_1", "/u/team/workspaces/workspace_1/files/",
-  "/u/team/settings/environments", "/admin/users", "/account",
+  "/u/team/environments", "/u/team/settings/general", "/admin/users", "/account",
 ])("keeps navigation for list or top-level page %s", (path) => {
   expect(isMobileDetailRoute(path)).toBe(false);
 });

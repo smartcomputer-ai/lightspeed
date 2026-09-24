@@ -183,9 +183,22 @@ restricted visibility, and restricted ones carry the lock marker. Session, bot
 and profile setup pickers disable attachments the chosen execution identity may
 not use (`access/read` with `as: "execution_service"` for the default identity)
 and keep such saved choices visible with the reason. The Configurator template
-registers its MCP server restricted to the installing Admin. Members lists never
-show the execution identity, which holds the system `executor` role and never
-gets a key.
+registers its MCP server restricted to the installing Admin; Operators see the
+template, and only Admins install it. Every member can read the Members list:
+names, roles and the kind of member, including the execution identity, which
+holds the system `executor` role and never gets a key. Emails, account links and
+the private-content capability are shown to Admins only.
+
+The universe sidebar groups the work (Bots, Sessions, Profiles), **Resources**
+agents use (Models, Workspaces, Environments, MCP servers), **Access** (Members,
+API keys, Credentials) and the universe's **Settings** (General, Channels,
+Templates) at flat `/u/:slug/...` routes; bare `/u/:slug/settings` opens the
+first settings page the caller may see. Models holds model provider keys,
+compatible endpoints and coding-agent subscriptions. Credentials lists reusable
+tokens, environment secrets, GitHub App installations and custom OAuth grants;
+model and MCP server logins stay on their own pages, while credential pickers
+still offer every grant. Credentials, Channels and Templates are for Operators
+and Admins; General is for Admins.
 Content reads name the session or resolve a file through its workspace path.
 Member role editing has a separate private-content capability control for people.
 Successful reads that use it carry a runtime response marker through Platform;

@@ -9,22 +9,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { integrationDefinition } from "./catalog";
-import type { ConnectedIntegration, IntegrationStatus } from "./use-integrations";
+import { modelProviderDefinition } from "./catalog";
+import type { ConnectedModelProvider, ModelProviderStatus } from "./use-model-providers";
 
-/// Connected integrations; a row opens the details dialog.
-export function IntegrationList({
-  integrations,
+/// Connected model providers; a row opens the details dialog.
+export function ModelProviderList({
+  providers,
   onSelect,
 }: {
-  integrations: ConnectedIntegration[];
-  onSelect: (integration: ConnectedIntegration) => void;
+  providers: ConnectedModelProvider[];
+  onSelect: (provider: ConnectedModelProvider) => void;
 }) {
-  if (integrations.length === 0) {
+  if (providers.length === 0) {
     return (
       <p className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">
-        No integrations yet. Use <span className="font-medium">Add integration</span> to connect a
-        GitHub App or a coding-agent subscription.
+        No model providers yet. Use <span className="font-medium">Add provider</span> to connect an
+        API key, a compatible endpoint, or a coding-agent subscription.
       </p>
     );
   }
@@ -33,35 +33,39 @@ export function IntegrationList({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Integration</TableHead>
+            <TableHead>Provider</TableHead>
             <TableHead>Type</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Updated</TableHead>
             <TableHead className="w-0" />
           </TableRow>
         </TableHeader>
         <TableBody>
-          {integrations.map((integration) => {
-            const definition = integrationDefinition(integration.kind);
+          {providers.map((provider) => {
+            const { Logo } = modelProviderDefinition(provider.kind);
             return (
               <TableRow
-                key={integration.id}
+                key={provider.id}
                 className="cursor-pointer"
-                onClick={() => onSelect(integration)}
+                onClick={() => onSelect(provider)}
               >
                 <TableCell>
                   <div className="flex items-center gap-3">
                     <span className="shrink-0 text-foreground">
-                      <definition.Logo size={20} />
+                      <Logo size={20} />
                     </span>
                     <div className="grid gap-0.5">
-                      <span className="font-medium">{integration.title}</span>
-                      <span className="text-xs text-muted-foreground">{integration.subtitle}</span>
+                      <span className="font-medium">{provider.title}</span>
+                      <span className="text-xs text-muted-foreground">{provider.subtitle}</span>
                     </div>
                   </div>
                 </TableCell>
-                <TableCell className="text-muted-foreground">{definition.name}</TableCell>
+                <TableCell className="text-muted-foreground">{provider.type}</TableCell>
                 <TableCell>
-                  <StatusBadge status={integration.status} />
+                  <StatusBadge status={provider.status} />
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {formatTimestamp(provider.updatedAtMs)}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   <ChevronRight className="size-4" />
@@ -75,7 +79,7 @@ export function IntegrationList({
   );
 }
 
-function StatusBadge({ status }: { status: IntegrationStatus }) {
+function StatusBadge({ status }: { status: ModelProviderStatus }) {
   if (status === "active") return <Badge variant="secondary">active</Badge>;
   if (status === "disabled") return <Badge variant="outline">disabled</Badge>;
   return (
@@ -83,4 +87,12 @@ function StatusBadge({ status }: { status: IntegrationStatus }) {
       needs attention
     </Badge>
   );
+}
+
+function formatTimestamp(timestampMs: number): string {
+  if (!timestampMs) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(timestampMs));
 }

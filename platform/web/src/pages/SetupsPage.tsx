@@ -19,14 +19,15 @@ export function SetupsPage({ admin: _admin }: { admin: boolean }) {
   if (permissions.error) {
     return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
   }
-  if (!universe || !permissions.can("manage_access")) {
+  if (!universe || !permissions.can("configure_resource")) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <SetupList universeId={universe.id} />;
+  return <SetupList universeId={universe.id} installable={permissions.can("manage_access")} />;
 }
 
-function SetupList({ universeId }: { universeId: string }) {
+/// Operators see the templates; installing one takes an Admin.
+function SetupList({ universeId, installable }: { universeId: string; installable: boolean }) {
   const queryClient = useQueryClient();
   const setups = useQuery({
     queryKey: ["setups", universeId],
@@ -58,6 +59,7 @@ function SetupList({ universeId }: { universeId: string }) {
           <SetupCard
             key={setup.id}
             setup={setup}
+            installable={installable}
             pending={install.isPending && install.variables === setup.id}
             onInstall={() => install.mutate(setup.id)}
           />
@@ -69,10 +71,12 @@ function SetupList({ universeId }: { universeId: string }) {
 
 function SetupCard({
   setup,
+  installable,
   pending,
   onInstall,
 }: {
   setup: UniverseSetup;
+  installable: boolean;
   pending: boolean;
   onInstall: () => void;
 }) {
@@ -102,7 +106,7 @@ function SetupCard({
         <CardTitle>{setup.name}</CardTitle>
         <CardDescription>{setup.description}</CardDescription>
       </CardHeader>
-      <CardContent className="flex-1">
+      <CardContent className="grid flex-1 content-start gap-3">
         {ready && setup.resources?.profileId && (
           <div className="rounded-lg bg-muted p-3 text-sm">
             <div className="flex items-center gap-2 font-medium">
@@ -124,6 +128,11 @@ function SetupCard({
             The deployment has not configured a Configurator MCP URL.
           </p>
         )}
+        {!installable && !unavailable && (
+          <p className="text-sm text-muted-foreground">
+            Needs a universe Admin: it creates a service identity with the Operator role.
+          </p>
+        )}
       </CardContent>
       <CardFooter className="justify-between gap-3">
         <span className="text-xs text-muted-foreground">
@@ -132,7 +141,7 @@ function SetupCard({
         </span>
         <Button
           onClick={onInstall}
-          disabled={installing || unavailable}
+          disabled={installing || unavailable || !installable}
           variant={ready && !upgradeAvailable ? "outline" : "default"}
         >
           {installing ? (

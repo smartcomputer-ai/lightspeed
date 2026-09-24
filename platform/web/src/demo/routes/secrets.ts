@@ -291,7 +291,7 @@ function modelDiscovery(universe: UniverseState): ModelListResponse {
     known.add(provider.providerId);
     return { ...provider, ...credentialStatus(universe, provider) };
   });
-  // Providers added through Integrations that the fixture never listed
+  // Providers added on Models that the fixture never listed
   // show up configured, with nothing discovered from them yet.
   for (const secret of universe.secrets.providers) {
     if (known.has(secret.providerId) || !secret.usableForModels || secret.status !== "active") continue;
@@ -707,9 +707,11 @@ export function secretRoutes(store: DemoStore): Hono {
     return c.json(modelDiscovery(universe));
   });
 
+  /// Operators see the templates; installing stays with Admins.
   app.get("/:id/setups", (c) => {
     const universe = universeFor(store, c);
-    if (!universe) return notFound(c);
+    const role = universe?.universe.role;
+    if (!universe || (role !== "admin" && role !== "operator")) return notFound(c);
     configuratorSetup(universe);
     return c.json(universe.setups);
   });
@@ -718,6 +720,7 @@ export function secretRoutes(store: DemoStore): Hono {
   app.post("/:id/setups/configurator/install", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
+    if (universe.universe.role !== "admin") return c.json({ error: "universe admin required" }, 403);
     const setup = configuratorSetup(universe);
     if (!setup.available) return c.json({ error: "Configurator MCP URL is not configured" }, 501);
     if (setup.status === "installing") {

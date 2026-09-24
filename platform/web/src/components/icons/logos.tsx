@@ -1,9 +1,9 @@
 import type { SVGProps } from "react";
 
-/// Small brand marks for integration cards, inlined as `currentColor` paths:
+/// Small brand marks for provider cards, inlined as `currentColor` paths:
 /// GitHub (Octicon, MIT), OpenAI (lobehub/lobe-icons, MIT), Anthropic
 /// (simple-icons, CC0). Marks are trademarks of their owners and are used
-/// only to identify the respective integration.
+/// only to identify the respective service.
 
 type LogoProps = SVGProps<SVGSVGElement> & { size?: number };
 
@@ -16,7 +16,7 @@ export function GitHubLogo({ size = 20, ...props }: LogoProps) {
 }
 
 /// OpenAI mark (path from lobehub/lobe-icons, MIT). Trademark of OpenAI;
-/// used referentially to identify the integration.
+/// used referentially to identify the service.
 export function OpenAiLogo({ size = 20, ...props }: LogoProps) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" fillRule="evenodd" aria-hidden {...props}>
@@ -26,7 +26,7 @@ export function OpenAiLogo({ size = 20, ...props }: LogoProps) {
 }
 
 /// Anthropic mark (path from simple-icons, CC0). Trademark of Anthropic;
-/// used referentially to identify the integration.
+/// used referentially to identify the service.
 export function AnthropicLogo({ size = 20, ...props }: LogoProps) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden {...props}>

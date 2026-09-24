@@ -4373,13 +4373,23 @@ impl AgentApiService for GatewayAgentApi {
             .delete_server(&server_id)
             .await
             .map_err(map_mcp_error)?;
-        // The server's OAuth client is authorized through the server, so it
-        // would be unreachable for everyone once the server is gone.
+        // The server's OAuth client and the login made through it belong to
+        // the server: both would be unreachable for everyone once it is gone.
+        // A pasted token it used is shared by nature and stays.
         if let Ok(client_id) = parse_oauth_client_id(format!("mcp:{}", server.server_id))
             && let Ok(client) = self.store.delete_oauth_client(&client_id).await
             && let Some(secret_id) = &client.client_secret
         {
             let _ = self.store.delete_secret(secret_id).await;
+        }
+        if let Some(grant_id) = &server.auth_grant_id
+            && let Ok(grant) = self.store.read_grant(grant_id).await
+            && grant.provider_kind == auth::AuthProviderKind::McpOAuth
+        {
+            let _ = self
+                .store
+                .update_grant_status(grant_id, auth::AuthGrantStatus::Revoked, now_ms()?)
+                .await;
         }
         Ok(AgentApiOutcome::new(McpServerDeleteResponse {
             server: mcp_server_view(server, access),

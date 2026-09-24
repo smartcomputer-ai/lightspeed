@@ -1,4 +1,4 @@
-import { PermissionIdentityProvider, useActionPermissions } from "@/lib/permissions";
+import { PermissionIdentityProvider } from "@/lib/permissions";
 import { AdminGroupsPage } from "@/pages/AdminGroupsPage";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
@@ -6,6 +6,7 @@ import type { SessionUser } from "./auth.js";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { authClient, isPlatformAdmin } from "./auth.js";
 import { AppShell } from "@/components/app-shell";
+import { SettingsIndexRedirect } from "@/components/universe-nav";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
 import { AccountPage } from "@/pages/AccountPage";
 import { ApiKeysPage } from "@/pages/ApiKeysPage";
@@ -15,15 +16,15 @@ import { AdminChannelsPage } from "@/pages/AdminChannelsPage";
 import { AdminEnvironmentProvidersPage } from "@/pages/AdminEnvironmentProvidersPage";
 import { BotsPage } from "@/pages/BotsPage";
 import { ChannelsPage } from "@/pages/ChannelsPage";
+import { CredentialsPage } from "@/pages/CredentialsPage";
 import { EnvironmentsPage } from "@/pages/EnvironmentsPage";
 import { GeneralSettingsPage } from "@/pages/GeneralSettingsPage";
 import { HomeRedirect } from "@/pages/HomeRedirect";
 import { LoginPage } from "@/pages/LoginPage";
 import { McpServersPage } from "@/pages/McpServersPage";
 import { MembersPage } from "@/pages/MembersPage";
+import { ModelsPage } from "@/pages/ModelsPage";
 import { ProfilesPage } from "@/pages/ProfilesPage";
-import { IntegrationsPage } from "@/pages/IntegrationsPage";
-import { SecretsPage } from "@/pages/SecretsPage";
 import { SessionsPage } from "@/pages/SessionsPage";
 import { SetupsPage } from "@/pages/SetupsPage";
 import { WorkspacesPage } from "@/pages/WorkspacesPage";
@@ -35,26 +36,6 @@ function UniverseIndexRedirect() {
     return null;
   }
   return <Navigate to={universeHome(slug ?? "")} replace />;
-}
-
-/// Bare /settings → General for people who can manage the universe, else
-/// the first section members can see.
-function SettingsIndexRedirect({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug } = useActiveUniverse();
-  const permissions = useActionPermissions(universe?.id);
-  if (!universe || permissions.isLoading) {
-    return null;
-  }
-  return (
-    <Navigate
-      to={
-        permissions.can("manage_access")
-          ? `/u/${slug}/settings/general`
-          : `/u/${slug}/settings/integrations`
-      }
-      replace
-    />
-  );
 }
 
 export function App() {
@@ -114,10 +95,6 @@ export function App() {
           element={<WorkspacesPage admin={admin} />}
         />
         <Route path="u/:slug/bots" element={<BotsPage admin={admin} />} />
-        <Route
-          path="u/:slug/channels"
-          element={<Navigate to="../settings/channels" replace relative="path" />}
-        />
         <Route path="u/:slug/bots/:botId" element={<BotsPage admin={admin} view="chat" />} />
         <Route
           path="u/:slug/bots/:botId/chat/:sessionId"
@@ -129,49 +106,27 @@ export function App() {
         />
         <Route path="u/:slug/profiles" element={<ProfilesPage admin={admin} />} />
         <Route
-          path="u/:slug/environments"
-          element={<Navigate to="../settings/environments" replace relative="path" />}
-        />
-        <Route
           path="u/:slug/profiles/:profileId"
           element={<ProfilesPage admin={admin} />}
         />
-        <Route path="u/:slug/settings" element={<SettingsIndexRedirect admin={admin} />} />
+        <Route path="u/:slug/models" element={<ModelsPage admin={admin} />} />
+        <Route path="u/:slug/environments" element={<EnvironmentsPage admin={admin} />} />
+        <Route path="u/:slug/mcp-servers" element={<McpServersPage admin={admin} />} />
+        <Route path="u/:slug/members" element={<MembersPage admin={admin} />} />
+        <Route path="u/:slug/api-keys" element={<ApiKeysPage admin={admin} />} />
+        <Route path="u/:slug/credentials" element={<CredentialsPage admin={admin} />} />
+        <Route path="u/:slug/settings" element={<SettingsIndexRedirect />} />
         <Route
           path="u/:slug/settings/general"
           element={<GeneralSettingsPage admin={admin} />}
-        />
-        <Route
-          path="u/:slug/settings/setups"
-          element={<SetupsPage admin={admin} />}
-        />
-        <Route
-          path="u/:slug/settings/environments"
-          element={<EnvironmentsPage admin={admin} />}
-        />
-        <Route
-          path="u/:slug/settings/mcp-servers"
-          element={<McpServersPage admin={admin} />}
         />
         <Route
           path="u/:slug/settings/channels"
           element={<ChannelsPage admin={admin} />}
         />
         <Route
-          path="u/:slug/settings/integrations"
-          element={<IntegrationsPage admin={admin} />}
-        />
-        <Route
-          path="u/:slug/settings/secrets"
-          element={<SecretsPage admin={admin} />}
-        />
-        <Route
-          path="u/:slug/settings/api-keys"
-          element={<ApiKeysPage admin={admin} />}
-        />
-        <Route
-          path="u/:slug/settings/members"
-          element={<MembersPage admin={admin} />}
+          path="u/:slug/settings/templates"
+          element={<SetupsPage admin={admin} />}
         />
         {admin && (
           <>

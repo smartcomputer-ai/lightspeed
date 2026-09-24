@@ -7,6 +7,7 @@ import {
   type ModelEndpointConfig,
   type ModelListResponse,
   type ModelOption,
+  type SecretGrant,
   type SecretProvider,
 } from "@/api";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +24,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { IdText } from "@/components/ui/table";
-import { ConfirmDangerButton } from "./confirm-danger-button";
+import { ConfirmDangerButton } from "@/components/confirm-danger-button";
+import { providerEndpoint } from "./use-model-providers";
 
 export type ModelKeyProvider = "openai" | "anthropic";
 
@@ -75,7 +77,7 @@ function compatibleProviderPreset(id: string) {
 }
 
 /// Add or replace the API key Lightspeed sessions use for a model provider
-/// (`model:<provider>` row). Rendered in the Add-integration dialog and in
+/// (`model:<provider>` row). Rendered in the Add-model-provider dialog and in
 /// the details dialog (replace mode).
 export function ModelApiKeyForm({
   universeId,
@@ -253,6 +255,7 @@ export function ModelApiKeyDetails({
   });
   const providerKey: ModelKeyProvider =
     provider.providerId === "openai" ? "openai" : "anthropic";
+  const endpoint = providerEndpoint(provider);
 
   if (writable && replacing) {
     return (
@@ -281,25 +284,7 @@ export function ModelApiKeyDetails({
         </dd>
         <dt className="text-muted-foreground">Status</dt>
         <dd>
-          {provider.status === "active" &&
-          provider.hasCredential &&
-          provider.usableForModels ? (
-            <Badge variant="secondary">active</Badge>
-          ) : !provider.usableForModels ? (
-            <Badge
-              variant="outline"
-              className="border-destructive/50 text-destructive"
-            >
-              legacy id — replace
-            </Badge>
-          ) : (
-            <Badge
-              variant="outline"
-              className="border-destructive/50 text-destructive"
-            >
-              needs key
-            </Badge>
-          )}
+          <ProviderStatusBadge provider={provider} />
         </dd>
       </dl>
       <p className="text-sm text-muted-foreground">
@@ -308,11 +293,9 @@ export function ModelApiKeyDetails({
           model.providerId = {provider.providerId}
         </span>
         . Not injected into environments; coding-agent subscriptions are
-        separate integrations.
+        added separately.
       </p>
-      {provider.config.type !== "githubApp" && provider.config.endpoint && (
-        <EndpointSummary endpoint={provider.config.endpoint} />
-      )}
+      {endpoint && <EndpointSummary endpoint={endpoint} />}
       <ProviderModelList
         universeId={universeId}
         providerId={provider.providerId}
@@ -569,14 +552,18 @@ export function OpenAiCompatibleForm({
   );
 }
 
+/// Details for an OpenAI-compatible provider, and for any other model
+/// provider row: status, endpoint, authentication, edit, remove.
 export function OpenAiCompatibleDetails({
   universeId,
   provider,
+  oauthGrant,
   onChanged,
   onRemoved,
 }: {
   universeId: string;
   provider: SecretProvider;
+  oauthGrant?: SecretGrant;
   onChanged: () => void;
   onRemoved: () => void;
 }) {
@@ -590,7 +577,8 @@ export function OpenAiCompatibleDetails({
       ),
     onSuccess: onRemoved,
   });
-  if (writable && editing)
+  const endpoint = providerEndpoint(provider);
+  if (writable && editing && endpoint)
     return (
       <OpenAiCompatibleForm
         universeId={universeId}
@@ -603,25 +591,30 @@ export function OpenAiCompatibleDetails({
         onCancel={() => setEditing(false)}
       />
     );
-  const endpoint =
-    provider.config.type === "modelEndpoint"
-      ? provider.config.endpoint
-      : provider.config.type === "modelApiKey" ||
-          provider.config.type === "modelOAuth"
-        ? provider.config.endpoint
-        : undefined;
   return (
     <div className="grid gap-4">
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
         <dt className="text-muted-foreground">Provider</dt>
         <dd className="font-mono">{provider.providerId}</dd>
+        <dt className="text-muted-foreground">Credential ID</dt>
+        <dd>
+          <IdText>{provider.credentialId}</IdText>
+        </dd>
+        <dt className="text-muted-foreground">Status</dt>
+        <dd>
+          <ProviderStatusBadge provider={provider} oauthGrant={oauthGrant} />
+        </dd>
         <dt className="text-muted-foreground">Authentication</dt>
         <dd>
-          {provider.hasCredential
-            ? "API key"
-            : provider.config.type === "modelOAuth"
-              ? "OAuth"
-              : "None"}
+          {provider.config.type === "modelOAuth" ? (
+            <>
+              OAuth · <IdText>{provider.config.grantId}</IdText>
+            </>
+          ) : provider.hasCredential ? (
+            "API key"
+          ) : (
+            "None"
+          )}
         </dd>
       </dl>
       {endpoint && <EndpointSummary endpoint={endpoint} />}
@@ -629,6 +622,9 @@ export function OpenAiCompatibleDetails({
         universeId={universeId}
         providerId={provider.providerId}
       />
+      {remove.error && (
+        <p className="text-sm text-destructive">{remove.error.message}</p>
+      )}
       {writable && (
         <DialogFooter>
           <ConfirmDangerButton
@@ -638,11 +634,38 @@ export function OpenAiCompatibleDetails({
             pending={remove.isPending}
             onConfirm={() => remove.mutate()}
           />
-          <Button onClick={() => setEditing(true)}>Edit provider</Button>
+          {endpoint && <Button onClick={() => setEditing(true)}>Edit provider</Button>}
         </DialogFooter>
       )}
     </div>
   );
+}
+
+/// Why a provider row is or is not used for model calls.
+function ProviderStatusBadge({
+  provider,
+  oauthGrant,
+}: {
+  provider: SecretProvider;
+  oauthGrant?: SecretGrant;
+}) {
+  const attention = (label: string) => (
+    <Badge variant="outline" className="border-destructive/50 text-destructive">
+      {label}
+    </Badge>
+  );
+  if (!provider.usableForModels) return attention("legacy id — replace");
+  if (provider.status === "disabled") return <Badge variant="outline">disabled</Badge>;
+  if (provider.config.type === "modelOAuth") {
+    if (!oauthGrant || oauthGrant.status === "revoked") return attention("OAuth grant missing");
+    if (oauthGrant.status !== "active") {
+      return attention(oauthGrant.status === "needsReauth" ? "needs reauth" : oauthGrant.status);
+    }
+  } else if (provider.config.type !== "modelEndpoint" && !provider.hasCredential) {
+    return attention("needs key");
+  }
+  if (provider.status !== "active") return attention("needs configuration");
+  return <Badge variant="secondary">active</Badge>;
 }
 
 export interface ProviderModelCatalogEntry {

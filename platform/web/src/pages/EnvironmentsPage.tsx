@@ -501,8 +501,8 @@ function EnvironmentCredentials({
       {unbind.error && <p className="mt-3 text-sm text-destructive">{unbind.error.message}</p>}
       {secrets && environmentCredentialOptions(secrets).length === 0 && (
         <p className="mt-3 text-xs text-muted-foreground">
-          Add an environment secret, active access credential, or model provider API key on the
-          Secrets page first.
+          Add an environment secret or access credential on the Credentials page, or a model
+          provider API key on the Models page, first.
         </p>
       )}
       {credentials.data && rows.length === 0 && (

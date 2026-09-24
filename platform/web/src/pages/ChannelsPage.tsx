@@ -73,12 +73,11 @@ export function ChannelsPage({ admin: _admin }: { admin: boolean }) {
   if (permissions.error) {
     return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
   }
-  if (!universe || !permissions.can("read")) return <UniverseNotFound slug={slug} />;
+  if (!universe || !permissions.can("configure_resource")) return <UniverseNotFound slug={slug} />;
   return <Channels universeId={universe.id} slug={universe.slug} />;
 }
 
 function Channels({ universeId, slug }: { universeId: string; slug: string }) {
-  const writable = useActionPermissions(universeId).can("configure_resource");
   const queryClient = useQueryClient();
   const [connectOpen, setConnectOpen] = useState(false);
   const accounts = useQuery({
@@ -138,20 +137,18 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
       <PageHeader
         title="Channels"
         description="Connect messaging accounts to this universe, then route conversations from your bots."
-        actions={writable && (
+        actions={
           <Button onClick={() => setConnectOpen(true)}>
             <Plus data-icon="inline-start" />
             Connect channel
           </Button>
-        )}
+        }
       />
-      {writable && (
-        <ConnectChannelDialog
-          universeId={universeId}
-          open={connectOpen}
-          onOpenChange={setConnectOpen}
-        />
-      )}
+      <ConnectChannelDialog
+        universeId={universeId}
+        open={connectOpen}
+        onOpenChange={setConnectOpen}
+      />
       {(accounts.isLoading || pairings.isLoading) && <LoadingNote />}
       {accounts.error && <ReadError error={accounts.error} loading={!accounts.data} className="mb-4" />}
       {status.error && (
@@ -164,11 +161,9 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
           <RadioTower className="mx-auto size-6" />
           <span className="font-medium text-foreground">No messaging accounts connected</span>
           <span>Connect a Telegram bot or WhatsApp number without managing credentials separately.</span>
-          {writable && (
-            <Button className="mx-auto mt-2" onClick={() => setConnectOpen(true)}>
-              Connect channel
-            </Button>
-          )}
+          <Button className="mx-auto mt-2" onClick={() => setConnectOpen(true)}>
+            Connect channel
+          </Button>
         </CenteredNote>
       ) : (
         <div className="grid gap-6">
@@ -211,18 +206,16 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
                           <TableCell className="text-muted-foreground">
                             {pairingRows.filter((pairing) => pairing.accountId === account.accountId).length}
                           </TableCell>
-                          {writable && (
-                            <TableActionsCell>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled={toggle.isPending}
-                                onClick={() => toggle.mutate(account)}
-                              >
-                                {(account.enabled ?? true) ? "Disable" : "Enable"}
-                              </Button>
-                            </TableActionsCell>
-                          )}
+                          <TableActionsCell>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={toggle.isPending}
+                              onClick={() => toggle.mutate(account)}
+                            >
+                              {(account.enabled ?? true) ? "Disable" : "Enable"}
+                            </Button>
+                          </TableActionsCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -279,41 +272,39 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
                           <TableCell className="text-muted-foreground">
                             {new Date(pairing.pairedAtMs).toLocaleString()}
                           </TableCell>
-                          {writable && (
-                            <TableActionsCell>
-                              <AlertDialog>
-                                <AlertDialogTrigger
-                                  render={
-                                    <Button
-                                      variant="ghost"
-                                      size="icon-sm"
-                                      className="text-destructive"
-                                      aria-label={`Unpair conversation ${pairing.chatId}`}
-                                    />
-                                  }
-                                >
-                                  <Unplug />
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>Unpair this conversation?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                      It stops routing to {pairing.botId}. The conversation must connect or present a pairing code again.
-                                    </AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction
-                                      className="bg-destructive text-white hover:bg-destructive/90"
-                                      onClick={() => unpair.mutate(pairing)}
-                                    >
-                                      Unpair
-                                    </AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
-                            </TableActionsCell>
-                          )}
+                          <TableActionsCell>
+                            <AlertDialog>
+                              <AlertDialogTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="text-destructive"
+                                    aria-label={`Unpair conversation ${pairing.chatId}`}
+                                  />
+                                }
+                              >
+                                <Unplug />
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Unpair this conversation?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    It stops routing to {pairing.botId}. The conversation must connect or present a pairing code again.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="bg-destructive text-white hover:bg-destructive/90"
+                                    onClick={() => unpair.mutate(pairing)}
+                                  >
+                                    Unpair
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </TableActionsCell>
                         </TableRow>
                       ))}
                     </TableBody>

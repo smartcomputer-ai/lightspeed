@@ -1,38 +1,37 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { integrationDefinition } from "./catalog";
-import { GitHubAppDetails } from "./github-app";
+import { modelProviderDefinition } from "./catalog";
 import { ModelApiKeyDetails, OpenAiCompatibleDetails } from "./model-api-key";
 import { SubscriptionDetails } from "./subscription";
-import type { ConnectedIntegration } from "./use-integrations";
+import type { ConnectedModelProvider } from "./use-model-providers";
 
-/// Details/configuration for one connected integration; content is
-/// dispatched on the integration kind.
-export function IntegrationDetailsDialog({
+/// Details/configuration for one connected model provider; content is
+/// dispatched on the provider kind.
+export function ModelProviderDetailsDialog({
   universeId,
-  integration,
+  provider,
   onOpenChange,
   onChanged,
 }: {
   universeId: string;
-  integration: ConnectedIntegration | null;
+  provider: ConnectedModelProvider | null;
   onOpenChange: (open: boolean) => void;
   onChanged: () => void;
 }) {
-  const definition = integration ? integrationDefinition(integration.kind) : null;
+  const definition = provider ? modelProviderDefinition(provider.kind) : null;
   return (
-    <Dialog open={integration !== null} onOpenChange={onOpenChange}>
+    <Dialog open={provider !== null} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        {integration && definition && (
+        {provider && definition && (
           <>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <definition.Logo size={18} />
-                {integration.title}
+                {provider.title}
               </DialogTitle>
             </DialogHeader>
-            <IntegrationDetails
+            <ModelProviderDetails
               universeId={universeId}
-              integration={integration}
+              provider={provider}
               onChanged={onChanged}
               onClose={() => onOpenChange(false)}
             />
@@ -43,14 +42,14 @@ export function IntegrationDetailsDialog({
   );
 }
 
-function IntegrationDetails({
+function ModelProviderDetails({
   universeId,
-  integration,
+  provider,
   onChanged,
   onClose,
 }: {
   universeId: string;
-  integration: ConnectedIntegration;
+  provider: ConnectedModelProvider;
   onChanged: () => void;
   onClose: () => void;
 }) {
@@ -58,13 +57,13 @@ function IntegrationDetails({
     onChanged();
     onClose();
   };
-  switch (integration.kind) {
+  switch (provider.kind) {
     case "openAiApiKey":
     case "anthropicApiKey":
       return (
         <ModelApiKeyDetails
           universeId={universeId}
-          provider={integration.provider}
+          provider={provider.provider}
           onChanged={onChanged}
           onRemoved={removed}
         />
@@ -73,17 +72,8 @@ function IntegrationDetails({
       return (
         <OpenAiCompatibleDetails
           universeId={universeId}
-          provider={integration.provider}
-          onChanged={onChanged}
-          onRemoved={removed}
-        />
-      );
-    case "githubApp":
-      return (
-        <GitHubAppDetails
-          universeId={universeId}
-          app={integration.app}
-          grants={integration.grants}
+          provider={provider.provider}
+          oauthGrant={provider.oauthGrant}
           onChanged={onChanged}
           onRemoved={removed}
         />
@@ -93,7 +83,7 @@ function IntegrationDetails({
       return (
         <SubscriptionDetails
           universeId={universeId}
-          grant={integration.grant}
+          grant={provider.grant}
           onDisconnected={removed}
         />
       );

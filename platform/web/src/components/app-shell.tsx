@@ -1,22 +1,13 @@
 import { useActionPermissions } from "@/lib/permissions";
-import { useEffect } from "react";
+import { useEffect, type ComponentType } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import {
   ArrowLeft,
-  Boxes,
-  FolderGit2,
   Globe,
   KeyRound,
-  LockKeyhole,
-  MessagesSquare,
   Palette,
-  PackageOpen,
-  Plug,
   RadioTower,
-  Server,
   ServerCog,
-  Settings,
-  SlidersHorizontal,
   UserRound,
   Users,
   UserCog,
@@ -36,9 +27,9 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { BotFaceIcon } from "@/components/icons/bot";
 import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
+import { UNIVERSE_NAV } from "@/components/universe-nav";
 import { isMobileDetailRoute } from "@/lib/shell-navigation";
 import type { SessionUser } from "@/auth";
 import { rememberUniverse, useUniverses } from "@/lib/universes";
@@ -49,22 +40,18 @@ import { rememberUniverse, useUniverses } from "@/lib/universes";
 /// (naming no universe) and the content is the mode's own menu.
 type ShellMode = "universe" | "admin" | "account";
 
+/// Active on the page itself and on detail views nested under it.
 function NavItem({
   to,
   icon: Icon,
   label,
-  prefix = false,
 }: {
   to: string;
-  icon: typeof MessagesSquare;
+  icon: ComponentType;
   label: string;
-  /// Match nested routes too (detail views under this section).
-  prefix?: boolean;
 }) {
   const location = useLocation();
-  const isActive = prefix
-    ? location.pathname === to || location.pathname.startsWith(`${to}/`)
-    : location.pathname === to;
+  const isActive = location.pathname === to || location.pathname.startsWith(`${to}/`);
   return (
     <SidebarMenuItem>
       <SidebarMenuButton isActive={isActive} render={<NavLink to={to} />} tooltip={label}>
@@ -139,110 +126,27 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           )}
         </SidebarHeader>
         <SidebarContent>
-          {mode === "universe" && active && (
-            <>
-              {/* The switcher above already names the universe. */}
-              {permissions.can("read") && (
-                <SidebarGroup>
-                  <SidebarGroupContent>
-                    <SidebarMenu>
-                      <NavItem
-                        to={`/u/${active.slug}/bots`}
-                        icon={BotFaceIcon}
-                        label="Bots"
-                        prefix
-                      />
-                      <NavItem
-                        to={`/u/${active.slug}/sessions`}
-                        icon={MessagesSquare}
-                        label="Sessions"
-                        prefix
-                      />
-                      <NavItem
-                        to={`/u/${active.slug}/profiles`}
-                        icon={SlidersHorizontal}
-                        label="Profiles"
-                        prefix
-                      />
-                      <NavItem
-                        to={`/u/${active.slug}/workspaces`}
-                        icon={FolderGit2}
-                        label="Workspaces"
-                        prefix
-                      />
-                    </SidebarMenu>
-                  </SidebarGroupContent>
-                </SidebarGroup>
-              )}
-              {/* Readable resource catalogs and administrative settings. */}
-              <SidebarGroup>
-                <SidebarGroupLabel>Settings</SidebarGroupLabel>
+          {mode === "universe" && active && UNIVERSE_NAV.map((group, index) => {
+            const items = group.items.filter((item) => permissions.can(item.action));
+            if (items.length === 0) return null;
+            return (
+              <SidebarGroup key={group.label ?? index}>
+                {group.label && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {permissions.can("read") && (
-                      <>
-                        {permissions.can("manage_access") && (
-                          <NavItem
-                            to={`/u/${active.slug}/settings/general`}
-                            icon={Settings}
-                            label="General"
-                          />
-                        )}
-                        <NavItem
-                          to={`/u/${active.slug}/settings/integrations`}
-                          icon={Plug}
-                          label="Integrations"
-                        />
-                        {permissions.can("manage_access") && (
-                          <NavItem
-                            to={`/u/${active.slug}/settings/setups`}
-                            icon={PackageOpen}
-                            label="Templates"
-                          />
-                        )}
-                        <NavItem
-                          to={`/u/${active.slug}/settings/environments`}
-                          icon={Boxes}
-                          label="Environments"
-                        />
-                        <NavItem
-                          to={`/u/${active.slug}/settings/mcp-servers`}
-                          icon={Server}
-                          label="MCP servers"
-                        />
-                        <NavItem
-                          to={`/u/${active.slug}/settings/channels`}
-                          icon={RadioTower}
-                          label="Channels"
-                        />
-                      </>
-                    )}
-                    {permissions.can("read") && (
-                      <>
-                        <NavItem
-                          to={`/u/${active.slug}/settings/secrets`}
-                          icon={LockKeyhole}
-                          label="Secrets"
-                        />
-                        <NavItem
-                          to={`/u/${active.slug}/settings/api-keys`}
-                          icon={KeyRound}
-                          label="API keys"
-                        />
-                      </>
-                    )}
-                    {permissions.can("manage_access") && (
+                    {items.map((item) => (
                       <NavItem
-                        to={`/u/${active.slug}/settings/members`}
-                        icon={Users}
-                        label="Members"
+                        key={item.path}
+                        to={`/u/${active.slug}/${item.path}`}
+                        icon={item.icon}
+                        label={item.label}
                       />
-                    )}
+                    ))}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
-            </>
-          )}
+            );
+          })}
           {mode === "admin" && (
             <SidebarGroup>
               <SidebarGroupLabel>Platform admin</SidebarGroupLabel>

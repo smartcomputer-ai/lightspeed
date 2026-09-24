@@ -1,20 +1,19 @@
 import type { ComponentType, SVGProps } from "react";
 import { Sparkles } from "lucide-react";
-import { AnthropicLogo, GitHubLogo, OpenAiLogo } from "./logos";
+import { AnthropicLogo, OpenAiLogo } from "@/components/icons/logos";
 
-/// Everything a universe can connect from the Integrations page. Adding an
-/// integration = one entry here plus its form/details components; the page
+/// Every kind of model provider a universe can add on the Models page.
+/// Adding one = an entry here plus its form/details components; the page
 /// itself stays generic.
-export type IntegrationKind =
-  | "githubApp"
+export type ModelProviderKind =
   | "openAiApiKey"
   | "openAiCompatible"
   | "anthropicApiKey"
   | "anthropicSubscription"
   | "openAiSubscription";
 
-export interface IntegrationDefinition {
-  kind: IntegrationKind;
+export interface ModelProviderDefinition {
+  kind: ModelProviderKind;
   name: string;
   /// One line for the picker card.
   tagline: string;
@@ -23,14 +22,7 @@ export interface IntegrationDefinition {
   multiple: boolean;
 }
 
-export const INTEGRATION_CATALOG: IntegrationDefinition[] = [
-  {
-    kind: "githubApp",
-    name: "GitHub App",
-    tagline: "Bring your own GitHub App and grant its installations to this universe.",
-    Logo: GitHubLogo,
-    multiple: true,
-  },
+export const MODEL_PROVIDER_CATALOG: ModelProviderDefinition[] = [
   {
     kind: "openAiApiKey",
     name: "OpenAI (API key)",
@@ -70,8 +62,8 @@ export const INTEGRATION_CATALOG: IntegrationDefinition[] = [
   },
 ];
 
-export function integrationDefinition(kind: IntegrationKind): IntegrationDefinition {
-  const found = INTEGRATION_CATALOG.find((entry) => entry.kind === kind);
-  if (!found) throw new Error(`unknown integration kind ${kind}`);
+export function modelProviderDefinition(kind: ModelProviderKind): ModelProviderDefinition {
+  const found = MODEL_PROVIDER_CATALOG.find((entry) => entry.kind === kind);
+  if (!found) throw new Error(`unknown model provider kind ${kind}`);
   return found;
 }

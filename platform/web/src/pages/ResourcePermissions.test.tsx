@@ -10,8 +10,8 @@ import { WorkspacesPage } from "./WorkspacesPage";
 import { McpServersPage } from "./McpServersPage";
 import { EnvironmentsPage } from "./EnvironmentsPage";
 import { ChannelsPage } from "./ChannelsPage";
-import { SecretsPage } from "./SecretsPage";
-import { IntegrationsPage } from "./IntegrationsPage";
+import { CredentialsPage } from "./CredentialsPage";
+import { ModelsPage } from "./ModelsPage";
 import { ApiKeysPage } from "./ApiKeysPage";
 import { MembersPage } from "./MembersPage";
 import { GeneralSettingsPage } from "./GeneralSettingsPage";
@@ -62,6 +62,7 @@ beforeEach(() => {
     if (path.includes("/models")) return { models: [] };
     if (path.endsWith("/api-keys")) return [{ keyPrefix: "lsk_own", displayName: "My key", createdAtMs: 0, principalId: "own" }];
     if (path.endsWith("/key-principals")) return [{ id: "own", displayName: "My account", kind: "user" }];
+    if (path.endsWith("/setups")) return [{ id: "configurator", name: "Configurator", description: "", version: 5, available: true, status: "available" }];
     throw new Error(`Unexpected request: ${path}`);
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -169,19 +170,16 @@ it("lets an environment's owner configure it while secrets stay with Operators",
   expect(button("Idle policy…")).toBeDefined();
   expect(button("Assign secret")).toBeUndefined();
 });
-it("shows channel accounts and secret metadata without modification controls", async () => {
+it("shows channel accounts with their controls to Operators", async () => {
+  actions.push("configure_resource");
   await show(<ChannelsPage admin />);
   expect(container.textContent).toContain("Telegram account");
-  expect(button("Connect channel")).toBeUndefined();
-  expect(button("Disable")).toBeUndefined();
-  await show(<SecretsPage admin />);
-  expect(container.textContent).toContain("Internal model");
-  expect(button("Add secret")).toBeUndefined();
-  expect(container.querySelector('[aria-label="Remove Internal model"]')).toBeNull();
+  expect(button("Connect channel")).toBeDefined();
+  expect(button("Disable")).toBeDefined();
 });
-it("retains integration details without replacement or removal forms for readers", async () => {
-  await show(<IntegrationsPage admin />);
-  expect(button("Add integration")).toBeUndefined();
+it("retains model provider details without replacement or removal forms for readers", async () => {
+  await show(<ModelsPage admin />);
+  expect(button("Add provider")).toBeUndefined();
   const row = [...container.querySelectorAll("tr")].find((node) => node.textContent?.includes("OpenAI (API key)"));
   expect(row).toBeDefined();
   await act(async () => row!.click());
@@ -200,13 +198,40 @@ it("lets a reader manage their own API keys with an authorized principal picker"
   expect(document.body.querySelector('input#api-key-principal')).toBeNull();
   expect(document.body.querySelector('[id="api-key-principal"]')).not.toBeNull();
 });
-it.each([["members", MembersPage], ["general settings", GeneralSettingsPage], ["templates", SetupsPage]] as const)("keeps %s closed without manage_access even for deployment administrators", async (_name, Page) => {
+it("keeps general settings closed without manage_access even for deployment administrators", async () => {
   actions = ["read", "configure_resource"];
+  await show(<GeneralSettingsPage admin />);
+  expect(mocks.api.mock.calls.every(([, path]) => path.endsWith("/access"))).toBe(true);
+  expect(button("Archive universe")).toBeUndefined();
+});
+it.each([["channels", ChannelsPage], ["credentials", CredentialsPage], ["templates", SetupsPage]] as const)("keeps %s closed without configure_resource even for deployment administrators", async (_name, Page) => {
+  actions = ["read", "create_session", "use_resource"];
   await show(<Page admin />);
   expect(mocks.api.mock.calls.every(([, path]) => path.endsWith("/access"))).toBe(true);
+  expect(container.textContent).toContain("not a member");
+});
+it("shows members read-only without manage_access", async () => {
+  mocks.api.mockImplementation(async (_method: string, path: string) => {
+    if (path.endsWith("/access")) return { actions, resources: [] };
+    if (path.endsWith("/members")) return [{ id: "principal:alice:contributor", subject: { kind: "principal", id: "alice" }, principalKind: "user", name: "Alice", role: "contributor" }];
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  await show(<MembersPage admin />);
+  expect(container.textContent).toContain("Alice");
   expect(button("Add member")).toBeUndefined();
-  expect(button("Archive universe")).toBeUndefined();
-  expect(button("Install")).toBeUndefined();
+  expect(container.querySelector('[aria-label="Edit role for Alice"]')).toBeNull();
+});
+it("shows templates to Operators with installation left to Admins", async () => {
+  actions = ["read", "configure_resource"];
+  await show(<SetupsPage admin />);
+  expect(container.textContent).toContain("Configurator");
+  expect(container.textContent).toContain("Needs a universe Admin: it creates a service identity with the Operator role.");
+  expect(button("Install")!.disabled).toBe(true);
+  actions.push("manage_access");
+  await act(async () => { await client.invalidateQueries({ queryKey: ["action-permissions"] }); });
+  await settle();
+  expect(container.textContent).not.toContain("Needs a universe Admin");
+  expect(button("Install")!.disabled).toBe(false);
 });
 it("reports permission lookup failure explicitly and exposes no mutations", async () => {
   mocks.api.mockRejectedValue(new Error("Permission service unavailable"));

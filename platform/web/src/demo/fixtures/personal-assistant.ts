@@ -1150,7 +1150,7 @@ function seedIntegrations(universe: UniverseState): void {
       expiresAtMs: ago(5 * DAY_MS),
       lastLeasedAtMs: ago(50 * MINUTE_MS),
       leaseCount: 233,
-      metadata: { note: "Refresh rejected since the workspace admin changed 5 days ago; reconnect Notion on the Integrations page." },
+      metadata: { note: "Refresh rejected since the workspace admin changed 5 days ago; reconnect Notion on the MCP servers page." },
       createdAtMs: ago(33 * DAY_MS),
       updatedAtMs: ago(5 * DAY_MS),
     },
@@ -2345,7 +2345,7 @@ const MARCO_AGENDA = `## 1:1 with Marco — ${MONDAY} 11:00
 
 Not on the list: the Q3 date for the board deck template (he sends it this week); the Kestrel nudge (yours, not his).`;
 
-const HIRING_TABLE = `Hiring pipeline this week (Notion is not reachable — its connection needs re-auth on the Integrations page — so this is from mail, calendar, and HubSpot):
+const HIRING_TABLE = `Hiring pipeline this week (Notion is not reachable — its connection needs re-auth on the MCP servers page — so this is from mail, calendar, and HubSpot):
 
 | Role | Stage | Candidate | Next step | When | Owner |
 | --- | --- | --- | --- | --- | --- |
@@ -2433,7 +2433,7 @@ function seedInteractiveSessions(store: DemoStore, universe: UniverseState): voi
       {
         thinking: "The hiring board is in Notion. Try it; if the connection is still broken, mail and calendar have the interviews and HubSpot has Marco's AE pipeline.",
         tools: [
-          mcpFailure("notion.search", { query: "Hiring pipeline", filter: { property: "object", value: "database" } }, "401 Unauthorized: the Notion workspace token was rejected (refresh failed 5 days ago). Reconnect the notion server on the Integrations page."),
+          mcpFailure("notion.search", { query: "Hiring pipeline", filter: { property: "object", value: "database" } }, "401 Unauthorized: the Notion workspace token was rejected (refresh failed 5 days ago). Reconnect the notion server on the MCP servers page."),
         ],
       },
       {
