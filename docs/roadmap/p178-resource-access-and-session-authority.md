@@ -1,7 +1,8 @@
 # P178 — Resource access and session authority
 
 **Status:** Implemented, 2026-09-24; proposed 2026-09-23 and rewritten the same
-day after review. Third
+day after review. Decisions 3 to 8 superseded for 0.1 by
+[core: universes, keys and actors](p179-core-universes-keys-and-actors.md) and [platform: organizations, roles and unshared work](p180-platform-organizations-roles-and-unshared-work.md). Third
 slice of [enterprise authorization](later/pNNN-enterprise-authorization.md),
 building on [identity and universe authorization](p176-identity-and-universe-authorization.md),
 [session access and execution authority](p177-session-access-and-execution-authority.md)

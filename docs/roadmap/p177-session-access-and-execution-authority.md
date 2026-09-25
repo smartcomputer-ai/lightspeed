@@ -1,7 +1,8 @@
 # P177 — Session access and execution authority
 
 **Status:** Implemented, 2026-09-24 (collections were built here and removed again
-by the third slice). Second slice of
+by the third slice); decisions 3 and 4 superseded for 0.1 by
+[core: universes, keys and actors](p179-core-universes-keys-and-actors.md) and [platform: organizations, roles and unshared work](p180-platform-organizations-roles-and-unshared-work.md). Second slice of
 [enterprise authorization and identity](later/pNNN-enterprise-authorization.md),
 building on [identity foundation and universe authorization](p176-identity-and-universe-authorization.md).
 Includes the hardening items left open by that slice's review where they fit.

@@ -1,0 +1,230 @@
+# P180 — Platform: organizations, roles and unshared work
+
+**Status:** Proposed, 2026-09-25. Second half of the version 0.1 access
+design; builds on the contract that
+[core: universes, keys and actors](p179-core-universes-keys-and-actors.md)
+defines and is blocked on its step 4. Fifth slice of
+[enterprise authorization](later/pNNN-enterprise-authorization.md).
+
+The Platform is the first integrator of core's public contract, not a
+privileged client. Everything it uses to model people is available to any
+holder of a key with `assert_actor`.
+
+## Outcome
+
+> Start an investigation, explore freely, share it with the universe when it
+> is useful. A universe is a team. Its members hold one of four roles. The
+> Platform decides what a person may do before the request reaches core, and
+> tells core who asked.
+
+Sessions start unshared, readable and controllable by their creator, and
+readable by universe Admins. Sharing with the universe is one action, one
+way. Bots and their conversations are shared. There are no per-person
+grants, no reader lists, no execution choice.
+
+## Why
+
+The Platform ran organizations as universes before the `permissions` branch
+moved the directory into core. Sign-in, SSO, provisioning and invitations all
+live in the Platform's ecosystem, and a directory in core forces every one of
+them through a translation hook. P179 removes that directory; this slice
+restores the Platform's own, with the four roles the customer documents are
+built on, and puts the two decisions that need a person, which method and
+which session, in the one place that knows people.
+
+## Starting point
+
+- Better Auth with email and password, GitHub, `bearer`, `disableSignUp`,
+  `accountLinking` off; the `corePrincipalId` create hook (goes).
+- `universes.ts`, `identity.ts`, `access.ts` and the Members page written
+  against `deployment/identity/*` and `access/*` (go).
+- The gateway proxy (`routes/gateway.ts`) forwarding to core with the
+  Platform's service key and `assert_user`.
+- On `main`: `organization()` and `admin()` plugins, an organization-backed
+  `universes.ts` with owner/admin/member gating, `bootstrap.ts`, the
+  universe switcher and admin area. These come back, adapted.
+
+## Decisions
+
+### 1. Organizations are universes
+
+Restore the `organization()` and `admin()` plugins. One organization per
+universe; the Platform `universes` table maps organization id to core
+universe id and gateway URL, as it did on `main`. Creating an organization
+calls `deployment/universes/create` with the Platform's deployment key;
+deleting one calls `deployment/universes/delete` after the last member
+confirms. A platform admin, the `admin` plugin role, is the deployment
+administrator: creates universes, mints keys, sees every organization.
+
+### 2. Four member roles
+
+Member roles are `viewer`, `contributor`, `operator`, `admin`, replacing the
+plugin's default owner/admin/member. The organization creator is `admin`.
+Last-admin protection stays a Platform rule. Teams, the plugin's groups, are
+not enabled in 0.1; they arrive with directory sync.
+
+### 3. The gateway proxy decides
+
+For every forwarded request, in order:
+
+1. **Membership.** The signed-in user is a member of the organization
+   behind the universe in the path, or a platform admin. Otherwise
+   `not_found` for the universe.
+2. **Method.** The member's role meets the method's minimum role. The table
+   is generated from the manifest's `role` metadata into
+   `platform/server/src/routes/method-roles.ts`; a test asserts every
+   manifest method has an entry, so a new core method fails the Platform
+   build until it is classified. Otherwise `forbidden`.
+3. **Target.** When the manifest names a `target` for the method and the
+   caller is not `admin`, the proxy reads the session view from core and
+   requires `visibility = universe` or `createdBy = user id`. Otherwise
+   `not_found`. This is one extra core read per session-scoped request from
+   non-admins; lists use filters instead.
+4. **Forward** with the deployment key, `x-lightspeed-universe` and
+   `x-lightspeed-actor: <user id>`.
+
+Lists: `session/list` is called with `visibility: universe` and, in a second
+page source, `createdBy: user id`, merged in the Platform for members;
+admins call it unfiltered and the response marks unshared rows. `bots/list`
+is unfiltered; bots are shared.
+
+`session/share` is allowed to the creator and to admins.
+
+### 4. Roles by method, the intent
+
+| Role | May |
+| --- | --- |
+| viewer | read shared work, lists, files, models |
+| contributor | viewer, plus start and control sessions and runs, create workspaces, invoke bots, approve tool calls in sessions they control, share their own sessions |
+| operator | contributor, plus create and configure profiles, bots, environments, MCP servers, credentials, channels |
+| admin | operator, plus members and roles, delete any session, share any session, read unshared work |
+
+The exact per-method table is the generated file; this table is what the
+manifest's `role` metadata must reproduce.
+
+### 5. Unshared work in the product
+
+- A new session starts **Unshared**. Creation asks no visibility question;
+  prepared team work created by an operator may pass `access: { visibility:
+  "universe" }`.
+- The session page has one action, **Share with universe**, and afterwards
+  shows **Shared with universe**. Bots show the same badge.
+- Admin access to unshared work is explained once, in the universe's
+  settings and the sharing help, never as a banner.
+- Members' lists show shared work and their own unshared work; admins' lists
+  show everything with unshared rows marked.
+- No "Running as", no reader lists, no execution settings anywhere.
+- Files written into a shared workspace or environment follow that
+  resource; the sharing help says so once.
+
+### 6. Members and audit
+
+The Members page is rebuilt on the organization plugin: list, invite by
+email, change role, remove. An `identity_audit` table records member added,
+role changed, member removed, organization created and deleted, key minted
+and revoked, with the acting user, the subject, timestamps and the
+organization. Rows have no foreign keys and outlive the user.
+
+### 7. Keys
+
+An admin area mints core keys through `deployment/api-keys/create`,
+choosing scope, groups and `assert_actor`, and revokes them. The secret is
+shown once. The Configurator installer mints its own universe key with the
+groups the install needs (`profiles, mcp, environments, bots, channels, auth,
+models` by default) and registers the MCP server unrestricted: whoever can
+attach it acts with that key's groups, which is the accepted 0.1 rule.
+
+### 8. Bootstrap and errors
+
+The first platform admin is created by `bootstrap.ts` as on `main`; the
+deployment key comes from `server api-keys bootstrap` and is configured as
+`LIGHTSPEED_PLATFORM_API_KEY`. Core's `unauthenticated` and `forbidden`
+kinds map to 502 and 500 respectively when they reach the Platform, since
+both mean the Platform's own key or gate is wrong; the Platform's own
+refusals are 403 and 404 as decided above.
+
+## Contract with core
+
+Uses only: `deployment/universes/*`, `deployment/api-keys/*`, the actor
+header, `access: { visibility }` on session starts, `session/share`, the
+`createdBy` and `visibility` list filters, `createdBy` and `visibility` on
+views, and the manifest's `group`, `target` and `role` fields. Nothing
+Platform-only exists in core; the CLI can do everything the Platform can do
+with a key.
+
+## Persistence
+
+Platform database, Drizzle migrations edited in place per the project's
+greenfield rule:
+
+- Better Auth `organization`, `member`, `invitation` tables restored;
+  `member.role` constrained to the four roles.
+- `universes` (organization id, core universe id, gateway URL) restored.
+- `user.corePrincipalId` dropped.
+- `identity_audit` added.
+
+## Implementation order
+
+1. [ ] Plugins and tables: restore `organization()` and `admin()`, the
+       four roles, `universes.ts`, bootstrap; drop the core-principal hook
+       and the identity and access routes.
+2. [ ] Gateway gate: generated `method-roles.ts` with its coverage test,
+       membership and target checks in the proxy, actor header, list
+       composition, error mapping.
+3. [ ] Unshared work UI: badge, Share action, list marking, help text; demo
+       fixtures and routes rebuilt on the same shapes.
+4. [ ] Members page, invitations, `identity_audit`; keys admin area;
+       Configurator installer on key groups.
+5. [ ] Customer documents (below), `platform/README.md`, merge of
+       `permissions`.
+
+## Validation
+
+- Unit (Platform): every manifest method has a role entry; a viewer is
+  refused `session/runs/start`; a contributor is refused `profiles/put`; a
+  non-admin is `not_found` on another member's unshared session and allowed
+  after `session/share`; an admin reads it before; lists compose correctly
+  across pages.
+- Live (Platform against a disposable core): sign in as two members and an
+  admin; the unshared, share, continue and admin-share sequence; a removed
+  member gets `not_found` on the next request; a minted key with
+  `channels/inbound` only is refused a session read by core; `identity_audit`
+  rows for each membership change.
+- Demo build unchanged in behaviour.
+
+## Documents that move with this slice
+
+- Customer solution design: §2.1 and §2.2 (Platform decides, core scopes
+  and records); R-04's acceptance check becomes "unshared and shared work;
+  Operators stop without reading; Admins read everything"; §2.4 sharing
+  paragraphs and Figure 8; §2.4.3 the "administrators can stop work without
+  receiving permission to read" and exceptional-access sentences; §3
+  Figures 10 and 11 and the boundary table; §6.1 and §6.2 audit streams
+  (core rows carry the actor; identity changes are Platform records); OP-03
+  "private/shared audiences and resource permissions".
+- Customer blueprint: PP-03 stands; the Application Architecture paragraph
+  "the operator selects the service principal" becomes "the operator
+  prepares the universe".
+- [Enterprise authorization](later/pNNN-enterprise-authorization.md): the
+  ownership table moves the directory to the Platform; per-person sharing
+  and exceptional reads become later work.
+
+## Later
+
+- OIDC and SAML sign-in through the Better Auth SSO plugin; SCIM; teams
+  mapped to roles; offboarding propagation.
+- Human API keys issued by the Platform and proxied to core.
+- Unshare; Operator visibility of unshared running work; private bots.
+- The Configurator acting as the requester, once core propagates the actor
+  to MCP servers.
+
+## Current seams
+
+- [Better Auth setup](../../platform/server/src/auth.ts),
+  [gateway proxy](../../platform/server/src/routes/gateway.ts),
+  [universes routes](../../platform/server/src/routes/universes.ts),
+  [runtime client](../../platform/server/src/runtime-client.ts),
+  [bootstrap](../../platform/server/src/bootstrap.ts).
+- [Platform schema](../../platform/db/src/schema/auth.ts),
+  [Members page](../../platform/web/src/pages/MembersPage.tsx),
+  [Configurator installer](../../platform/server/src/routes/setups.ts).
