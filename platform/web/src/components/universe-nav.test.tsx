@@ -4,18 +4,17 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { UniverseAction } from "@lightspeed-ai/agent-client";
-import { PermissionIdentityProvider } from "@/lib/permissions";
+import { PermissionIdentityProvider, type PermissionAction } from "@/lib/permissions";
 import { SettingsIndexRedirect, settingsIndexPath } from "./universe-nav";
 
-const mocks = vi.hoisted(() => ({ api: vi.fn() }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", async (original) => ({
   ...await original<typeof import("@/lib/universes")>(),
-  useActiveUniverse: () => ({ universe: { id: "universe", slug: "test", name: "Test" }, slug: "test", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", slug: "test", name: "Test", role: mocks.role }, slug: "test", isLoading: false }),
 }));
 
-const ROLE_ACTIONS: Record<string, UniverseAction[]> = {
+const ROLE_ACTIONS: Record<string, PermissionAction[]> = {
   viewer: ["read"],
   contributor: ["read", "create_session", "use_resource"],
   operator: ["read", "create_session", "use_resource", "configure_resource"],
@@ -56,12 +55,9 @@ function Location() {
 }
 
 it.each(DESTINATIONS)("redirects a %s from /settings to %s", async (role, path) => {
-  mocks.api.mockReset().mockImplementation(async (_method: string, url: string) => {
-    if (url.endsWith("/access")) return { actions: ROLE_ACTIONS[role], resources: [] };
-    throw new Error(`Unexpected request: ${url}`);
-  });
+  mocks.role = role;
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user">
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}>
       <MemoryRouter initialEntries={["/u/test/settings"]}>
         <Routes>
           <Route path="u/:slug/settings" element={<SettingsIndexRedirect />} />

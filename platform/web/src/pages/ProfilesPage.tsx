@@ -117,10 +117,7 @@ function ProfilePane({
     queryKey: ["profiles", universeId],
     queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
   });
-  const permissions = useActionPermissions(
-    universeId,
-    (profiles.data ?? []).map((profile) => ({ kind: "profile", id: profile.profileId })),
-  );
+  const permissions = useActionPermissions(universeId);
   const canCreate = permissions.can("create_profile");
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -164,7 +161,7 @@ function ProfilePane({
                   <span className="truncate font-medium">
                     {profile.displayName ?? profile.profileId}
                   </span>
-                  {!permissions.can("manage_profile", { kind: "profile", id: profile.profileId }) && (
+                  {!permissions.can("manage_profile") && (
                     <span className="shrink-0 text-xs text-muted-foreground">Read only</span>
                   )}
                   <span className="ml-auto shrink-0 text-xs text-muted-foreground">
@@ -201,8 +198,8 @@ function ProfileEditor({
   slug: string;
   profileId: string;
 }) {
-  const permissions = useActionPermissions(universeId, [{ kind: "profile", id: profileId }]);
-  const manage = permissions.can("manage_profile", { kind: "profile", id: profileId });
+  const permissions = useActionPermissions(universeId);
+  const manage = permissions.can("manage_profile");
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const doc = useQuery({
@@ -402,11 +399,7 @@ function ProfileEditor({
       </header>
       {!manage && (
         <p className="border-b px-4 py-2 text-xs text-muted-foreground">
-          {permissions.isLoading
-            ? "Checking profile permissions…"
-            : permissions.error
-              ? "Profile permissions are unavailable. Editing is disabled."
-              : "Read only — you can view this profile, but cannot change it."}
+          Read only — you can view this profile, but cannot change it.
         </p>
       )}
       {error && <p className="border-b px-4 py-2 text-sm text-destructive">{error}</p>}

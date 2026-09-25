@@ -1,6 +1,3 @@
-import { PrivilegedReadMarker } from "@/components/access/privileged-read";
-import type { ResourceAccessSummary } from "@lightspeed-ai/agent-client";
-import { AccessButton } from "@/components/access/access-dialog";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -132,8 +129,6 @@ export function BotDetail({
   universeId,
   slug,
   bot,
-  access,
-  privilegedRead,
   state,
   stateError,
   view,
@@ -142,16 +137,14 @@ export function BotDetail({
   universeId: string;
   slug: string;
   bot: BotView;
-  access?: ResourceAccessSummary;
-  privilegedRead?: boolean;
   state?: BotStateView;
   stateError?: string;
   view: BotTab;
   sessionId: string | undefined;
 }) {
-  const permissions = useActionPermissions(universeId, [{ kind: "bot", id: bot.botId }]);
-  const manage = permissions.can("manage_bot", { kind: "bot", id: bot.botId });
-  const invoke = permissions.can("invoke_bot", { kind: "bot", id: bot.botId });
+  const permissions = useActionPermissions(universeId);
+  const manage = permissions.can("manage_bot");
+  const invoke = permissions.can("invoke_bot");
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const base = `/u/${slug}/bots/${bot.botId}`;
@@ -171,7 +164,7 @@ export function BotDetail({
         expectedRevision: bot.revision,
       }),
     onSuccess: async ({ bot: updated }) => {
-      queryClient.setQueryData(["bot", universeId, bot.botId], { bot: updated, access });
+      queryClient.setQueryData(["bot", universeId, bot.botId], { bot: updated });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["bots", universeId] }),
         queryClient.invalidateQueries({ queryKey: ["bot-state", universeId, bot.botId] }),
@@ -209,8 +202,6 @@ export function BotDetail({
           <span className="truncate">{status.label}</span>
         </span>
         <div className="ml-auto flex items-center gap-1">
-          <PrivilegedReadMarker privileged={privilegedRead} />
-          {access && <AccessButton universeId={universeId} slug={slug} resource={{ kind: "bot", id: bot.botId }} access={access} />}
           {manage && bot.closedAtMs == null && (
             <Button
               variant="outline"
@@ -315,7 +306,7 @@ export function BotDetail({
         description="Identity, job, triggers, session profile, collaborators, guardrails, and lifecycle."
         contentClassName="sm:max-w-4xl"
       >
-        <BotSetup universeId={universeId} slug={slug} bot={bot} execution={access?.execution?.kind} state={state} manage={manage} />
+        <BotSetup universeId={universeId} slug={slug} bot={bot} state={state} manage={manage} />
       </BotEditorDialog>
     </div>
   );

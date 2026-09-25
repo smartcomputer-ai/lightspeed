@@ -210,18 +210,26 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run_migrate() -> anyhow::Result<()> {
     let pool = postgres_pool_from_env().await?;
-    let before = store_pg::schema_status(&pool).await?;
+    let before = store_pg::schema_status(&pool)
+        .await
+        .map_err(explain_migration_error)?;
     println!("current_schema_revision: {}", before.current_revision);
     println!("required_schema_revision: {}", before.required_revision);
-    store_pg::PgStore::migrate(&pool).await?;
-    let after = store_pg::verify_schema(&pool).await?;
+    store_pg::PgStore::migrate(&pool)
+        .await
+        .map_err(explain_migration_error)?;
+    let after = store_pg::verify_schema(&pool)
+        .await
+        .map_err(explain_migration_error)?;
     println!("applied_schema_revision: {}", after.current_revision);
     Ok(())
 }
 
 async fn run_schema_version() -> anyhow::Result<()> {
     let pool = postgres_pool_from_env().await?;
-    let status = store_pg::schema_status(&pool).await?;
+    let status = store_pg::schema_status(&pool)
+        .await
+        .map_err(explain_migration_error)?;
     println!("current_schema_revision: {}", status.current_revision);
     println!("required_schema_revision: {}", status.required_revision);
     if status.is_current() {
@@ -233,6 +241,23 @@ async fn run_schema_version() -> anyhow::Result<()> {
             status.required_revision
         )
     }
+}
+
+fn explain_migration_error(error: store_pg::PgStoreError) -> anyhow::Error {
+    let mismatch = match error {
+        store_pg::PgStoreError::MigrationChecksumChanged { version, name, .. } => {
+            format!("migration {version} ({name}) has a different checksum")
+        }
+        store_pg::PgStoreError::MigrationNameChanged {
+            version, expected, ..
+        } => format!("migration {version} ({expected}) has a different name"),
+        other => return other.into(),
+    };
+    anyhow::anyhow!(
+        "database schema does not match this build: {mismatch}.\n\
+         If this is disposable local development data, run `./dev.sh reset` and retry. Reset deletes local PostgreSQL and MinIO data.\n\
+         To keep the data, restore the migration used by this database and put changes in a new migration; do not edit the migration ledger."
+    )
 }
 
 async fn run_cas_sweep(dry_run: bool) -> anyhow::Result<()> {
@@ -679,6 +704,32 @@ fn init_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changed_migration_explains_safe_recovery_without_hashes() {
+        let message = explain_migration_error(store_pg::PgStoreError::MigrationChecksumChanged {
+            version: 1,
+            name: "core",
+            expected: "expected-hash".into(),
+            actual: "recorded-hash".into(),
+        })
+        .to_string();
+        assert!(message.contains("migration 1 (core)"));
+        assert!(message.contains("./dev.sh reset"));
+        assert!(message.contains("deletes local PostgreSQL and MinIO data"));
+        assert!(message.contains("To keep the data"));
+        assert!(!message.contains("expected-hash"));
+        assert!(!message.contains("recorded-hash"));
+
+        let renamed = explain_migration_error(store_pg::PgStoreError::MigrationNameChanged {
+            version: 1,
+            expected: "core",
+            actual: "old_core".into(),
+        })
+        .to_string();
+        assert!(renamed.contains("migration 1 (core) has a different name"));
+        assert!(renamed.contains("./dev.sh reset"));
+    }
 
     #[test]
     fn a_key_names_exactly_one_scope_and_its_groups() {

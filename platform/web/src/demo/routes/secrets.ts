@@ -15,7 +15,6 @@ import type {
   SecretProvider,
   UniverseSetup,
 } from "@/api";
-import { demoCreateAccess } from "../access-state";
 import { base64ToText, type DemoStore, type UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
 
@@ -99,7 +98,7 @@ interface GrantInit {
   displayName?: string | null;
   subjectHint?: string | null;
   exposure?: SecretGrant["exposure"];
-  principal?: SecretGrant["principal"];
+  createdBy?: SecretGrant["createdBy"];
   scopes?: string[];
   audience?: string | null;
   expiresAtMs?: number | null;
@@ -119,7 +118,7 @@ function mintGrant(store: DemoStore, universe: UniverseState, init: GrantInit): 
     subjectHint: init.subjectHint ?? null,
     status: "active",
     exposure: init.exposure ?? "brokered",
-    principal: init.principal ?? { kind: "serviceAccount", id: "demo-service" },
+    createdBy: init.createdBy ?? { kind: "actor", id: store.currentUser.id },
     scopes: init.scopes ?? [],
     audience: init.audience ?? null,
     hasAccessToken: true,
@@ -324,7 +323,7 @@ function configuratorSetup(universe: UniverseState): UniverseSetup {
       name: "Configurator",
       description:
         "Creates a dedicated credential, registers the Configurator MCP server, and adds a ready-to-use profile for managing this universe. " +
-        "The server starts restricted to you. Granting it to Default agent identity hands Operator actions to every session and bot running as Default agent identity.",
+        "Anyone who can attach the server configures profiles, MCP servers, environments, bots, channels, credentials and models with its key.",
       version: CONFIGURATOR_VERSION,
       available: true,
       status: "available",
@@ -352,7 +351,6 @@ function finishConfiguratorInstall(store: DemoStore, universe: UniverseState, se
     providerKind: "staticBearer",
     displayName: "Lightspeed Configurator setup",
     audience: CONFIGURATOR_MCP_URL,
-    principal: { kind: "user", id: store.currentUser.id },
   });
   const existingServer = universe.mcpServers.get(CONFIGURATOR_SERVER_ID);
   const server: McpServer = {
@@ -375,10 +373,6 @@ function finishConfiguratorInstall(store: DemoStore, universe: UniverseState, se
     updatedAtMs: now,
   };
   universe.mcpServers.set(server.serverId, server);
-  // Whoever may use the server holds Operator actions: it starts restricted
-  // to the installing Admin, and a repair keeps the access chosen since.
-  if (!existingServer)
-    demoCreateAccess(store, universe, { kind: "mcp_server", id: server.serverId }, { visibility: "restricted" });
   const existingProfile = universe.profiles.get(CONFIGURATOR_PROFILE_ID);
   const profile: ProfileDocument = {
     profileId: CONFIGURATOR_PROFILE_ID,

@@ -4,28 +4,19 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { UniverseAction } from "@lightspeed-ai/agent-client";
 import type { SessionUser } from "@/auth";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { AppShell } from "./app-shell";
 
-const mocks = vi.hoisted(() => ({ api: vi.fn() }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", async (original) => ({
   ...await original<typeof import("@/lib/universes")>(),
-  useUniverses: () => ({ data: [{ id: "universe", slug: "test", name: "Test" }], isLoading: false }),
   rememberUniverse: () => {},
 }));
 vi.mock("@/components/universe-switcher", () => ({ UniverseSwitcher: () => null }));
 vi.mock("@/components/user-menu", () => ({ UserMenu: () => null }));
 
-/// Universe actions each role holds, as the runtime reports them.
-const ROLE_ACTIONS: Record<string, UniverseAction[]> = {
-  viewer: ["read"],
-  contributor: ["read", "create_session", "create_profile", "create_bot", "create_workspace", "use_resource"],
-  operator: ["read", "create_session", "create_profile", "create_bot", "create_workspace", "use_resource", "configure_resource"],
-  admin: ["read", "create_session", "create_profile", "create_bot", "create_workspace", "use_resource", "configure_resource", "manage_access"],
-};
 const WORK = ["Bots", "Sessions", "Profiles", "Workspaces"];
 const RESOURCES = ["Environments", "MCP servers"];
 
@@ -51,12 +42,13 @@ afterEach(async () => {
 
 /// The sidebar as label → nav items, with the unlabelled first group as "".
 async function sidebarFor(role: string): Promise<Record<string, string[]>> {
+  mocks.role = role;
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path.endsWith("/access")) return { actions: ROLE_ACTIONS[role], resources: [] };
+    if (path === "/api/v1/universes") return [{ id: "universe", slug: "test", name: "Test", status: "active", role: mocks.role }];
     throw new Error(`Unexpected request: ${path}`);
   });
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user">
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}>
       <MemoryRouter initialEntries={["/u/test/bots"]}>
         <Routes>
           <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} admin={false} />}>
@@ -78,7 +70,7 @@ it.each(["viewer", "contributor"])("shows a %s the work, resources and readable 
   expect(await sidebarFor(role)).toEqual({
     "": WORK,
     Resources: RESOURCES,
-    Access: ["Models", "API keys", "Members"],
+    Access: ["Models", "Members"],
   });
 });
 
@@ -86,12 +78,12 @@ it("adds credentials, channels and templates for an Operator", async () => {
   expect(await sidebarFor("operator")).toEqual({
     "": WORK,
     Resources: RESOURCES,
-    Access: ["Models", "Credentials", "API keys", "Members"],
+    Access: ["Models", "Credentials", "Members"],
     Settings: ["Channels", "Templates"],
   });
 });
 
-it("adds general settings for an Admin", async () => {
+it("adds API keys and general settings for an Admin", async () => {
   expect(await sidebarFor("admin")).toEqual({
     "": WORK,
     Resources: RESOURCES,

@@ -4,13 +4,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ResourceRef } from "@lightspeed-ai/agent-client";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { ProfilesPage } from "./ProfilesPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "contributor" }, slug: "universe", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator" }, slug: "universe", isLoading: false }) }));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 vi.mock("@/components/session/session-config-editor", () => ({ SessionConfigEditor: () => null }));
 // Every select becomes a native control named by its trigger; jsdom cannot lay out the popup.
@@ -52,11 +51,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
-  mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: { resources?: ResourceRef[] }) => {
-    if (path.endsWith("/access")) return {
-      actions: ["read", "create_profile"],
-      resources: (body?.resources ?? []).map((resource) => ({ resource, actions: ["read"] })),
-    };
+  mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
     if (method === "GET" && path.endsWith("/profiles")) return profiles;
     if (method === "GET" && path.includes("/profiles/"))
       return profiles.find((profile) => path.endsWith(`/${profile.profileId}`)) ?? { profileId: path.split("/").pop(), revision: 1 };
@@ -96,7 +91,7 @@ async function type(selector: string, value: string) {
 
 it("keeps the display name open and summarizes the id and starting point", async () => {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user"><MemoryRouter initialEntries={["/u/universe/profiles/own"]}>
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={["/u/universe/profiles/own"]}>
       <Routes><Route path="/u/:slug/profiles/:profileId" element={<ProfilesPage admin />} /></Routes>
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
@@ -135,7 +130,7 @@ it("keeps the display name open and summarizes the id and starting point", async
 
 it("opens the id on its own when neither a name nor an id is given", async () => {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user"><MemoryRouter initialEntries={["/u/universe/profiles/own"]}>
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={["/u/universe/profiles/own"]}>
       <Routes><Route path="/u/:slug/profiles/:profileId" element={<ProfilesPage admin />} /></Routes>
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));

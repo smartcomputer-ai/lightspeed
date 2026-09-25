@@ -17,7 +17,7 @@ const legacy = {
 };
 const subscription = {
   grantId: "claude", providerId: "anthropic", providerKind: "staticBearer", displayName: "Team Max", status: "active",
-  exposure: "brokered", principal: {}, hasAccessToken: true, hasRefreshToken: false, leaseCount: 0,
+  exposure: "brokered", createdBy: { kind: "local" }, hasAccessToken: true, hasRefreshToken: false, leaseCount: 0,
   metadata: { subscription: "claudeCode" }, createdAtMs: 1, updatedAtMs: 1,
 };
 let root: Root;
@@ -48,7 +48,7 @@ afterEach(async () => {
 });
 async function show(path = "/") {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user"><MemoryRouter initialEntries={[path]}>
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[path]}>
       <ModelsPage admin={false} />
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));

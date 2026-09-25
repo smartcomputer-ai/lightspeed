@@ -12,7 +12,6 @@ import { SessionDetail } from "./SessionsPage";
 const mocks = vi.hoisted(() => ({
   permissions: new Set<string>(),
   permissionLoading: false,
-  permissionError: null as Error | null,
   api: vi.fn(),
   tail: vi.fn(),
   scrollable: { start: true, end: true },
@@ -24,7 +23,11 @@ vi.mock("@/api", async (original) => ({
   api: mocks.api,
 }));
 vi.mock("@/lib/sessions/tail", () => ({ useSessionTail: mocks.tail }));
-vi.mock("@/lib/permissions", () => ({ useActionPermissions: () => ({ can: (action: string) => mocks.permissions.has(action), isLoading: mocks.permissionLoading, error: mocks.permissionError }) }));
+vi.mock("@/lib/permissions", () => ({
+  useActionPermissions: () => ({ can: (action: string) => mocks.permissions.has(action), isLoading: mocks.permissionLoading }),
+  usePermissionIdentity: () => "user",
+  useUniverseRole: () => "contributor",
+}));
 // Keep queries and unrelated settings out of these composer/transcript tests.
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({}),
@@ -63,7 +66,6 @@ beforeEach(() => {
   window.localStorage.clear();
   mocks.permissions = new Set(["read", "control_session", "stop_session", "delete_session", "invoke_bot", "manage_bot"]);
   mocks.permissionLoading = false;
-  mocks.permissionError = null;
   transcript = emptyTranscript();
   mocks.tail.mockReturnValue({
     transcript, phase: "live", error: null, reconcileRuns: vi.fn(),
@@ -387,17 +389,16 @@ describe("session action permissions", () => {
     expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/universe/sessions/session/runs/active-run/cancel", {});
   });
 
-  it.each(["loading", "failed"])("fails closed while permission lookup is %s", async (state) => {
+  it("fails closed while the member's role is loading", async () => {
     mocks.permissions.clear();
-    mocks.permissionLoading = state === "loading";
-    mocks.permissionError = state === "failed" ? new Error("Unavailable") : null;
+    mocks.permissionLoading = true;
     await show("session");
     expect(input().disabled).toBe(true);
     expect(container.querySelector('[aria-label="Session settings"]')).toBeNull();
     expect(mocks.api).not.toHaveBeenCalled();
   });
 
-  it("removes controls when an updated preview no longer permits them", async () => {
+  it("removes controls when the member's role no longer permits them", async () => {
     transcript.activeRun = { runId: "active-run", label: "running", cancelling: false };
     await show("session");
     expect(input().disabled).toBe(false);

@@ -8,7 +8,7 @@ import { useSessionTail, type SessionTail } from "./tail";
 interface Request {
   url: URL;
   signal: AbortSignal;
-  reply: (body: unknown, status?: number, privileged?: boolean) => void;
+  reply: (body: unknown, status?: number) => void;
   reject: (error: Error) => void;
 }
 let requests: Request[];
@@ -32,8 +32,8 @@ function history(seqs: number[], head: number, before?: number) {
   return { events: seqs.map(message), headCursor: { seq: head },
     complete: before === undefined, nextCursor: before === undefined ? null : { seq: before } };
 }
-async function reply(index: number, body: unknown, status = 200, privileged = false) {
-  await act(async () => requests[index]!.reply(body, status, privileged));
+async function reply(index: number, body: unknown, status = 200) {
+  await act(async () => requests[index]!.reply(body, status));
 }
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -42,7 +42,7 @@ beforeEach(() => {
     const signal = options.signal as AbortSignal;
     signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
     requests.push({ url: new URL(url, "http://localhost"), signal, reject,
-      reply: (body, status = 200, privileged = false) => resolve(new Response(JSON.stringify(body), { status, headers: privileged ? { "x-lightspeed-privileged-read": "true" } : {} })) });
+      reply: (body, status = 200) => resolve(new Response(JSON.stringify(body), { status })) });
   })));
   container = document.createElement("div");
   root = createRoot(container);
@@ -235,14 +235,4 @@ describe("recent transcript and live history", () => {
     expect(requests[1]!.url.searchParams.get("direction")).toBe("backward");
     expect(requests[1]!.url.searchParams.has("after")).toBe(false);
   });
-});
-
-it("retains privileged provenance with loaded history and clears it on navigation", async () => {
-  await act(async () => root.render(<Harness />));
-  await reply(0, history([1], 1), 200, true);
-  expect(tail.privilegedRead).toBe(true);
-  await act(async () => root.render(<Harness id="other" />));
-  expect(tail.privilegedRead).not.toBe(true);
-  await reply(2, history([1], 1));
-  expect(tail.privilegedRead).not.toBe(true);
 });

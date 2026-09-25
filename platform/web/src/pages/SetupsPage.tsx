@@ -13,11 +13,8 @@ export function SetupsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
-  if (isLoading || permissions.isLoading) {
+  if (isLoading) {
     return <LoadingNote />;
-  }
-  if (permissions.error) {
-    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
   }
   if (!universe || !permissions.can("configure_resource")) {
     return <UniverseNotFound slug={slug} />;
@@ -130,7 +127,7 @@ function SetupCard({
         )}
         {!installable && !unavailable && (
           <p className="text-sm text-muted-foreground">
-            Needs a universe Admin: it creates a service identity with the Operator role.
+            Needs a universe Admin: it mints a key that configures the universe.
           </p>
         )}
       </CardContent>

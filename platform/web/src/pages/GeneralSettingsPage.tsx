@@ -1,5 +1,3 @@
-import { ExecutionSettings } from "@/components/access/execution-settings";
-import { ReadError } from "@/components/read-error";
 import { useActionPermissions } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -38,11 +36,8 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
-  if (isLoading || permissions.isLoading) {
+  if (isLoading) {
     return <LoadingNote />;
-  }
-  if (permissions.error) {
-    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
   }
   if (!universe || !permissions.can("manage_access")) {
     return <UniverseNotFound slug={slug} />;
@@ -54,10 +49,35 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
       <div className="grid gap-6">
         <RenameCard universe={universe} />
         <IdentifiersCard universe={universe} />
-        <ExecutionSettings universeId={universe.id} />
+        <SharingCard />
         <DangerZone universe={universe} />
       </div>
     </>
+  );
+}
+
+/// How work is shared in a universe, said once here and in the sharing help
+/// rather than as a banner.
+function SharingCard() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Sharing</CardTitle>
+        <CardDescription>Who sees a session in this universe.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-2 text-sm text-muted-foreground">
+        <p>
+          A new session is unshared: its creator reads and controls it. Sharing it with the
+          universe is one action and cannot be undone; members then see and continue it by their
+          role. Bots and their conversations are always shared.
+        </p>
+        <p>
+          Admins read unshared work, and can share or delete any session. Files written into a
+          shared workspace or environment follow that resource, and content can be read across
+          the universe by its digest.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -1,5 +1,4 @@
 import { PermissionIdentityProvider } from "@/lib/permissions";
-import { AdminGroupsPage } from "@/pages/AdminGroupsPage";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import type { SessionUser } from "./auth.js";
@@ -10,6 +9,7 @@ import { SettingsIndexRedirect } from "@/components/universe-nav";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
 import { AccountPage } from "@/pages/AccountPage";
 import { ApiKeysPage } from "@/pages/ApiKeysPage";
+import { AdminApiKeysPage } from "@/pages/AdminApiKeysPage";
 import { AdminUniversesPage } from "@/pages/AdminUniversesPage";
 import { AdminUsersPage } from "@/pages/AdminUsersPage";
 import { AdminChannelsPage } from "@/pages/AdminChannelsPage";
@@ -73,7 +73,7 @@ export function App() {
     <Routes>
       <Route element={
         <UserPreferencesProvider userId={user.id}>
-          <PermissionIdentityProvider userId={user.id}>
+          <PermissionIdentityProvider userId={user.id} platformAdmin={admin}>
             <AppShell user={user} admin={admin} />
           </PermissionIdentityProvider>
         </UserPreferencesProvider>
@@ -131,9 +131,9 @@ export function App() {
         {admin && (
           <>
             <Route path="admin" element={<Navigate to="/admin/users" replace />} />
-            <Route path="admin/groups" element={<AdminGroupsPage />} />
             <Route path="admin/users" element={<AdminUsersPage currentUser={user} />} />
             <Route path="admin/universes" element={<AdminUniversesPage />} />
+            <Route path="admin/api-keys" element={<AdminApiKeysPage />} />
             <Route path="admin/channels" element={<AdminChannelsPage />} />
             <Route path="admin/environment-providers" element={<AdminEnvironmentProvidersPage />} />
           </>

@@ -60,21 +60,18 @@ const universeReads = [
 ];
 
 describe("demo router", () => {
-  it("serves action previews while keeping read-only and non-member universes distinct", async () => {
+  it("shares an unshared root session once, with its sub-agents", async () => {
     const { store, call } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const body = { resources: [{ kind: "session", id: "session-flaky-scheduler" }, { kind: "session", id: "missing" }] };
-    const path = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/access`;
-    const admin = await call("POST", path, body);
-    expect(admin.status).toBe(200);
-    expect(admin.json).toMatchObject({ actions: expect.arrayContaining(["create_session", "configure_resource"]), resources: [
-      { actions: expect.arrayContaining(["control_session", "stop_session"]) }, { actions: [] },
-    ] });
-    universe.universe.role = "viewer";
-    const viewer = await call("POST", path, body);
-    expect(viewer.json).toMatchObject({ actions: ["read"], resources: [{ actions: ["read"] }, { actions: [] }] });
-    universe.universe.role = null;
-    expect((await call("POST", path, body)).status).toBe(403);
+    const path = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions/session-flaky-scheduler`;
+    expect((await call("GET", path)).json).toMatchObject({ access: { visibility: "restricted" } });
+    const listed = (await call("GET", `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as { sessions: { id: string; access: { visibility: string } }[] };
+    expect(listed.sessions.find((session) => session.id === "session-flaky-scheduler")?.access.visibility).toBe("restricted");
+    const shared = await call("POST", `${path}/share`);
+    expect(shared.status).toBe(200);
+    expect(shared.json).toMatchObject({ access: { visibility: "universe" } });
+    expect(universe.sessions.get("session-flaky-scheduler")!.view.access.visibility).toBe("universe");
+    expect((await call("POST", `${path}/share`)).status).toBe(409);
   });
 
   it("keeps full run output after its entries leave active context", async () => {
@@ -213,7 +210,8 @@ describe("demo router", () => {
       "/api/v1/channel-accounts",
       "/api/v1/admin/environment-providers",
       "/api/v1/admin/environment-provider-bindings",
-      "/api/v1/admin/users",
+      "/api/auth/admin/list-users",
+      "/api/v1/admin/api-keys",
     ]) {
       expect((await call("GET", path)).status, path).toBe(200);
     }
@@ -239,16 +237,14 @@ describe("demo router", () => {
     const path = `/api/v1/universes/${state.universe.id}/members`;
     const admin = (await call("GET", path)).json as Record<string, unknown>[];
     expect(admin.every((member) => typeof member.email === "string")).toBe(true);
-    for (const role of ["viewer", "contributor", "operator"]) {
+    for (const role of ["viewer", "contributor", "operator"] as const) {
       state.universe.role = role;
       const response = await call("GET", path);
       expect(response.status).toBe(200);
       const members = response.json as Record<string, unknown>[];
       expect(members.map((member) => member.name)).toEqual(admin.map((member) => member.name));
       for (const member of members) {
-        expect(Object.keys(member).sort()).toEqual(
-          ["id", "name", "role", "subject", ...(member.system ? ["system"] : []), ...(member.principalKind ? ["principalKind"] : [])].sort(),
-        );
+        expect(Object.keys(member).sort()).toEqual(["createdAt", "id", "name", "role", "userId"]);
       }
     }
     state.universe.role = null;
@@ -259,7 +255,7 @@ describe("demo router", () => {
     const { store, call } = await boot();
     const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const base = `/api/v1/universes/${state.universe.id}/setups`;
-    for (const role of ["viewer", "contributor"]) {
+    for (const role of ["viewer", "contributor"] as const) {
       state.universe.role = role;
       expect((await call("GET", base)).status, role).toBe(404);
     }
@@ -270,15 +266,32 @@ describe("demo router", () => {
     expect((await call("POST", `${base}/configurator/install`)).json).toMatchObject({ status: "installing" });
   });
 
+  it("mints scoped keys from the admin keys page and revokes them", async () => {
+    const { store, call } = await boot();
+    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const created = await call("POST", "/api/v1/admin/api-keys", {
+      displayName: "Connector", scope: { kind: "universe", universeId: universe.universe.id }, groups: ["channels/inbound"],
+    });
+    expect(created.status).toBe(201);
+    const { apiKey } = created.json as { apiKey: { keyPrefix: string } };
+    const listed = (await call("GET", "/api/v1/admin/api-keys")).json as { keyPrefix: string; groups: string[]; scope: { kind: string } }[];
+    expect(listed.find((key) => key.keyPrefix === apiKey.keyPrefix)).toMatchObject({ groups: ["channels/inbound"], scope: { kind: "universe" } });
+    expect(listed.find((key) => key.keyPrefix === "lsk_platform")).toMatchObject({ scope: { kind: "deployment" } });
+    expect((await call("DELETE", `/api/v1/admin/api-keys/${apiKey.keyPrefix}`)).status).toBe(200);
+  });
+
   it("updates a user's admin-managed account fields and accepts a password reset", async () => {
     const { store, call } = await boot();
     const target = [...store.users.values()].find((user) => user.id !== store.currentUser.id)!;
 
-    const updated = await call("PATCH", `/api/v1/admin/users/${target.id}`, {
+    const updated = await call("POST", "/api/auth/admin/update-user", {
+      userId: target.id,
+      data: {
         name: "Updated User",
         email: "UPDATED@EXAMPLE.COM",
         emailVerified: true,
         role: "admin",
+      },
     });
     expect(updated.status).toBe(200);
     expect(store.users.get(target.id)).toMatchObject({
@@ -289,12 +302,18 @@ describe("demo router", () => {
     });
 
     expect(
-      (await call("POST", `/api/v1/admin/users/${target.id}/password`, {
+      (await call("POST", "/api/auth/admin/set-user-password", {
         userId: target.id,
         newPassword: "replacement-password",
       })).status,
     ).toBe(200);
+    expect(
+      (await call("POST", "/api/auth/admin/revoke-user-sessions", {
+        userId: target.id,
+      })).status,
+    ).toBe(200);
   });
+
 
   it("returns a request-local MCP tool inventory", async () => {
     const { call } = await boot();

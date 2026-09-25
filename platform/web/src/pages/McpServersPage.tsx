@@ -1,9 +1,5 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
-import { AccessButton } from "@/components/access/access-dialog";
-import { CreationVisibilityField, creationAudienceSentence } from "@/components/access/creation";
-import { RestrictedMarker } from "@/components/access/shared";
-import type { ResourceRef, Visibility } from "@lightspeed-ai/agent-client";
 import { McpToolPicker } from "@/components/mcp/tool-picker";
 import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -88,26 +84,19 @@ export function McpServersPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
-  if (isLoading || permissions.isLoading) {
+  if (isLoading) {
     return <LoadingNote />;
-  }
-  if (permissions.error) {
-    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
   }
   if (!universe || !permissions.can("read")) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <ServerList universeId={universe.id} slug={universe.slug} />;
-}
-
-function serverRef(server: McpServer): ResourceRef {
-  return { kind: "mcp_server", id: server.serverId };
+  return <ServerList universeId={universe.id} />;
 }
 
 const APPROVALS = ["always", "never"] as const;
 
-function ServerList({ universeId, slug }: { universeId: string; slug: string }) {
+function ServerList({ universeId }: { universeId: string }) {
   // Adding servers and changing credentials are universe configuration;
   // everything else on a row is decided for that server.
   const writable = useActionPermissions(universeId).can("configure_resource");
@@ -137,11 +126,10 @@ function ServerList({ universeId, slug }: { universeId: string; slug: string }) 
   const rows = (servers.data ?? [])
     .slice()
     .sort((a, b) => a.serverId.localeCompare(b.serverId));
-  const decisions = useActionPermissions(universeId, rows.map(serverRef));
-  const configurable = (server: McpServer) => decisions.can("configure_resource", serverRef(server));
+  const configurable = useActionPermissions(universeId).can("configure_resource");
   // Open dialogs follow current permissions, like the controls that open them.
-  const editable = editing && configurable(editing) ? editing : null;
-  const connectable = oauthServer && writable && configurable(oauthServer) ? oauthServer : null;
+  const editable = editing && configurable ? editing : null;
+  const connectable = oauthServer && writable && configurable ? oauthServer : null;
   const grantLabels = new Map(
     (authGrants.data ?? []).map((grant) => [grant.grantId, authGrantLabel(grant)]),
   );
@@ -187,10 +175,7 @@ function ServerList({ universeId, slug }: { universeId: string; slug: string }) 
                 <TableRow key={server.serverId}>
                   <TableCell className="max-w-72">
                     <div className="grid min-w-0 gap-0.5">
-                      <span className="flex min-w-0 items-center gap-1.5 font-medium">
-                        <span className="truncate">{server.displayName ?? server.serverId}</span>
-                        <RestrictedMarker access={server.access} />
-                      </span>
+                      <span className="truncate font-medium">{server.displayName ?? server.serverId}</span>
                       <IdText className="text-muted-foreground">{server.serverId}</IdText>
                     </div>
                   </TableCell>
@@ -214,7 +199,7 @@ function ServerList({ universeId, slug }: { universeId: string; slug: string }) 
                     <div className="flex items-center gap-2">
                       <StatusBadge status={server.status} />
                       {/* The one thing to do on a row that needs auth is right here, not behind an icon. */}
-                      {writable && configurable(server) && isOAuthPolicy(server.authPolicy.type) && !server.credential && (
+                      {writable && configurable && isOAuthPolicy(server.authPolicy.type) && !server.credential && (
                         <Button variant="outline" size="xs" onClick={() => setOAuthServer(server)}>
                           <LogIn data-icon="inline-start" /> Connect
                         </Button>
@@ -222,14 +207,7 @@ function ServerList({ universeId, slug }: { universeId: string; slug: string }) 
                     </div>
                   </TableCell>
                   <TableActionsCell>
-                    <AccessButton
-                      compact
-                      universeId={universeId}
-                      slug={slug}
-                      resource={serverRef(server)}
-                      access={server.access}
-                    />
-                    {configurable(server) && (
+                    {configurable && (
                       <>
                         {writable && isOAuthPolicy(server.authPolicy.type) && server.credential && (
                           <Button
@@ -442,7 +420,6 @@ function ServerDialog({
     server?.credential?.grantId ?? "",
   );
   const [status, setStatus] = useState<McpServer["status"]>(server?.status ?? "active");
-  const [visibility, setVisibility] = useState<Visibility>("universe");
   const [discovery, setDiscovery] = useState<McpServerAuthDiscovery | null>(null);
   const [lastProbedUrl, setLastProbedUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -535,7 +512,6 @@ function ServerDialog({
           displayName: displayName.trim(),
           ...(description.trim() ? { description: description.trim() } : {}),
           allowedTools: null,
-          access: { visibility },
         });
       }
       return api<McpServer>(
@@ -797,7 +773,6 @@ function ServerDialog({
           approval,
           allowPrivateNetwork,
           customOAuthSettings,
-          visibility: editing ? undefined : visibility,
         })}
         action="Customize"
         label="Customize connection options"
@@ -926,11 +901,6 @@ function ServerDialog({
                 />
               </Field>
             </div>
-          </SettingsGroup>
-        )}
-        {!editing && (
-          <SettingsGroup title="Access">
-            <CreationVisibilityField audience="use" value={visibility} onChange={setVisibility} />
           </SettingsGroup>
         )}
       </SettingsDisclosure>
@@ -1299,7 +1269,6 @@ export function mcpConnectionSummary({
   approval,
   allowPrivateNetwork,
   customOAuthSettings,
-  visibility,
 }: {
   execution: McpServer["execution"];
   exposure: McpServer["exposure"];
@@ -1307,10 +1276,7 @@ export function mcpConnectionSummary({
   allowPrivateNetwork: boolean;
   /** How many OAuth details differ from what discovery supplies. */
   customOAuthSettings: number;
-  /** Who can use a new server; omitted when editing. */
-  visibility?: Visibility;
 }): string {
-  const audience = visibility && creationAudienceSentence(visibility, "use");
   return [
     execution === "native" ? "Lightspeed connects" : "Model provider connects",
     execution === "native" &&
@@ -1319,7 +1285,6 @@ export function mcpConnectionSummary({
     allowPrivateNetwork && "private network allowed",
     customOAuthSettings > 0 &&
       `${customOAuthSettings} custom OAuth ${customOAuthSettings === 1 ? "setting" : "settings"}`,
-    audience && `${audience.charAt(0).toLowerCase()}${audience.slice(1)}`,
   ]
     .filter(Boolean)
     .join(" · ");

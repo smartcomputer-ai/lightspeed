@@ -61,7 +61,6 @@ import {
   type EventLog,
   type ScriptedEvent,
   mcpDisplay,
-  demoAccess,
 } from "./builders";
 import { INCUS_PROVIDER_ID } from "./platform";
 
@@ -293,7 +292,7 @@ function subagentSession(store: DemoStore, universe: UniverseState, init: Subage
 function lineageChild(session: SessionRecord): SessionSummaryView {
   const view = session.view;
   return {
-    access: demoAccess("session", view.id),
+    access: view.access,
     id: view.id,
     displayName: view.displayName ?? null,
     createdAtMs: view.createdAtMs,
@@ -1213,7 +1212,6 @@ function sandbox(init: SandboxInit): Environment {
   const updatedAtMs = init.closedAtMs ?? init.createdAtMs + 3 * MINUTE_MS;
   return {
     environmentId: init.id,
-    access: demoAccess("environment", init.id),
     requestId,
     source: { type: "provisioned", providerId: INCUS_PROVIDER_ID, bindingId: INCUS_PROVIDER_ID },
     displayName: init.displayName,
@@ -1275,7 +1273,6 @@ function seedEnvironments(universe: UniverseState): void {
   const ciRequestId = `req-${hex("ci-runner", 12)}`;
   universe.environments.set(ENV.ci, {
     environmentId: ENV.ci,
-    access: demoAccess("environment", ENV.ci),
     requestId: ciRequestId,
     source: { type: "provisioned", providerId: INCUS_PROVIDER_ID, bindingId: INCUS_PROVIDER_ID },
     displayName: "CI runner",
@@ -1299,7 +1296,6 @@ function seedEnvironments(universe: UniverseState): void {
   });
   universe.environments.set(ENV.laptop, {
     environmentId: ENV.laptop,
-    access: demoAccess("environment", ENV.laptop),
     requestId: `req-${hex("priya-laptop", 12)}`,
     source: {
       type: "external",
@@ -1321,7 +1317,6 @@ function seedEnvironments(universe: UniverseState): void {
   const oldRequestId = `req-${hex("old-sandbox", 12)}`;
   universe.environments.set(ENV.old, {
     environmentId: ENV.old,
-    access: demoAccess("environment", ENV.old),
     requestId: oldRequestId,
     source: { type: "provisioned", providerId: INCUS_PROVIDER_ID, bindingId: INCUS_PROVIDER_ID },
     displayName: "repo-explorer sandbox",
@@ -1422,7 +1417,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "acme-dev",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "serviceAccount", id: "demo-service" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: [],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1446,7 +1441,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "ops@acme.example",
       status: "needsReauth",
       exposure: "brokered",
-      principal: { kind: "user", id: "user-marco" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["read", "write"],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1464,7 +1459,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "intake · linear-webhook",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "serviceAccount", id: "demo-service" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: [],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1482,7 +1477,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "software-factory (workspace key)",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "serviceAccount", id: "demo-service" },
+      createdBy: { kind: "actor", id: "user-ada" },
       hasAccessToken: true,
       hasRefreshToken: false,
       lastLeasedAtMs: ago(3 * HOUR_MS),

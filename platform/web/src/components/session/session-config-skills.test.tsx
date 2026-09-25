@@ -373,20 +373,3 @@ it("enables Web with search and page fetching", async () => {
   expect(current ?? {}).not.toHaveProperty("features.web");
 });
 
-it("keeps an unusable saved attachment visible with its reason and never picks one by default", async () => {
-  const reason = "Default agent identity cannot use this";
-  await setup(
-    { features: { environments: { environments: [{ environmentId: "production", access: "exec", default: true }] } } },
-    { environments: [
-      { environmentId: "production", displayName: "Production", status: "ready", unusable: reason },
-      { environmentId: "staging", status: "ready", unusable: reason },
-      { environmentId: "ci", status: "ready" },
-    ] },
-  );
-  expect(container.querySelector('[aria-label="Environment 1"]')?.textContent).toContain(`Production (production) — ${reason}`);
-  expect(container.textContent).toContain(`${reason}. Ask its owner for access or remove it.`);
-  const add = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-    .find((button) => button.textContent?.trim() === "Add environment")!;
-  await act(async () => add.click());
-  expect(current).toHaveProperty("features.environments.environments.1.environmentId", "ci");
-});

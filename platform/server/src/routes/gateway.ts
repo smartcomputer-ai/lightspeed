@@ -589,6 +589,21 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
+  /// Shares an unshared root session with the universe, one way. The member
+  /// gate lets only its creator or an admin do it.
+  app.post("/:id/sessions/:sessionId/share", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) {
+      return c.json({ error: "not found" }, 404);
+    }
+    return withGateway(c, async () => {
+      const response = await engineClientFor(ctx, access).call("session/share", {
+        sessionId: c.req.param("sessionId"),
+      });
+      return c.json(response.result);
+    });
+  });
+
   /// Retention belongs to the root session. Null keeps the tree until an
   /// operator deletes it; a positive duration schedules deletion after close.
   app.put("/:id/sessions/:sessionId/retention", async (c) => {

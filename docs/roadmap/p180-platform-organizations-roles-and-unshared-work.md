@@ -1,7 +1,8 @@
 # P180 — Platform: organizations, roles and unshared work
 
-**Status:** In progress, 2026-09-25: steps 1 and 2 (server) done. Second
-half of the version 0.1 access design; builds on the contract that
+**Status:** In progress, 2026-09-25: steps 1 to 4 done, audit and
+invitations deferred, customer documents held. Second half of the version
+0.1 access design; builds on the contract that
 [core: universes, keys and actors](p179-core-universes-keys-and-actors.md)
 defines and is blocked on its step 4. Fifth slice of
 [enterprise authorization](later/pNNN-enterprise-authorization.md).
@@ -184,16 +185,27 @@ greenfield rule:
 2. [x] Gateway gate: generated `method-roles.ts` with its coverage test,
        membership and target checks in the proxy, actor header, list
        composition, error mapping.
-3. [ ] Web on the new server: remove the access dialogs, execution settings,
-       privileged-read markers and the groups page; permission hints from the
-       member's role; Members, API keys and platform Users pages on the
-       restored routes and the admin plugin; demo routes and fixtures on the
-       same shapes. Then the unshared work UI: badge, Share action, list
-       marking, help text.
-4. [ ] Members invitations, `identity_audit`; keys admin area (scope, groups,
-       `assert_actor`).
-5. [ ] Customer documents (below), `platform/README.md`, merge of
-       `permissions`.
+3. [x] Web on the new server: access dialogs, execution settings,
+       privileged-read markers and the groups page removed; permission hints
+       from the member's role in the universe on screen; Members, API keys
+       (admins only) and platform Users pages on the restored routes and the
+       admin plugin; demo routes and fixtures on the same shapes. The
+       unshared work UI: an Unshared badge on sessions in lists and headers,
+       a Share with universe action for the creator or an admin with a
+       one-way confirmation, delete offered to the creator or an admin, and
+       the sharing explanation once in General settings and the new-session
+       dialog.
+4. [x] Keys admin area: platform admins list, mint (scope, groups,
+       `assert_actor`) and revoke every core key under Admin → API keys;
+       universe API keys are for universe admins.
+   [ ] Deferred for now: `identity_audit` (decision 6) and member
+       invitations. Until then accounts are created under Admin → Users and
+       added on Members; the session log and `created_by` columns are the
+       only records, and nothing outlives a deleted session. Both return
+       before customer data is loaded.
+5. [x] `platform/README.md`.
+   [ ] Held for now: customer documents (below).
+   [ ] Merge of `permissions`.
 
 Notes on steps 1 and 2 as built:
 
@@ -211,7 +223,6 @@ Notes on steps 1 and 2 as built:
 - Universe admins mint universe keys (every universe group, no actor) from
   the universe's API keys page. The Configurator installer already mints its
   key with the configuration groups.
-- The web still calls the removed routes; it is step 3.
 
 ## Validation
 

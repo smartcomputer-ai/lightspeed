@@ -1,13 +1,11 @@
-import { directoryFor } from "./identity";
 /// Platform-owned records: universes, memberships, the user directory, and
 /// universe API keys. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
-import { memberUpdateSchema, slugify } from "@lightspeed/platform-shared";
+import { memberUpdateSchema, slugify, universeRoleSchema } from "@lightspeed/platform-shared";
 import type { EngineUniverse, Member, Universe, UniverseApiKey } from "@/api";
 import type { DemoStore, UniverseState } from "../store";
 import { conflict, badRequest, notFound, nowIso, readBody, universeFor } from "./common";
-import { DEFAULT_AGENT_IDENTITY, executionPrincipal } from "../access-state";
 
 export function platformRoutes(store: DemoStore): Hono {
   const app = new Hono();
@@ -17,12 +15,6 @@ export function platformRoutes(store: DemoStore): Hono {
   app.get("/users", (c) =>
     c.json([...store.users.values()].map(({ id, name, email }) => ({ id, name, email }))),
   );
-
-  app.get("/universes/:id/key-principals", (c) => {
-    const universe = universeFor(store, c);
-    if (!universe || !universe.universe.role) return notFound(c);
-    return c.json([{ id: store.currentUser.id, displayName: store.currentUser.name, kind: "user" }]);
-  });
 
   app.get("/universes", (c) => c.json([...store.universes.values()].map((state) => state.universe)));
 
@@ -118,34 +110,21 @@ export function platformRoutes(store: DemoStore): Hono {
 
   // --- membership ---------------------------------------------------------
 
-  app.get("/universes/:id/groups", (c) => c.json(directoryFor(store).groups));
-
-  /// Every member may list members; emails, account links and the
-  /// private-content capability are for Admins only.
+  /// Every member may list members; emails are for admins only.
   app.get("/universes/:id/members", (c) => {
     const state = universeFor(store, c);
     if (!state || !state.universe.role) return notFound(c);
-    const agent = executionPrincipal(state);
-    const rows: Member[] = [
-      ...state.members.map((member) => ({ ...member,
-        subject: { kind: member.email === "Group" ? "group" as const : "principal" as const, id: member.userId ?? member.id },
-        principalKind: member.email === "Group" ? undefined : "user" as const,
-      })),
-      // The universe's agent identity: listed, never edited.
-      { id: `principal:${agent}:executor`, userId: agent, name: DEFAULT_AGENT_IDENTITY, email: "Agent identity",
-        role: "executor", system: true, createdAt: state.universe.createdAt,
-        subject: { kind: "principal", id: agent }, principalKind: "service" },
-    ];
-    if (state.universe.role === "admin") return c.json(rows);
-    return c.json(rows.map(({ id, subject, principalKind, role, system, name }) => ({ id, subject, principalKind, role, system, name })));
+    if (state.universe.role === "admin") return c.json(state.members);
+    return c.json(state.members.map(({ email: _email, ...member }) => member));
   });
 
   app.post("/universes/:id/members", async (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const body = await readBody<{ userId?: string; email?: string; groupId?: string; role?: string }>(c);
-    const group = directoryFor(store).groups.find((g) => g.id === body.groupId);
-    const target = group ? { id: group.id, name: group.displayName, email: "Group" } : body.userId
+    const body = await readBody<{ userId?: string; email?: string; role?: string }>(c);
+    const role = universeRoleSchema.safeParse(body.role ?? "contributor");
+    if (!role.success) return badRequest(c, "invalid role");
+    const target = body.userId
       ? store.users.get(body.userId)
       : [...store.users.values()].find((u) => u.email === body.email?.trim());
     if (!target) return notFound(c, "user not found");
@@ -153,7 +132,7 @@ export function platformRoutes(store: DemoStore): Hono {
     const created: Member = {
       id: store.nextId("member"),
       userId: target.id,
-      role: body.role ?? "contributor",
+      role: role.data,
       email: target.email,
       name: target.name,
       createdAt: nowIso(),
@@ -170,7 +149,7 @@ export function platformRoutes(store: DemoStore): Hono {
     const member = state.members.find((m) => m.id === c.req.param("memberId"));
     if (!member) return notFound(c);
     if (member.role === "admin" && body.data.role !== "admin" && !state.members.some((m) => m.id !== member.id && m.role === "admin")) {
-      return conflict(c, "At least one administrator must remain.");
+      return conflict(c, "a universe keeps at least one admin");
     }
     member.role = body.data.role;
     if (member.userId === store.currentUser.id) state.universe.role = member.role;
@@ -180,6 +159,10 @@ export function platformRoutes(store: DemoStore): Hono {
   app.delete("/universes/:id/members/:memberId", (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
+    const member = state.members.find((m) => m.id === c.req.param("memberId"));
+    if (member?.role === "admin" && !state.members.some((m) => m.id !== member.id && m.role === "admin")) {
+      return conflict(c, "a universe keeps at least one admin");
+    }
     const before = state.members.length;
     state.members = state.members.filter((m) => m.id !== c.req.param("memberId"));
     return state.members.length === before ? notFound(c) : c.json({ ok: true });

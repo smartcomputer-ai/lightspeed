@@ -1,8 +1,8 @@
-import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, KeyRound, Plus, ShieldOff } from "lucide-react";
+import { KeyRound, Plus, ShieldOff } from "lucide-react";
+import { ApiKeySecret } from "@/components/api-keys/secret-once";
 import {
   api,
   type UniverseApiKey,
@@ -31,7 +31,6 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Table,
   TableActionsCell,
@@ -45,20 +44,16 @@ import {
 } from "@/components/ui/table";
 import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
 import { useActiveUniverse } from "@/lib/universes";
-
-type KeyPrincipal = { id: string; displayName: string; kind: "user" | "service" };
+import { useActionPermissions } from "@/lib/permissions";
 
 export function ApiKeysPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
-  if (isLoading || permissions.isLoading) {
+  if (isLoading) {
     return <LoadingNote />;
   }
-  if (permissions.error) {
-    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
-  }
-  if (!universe || !permissions.can("read")) {
+  if (!universe || !permissions.can("manage_access")) {
     return <UniverseNotFound slug={slug} />;
   }
 
@@ -91,7 +86,7 @@ function ApiKeyList({ universeId }: { universeId: string }) {
     <>
       <PageHeader
         title="API keys"
-        description="Your universe credentials. Universe administrators can also manage keys for this universe’s service principals."
+        description="Universe credentials for remote agents and the public Configurator MCP endpoint."
         actions={
           <Button onClick={() => setCreateOpen(true)}>
             <Plus data-icon="inline-start" />
@@ -217,21 +212,12 @@ function CreateApiKeyDialog({
   onCreated: () => void;
 }) {
   const [displayName, setDisplayName] = useState("");
-  const [principalId, setPrincipalId] = useState("");
-  const principals = useQuery({
-    queryKey: ["key-principals", universeId],
-    queryFn: () => api<KeyPrincipal[]>("GET", `/api/v1/universes/${universeId}/key-principals`),
-    enabled: open,
-  });
-  const target = principals.data?.find((principal) => principal.id === principalId) ?? principals.data?.[0];
   const [created, setCreated] = useState<UniverseApiKeyCreated | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const create = useMutation({
     mutationFn: () =>
       api<UniverseApiKeyCreated>("POST", `/api/v1/universes/${universeId}/api-keys`, {
         displayName,
-        principalId: target!.id,
       }),
     onSuccess: (result) => {
       setCreated(result);
@@ -242,25 +228,15 @@ function CreateApiKeyDialog({
   const close = () => {
     onOpenChange(false);
     setDisplayName("");
-    setPrincipalId("");
     setCreated(null);
-    setCopied(false);
     create.reset();
   };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (displayName.trim() && target && !principals.isError) {
+    if (displayName.trim()) {
       create.mutate();
     }
-  };
-
-  const copySecret = async () => {
-    if (!created) {
-      return;
-    }
-    await navigator.clipboard.writeText(created.secret);
-    setCopied(true);
   };
 
   return (
@@ -274,37 +250,7 @@ function CreateApiKeyDialog({
     >
       <DialogContent showCloseButton={!created}>
         {created ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>Copy your API key</DialogTitle>
-              <DialogDescription>
-                This secret is shown once. Store it in the agent's secret manager before
-                closing this dialog.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-2">
-              <FieldLabel htmlFor="api-key-secret">API key</FieldLabel>
-              <div className="flex gap-2">
-                <Input
-                  id="api-key-secret"
-                  value={created.secret}
-                  readOnly
-                  className="font-mono text-xs"
-                  onFocus={(event) => event.currentTarget.select()}
-                />
-                <Button type="button" variant="outline" onClick={() => void copySecret()}>
-                  {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
-                  {copied ? "Copied" : "Copy"}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Identifier: <span className="font-mono">{created.apiKey.keyPrefix}</span>
-              </p>
-            </div>
-            <DialogFooter>
-              <Button type="button" onClick={close}>I saved the key</Button>
-            </DialogFooter>
-          </>
+          <ApiKeySecret secret={created.secret} keyPrefix={created.apiKey.keyPrefix} onDone={close} />
         ) : (
           <>
             <DialogHeader>
@@ -315,20 +261,6 @@ function CreateApiKeyDialog({
             </DialogHeader>
             <form onSubmit={submit} className="grid gap-4">
               <Field>
-                <FieldLabel htmlFor="api-key-principal">Principal ID</FieldLabel>
-                <Select value={target?.id ?? ""} onValueChange={(value) => setPrincipalId(value ?? "")}>
-                  <SelectTrigger id="api-key-principal" className="w-full" disabled={principals.isLoading || principals.isError}>
-                    <SelectValue>{target ? `${target.displayName} (${target.kind})` : "Loading principals…"}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(principals.data ?? []).map((principal) => (
-                      <SelectItem key={principal.id} value={principal.id}>
-                        {principal.displayName} ({principal.kind})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FieldDescription>A key acts as this principal, with current permissions limited to this universe.</FieldDescription>
                 <FieldLabel htmlFor="api-key-name">Name</FieldLabel>
                 <Input
                   id="api-key-name"
@@ -341,13 +273,12 @@ function CreateApiKeyDialog({
                 />
                 <FieldDescription>Shown in this list; it is not part of the secret.</FieldDescription>
               </Field>
-              {principals.error && <p className="text-sm text-destructive">{principals.error.message}</p>}
               {create.error && (
                 <p className="text-sm text-destructive">{create.error.message}</p>
               )}
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={close}>Cancel</Button>
-                <Button type="submit" disabled={create.isPending || !displayName.trim() || !target || principals.isError}>
+                <Button type="submit" disabled={create.isPending || !displayName.trim()}>
                   {create.isPending ? "Creating…" : "Create key"}
                 </Button>
               </DialogFooter>

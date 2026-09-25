@@ -1,6 +1,4 @@
-import { PrivilegedReadMarker } from "@/components/access/privileged-read";
 import type { BotReadResponse } from "@lightspeed-ai/agent-client";
-import { RestrictedMarker } from "@/components/access/shared";
 import { ReadError } from "@/components/read-error";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
@@ -164,7 +162,6 @@ function BotsPane({
     <>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
         <h1 className="text-sm font-semibold">Bots</h1>
-        <PrivilegedReadMarker privileged={bots.data?.privilegedRead} />
         {bots.data && <span className="text-xs text-muted-foreground">{roster.length}</span>}
         {create && (
           <Button
@@ -212,7 +209,7 @@ function BotsPane({
                     >
                       <BotAvatar botId={bot.botId} size={28} className="row-span-2" />
                       <span className="flex min-w-0 items-center gap-1.5">
-                        <StatusDot tone={line.tone} /><RestrictedMarker access={bot.access} />
+                        <StatusDot tone={line.tone} />
                         <span className="min-w-0 truncate font-medium">{botLabel(bot)}</span>
                       </span>
                       <span className="text-right text-[11px] text-muted-foreground">
@@ -285,8 +282,6 @@ function BotWorkspace({
       universeId={universeId}
       slug={slug}
       bot={bot.data.bot}
-      access={bot.data.access}
-      privilegedRead={bot.data.privilegedRead || state.data?.privilegedRead}
       {...(state.data?.state ? { state: state.data.state } : {})}
       {...(state.error ? { stateError: state.error.message } : {})}
       view={view}

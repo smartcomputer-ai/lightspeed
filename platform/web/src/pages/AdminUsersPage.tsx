@@ -1,4 +1,3 @@
-import { api } from "@/api";
 import { ReadError } from "@/components/read-error";
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,7 +15,13 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -34,8 +39,6 @@ interface UserRow {
   name: string;
   email: string;
   role?: string | null;
-  directRole?: string;
-  status?: "active" | "disabled";
   createdAt?: string | Date;
 }
 
@@ -43,7 +46,13 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
   const users = useQuery({
     queryKey: ["admin", "users"],
     queryFn: async () => {
-      return (await api<{ users: UserRow[] }>("GET", "/api/v1/admin/users")).users;
+      const result = await authClient.admin.listUsers({
+        query: { limit: 200, sortBy: "createdAt" },
+      });
+      if (result.error) {
+        throw new Error(result.error.message ?? "failed to load users");
+      }
+      return result.data.users as UserRow[];
     },
   });
 
@@ -79,7 +88,7 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
-                <TableHead>Deployment administrator (root)</TableHead>
+                <TableHead>Role</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="w-0" />
               </TableRow>
@@ -91,11 +100,9 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
                   <TableCell>{user.email}</TableCell>
                   <TableCell>
                     {user.role?.split(",").includes("admin") ? (
-                      <Badge variant="secondary">
-                        {user.directRole === "user" ? "Yes · via group" : "Yes"}
-                      </Badge>
+                      <Badge variant="secondary">admin</Badge>
                     ) : (
-                      <span className="text-muted-foreground">No</span>
+                      <span className="text-muted-foreground">user</span>
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
@@ -138,7 +145,6 @@ function EditUserDialog({
   const [role, setRole] = useState("user");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [status, setStatus] = useState<"active" | "disabled">("active");
   const [error, setError] = useState<string | null>(null);
 
   const open = user !== null;
@@ -146,10 +152,9 @@ function EditUserDialog({
 
   useEffect(() => {
     if (!user) return;
-    setStatus(user.status ?? "active");
     setName(user.name);
     setEmail(user.email);
-    setRole(user.directRole ?? (user.role === "admin" ? "admin" : "user"));
+    setRole(user.role?.split(",").includes("admin") ? "admin" : "user");
     setPassword("");
     setConfirm("");
     setError(null);
@@ -176,7 +181,7 @@ function EditUserDialog({
       const data: Record<string, unknown> = {};
       const nextName = name.trim();
       const nextEmail = email.trim().toLowerCase();
-      const currentRole = user.directRole ?? (user.role === "admin" ? "admin" : "user");
+      const currentRole = user.role?.split(",").includes("admin") ? "admin" : "user";
       if (nextName !== user.name) data.name = nextName;
       if (nextEmail !== user.email.toLowerCase()) {
         data.email = nextEmail;
@@ -184,20 +189,32 @@ function EditUserDialog({
         data.emailVerified = true;
       }
       if (!isCurrentUser && role !== currentRole) data.role = role;
-      if (status !== (user.status ?? "active")) data.status = status;
 
       if (Object.keys(data).length > 0) {
-        await api("PATCH", `/api/v1/admin/users/${user.id}`, data);
+        const result = await authClient.admin.updateUser({ userId: user.id, data });
+        if (result.error) {
+          throw new Error(result.error.message ?? "failed to update user");
+        }
       }
 
       if (password) {
-        await api("POST", `/api/v1/admin/users/${user.id}/password`, { newPassword: password });
+        const result = await authClient.admin.setUserPassword({
+          userId: user.id,
+          newPassword: password,
+        });
+        if (result.error) {
+          throw new Error(result.error.message ?? "failed to set password");
+        }
+        const revoked = await authClient.admin.revokeUserSessions({ userId: user.id });
+        if (revoked.error) {
+          throw new Error(
+            `Password changed, but sessions could not be signed out: ${revoked.error.message ?? "unknown error"}`,
+          );
+        }
       }
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
-      void queryClient.invalidateQueries({ queryKey: ["me"] });
-      void queryClient.invalidateQueries({ queryKey: ["universes"] });
       const signedOutSelf = isCurrentUser && Boolean(password);
       const refreshedSelf = isCurrentUser && hasProfileChanges;
       close();
@@ -210,14 +227,14 @@ function EditUserDialog({
     onError: (err) => setError(err.message),
   });
 
-  const currentRole = user?.directRole ?? (user?.role === "admin" ? "admin" : "user");
+  const currentRole = user?.role?.split(",").includes("admin") ? "admin" : "user";
   const hasProfileChanges = Boolean(
     user &&
       (name.trim() !== user.name ||
         email.trim().toLowerCase() !== user.email.toLowerCase() ||
         (!isCurrentUser && role !== currentRole)),
   );
-  const hasChanges = hasProfileChanges || Boolean(password) || status !== (user?.status ?? "active");
+  const hasChanges = hasProfileChanges || Boolean(password);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -270,30 +287,24 @@ function EditUserDialog({
               </FieldDescription>
             </Field>
             <Field>
-              <div className="flex items-center justify-between gap-3">
-                <FieldLabel htmlFor="edit-user-deployment-admin">Deployment administrator</FieldLabel>
-                <Switch
-                  id="edit-user-deployment-admin"
-                  checked={role === "admin"}
-                  onCheckedChange={(checked) => setRole(checked ? "admin" : "user")}
-                  disabled={isCurrentUser}
-                  aria-describedby="edit-user-deployment-admin-description"
-                />
-              </div>
-              <FieldDescription id="edit-user-deployment-admin-description">
-                Deployment-wide administration ("root" admin): manage users, groups,
-                universes, and infrastructure.
-                Universe roles are assigned separately. This switch controls the direct
-                administrator grant; grants through groups still apply.
-              </FieldDescription>
-              {user?.role === "admin" && user.directRole === "user" && (
-                <FieldDescription>
-                  This account has administrator access through a group. Manage that access under Groups.
-                </FieldDescription>
-              )}
+              <FieldLabel htmlFor="edit-user-role">Platform role</FieldLabel>
+              <Select
+                value={role}
+                onValueChange={(value) => setRole(value as string)}
+                disabled={isCurrentUser}
+              >
+                <SelectTrigger id="edit-user-role" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user">user</SelectItem>
+                  <SelectItem value="admin">admin</SelectItem>
+                </SelectContent>
+              </Select>
               {isCurrentUser && (
                 <FieldDescription>
-                  You cannot change your own administrator grant here.
+                  Another platform admin must change your role, preventing accidental
+                  self-lockout.
                 </FieldDescription>
               )}
             </Field>
@@ -333,7 +344,6 @@ function EditUserDialog({
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
-          {user && <label className="flex gap-2 text-sm"><input type="checkbox" checked={status === "active"} onChange={(e) => setStatus(e.target.checked ? "active" : "disabled")} />Account active (core identity)</label>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={close}>
               Cancel
@@ -375,12 +385,19 @@ function CreateUserDialog({
 
   const create = useMutation({
     mutationFn: async () => {
-      return api("POST", "/api/v1/admin/users", { name, email, password, role });
+      const result = await authClient.admin.createUser({
+        name,
+        email,
+        password,
+        role: role as "user" | "admin",
+      });
+      if (result.error) {
+        throw new Error(result.error.message ?? "failed to create user");
+      }
+      return result.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
-      void queryClient.invalidateQueries({ queryKey: ["me"] });
-      void queryClient.invalidateQueries({ queryKey: ["universes"] });
       onOpenChange(false);
       reset();
     },
@@ -437,20 +454,16 @@ function CreateUserDialog({
                 />
               </Field>
               <Field>
-                <div className="flex items-center justify-between gap-3">
-                  <FieldLabel htmlFor="user-deployment-admin">Deployment administrator</FieldLabel>
-                  <Switch
-                    id="user-deployment-admin"
-                    checked={role === "admin"}
-                    onCheckedChange={(checked) => setRole(checked ? "admin" : "user")}
-                    aria-describedby="user-deployment-admin-description"
-                  />
-                </div>
-                <FieldDescription id="user-deployment-admin-description">
-                  Deployment-wide administration ("root" admin): manage users, groups,
-                  universes, and infrastructure.
-                  Universe roles are assigned separately.
-                </FieldDescription>
+                <FieldLabel htmlFor="user-role">Role</FieldLabel>
+                <Select value={role} onValueChange={(value) => setRole(value as string)}>
+                  <SelectTrigger id="user-role" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="user">user</SelectItem>
+                    <SelectItem value="admin">admin</SelectItem>
+                  </SelectContent>
+                </Select>
               </Field>
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}

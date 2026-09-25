@@ -1,4 +1,6 @@
+import type { UniverseRole } from "@lightspeed/platform-shared";
 import type {
+  Attribution,
   ResourceAccessSummary,
   ContextEntryView,
   RunSummaryView,
@@ -52,17 +54,7 @@ function extractMessage(body: unknown): string | null {
   return error;
 }
 
-export interface ReadMetadata { privilegedRead?: boolean }
-
-/** Provenance belongs to this response, never to the user's general capabilities. */
-export function withReadMetadata<T>(value: T, headers: Headers): T & ReadMetadata {
-  if (value && typeof value === "object" && !Array.isArray(value) && headers.get("x-lightspeed-privileged-read") === "true") {
-    return { ...value, privilegedRead: true };
-  }
-  return value as T & ReadMetadata;
-}
-
-export async function api<T>(method: string, path: string, body?: unknown): Promise<T & ReadMetadata> {
+export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
     headers: body !== undefined ? { "content-type": "application/json" } : undefined,
@@ -74,7 +66,7 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
   if (!res.ok) {
     throw new ApiError(res.status, json);
   }
-  return withReadMetadata(json as T, res.headers);
+  return json as T;
 }
 
 export interface Universe {
@@ -88,7 +80,7 @@ export interface Universe {
   createdAt: string;
   /// Own membership role; null for platform admins browsing a universe
   /// they are not a member of.
-  role?: string | null;
+  role?: UniverseRole | null;
 }
 
 /// Engine-side universe inventory entry (deployment/universes/list view).
@@ -113,20 +105,15 @@ export interface UniverseReconcile {
   orphans: EngineUniverse[];
 }
 
-/// One universe role assignment. Every member may list them; the account
-/// link, email and private-content capability are sent to Admins only.
+/// One member of a universe. Every member sees names and roles; emails are
+/// sent to admins only.
 export interface Member {
-  subject?: { kind: "principal" | "group"; id: string };
-  principalKind?: "user" | "service";
-  readPrivateContent?: boolean;
-  /// A system-assigned member (the universe's agent identity): read-only.
-  system?: boolean;
   id: string;
-  userId?: string;
-  role: string;
+  userId: string;
+  role: UniverseRole;
   email?: string;
   name: string;
-  createdAt?: string | null;
+  createdAt: string;
 }
 
 export interface UniverseApiKey {
@@ -236,10 +223,8 @@ export interface AuthGrantOption {
 }
 
 export interface SecretGrant extends AuthGrantOption {
-  principal: {
-    kind?: "user" | "serviceAccount" | string;
-    id?: string | null;
-  };
+  /// Who created the grant; attribution only.
+  createdBy: Attribution;
   scopes?: string[];
   audience?: string | null;
   hasAccessToken: boolean;
@@ -334,8 +319,6 @@ export interface GitHubIntegration {
 /// Engine MCP server record (mcp/servers/list view). The optional credential
 /// is a non-secret universe-owned grant reference; token material is never returned.
 export interface McpServer {
-  /// Owner and audience; the runtime returns it on every read.
-  access?: ResourceAccessSummary;
   serverId: string;
   displayName?: string | null;
   serverUrl: string;
@@ -439,7 +422,7 @@ export interface SessionOrigin {
 }
 
 export interface SessionSummary {
-  access?: ResourceAccessSummary;
+  access: ResourceAccessSummary;
   id: string;
   displayName?: string | null;
   /// Descriptive key/value metadata; absent or empty when none was set.
@@ -479,7 +462,7 @@ export interface ManagedWorkflowTool {
 }
 
 export interface SessionView {
-  access?: ResourceAccessSummary;
+  access: ResourceAccessSummary;
   id: string;
   displayName?: string | null;
   metadata?: Record<string, string>;
@@ -563,8 +546,6 @@ export interface SessionRunApprovalsDecided {
 
 /// Engine workspace view, straight from `vfs/workspaces/list`.
 export interface WorkspaceRow {
-  /// Owner and audience; the runtime returns it on every read.
-  access?: ResourceAccessSummary;
   workspaceId: string;
   displayName?: string | null;
   headSnapshotRef: string;

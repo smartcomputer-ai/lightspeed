@@ -4,7 +4,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ResourceRef } from "@lightspeed-ai/agent-client";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { McpServersPage, mcpConnectionSummary } from "./McpServersPage";
 
@@ -38,18 +37,6 @@ vi.mock("@/components/ui/select", async () => {
   const Part = () => null;
   return { Select, SelectTrigger, SelectContent: ({ children }: { children?: ReactNode }) => <>{children}</>, SelectItem: Part, SelectValue: Part };
 });
-vi.mock("@/components/access/shared", async (original) => {
-  const actual = await original<typeof import("@/components/access/shared")>();
-  return {
-    ...actual,
-    AccessSelect: ({ label, value, options, onChange }: Parameters<typeof actual.AccessSelect>[0]) => (
-      <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
-        {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
-    ),
-  };
-});
-
 const saved = {
   serverId: "tools", displayName: "Research tools", serverUrl: "https://example.test/mcp", defaultServerLabel: "tools",
   execution: "native", exposure: "search", approval: "never", allowPrivateNetwork: false, revision: 4,
@@ -62,11 +49,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
-  mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: { resources?: ResourceRef[] }) => {
-    if (path.endsWith("/access")) return {
-      actions: ["read", "configure_resource"],
-      resources: (body?.resources ?? []).map((resource) => ({ resource, actions: ["read", "configure_resource"] })),
-    };
+  mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
     if (method === "GET" && path.endsWith("/mcp-servers")) return [saved];
     if (path.endsWith("/auth-grants")) return [];
     if (path.endsWith("/discover-auth")) return { oauth: null };
@@ -92,7 +75,7 @@ async function settle() {
 }
 async function show() {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user"><MemoryRouter>
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter>
       <McpServersPage admin />
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
@@ -146,18 +129,17 @@ it("names the server first, then confirms the connection with everything else be
   // Step 2: authentication in the open, the rest summarized with its defaults.
   expect(field('select[aria-label="Authentication"]')).not.toBeNull();
   expect(field('select[aria-label="Tool approval"]')).toBeNull();
-  expect(summary()).toBe("Model provider connects · no approval · universe members can use it·Customize");
+  expect(summary()).toBe("Model provider connects · no approval·Customize");
   await click(field('[aria-label="Customize connection options"]') as HTMLButtonElement);
   const headings = [...dialog().querySelectorAll('[role="group"][aria-labelledby]')].map(
     (group) => document.getElementById(group.getAttribute("aria-labelledby")!)?.textContent,
   );
-  expect(headings).toEqual(["Tools", "Network", "Access"]);
+  expect(headings).toEqual(["Tools", "Network"]);
   await choose("MCP execution", "native");
   await choose("MCP tool exposure", "search");
   await choose("Tool approval", "always");
-  await choose("Who can use", "restricted");
   expect(summary()).toBe(
-    "Lightspeed connects · tools searched on demand · approval: always ask · only you and people you share with can use it·Hide",
+    "Lightspeed connects · tools searched on demand · approval: always ask·Hide",
   );
   // Choosing provider execution resets exposure, and the summary follows.
   await choose("MCP execution", "provider");
@@ -174,8 +156,8 @@ it("names the server first, then confirms the connection with everything else be
     execution: "native",
     exposure: "inject",
     approval: "always",
-    access: { visibility: "restricted" },
   });
+  expect(create).not.toHaveProperty("access");
 });
 
 it("edits on one page with the status switch as the first row", async () => {

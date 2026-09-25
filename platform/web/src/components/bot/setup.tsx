@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, ChevronRight, SlidersHorizontal } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import type { ExecutionKind } from "@lightspeed-ai/agent-client";
 import {
   api,
   botLabel,
@@ -79,15 +78,12 @@ export function BotSetup({
   universeId,
   slug,
   bot,
-  execution = "service",
   state,
   manage,
 }: {
   universeId: string;
   slug: string;
   bot: BotView;
-  /** Who the bot's sessions run as; attachment choices are checked for it. */
-  execution?: ExecutionKind;
   state?: BotStateView;
   manage: boolean;
 }) {
@@ -149,7 +145,6 @@ export function BotSetup({
           universeId={universeId}
           slug={slug}
           bot={bot}
-          execution={execution}
           manage={manage}
           profile={profile.data}
           profileError={profile.error?.message}
@@ -386,7 +381,6 @@ function SessionProfileSection({
   universeId,
   slug,
   bot,
-  execution,
   manage,
   profile,
   profileError,
@@ -394,16 +388,15 @@ function SessionProfileSection({
   universeId: string;
   slug: string;
   bot: BotView;
-  execution: ExecutionKind;
   manage: boolean;
   profile: ProfileDocument | undefined;
   profileError: string | undefined;
 }) {
-  const permissions = useActionPermissions(universeId, [{ kind: "profile", id: bot.profileId }]);
-  const manageProfile = permissions.can("manage_profile", { kind: "profile", id: bot.profileId });
+  const permissions = useActionPermissions(universeId);
+  const manageProfile = permissions.can("manage_profile");
   const queryClient = useQueryClient();
   const profileUrl = `/api/v1/universes/${universeId}/profiles/${encodeURIComponent(bot.profileId)}`;
-  const options = useSessionConfigEditorOptions(universeId, true, execution);
+  const options = useSessionConfigEditorOptions(universeId, true);
   const environments = useQuery({
     queryKey: ["environments", universeId],
     queryFn: () => api<Environment[]>("GET", `/api/v1/universes/${universeId}/environments`),

@@ -1,4 +1,3 @@
-import { ReadError } from "@/components/read-error";
 import { useActionPermissions } from "@/lib/permissions";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -20,10 +19,7 @@ import { useActiveUniverse } from "@/lib/universes";
 export function ModelsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
-  if (isLoading || permissions.isLoading) return <LoadingNote />;
-  if (permissions.error) {
-    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
-  }
+  if (isLoading) return <LoadingNote />;
   if (!universe || !permissions.can("read")) return <UniverseNotFound slug={slug} />;
   return <Models universeId={universe.id} slug={universe.slug} />;
 }

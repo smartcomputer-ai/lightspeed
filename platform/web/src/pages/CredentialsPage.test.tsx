@@ -15,7 +15,7 @@ vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: 
 function grant(grantId: string, providerKind: string, extra: Partial<SecretGrant> = {}): SecretGrant {
   return {
     grantId, providerId: grantId, providerKind, displayName: `${grantId} credential`, status: "active", exposure: "brokered",
-    principal: {}, hasAccessToken: true, hasRefreshToken: false, leaseCount: 0, createdAtMs: 1, updatedAtMs: 1, ...extra,
+    createdBy: { kind: "local" }, hasAccessToken: true, hasRefreshToken: false, leaseCount: 0, createdAtMs: 1, updatedAtMs: 1, ...extra,
   };
 }
 const reusable = [
@@ -68,7 +68,7 @@ it("lists pasted tokens, GitHub App installations and custom OAuth, not credenti
 
 it("lists reusable credentials only and points model and MCP logins at their pages", async () => {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user"><MemoryRouter>
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter>
       <CredentialsPage admin={false} />
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));

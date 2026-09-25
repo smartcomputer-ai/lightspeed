@@ -1,9 +1,5 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
-import { AccessButton } from "@/components/access/access-dialog";
-import { CreationAccessSummary } from "@/components/access/creation";
-import { RestrictedMarker } from "@/components/access/shared";
-import type { Visibility } from "@lightspeed-ai/agent-client";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
@@ -71,11 +67,8 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   const workspaceId = params.workspaceId;
   const filePath = params["*"] || undefined;
 
-  if (isLoading || permissions.isLoading) {
+  if (isLoading) {
     return <LoadingNote />;
-  }
-  if (permissions.error) {
-    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
   }
   if (!universe || !permissions.can("read")) {
     return (
@@ -134,11 +127,10 @@ function WorkspacePane({
   filePath: string | undefined;
 }) {
   const navigate = useNavigate();
-  const target = workspaceId ? { kind: "workspace" as const, id: workspaceId } : undefined;
-  const permissions = useActionPermissions(universeId, target ? [target] : []);
+  const permissions = useActionPermissions(universeId);
   const canCreate = permissions.can("create_workspace");
   // Editing files is using the workspace; configuring it is not needed.
-  const canEditFiles = !!target && permissions.can("use_resource", target);
+  const canEditFiles = !!workspaceId && permissions.can("use_resource");
   const workspaces = useQuery({
     queryKey: ["workspaces", universeId],
     queryFn: () =>
@@ -199,10 +191,7 @@ function WorkspacePane({
             <SelectContent>
               {workspaces.data.map((workspace) => (
                 <SelectItem key={workspace.workspaceId} value={workspace.workspaceId}>
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate">{workspace.displayName ?? workspace.workspaceId}</span>
-                    <RestrictedMarker access={workspace.access} />
-                  </span>
+                  <span className="truncate">{workspace.displayName ?? workspace.workspaceId}</span>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -229,13 +218,6 @@ function WorkspacePane({
               r{tree.data.workspace.revision}
             </span>
             <div className="ml-auto flex items-center gap-1">
-              <AccessButton
-                compact
-                universeId={universeId}
-                slug={slug}
-                resource={{ kind: "workspace", id: tree.data.workspace.workspaceId }}
-                access={tree.data.workspace.access}
-              />
               {canEditFiles && (
                 <Button
                   variant="ghost"
@@ -428,9 +410,8 @@ function FileDetail({
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const target = { kind: "workspace" as const, id: workspaceId };
-  const permissions = useActionPermissions(universeId, [target]);
-  const canEditFiles = permissions.can("use_resource", target);
+  const permissions = useActionPermissions(universeId);
+  const canEditFiles = permissions.can("use_resource");
   const tree = useQuery({
     queryKey: ["workspace-tree", universeId, workspaceId],
     queryFn: () =>
@@ -627,7 +608,6 @@ function NewWorkspaceDialog({
   // Once the id is hand-edited it stops tracking the name; clearing it
   // resumes tracking.
   const [idTouched, setIdTouched] = useState(false);
-  const [visibility, setVisibility] = useState<Visibility>("universe");
   const [error, setError] = useState<string | null>(null);
 
   const create = useMutation({
@@ -639,7 +619,6 @@ function NewWorkspaceDialog({
       setDisplayName("");
       setWorkspaceId("");
       setIdTouched(false);
-      setVisibility("universe");
       setError(null);
       navigate(`/u/${slug}/workspaces/${created.workspaceId}`);
     },
@@ -661,7 +640,7 @@ function NewWorkspaceDialog({
       setError(issue ? `${issue.path.join(".")}: ${issue.message}` : "invalid input");
       return;
     }
-    create.mutate({ ...parsed.data, access: { visibility } });
+    create.mutate(parsed.data);
   };
 
   return (
@@ -716,7 +695,6 @@ function NewWorkspaceDialog({
               </Field>
             </SettingsDisclosure>
           </Field>
-          <CreationAccessSummary audience="use" value={visibility} onChange={setVisibility} />
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

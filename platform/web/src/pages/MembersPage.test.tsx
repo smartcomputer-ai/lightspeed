@@ -4,13 +4,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { UniverseAction } from "@lightspeed-ai/agent-client";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { MembersPage } from "./MembersPage";
 
-const mocks = vi.hoisted(() => ({ api: vi.fn() }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "admin", slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({
+  useActiveUniverse: () => ({ universe: { id: "universe", slug: "test", name: "Test", role: mocks.role }, slug: "test", isLoading: false }),
+}));
 // JSDOM has no popup layout; keep the real options and exercise changes with a native select.
 vi.mock("@/components/ui/select", async () => {
   const React = await import("react");
@@ -34,22 +35,20 @@ vi.mock("@/components/ui/select", async () => {
 });
 
 const members = [
-  { id: "principal:alice:contributor", userId: "alice", name: "Alice", email: "alice@example.test", role: "contributor", createdAt: "" },
-  { id: "group:team:viewer", userId: "team", name: "Team", email: "Group", role: "viewer", createdAt: "" },
+  { id: "member-alice", userId: "alice", name: "Alice", email: "alice@example.test", role: "contributor", createdAt: "" },
+  { id: "member-bob", userId: "bob", name: "Bob", email: "bob@example.test", role: "viewer", createdAt: "" },
 ];
 let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
-let actions: UniverseAction[];
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
-  actions = ["read"];
+  mocks.role = "viewer";
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path.endsWith("/access")) return { actions, resources: [] };
     if (path.endsWith("/members")) return members;
-    if (path.endsWith("/groups") || path === "/api/v1/users") return [];
+    if (path === "/api/v1/users") return [];
     throw new Error(`Unexpected request: ${path}`);
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -69,7 +68,7 @@ async function settle() {
 }
 async function show(page: React.ReactNode) {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user"><MemoryRouter>{page}</MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter>{page}</MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();
 }
@@ -85,8 +84,8 @@ async function chooseMemberRole(role: string) {
   await settle();
 }
 
-it.each(members)("edits the specific role grant for $name", async (member) => {
-  actions.push("manage_access");
+it.each(members)("changes the role of $name in place", async (member) => {
+  mocks.role = "admin";
   const implementation = mocks.api.getMockImplementation()!;
   mocks.api.mockImplementation(async (method, path, body) => {
     if (method === "PATCH") return { changed: true };
@@ -105,10 +104,10 @@ it.each(members)("edits the specific role grant for $name", async (member) => {
 });
 
 it("keeps the original member role and explains a rejected edit", async () => {
-  actions.push("manage_access");
+  mocks.role = "admin";
   const implementation = mocks.api.getMockImplementation()!;
   mocks.api.mockImplementation(async (method, path, body) => {
-    if (method === "PATCH") throw new Error("At least one active administrator must remain.");
+    if (method === "PATCH") throw new Error("a universe keeps at least one admin");
     return implementation(method, path, body);
   });
   await show(<MembersPage admin={false} />);
@@ -117,46 +116,17 @@ it("keeps the original member role and explains a rejected edit", async () => {
   await chooseMemberRole("viewer");
   await act(async () => button("Save role")!.click());
   await settle();
-  expect(document.querySelector('[role="alert"]')?.textContent).toContain("At least one active administrator");
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain("at least one admin");
   expect(container.querySelector("tbody tr")?.textContent).toContain("contributor");
   expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-  actions = ["read"];
-  await act(async () => { await client.invalidateQueries({ queryKey: ["action-permissions"] }); });
-  await settle();
-  expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 
-it("shows the agent identity read-only", async () => {
-  actions.push("manage_access");
-  const agent = { id: "principal:agent:executor", userId: "agent", name: "Default agent identity", email: "Agent identity", role: "executor", system: true, createdAt: "" };
-  const implementation = mocks.api.getMockImplementation()!;
-  mocks.api.mockImplementation(async (method, path, body) =>
-    path.endsWith("/members") ? [...members, agent] : implementation(method, path, body));
+it("shows other members names and roles without emails or controls", async () => {
   await show(<MembersPage admin={false} />);
-  const row = [...container.querySelectorAll("tbody tr")].find((tr) => tr.textContent?.includes("Default agent identity"))!;
-  expect(row.textContent).toContain("Executor");
-  expect(row.querySelector("a")?.getAttribute("href")).toBe("/u/test/settings/general");
-  expect(row.querySelector("button")).toBeNull();
-  expect(container.querySelector('[aria-label="Edit role for Alice"]')).not.toBeNull();
-});
-
-it("shows other members names, kinds and roles without emails or controls", async () => {
-  const implementation = mocks.api.getMockImplementation()!;
-  mocks.api.mockImplementation(async (method, path, body) => path.endsWith("/members") ? [
-    // A stray admin-only field never reaches a reader's screen.
-    { id: "principal:alice:contributor", subject: { kind: "principal", id: "alice" }, principalKind: "user", name: "Alice", role: "contributor", readPrivateContent: true, email: "alice@example.test" },
-    { id: "group:team:viewer", subject: { kind: "group", id: "team" }, name: "Team", role: "viewer" },
-    { id: "principal:svc:operator", subject: { kind: "principal", id: "svc" }, principalKind: "service", name: "Configurator", role: "operator" },
-    { id: "principal:agent:executor", subject: { kind: "principal", id: "agent" }, principalKind: "service", name: "Default agent identity", role: "executor", system: true },
-  ] : implementation(method, path, body));
-  await show(<MembersPage admin={false} />);
-  expect([...container.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["Name", "Kind", "Role"]);
+  expect([...container.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["Name", "Role"]);
   const rows = [...container.querySelectorAll("tbody tr")].map((tr) => [...tr.querySelectorAll("td")].map((td) => td.textContent));
-  expect(rows.map(([name, kind]) => [name, kind])).toEqual([
-    ["Alice", "Person"], ["Team", "Group"], ["Configurator", "Service"], ["Default agent identity", "Agent identity"],
-  ]);
+  expect(rows.map(([name]) => name)).toEqual(["Alice", "Bob"]);
+  expect(rows[0]![1]).toContain("contributor");
   expect(container.textContent).not.toContain("alice@example.test");
-  expect(container.textContent).not.toContain("Private-content access");
-  expect(container.querySelector("tbody a")).toBeNull();
   expect(container.querySelector("button")).toBeNull();
 });

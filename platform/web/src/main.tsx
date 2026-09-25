@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
@@ -9,9 +9,6 @@ import { App } from "./App.js";
 import "./index.css";
 
 const queryClient = new QueryClient({
-  mutationCache: new MutationCache({
-    onSettled: () => { void queryClient.invalidateQueries({ queryKey: ["action-permissions"] }); },
-  }),
   defaultOptions: {
     queries: { retry: retryRead, refetchOnWindowFocus: false, staleTime: 30_000 },
   },

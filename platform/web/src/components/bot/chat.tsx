@@ -40,8 +40,8 @@ export function BotChat({
   const isMain = selected !== undefined && selected === main;
   const sessionHref = (id: string) => (id === main ? base : `${base}/chat/${encodeURIComponent(id)}`);
   const ready = controller?.setupStatus === "ready";
-  const permissions = useActionPermissions(universeId, main ? [{ kind: "session", id: main }] : []);
-  const controlMain = !!main && permissions.can("control_session", { kind: "session", id: main });
+  const permissions = useActionPermissions(universeId);
+  const controlMain = !!main && permissions.can("control_session");
 
   useIntroduction(universeId, bot, controller, isMain, controlMain);
 

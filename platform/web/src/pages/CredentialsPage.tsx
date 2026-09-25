@@ -99,11 +99,8 @@ export function CredentialsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
-  if (isLoading || permissions.isLoading) {
+  if (isLoading) {
     return <LoadingNote />;
-  }
-  if (permissions.error) {
-    return <ReadError error={permissions.error} loading prefix="Permissions unavailable" />;
   }
   if (!universe || !permissions.can("configure_resource")) {
     return <UniverseNotFound slug={slug} />;

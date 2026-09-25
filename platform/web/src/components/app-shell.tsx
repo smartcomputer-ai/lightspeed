@@ -153,8 +153,8 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
               <SidebarGroupContent>
                 <SidebarMenu>
                   <NavItem to="/admin/users" icon={UserCog} label="Users" />
-                  <NavItem to="/admin/groups" icon={Users} label="Groups" />
                   <NavItem to="/admin/universes" icon={Globe} label="Universes" />
+                  <NavItem to="/admin/api-keys" icon={KeyRound} label="API keys" />
                   <NavItem to="/admin/channels" icon={RadioTower} label="Channels" />
                   <NavItem
                     to="/admin/environment-providers"

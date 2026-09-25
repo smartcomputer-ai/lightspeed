@@ -7,11 +7,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { BotsPage } from "./BotsPage";
 import { BotSetup } from "@/components/bot/setup";
-import type { ResourceRef, UniverseAction } from "@lightspeed-ai/agent-client";
 
-const mocks = vi.hoisted(() => ({ api: vi.fn() }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "contributor" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "contributor" }, slug: "universe", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, slug: "universe", isLoading: false }) }));
 vi.mock("@/pages/SessionsPage", () => ({ SessionDetail: () => <div>Readable transcript</div> }));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 vi.mock("@/components/session/session-config-editor", () => ({ SessionConfigEditor: () => <div data-testid="config-editor">Model configuration editor</div> }));
@@ -19,27 +18,14 @@ vi.mock("@/components/provider-readiness-banner", () => ({ ProviderReadinessBann
 let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
-let globalActions: UniverseAction[];
-let botActions: UniverseAction[];
-let sessionActions: UniverseAction[];
-let environmentActions: UniverseAction[];
-let accessError: boolean;
 const bot = { botId: "bot", displayName: "Test bot", profileId: "shared", revision: 1, eventSeq: 0, selfConfig: true, emit: false, enabled: true, createdAtMs: 0, updatedAtMs: 0, triggerCount: 0, pendingCount: 0, lastEvent: null };
 const state = { controller: { mainSessionId: "main", controllerStatus: "idle", setupStatus: "ready", enabled: true, closed: false, sessions: [{ sessionId: "main", label: "main", kind: "main", busy: false, generation: 1 }], activeDeliveries: [] } };
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
-  globalActions = ["read", "create_bot", "create_profile"];
-  botActions = ["read", "invoke_bot"];
-  sessionActions = ["read"];
-  environmentActions = ["read"];
-  accessError = false;
-  mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: { resources: ResourceRef[] }) => {
-    if (path.endsWith("/access")) {
-      if (accessError) throw new Error("Permission lookup unavailable");
-      return { actions: globalActions, resources: (body?.resources ?? []).map((resource) => ({ resource, actions: resource.kind === "bot" ? botActions : resource.kind === "session" ? sessionActions : resource.kind === "environment" ? environmentActions : ["read"] })) };
-    }
+  mocks.role = "contributor";
+  mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
     if (method === "POST" && path.endsWith("/messages")) return {};
     if (path.endsWith("/bots")) return { bots: [bot] };
     if (path.endsWith("/bots/bot")) return { bot };
@@ -72,61 +58,49 @@ async function settle() {
 }
 async function show(view: "chat" | "activity" = "activity", introduce = false) {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user"><MemoryRouter initialEntries={[{ pathname: "/u/universe/bots/bot", state: { introduce } }]}><Routes><Route path="/u/:slug/bots/:botId" element={<BotsPage admin={true} view={view} />} /></Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[{ pathname: "/u/universe/bots/bot", state: { introduce } }]}><Routes><Route path="/u/:slug/bots/:botId" element={<BotsPage admin={true} view={view} />} /></Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();
 }
 const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === text);
-it("allows contributors to create and invoke without offering bot management or replay", async () => {
+it("lets a contributor invoke without creating, managing or replaying bots", async () => {
   await show();
-  expect(container.querySelector('[aria-label="New bot"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="New bot"]')).toBeNull();
   expect(button("Send a test event")).toBeDefined();
   expect(button("Pause")).toBeUndefined();
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("#1"))!.click());
   expect(button("Replay this event")).toBeUndefined();
   expect(container.textContent).toContain("Visible history");
 });
-it("shows bot management for an allowed target", async () => {
-  botActions.push("manage_bot");
+it("offers bot creation and management to an operator", async () => {
+  mocks.role = "operator";
   await show();
+  expect(container.querySelector('[aria-label="New bot"]')).not.toBeNull();
   expect(button("Pause")).toBeDefined();
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("#1"))!.click());
   expect(button("Replay this event")).toBeDefined();
 });
 it("keeps activity readable without creation, invocation or management for viewers", async () => {
-  globalActions = ["read"];
-  botActions = ["read"];
+  mocks.role = "viewer";
   await show();
   expect(container.querySelector('[aria-label="New bot"]')).toBeNull();
   expect(button("Send a test event")).toBeUndefined();
   expect(button("Pause")).toBeUndefined();
   expect(container.textContent).toContain("Visible history");
 });
-it("does not send the introduction from router state without session control", async () => {
+it("sends the introduction from router state only with session control", async () => {
+  mocks.role = "viewer";
   await show("chat", true);
   expect(container.textContent).toContain("Readable transcript");
   expect(mocks.api.mock.calls.filter(([method, path]) => method === "POST" && path.endsWith("/messages"))).toHaveLength(0);
-  sessionActions.push("control_session");
-  await act(async () => { await client.invalidateQueries({ queryKey: ["action-permissions"] }); });
-  await settle();
+  mocks.role = "contributor";
+  await show("chat", true);
   expect(mocks.api.mock.calls.filter(([method, path]) => method === "POST" && path.endsWith("/messages"))).toHaveLength(1);
 });
-it("withdraws mutation controls when permission lookup becomes unavailable", async () => {
-  botActions.push("manage_bot");
-  await show();
-  accessError = true;
-  await act(async () => { await client.invalidateQueries({ queryKey: ["action-permissions"] }); });
-  await settle();
-  expect(container.querySelector('[aria-label="New bot"]')).toBeNull();
-  expect(button("Send a test event")).toBeUndefined();
-  expect(button("Pause")).toBeUndefined();
-  expect(container.textContent).toContain("Visible history");
-});
 
-it("does not turn bot ownership into profile or environment administration", async () => {
-  botActions.push("manage_bot");
+it("does not turn bot management into profile or environment administration", async () => {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user"><MemoryRouter><BotSetup universeId="universe" slug="universe" bot={bot} manage /></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter><BotSetup universeId="universe" slug="universe" bot={bot} manage /></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();
   const profileToggle = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.startsWith("Session profile"))!;
@@ -138,13 +112,11 @@ it("does not turn bot ownership into profile or environment administration", asy
   expect(container.textContent).toContain("Shared environment");
   expect(button("Pause")).toBeUndefined();
   expect(button("Idle policy…")).toBeUndefined();
-  // Configuring the environment is decided for that environment.
-  globalActions.push("configure_resource");
-  await act(async () => { await client.invalidateQueries({ queryKey: ["action-permissions"] }); });
-  await settle();
-  expect(button("Pause")).toBeUndefined();
-  environmentActions.push("configure_resource");
-  await act(async () => { await client.invalidateQueries({ queryKey: ["action-permissions"] }); });
+  // Configuring the environment is an operator's.
+  mocks.role = "operator";
+  await act(async () => root.render(
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter><BotSetup universeId="universe" slug="universe" bot={bot} manage /></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+  ));
   await settle();
   expect(button("Pause")).toBeDefined();
   expect(button("Idle policy…")).toBeDefined();

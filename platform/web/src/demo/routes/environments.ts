@@ -10,7 +10,6 @@ import type {
   EnvironmentCredentialSource,
   EnvironmentRegistrationKey,
 } from "@/api";
-import { demoAccess } from "../fixtures/builders";
 import type { DemoStore, UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
 
@@ -148,7 +147,6 @@ export function provisionEnvironment(
   const now = Date.now();
   const environment: Environment = {
     environmentId,
-    access: demoAccess("environment", environmentId),
     requestId: params.requestId,
     source: { type: "provisioned", providerId: binding.providerId, bindingId: binding.bindingId },
     displayName: params.displayName ?? null,
@@ -419,7 +417,6 @@ export function environmentRoutes(store: DemoStore): Hono {
     const now = Date.now();
     const environment: Environment = {
       environmentId,
-      access: demoAccess("environment", environmentId),
       requestId,
       source: { type: "external", connection: { endpoint, transport: "webSocket" } },
       displayName: typeof body.displayName === "string" && body.displayName.trim()

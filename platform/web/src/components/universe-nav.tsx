@@ -1,5 +1,4 @@
 import type { ComponentType } from "react";
-import type { UniverseAction } from "@lightspeed-ai/agent-client";
 import {
   Boxes,
   BrainCircuit,
@@ -16,7 +15,7 @@ import {
 } from "lucide-react";
 import { Navigate } from "react-router-dom";
 import { BotFaceIcon } from "@/components/icons/bot";
-import { useActionPermissions } from "@/lib/permissions";
+import { useActionPermissions, type PermissionAction } from "@/lib/permissions";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
 
 /// One universe page in the sidebar. The item shows when the caller holds
@@ -26,7 +25,7 @@ export interface UniverseNavItem {
   path: string;
   label: string;
   icon: ComponentType;
-  action: UniverseAction;
+  action: PermissionAction;
 }
 
 export interface UniverseNavGroup {
@@ -66,7 +65,7 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
     items: [
       { path: "models", label: "Models", icon: BrainCircuit, action: "read" },
       { path: "credentials", label: "Credentials", icon: LockKeyhole, action: "configure_resource" },
-      { path: "api-keys", label: "API keys", icon: KeyRound, action: "read" },
+      { path: "api-keys", label: "API keys", icon: KeyRound, action: "manage_access" },
       { path: "members", label: "Members", icon: Users, action: "read" },
     ],
   },
@@ -77,7 +76,7 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
 /// universe's home.
 export function settingsIndexPath(
   slug: string,
-  can: (action: UniverseAction) => boolean,
+  can: (action: PermissionAction) => boolean,
 ): string {
   const first = SETTINGS_NAV.find((item) => can(item.action));
   return first ? `/u/${slug}/${first.path}` : universeHome(slug);

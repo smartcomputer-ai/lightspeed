@@ -1,7 +1,4 @@
-import { PrivilegedReadMarker } from "@/components/access/privileged-read";
-import { AccessButton } from "@/components/access/access-dialog";
-import { ExecutionLabel, RestrictedMarker } from "@/components/access/shared";
-import { CreationAccessSummary, creationAccessInput, defaultCreationAccess } from "@/components/access/creation";
+import { ShareSessionButton, UnsharedBadge, useSessionOwner } from "@/components/session/sharing";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   type InfiniteData,
@@ -244,11 +241,11 @@ function SessionList({
   const tree = buildSessionTree(sessions);
   const visibleIds = sessions.map((session) => session.id);
   const selectedSessions = sessions.filter((session) => selected.has(session.id));
-  const permissions = useActionPermissions(universeId, sessions.map((session) => ({ kind: "session", id: session.id })));
+  const permissions = useActionPermissions(universeId);
   const canCreate = permissions.can("create_session");
-  const canSelect = sessions.some((session) => !session.managed && permissions.can(session.lifecycleStatus === "closed" ? "delete_session" : "stop_session", { kind: "session", id: session.id }));
-  const selectedOpen = selectedSessions.filter((session) => !session.managed && session.lifecycleStatus !== "closed" && permissions.can("stop_session", { kind: "session", id: session.id }));
-  const selectedClosed = selectedSessions.filter((session) => !session.managed && session.lifecycleStatus === "closed" && permissions.can("delete_session", { kind: "session", id: session.id }));
+  const canSelect = sessions.some((session) => !session.managed && permissions.can(session.lifecycleStatus === "closed" ? "delete_session" : "stop_session"));
+  const selectedOpen = selectedSessions.filter((session) => !session.managed && session.lifecycleStatus !== "closed" && permissions.can("stop_session"));
+  const selectedClosed = selectedSessions.filter((session) => !session.managed && session.lifecycleStatus === "closed" && permissions.can("delete_session"));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const activeFilterCount = sessionListActiveFilterCount(metadataFilter, preferences);
   const listSearch = searchParams.toString();
@@ -344,7 +341,7 @@ function SessionList({
   const bulk = useMutation({
     mutationFn: async ({ action, ids }: { action: "close" | "delete"; ids: string[] }) => {
       const actionName = action === "close" ? "stop_session" : "delete_session";
-      if (ids.some((id) => !permissions.can(actionName, { kind: "session", id }))) throw new Error("Session permissions changed. Review the selection.");
+      if (!permissions.can(actionName)) throw new Error("Session permissions changed. Review the selection.");
       const results = await runBatched(ids, 6, (id): Promise<unknown> =>
         action === "close"
           ? api<SessionView>(
@@ -376,7 +373,6 @@ function SessionList({
     <>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
         <h1 className="text-sm font-semibold">Sessions</h1>
-        <PrivilegedReadMarker privileged={pages.data?.pages.some((page) => page.privilegedRead)} />
         <span className="text-xs text-muted-foreground">
           {sessions.length}
           {pages.hasNextPage ? "+" : ""}
@@ -839,7 +835,7 @@ function SessionListItem({
         <span className="min-w-0 flex-1 truncate font-medium" title={displayName ? undefined : session.id}>
           {displayName || session.id}
         </span>
-        <RestrictedMarker access={session.access} />
+        <UnsharedBadge access={session.access} />
         {origin && (
           <Badge
             variant="outline"
@@ -923,7 +919,6 @@ function NewSessionDialog({
   onOpenChange: (open: boolean) => void;
   search: string;
 }) {
-  const [creationAccess, setCreationAccess] = useState(defaultCreationAccess);
   const [displayName, setDisplayName] = useState("");
   const [profileId, setProfileId] = useState("");
   const [step, setStep] = useState<"basics" | "setup">("basics");
@@ -945,13 +940,12 @@ function NewSessionDialog({
       api<ProfileDocument>("GET", `/api/v1/universes/${universeId}/profiles/${profileId}`),
     enabled: open && Boolean(profileId),
   });
-  const editorOptions = useSessionConfigEditorOptions(universeId, open && step === "setup", creationAccess.kind);
+  const editorOptions = useSessionConfigEditorOptions(universeId, open && step === "setup");
   const create = useMutation({
     mutationFn: () =>
       api<SessionView>("POST", `/api/v1/universes/${universeId}/sessions`, {
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
         profile: profileForCreate(profileId, inlineProfile, selectedProfile.data),
-        ...creationAccessInput(creationAccess),
       }),
     onSuccess: async (session) => {
       await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
@@ -1081,13 +1075,9 @@ function NewSessionDialog({
               >
                 {inlineProfile ? "Edit customized setup" : "Customize setup…"}
               </Button>
-              <CreationAccessSummary
-                audience="read"
-                universeId={universeId}
-                value={creationAccess}
-                onChange={setCreationAccess}
-                enabled={open}
-              />
+              <p className="text-xs text-muted-foreground">
+                A new session is unshared: you and the universe admins see it until you share it.
+              </p>
               {selectedProfile.error && (
                 <p className="text-sm text-destructive">{selectedProfile.error.message}</p>
               )}
@@ -1303,6 +1293,8 @@ export function SessionDetail({
         `/api/v1/universes/${universeId}/sessions/${sessionId}`,
       ),
   });
+  // Deleting a session, like sharing it, is for its creator or an admin.
+  const owner = useSessionOwner(universeId, session.data?.access);
   const [pending, setPending] = useState<PendingMessage[]>([]);
   // Retain only this view's local submission identities after pending cleanup.
   // Historical acknowledgements must never rekey a backend-loaded run. Scope
@@ -1320,13 +1312,10 @@ export function SessionDetail({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteCascade, setDeleteCascade] = useState(false);
-  const target = { kind: "session" as const, id: sessionId };
-  const permissions = useActionPermissions(universeId, [target]);
-  const cascadePermissions = useActionPermissions(deleteOpen ? universeId : undefined, [target], { sessionDeleteCascade: true });
-  const canControl = permissions.can("control_session", target);
-  const canStop = permissions.can("stop_session", target);
-  const canDelete = permissions.can("delete_session", target);
-  const canDeleteCascade = cascadePermissions.can("delete_session", target);
+  const permissions = useActionPermissions(universeId);
+  const canControl = permissions.can("control_session");
+  const canStop = permissions.can("stop_session");
+  const canDelete = owner && permissions.can("delete_session");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [decidingApproval, setDecidingApproval] = useState<{
     approvalId: string;
@@ -1825,8 +1814,7 @@ export function SessionDetail({
             <h1 className="min-w-0 truncate text-sm font-semibold">
               {session.data?.displayName ?? sessionId.slice(0, 24)}
             </h1>
-            <RestrictedMarker access={session.data?.access} />
-            <PrivilegedReadMarker privileged={session.data?.privilegedRead || tail.privilegedRead} />
+            <UnsharedBadge access={session.data?.access} />
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -1846,7 +1834,6 @@ export function SessionDetail({
                 className="max-h-[min(28rem,calc(100vh-1rem))] w-80 max-w-[calc(100vw-1rem)]"
               >
                 <SessionMenuIdentity sessionId={sessionId} />
-                <div className="px-2 py-1"><ExecutionLabel universeId={universeId} access={session.data?.access} /></div>
                 <SessionMenuPreferences />
                 {owningBotHref && (
                   <>
@@ -1863,7 +1850,12 @@ export function SessionDetail({
             </DropdownMenu>
           </div>
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
-            {session.data?.access && <AccessButton universeId={universeId} slug={slug} resource={target} access={session.data.access} />}
+            <ShareSessionButton
+              universeId={universeId}
+              sessionId={sessionId}
+              access={session.data?.access}
+              delegated={Boolean(session.data?.origin)}
+            />
             {activeRun && (
               <span className="hidden max-w-40 shrink truncate text-xs text-muted-foreground xl:inline">
                 {activeRun.label}…
@@ -1999,7 +1991,7 @@ export function SessionDetail({
               <Checkbox
                 checked={deleteCascade}
                 onCheckedChange={(checked) => setDeleteCascade(checked === true)}
-                disabled={deleteSession.isPending || !canDeleteCascade}
+                disabled={deleteSession.isPending}
               />
               <span className="min-w-0">
                 <span className="block font-medium">Also delete forks and delegated children</span>
@@ -2013,7 +2005,7 @@ export function SessionDetail({
               <AlertDialogCancel disabled={deleteSession.isPending}>Cancel</AlertDialogCancel>
               <AlertDialogAction
                 className="bg-destructive text-white hover:bg-destructive/90"
-                disabled={deleteSession.isPending || (deleteCascade && !canDeleteCascade)}
+                disabled={deleteSession.isPending}
                 onClick={() => deleteSession.mutate()}
               >
                 {deleteSession.isPending ? "Deleting…" : "Delete permanently"}
@@ -2119,7 +2111,7 @@ export function SessionDetail({
         canStop={canStop && !closed}
         disabled={!canControl || closed || (managedGate && !directInput)}
         disabledReason={!canControl
-          ? permissions.isLoading ? "Checking session permissions…" : permissions.error ? "Session permissions are unavailable." : "You have read-only access to this session."
+          ? "You have read-only access to this session."
           : managedGate && !directInput
           ? `Managed by ${managerLabel} — flip Direct input to message this session anyway.`
           : undefined}

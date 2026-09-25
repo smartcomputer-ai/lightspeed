@@ -11,7 +11,7 @@ function provider(providerId: string, config: SecretProvider["config"], extra: P
 }
 function grant(grantId: string, extra: Partial<SecretGrant> = {}): SecretGrant {
   return {
-    grantId, providerId: grantId, providerKind: "staticBearer", status: "active", exposure: "brokered", principal: {},
+    grantId, providerId: grantId, providerKind: "staticBearer", status: "active", exposure: "brokered", createdBy: { kind: "local" },
     hasAccessToken: true, hasRefreshToken: false, leaseCount: 0, createdAtMs: 1, updatedAtMs: 3, ...extra,
   };
 }

@@ -73,7 +73,12 @@ for (const port of plan.ports) {
 }
 
 for (const preparation of plan.preparations) {
-  runChecked(preparation.name, preparation.command, preparation.args, preparation.env);
+  try {
+    runChecked(preparation.name, preparation.command, preparation.args, preparation.env);
+  } catch (error) {
+    console.error(`[prepare] ${error.message}`);
+    process.exit(1);
+  }
 }
 
 if (plan.profile === "full") {

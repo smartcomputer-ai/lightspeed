@@ -13,7 +13,6 @@ import type { DemoResponder, DemoStore, DemoToolCall, DemoTurn, SessionRecord, U
 import {
   BOT_TOOLS,
   DAY_MS,
-  demoAccess,
   EMIT_TOOL,
   GPT,
   HOUR_MS,
@@ -819,7 +818,7 @@ const WRITER_PROFILE: ProfileInit = {
 function seedMembers(store: DemoStore, universe: UniverseState): void {
   universe.members.push(
     member(store, universe, "user-marco", "admin", ago(38 * DAY_MS)),
-    member(store, universe, "user-priya", "member", ago(22 * DAY_MS)),
+    member(store, universe, "user-priya", "contributor", ago(22 * DAY_MS)),
   );
   universe.apiKeys.push({
     keyPrefix: "lsk_pa_2f8d",
@@ -866,7 +865,6 @@ function seedWorkspaces(store: DemoStore, universe: UniverseState): void {
 function seedEnvironments(universe: UniverseState): void {
   const macMini: Environment = {
     environmentId: ENV_MAC_MINI,
-    access: demoAccess("environment", ENV_MAC_MINI),
     requestId: `req-${hex("ada-mac-mini", 12)}`,
     source: {
       type: "external",
@@ -912,7 +910,6 @@ function seedEnvironments(universe: UniverseState): void {
   const laptopDaemonId = `daemon_${hex("ada-laptop-daemon", 64)}`;
   universe.environments.set("env-ada-laptop", {
     environmentId: "env-ada-laptop",
-    access: demoAccess("environment", "env-ada-laptop"),
     requestId: `daemon:${laptopDaemonId}`,
     source: {
       type: "registered",
@@ -1052,7 +1049,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "ada@lumen.example",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "user", id: "user-ada" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["gmail.modify", "calendar.events"],
       audience: null,
       hasAccessToken: true,
@@ -1071,7 +1068,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "@ada-assistant",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "serviceAccount", id: BOT.assistant },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["search:read", "channels:history", "users:read"],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1089,7 +1086,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "rk_live_…7Qx2",
       status: "active",
       exposure: "retrievable",
-      principal: { kind: "serviceAccount", id: BOT.metrics },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["subscriptions:read", "invoices:read", "customers:read"],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1107,7 +1104,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "metrics · stripe-webhook",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "serviceAccount", id: BOT.metrics },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: [],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1125,7 +1122,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "marco@lumen.example",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "user", id: "user-marco" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["crm.objects.deals.read"],
       hasAccessToken: true,
       hasRefreshToken: true,
@@ -1143,7 +1140,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "ada@lumen.example",
       status: "needsReauth",
       exposure: "brokered",
-      principal: { kind: "user", id: "user-ada" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["read_content"],
       hasAccessToken: true,
       hasRefreshToken: true,
@@ -1162,7 +1159,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "sk-ant-…9mA1",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "serviceAccount", id: "demo-service" },
+      createdBy: { kind: "actor", id: "user-ada" },
       hasAccessToken: true,
       hasRefreshToken: false,
       expiresAtMs: null,

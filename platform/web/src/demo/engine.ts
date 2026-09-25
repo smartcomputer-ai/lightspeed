@@ -8,6 +8,7 @@ import type {
   EventJoinsView,
   ModelConfig,
   RunAcceptedSourceView,
+  ResourceAccessSummary,
   RunSummaryView,
   RunView,
   SessionEventKindView,
@@ -24,6 +25,12 @@ import type {
   SessionRecord,
   UniverseState,
 } from "./store";
+
+/// A session's or bot's audience in seeded demo data: shared with the
+/// universe, created by the demo user.
+export function demoAccess(): ResourceAccessSummary {
+  return { visibility: "universe", createdBy: { kind: "actor", id: "user-ada" } };
+}
 
 export const DEFAULT_MODEL: ModelConfig = {
   providerId: "anthropic",
@@ -183,6 +190,9 @@ export interface NewSessionInit {
   instructions?: string | null;
   createdAtMs?: number;
   deleteAfterCloseMs?: number | null;
+  /// Who sees a root session; seeded work defaults to shared. A sub-agent's
+  /// session follows its root.
+  access?: ResourceAccessSummary;
   responder?: DemoResponder;
 }
 
@@ -197,8 +207,12 @@ export function newSession(
   const retentionRootSessionId = init.origin
     ? universe.sessions.get(init.origin.parentSessionId)?.view.retention.rootSessionId ?? id
     : id;
+  const access = retentionRootSessionId === id
+    ? init.access ?? demoAccess()
+    : universe.sessions.get(retentionRootSessionId)?.view.access ?? demoAccess();
   const view: SessionView = {
     id,
+    access,
     displayName: init.displayName ?? null,
     metadata: init.metadata ?? {},
     createdAtMs: at,

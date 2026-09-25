@@ -1,4 +1,3 @@
-import { CreationAccessSummary, creationAccessInput, defaultCreationAccess } from "@/components/access/creation";
 import { defaultEnvironmentAttachment } from "@/lib/sessions/resource-features";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -154,7 +153,6 @@ function Wizard({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [step, setStep] = useState<Step>("job");
-  const [creationAccess, setCreationAccess] = useState(defaultCreationAccess);
   const [templateId, setTemplateId] = useState("blank");
   // The last name a template suggested: a person's own name is never
   // overwritten, a suggestion is replaced by the next template's.
@@ -223,7 +221,7 @@ function Wizard({
     queryKey: ["bots", universeId],
     queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
   });
-  const options = useSessionConfigEditorOptions(universeId, step === "profile" || step === "wakeups", creationAccess.kind);
+  const options = useSessionConfigEditorOptions(universeId, step === "profile" || step === "wakeups");
   const defaultEnvironmentId = defaultEnvironmentAttachment(config)?.environmentId;
 
   const env: BotEnvStatus =
@@ -346,7 +344,6 @@ function Wizard({
             selfConfig,
             emit,
           },
-          ...creationAccessInput(creationAccess),
           triggers: wakeups.map((draft) => triggerCreateBody(draft.kind, draft.name.trim(), draft.forms)),
         });
         return bot;
@@ -737,14 +734,6 @@ function Wizard({
                     <Switch id="new-bot-self-config" checked={selfConfig} onCheckedChange={setSelfConfig} />
                   </div>
                 </div>
-                {/* Access is decided last, next to Create. */}
-                <CreationAccessSummary
-                  audience="read"
-                  universeId={universeId}
-                  value={creationAccess}
-                  onChange={setCreationAccess}
-                  enabled={open}
-                />
               </section>
             )}
           </div>
