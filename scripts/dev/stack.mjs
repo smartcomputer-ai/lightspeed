@@ -79,15 +79,14 @@ for (const preparation of plan.preparations) {
 if (plan.profile === "full") {
   const runtime = plan.processes.find((p) => p.name === "runtime");
   if (runtime.env.LIGHTSPEED_AUTH_MODE === "authenticated" && !runtime.env.LIGHTSPEED_PLATFORM_API_KEY) {
-    console.log("[prepare] explicit local development identity and service key");
-    const result = spawnSync("cargo", ["run", "-p", "temporal-server", "--", "identity", "development", "--universe-id", runtime.env.LIGHTSPEED_PG_UNIVERSE_ID], {
+    console.log("[prepare] local development universe and Platform deployment key");
+    const result = spawnSync("cargo", ["run", "-p", "temporal-server", "--", "api-key", "bootstrap", "--universe-id", runtime.env.LIGHTSPEED_PG_UNIVERSE_ID], {
       cwd: repoRoot, env: { ...runtime.env, RUST_LOG: "off" }, encoding: "utf8",
     });
-    if (result.status !== 0) throw new Error(`development identity initialization failed: ${result.stderr}`);
+    if (result.status !== 0) throw new Error(`development key bootstrap failed: ${result.stderr}`);
     const credential = JSON.parse(result.stdout);
     for (const processPlan of plan.processes) {
       processPlan.env.LIGHTSPEED_PLATFORM_API_KEY = credential.secret;
-      processPlan.env.LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID = credential.userPrincipalId;
     }
   }
 }

@@ -1,6 +1,5 @@
 use api::BlobPutItem;
 
-use super::blobs::has_blobs;
 use super::*;
 use tools::prompts::active_prompt_instruction_entries as active_prompt_context_entries;
 use tools::skills::SkillLocation;
@@ -556,10 +555,7 @@ fn test_auth_grant_record(
         provider_id: "static".to_owned(),
         provider_kind,
         exposure: auth::AuthGrantExposure::Brokered,
-        principal: auth::PrincipalRef {
-            kind: auth::PrincipalKind::ServiceAccount,
-            id: Some("test-service".into()),
-        },
+        created_by: Attribution::Local,
         display_name: None,
         subject_hint: None,
         scopes: Vec::new(),
@@ -2018,7 +2014,6 @@ async fn blob_api_helpers_put_get_and_check_many() {
     let has = has_blobs(
         &store,
         BlobHasParams {
-            resource: None,
             blob_refs: vec![
                 put.blobs[0].blob_ref.clone(),
                 BlobRef::from_bytes(b"missing").as_str().to_owned(),
@@ -2035,7 +2030,6 @@ async fn blob_api_helpers_put_get_and_check_many() {
     let read = read_blob(
         &store,
         BlobReadParams {
-            resource: None,
             blob_ref: put.blobs[1].blob_ref.clone(),
         },
     )
@@ -2062,7 +2056,6 @@ async fn vfs_snapshot_api_helpers_commit_and_read_manifest() {
         &store,
         None,
         VfsSnapshotCommitParams {
-            source_workspace_id: None,
             manifest: manifest.clone(),
         },
     )
@@ -2074,7 +2067,6 @@ async fn vfs_snapshot_api_helpers_commit_and_read_manifest() {
     let read = read_vfs_snapshot(
         &store,
         VfsSnapshotReadParams {
-            workspace_id: None,
             snapshot_ref: committed.snapshot_ref,
         },
     )
@@ -2107,7 +2099,6 @@ async fn vfs_snapshot_commit_rejects_missing_file_blob_refs() {
         &store,
         None,
         VfsSnapshotCommitParams {
-            source_workspace_id: None,
             manifest: serde_json::to_value(manifest).expect("manifest json"),
         },
     )
@@ -2354,10 +2345,7 @@ fn auth_flow_views_carry_derived_status() {
         provider_id: "crm".to_owned(),
         provider_kind: auth::AuthProviderKind::McpOAuth,
         grant_exposure: auth::AuthGrantExposure::Brokered,
-        principal: auth::PrincipalRef {
-            kind: auth::PrincipalKind::ServiceAccount,
-            id: Some("test-service".into()),
-        },
+        created_by: Attribution::Local,
         state_hash: auth::state_hash("state-1"),
         pkce_verifier_secret: auth::SecretId::new("authsec_pkce"),
         redirect_uri: "http://127.0.0.1:18080/auth/callback".to_owned(),
@@ -2785,73 +2773,13 @@ fn environment_access_ladder_derives_the_union_tool_surface() {
 }
 
 #[test]
-fn use_refusals_name_the_resource_and_identity_or_look_missing() {
-    use super::authorization::use_refusal;
-    let refused = |resource: ResourceRef, kind| store_pg::UseRefusal::Resource {
-        execution: access::Execution {
-            run_as: uuid::Uuid::from_u128(9),
-            kind,
-        },
-        resource,
-        decision: access::Decision::Hidden,
-    };
-    let session = ResourceRef::Session("session_1".into());
-    let environment = ResourceRef::Environment("prod-1".into());
-    let error = use_refusal(
-        &session,
-        refused(environment.clone(), access::ExecutionKind::Service),
-        true,
-    );
-    assert_eq!(error.kind, AgentApiErrorKind::Forbidden);
-    assert_eq!(
-        error.message,
-        "environment prod-1 is not available to Default agent identity"
-    );
-    let error = use_refusal(
-        &ResourceRef::Bot("triage".into()),
-        refused(
-            ResourceRef::McpServer("crm".into()),
-            access::ExecutionKind::Personal,
-        ),
-        true,
-    );
-    assert_eq!(error.kind, AgentApiErrorKind::Forbidden);
-    assert_eq!(
-        error.message,
-        "MCP server crm is not available to the bot owner"
-    );
-    let error = use_refusal(
-        &session,
-        refused(
-            ResourceRef::Workspace("repo".into()),
-            access::ExecutionKind::Personal,
-        ),
-        true,
-    );
-    assert_eq!(
-        error.message,
-        "workspace repo is not available to the session owner"
-    );
-    // Whoever may not see the resource learns only that the id it supplied
-    // names nothing, in the text every not-found uses.
-    let hidden = use_refusal(
-        &session,
-        refused(environment.clone(), access::ExecutionKind::Service),
-        false,
-    );
-    assert_eq!(hidden.kind, AgentApiErrorKind::NotFound);
-    assert_eq!(hidden.message, "environment not found: prod-1");
+fn a_missing_resource_names_only_its_kind_and_id() {
     assert_eq!(
         super::authorization::not_found(&ResourceRef::McpServer("crm".into())).message,
         "MCP server not found: crm"
     );
-    // Without a caller, the identity's own view decides.
-    assert!(!refused(environment.clone(), access::ExecutionKind::Service).visible_to_identity());
-    // An identity that may not run work at all is refused as such.
-    let identity = use_refusal(&session, store_pg::UseRefusal::Identity, true);
-    assert_eq!(identity.kind, AgentApiErrorKind::Forbidden);
     assert_eq!(
-        identity.message,
-        "the session's execution identity is disabled or may not use resources"
+        super::authorization::not_found(&ResourceRef::Environment("prod-1".into())).message,
+        "environment not found: prod-1"
     );
 }

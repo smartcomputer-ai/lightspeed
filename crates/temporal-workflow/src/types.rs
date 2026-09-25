@@ -753,12 +753,6 @@ pub struct AppendEventsRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LlmGenerateActivityRequest {
     pub request: engine::LlmGenerationRequest,
-    /// The workspaces, environments and MCP servers the session has
-    /// attached when the turn starts ([`attached_resources`]). The turn
-    /// begins only while its execution identity may use every one of them;
-    /// the activity never reads session configuration itself.
-    #[serde(default)]
-    pub attached_resources: Vec<api::ResourceRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -800,10 +794,6 @@ pub enum PreprocessRunInputFailureKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCompactActivityRequest {
     pub request: engine::ContextCompactionRequest,
-    /// What the session has attached, as for a turn: compaction calls the
-    /// model and is held to the same authority.
-    #[serde(default)]
-    pub attached_resources: Vec<api::ResourceRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

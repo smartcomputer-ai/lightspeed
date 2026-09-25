@@ -295,26 +295,6 @@ impl GatewayAgentApi {
                 })?;
         }
         self.validate_trigger_grants(&input.document).await?;
-        // An exec poll naming its environment runs there as the bot's
-        // execution identity; one taken from the profile's default is
-        // admitted with the profile, and every fire is decided again.
-        if let BotTriggerSpec::Poll {
-            source:
-                PollSource::Exec {
-                    environment_id: Some(environment_id),
-                    ..
-                },
-            ..
-        } = &input.document.spec
-        {
-            self.require_execution_use(
-                &ResourceRef::Bot(bot_id.as_str().to_owned()),
-                &[ResourceRef::Environment(environment_id.as_str().to_owned())],
-                store_pg::UseCheck::Admission,
-            )
-            .await?;
-        }
-
         let mut secrets = existing
             .as_ref()
             .map(|existing| existing.secrets.clone())
@@ -411,10 +391,7 @@ impl GatewayAgentApi {
         .await?;
         let store = self.store();
         let previous = self.read_bot_record(&input.bot_id).await?;
-        let profile = self.require_profile(&input.document.profile_id).await?;
-        if previous.document.profile_id != input.document.profile_id {
-            self.admit_bot_profile(&input.bot_id, &profile).await?;
-        }
+        self.require_profile(&input.document.profile_id).await?;
         let record = store
             .put_bot(
                 input.bot_id.clone(),
@@ -461,42 +438,18 @@ impl GatewayAgentApi {
         Ok(())
     }
 
-    async fn require_profile(&self, profile_id: &ProfileId) -> Result<AgentProfile, AgentApiError> {
+    async fn require_profile(&self, profile_id: &ProfileId) -> Result<(), AgentApiError> {
         let profiles: &dyn ::profiles::ProfileStore = self.store().as_ref();
         profiles
             .read_agent_profile(profile_id)
             .await
+            .map(|_| ())
             .map_err(|error| match error {
                 ::profiles::ProfileError::NotFound { .. } => {
                     AgentApiError::invalid_request(format!("unknown profile: {profile_id}"))
                 }
                 other => AgentApiError::internal(other.to_string()),
             })
-    }
-
-    /// A bot's sessions take its profile's attachments, so the bot's
-    /// execution identity must be able to use them when the profile is
-    /// chosen; every session start admits them again. A configuration that
-    /// does not translate is refused when a session applies it.
-    async fn admit_bot_profile(
-        &self,
-        bot_id: &BotId,
-        profile: &AgentProfile,
-    ) -> Result<(), AgentApiError> {
-        let Some(config) = profile.document.config.clone() else {
-            return Ok(());
-        };
-        let Ok(config) =
-            super::api_config::engine_session_config_from_api(config, self.default_model.clone())
-        else {
-            return Ok(());
-        };
-        self.require_execution_use(
-            &ResourceRef::Bot(bot_id.as_str().to_owned()),
-            &temporal_workflow::attached_resources(&config.features),
-            store_pg::UseCheck::Admission,
-        )
-        .await
     }
 
     /// Terminal close: the row first (admission refuses on it), then every
@@ -622,12 +575,9 @@ impl GatewayAgentApi {
             for session in &snapshot.sessions {
                 let listed = self
                     .list_sessions(SessionListParams {
-                        metadata: Default::default(),
-                        cursor: None,
                         limit: Some(MAX_SESSION_LIST_LIMIT as u32),
                         root_session_id: Some(session.session_id.clone()),
-                        parent_session_id: None,
-                        exclude_closed: false,
+                        ..Default::default()
                     })
                     .await?;
                 descendants.extend(listed.result.sessions);
@@ -877,19 +827,13 @@ impl GatewayAgentApi {
     ) -> Result<BotCreateResponse, AgentApiError> {
         let store = self.store();
         let BotInput { bot_id, document } = params.bot;
-        let profile = self.require_profile(&document.profile_id).await?;
-        // A bot is its own root and its sessions follow it, carrying its
-        // audience and execution identity.
-        let resource = ResourceRef::Bot(bot_id.as_str().to_owned());
-        let execution = self.resolve_execution(params.execution).await?;
-        self.reserve_resource(resource.clone(), Some(execution))
-            .await?;
-        self.apply_creation_access(&resource, params.access).await?;
-        self.admit_bot_profile(&bot_id, &profile).await?;
+        self.require_profile(&document.profile_id).await?;
         let bot = store
             .create_bot(bot_id.clone(), document, bot_now_ms())
             .await
             .map_err(map_bot_error)?;
+        // Bots are shared with the universe; only who created one is kept.
+        self.record_bot_creator(&bot_id).await?;
         let mut triggers = Vec::new();
         let rollback = |store: Arc<PgStore>, bot_id: BotId| async move {
             let _ = store.delete_bot(&bot_id).await;
@@ -928,14 +872,15 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn list_bot_roster(&self) -> Result<BotListResponse, AgentApiError> {
-        let reader = self.reader()?;
-        let (rows, privileged) = self
+    pub(super) async fn list_bot_roster(
+        &self,
+        params: BotListParams,
+    ) -> Result<BotListResponse, AgentApiError> {
+        let rows = self
             .store()
-            .list_bot_roster_for(&reader)
+            .list_bot_roster_for(params.created_by.as_deref())
             .await
             .map_err(map_bot_error)?;
-        self.note_privileged_list(privileged);
         Ok(BotListResponse {
             bots: rows
                 .into_iter()

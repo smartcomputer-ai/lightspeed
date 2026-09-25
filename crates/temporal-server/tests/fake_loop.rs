@@ -108,6 +108,7 @@ async fn assert_tool_loop(builtin: bool) {
             session_id: session_id.clone(),
             observed_at_ms: 13,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                requested_by: None,
                 notify_on_terminal: Vec::new(),
                 submission_id: Some(SubmissionId::new("submit_test")),
                 source: engine::RunRequestSource::Input {

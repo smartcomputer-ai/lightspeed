@@ -237,14 +237,13 @@ impl ChatSessionDriver {
         let api = build_chat_api(&options).await?;
         let started = api
             .open_or_start_session(SessionStartParams {
-                access: None,
-                execution: None,
                 metadata: Default::default(),
                 session_id: Some(session_id.clone()),
                 display_name: None,
                 config: Some(session_start_config(&options.draft_settings)),
                 profile: options.profile.clone(),
                 delete_after_close_ms: None,
+                access: None,
             })
             .await
             .map_err(api_error)?;
@@ -874,7 +873,7 @@ impl ChatSessionDriver {
                     action: None,
                 }));
             }
-            SessionEventKindView::RunCancelled { run_id } => {
+            SessionEventKindView::RunCancelled { run_id, .. } => {
                 events.push(ChatEvent::RunChanged(self.run_view_from_status(
                     run_id,
                     api::RunStatus::Cancelled,
@@ -1047,14 +1046,13 @@ impl ChatSessionDriver {
         self.run_states.clear();
         self.api
             .start_session(SessionStartParams {
-                access: None,
-                execution: None,
                 metadata: Default::default(),
                 session_id: Some(session_id.clone()),
                 display_name: None,
                 config: Some(session_start_config(&self.settings)),
                 profile: None,
                 delete_after_close_ms: None,
+                access: None,
             })
             .await
             .map_err(api_error)?;
@@ -2188,6 +2186,7 @@ mod tests {
             source: api::RunAcceptedSourceView::Input {
                 entries: Vec::new(),
             },
+            requested_by: None,
         }));
         assert!(!event_needs_snapshot(&SessionEventKindView::RunStarted {
             run_id: "run_1".into(),

@@ -1,36 +1,6 @@
 use super::*;
 
 impl GatewayAgentApi {
-    /// A workspace edit may retain its current files. New files need the
-    /// caller's own upload even when the manifest itself was uploaded raw.
-    pub(super) async fn authorize_vfs_manifest(
-        &self,
-        manifest: &vfs::VfsSnapshotManifest,
-        source_workspace_id: Option<&str>,
-    ) -> Result<(), AgentApiError> {
-        let mut supplied = vfs::manifest_blob_refs(manifest);
-        if let Some(workspace_id) = source_workspace_id {
-            // Retaining a workspace's files is reading them.
-            self.authorize_method(
-                METHOD_VFS_WORKSPACES_READ,
-                Some(ResourceRef::Workspace(workspace_id.to_owned())),
-            )
-            .await?;
-            let workspace = self
-                .read_vfs_workspace_record(VfsWorkspaceReadParams {
-                    workspace_id: workspace_id.to_owned(),
-                })
-                .await?;
-            let source =
-                vfs::read_snapshot_manifest(self.store.as_ref(), &workspace.head_snapshot_ref)
-                    .await
-                    .map_err(map_vfs_read_error)?;
-            let admitted = vfs::manifest_blob_refs(&source);
-            supplied.retain(|blob_ref| !admitted.contains(blob_ref));
-        }
-        self.authorize_supplied_refs(None, supplied).await
-    }
-
     pub(super) async fn validate_workspace_attachment_targets(
         &self,
         features: &engine::FeaturesConfig,
@@ -76,26 +46,17 @@ impl GatewayAgentApi {
             })?,
             None => self.allocate_vfs_workspace_id(),
         };
-        let created_at_ms = now_ms()?;
-        self.create_owned_resource(
-            ResourceRef::Workspace(workspace_id.as_str().to_owned()),
-            params.access,
-            async {
-                self.store
-                    .create_workspace(CreateVfsWorkspaceRecord {
-                        workspace_id,
-                        display_name: params.display_name,
-                        base_snapshot_ref: Some(snapshot_ref.clone()),
-                        head_snapshot_ref: snapshot_ref,
-                        head_totals,
-                        created_at_ms,
-                    })
-                    .await
-                    .map_err(map_vfs_catalog_error)
-            },
-            |_| true,
-        )
-        .await
+        self.store
+            .create_workspace(CreateVfsWorkspaceRecord {
+                workspace_id,
+                display_name: params.display_name,
+                base_snapshot_ref: Some(snapshot_ref.clone()),
+                head_snapshot_ref: snapshot_ref,
+                head_totals,
+                created_at_ms: now_ms()?,
+            })
+            .await
+            .map_err(map_vfs_catalog_error)
     }
 
     pub(super) async fn read_vfs_workspace_record(
@@ -109,57 +70,13 @@ impl GatewayAgentApi {
             .map_err(map_vfs_catalog_error)
     }
 
-    /// The workspaces the caller may see, with their access summaries.
-    pub(super) async fn list_vfs_workspace_views(
+    pub(super) async fn list_vfs_workspace_records(
         &self,
-    ) -> Result<Vec<VfsWorkspaceView>, AgentApiError> {
-        Ok(self
-            .store
-            .list_workspaces_for(&self.operational_reader()?)
+    ) -> Result<Vec<VfsWorkspaceRecord>, AgentApiError> {
+        self.store
+            .list_workspaces()
             .await
-            .map_err(map_vfs_catalog_error)?
-            .into_iter()
-            .map(|(record, access)| vfs_workspace_view(record, access))
-            .collect())
-    }
-
-    /// The view of a workspace with its access summary.
-    pub(super) async fn vfs_workspace_view(
-        &self,
-        record: VfsWorkspaceRecord,
-    ) -> Result<VfsWorkspaceView, AgentApiError> {
-        let access = self
-            .access_summary(&ResourceRef::Workspace(
-                record.workspace_id.as_str().to_owned(),
-            ))
-            .await?;
-        Ok(vfs_workspace_view(record, access))
-    }
-
-    /// A snapshot read through a workspace must be that workspace's head or
-    /// base; without one, only a snapshot the caller committed or uploaded.
-    pub(super) async fn authorize_vfs_snapshot_read(
-        &self,
-        params: &VfsSnapshotReadParams,
-    ) -> Result<(), AgentApiError> {
-        let snapshot_ref = parse_blob_ref(&params.snapshot_ref)?;
-        let Some(workspace_id) = &params.workspace_id else {
-            return self.authorize_blob_read(None, &snapshot_ref).await;
-        };
-        let workspace = self
-            .read_vfs_workspace_record(VfsWorkspaceReadParams {
-                workspace_id: workspace_id.clone(),
-            })
-            .await?;
-        if workspace.head_snapshot_ref != snapshot_ref
-            && workspace.base_snapshot_ref.as_ref() != Some(&snapshot_ref)
-        {
-            return Err(AgentApiError::not_found(format!(
-                "snapshot {} is neither the head nor the base of workspace {workspace_id}",
-                snapshot_ref.as_str()
-            )));
-        }
-        Ok(())
+            .map_err(map_vfs_catalog_error)
     }
 
     pub(super) async fn update_vfs_workspace_record(
@@ -281,12 +198,8 @@ pub(super) async fn read_vfs_snapshot(
     })
 }
 
-pub(super) fn vfs_workspace_view(
-    record: VfsWorkspaceRecord,
-    access: access::ResourceAccessSummary,
-) -> VfsWorkspaceView {
+pub(super) fn vfs_workspace_view(record: VfsWorkspaceRecord) -> VfsWorkspaceView {
     VfsWorkspaceView {
-        access,
         workspace_id: record.workspace_id.as_str().to_owned(),
         display_name: record.display_name,
         base_snapshot_ref: record

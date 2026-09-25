@@ -626,7 +626,7 @@ pub struct BotTriggerInput {
     pub document: BotTriggerDocument,
     /// Chat triggers with `pairing: code`: set a specific pairing code
     /// (8–64 chars) instead of the server-minted one. Never returned to
-    /// non-managing principals.
+    /// channel-facing views.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pairing_code: Option<String>,
 }
@@ -670,11 +670,11 @@ pub struct BotTriggerView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_state: Option<PollCursorState>,
     /// Webhook triggers: the ingest path including its URL token, for
-    /// managing principals only.
+    /// bot-management callers only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ingest_path: Option<String>,
-    /// Chat triggers with `pairing: code`: the code, for managing
-    /// principals only.
+    /// Chat triggers with `pairing: code`: the code, for bot-management
+    /// callers only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pairing_code: Option<String>,
     pub created_at_ms: i64,
@@ -1019,14 +1019,6 @@ pub struct BotCreateParams {
     /// back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<BotTriggerInput>,
-    /// Audience of the bot, its events and every session it creates, set
-    /// atomically with its creation. Absent means universe-visible.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub access: Option<AccessInput>,
-    /// Execution identity of the bot and every session it creates; absent
-    /// means the universe's execution service.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub execution: Option<ExecutionInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1063,13 +1055,17 @@ pub struct BotReadParams {
 #[serde(rename_all = "camelCase")]
 pub struct BotReadResponse {
     pub bot: BotView,
-    /// The root governing this bot and its sessions, and who they run as.
+    /// The bot's audience, always the universe, and who created it.
     pub access: ResourceAccessSummary,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct BotListParams {}
+pub struct BotListParams {
+    /// Only bots this actor created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

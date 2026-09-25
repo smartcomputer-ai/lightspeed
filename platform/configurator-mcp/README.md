@@ -51,7 +51,7 @@ is kept here for service-local convenience.
 | `LIGHTSPEED_CONFIGURATOR_MCP_SHUTDOWN_TIMEOUT_MS` | `10000` | Grace period before open HTTP connections are closed |
 
 Authenticated clients send `Authorization: Bearer lsk_...`. Configurator forwards
-the credential and optional universe/canonical-user headers to the runtime, which
+the credential and optional universe/actor headers to the runtime, which
 validates scope and assertion authority. Headers alone never authenticate callers.
 The Platform setup creates a dedicated universe service credential. The former
 loopback trusted-header route is retired.

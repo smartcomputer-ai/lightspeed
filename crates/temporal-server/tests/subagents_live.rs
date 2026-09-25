@@ -522,7 +522,7 @@ where
 
     let blobs_for_client: Arc<dyn BlobStore> = store.clone();
     let sessions_for_client: Arc<dyn SessionStore> = store;
-    let client_future = temporal_server::gateway::principal::with_request_context(
+    let client_future = temporal_server::gateway::request_context::with_request_context(
         support::live::local_request_context().await?,
         run_client(
             client.clone(),
@@ -647,7 +647,6 @@ async fn start_subagent_parent_with_features(
 ) -> anyhow::Result<String> {
     api.start_session(SessionStartParams {
         access: None,
-        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -934,6 +933,9 @@ async fn run_agent_run_inline_live_client(
             metadata: Default::default(),
             cursor: None,
             limit: None,
+            created_by: None,
+            visibility: None,
+            visible_to: None,
             root_session_id: Some(session_id.as_str().to_owned()),
             parent_session_id: None,
             exclude_closed: false,
@@ -1220,7 +1222,6 @@ async fn run_agent_run_inherit_environment_live_client(
 
     let independent_environment = api
         .create_environment(api::EnvironmentCreateParams {
-            access: None,
             request_id: format!("inherit-env-{suffix}"),
             binding_id: binding_id.clone(),
             template_id: "rust-v1".into(),
@@ -1239,7 +1240,6 @@ async fn run_agent_run_inherit_environment_live_client(
         config: None,
         delete_after_close_ms: None,
         access: None,
-        execution: None,
         profile: Some(ProfileSource::Inline {
             profile: Box::new(api::InlineAgentProfile {
                 display_name: None,

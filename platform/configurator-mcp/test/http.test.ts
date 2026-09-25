@@ -61,12 +61,12 @@ describe("Streamable HTTP configurator", () => {
     const a = mcpClient(server, {
       "x-lightspeed-universe": universeA,
       authorization: "Bearer lsk_service",
-      "x-lightspeed-principal": "user:00000000-0000-4000-8000-000000000003",
+      "x-lightspeed-actor": "platform:user:00000000-0000-4000-8000-000000000003",
     });
     const b = mcpClient(server, {
       "x-lightspeed-universe": universeB,
       authorization: "Bearer lsk_service",
-      "x-lightspeed-principal": "user:00000000-0000-4000-8000-000000000004",
+      "x-lightspeed-actor": "platform:user:00000000-0000-4000-8000-000000000004",
     });
 
     await Promise.all([
@@ -89,8 +89,8 @@ describe("Streamable HTTP configurator", () => {
     const callB = calls.find(
       (call) => call.headers.get("x-lightspeed-universe") === universeB,
     );
-    expect(callA?.headers.get("x-lightspeed-principal")).toBe("user:00000000-0000-4000-8000-000000000003");
-    expect(callB?.headers.get("x-lightspeed-principal")).toBe("user:00000000-0000-4000-8000-000000000004");
+    expect(callA?.headers.get("x-lightspeed-actor")).toBe("platform:user:00000000-0000-4000-8000-000000000003");
+    expect(callB?.headers.get("x-lightspeed-actor")).toBe("platform:user:00000000-0000-4000-8000-000000000004");
     await Promise.all([a.client.close(), b.client.close()]);
   });
 

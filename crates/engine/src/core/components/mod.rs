@@ -4,6 +4,7 @@
 //! vocabulary plus the domain-local logic that owns those facts.
 
 pub mod approval;
+pub mod attribution;
 pub mod command;
 pub mod config;
 pub mod context;
@@ -22,6 +23,7 @@ pub mod turn;
 pub mod workflow_tool;
 
 pub use approval::*;
+pub use attribution::Attribution;
 pub use command::*;
 pub use config::*;
 pub use context::{

@@ -343,7 +343,6 @@ async fn upsert_vfs_workspace(
         }
         Err(error) if matches!(error.kind, AgentApiErrorKind::NotFound) => Ok(api
             .create_vfs_workspace(api::VfsWorkspaceCreateParams {
-                access: None,
                 workspace_id: Some(workspace_id),
                 snapshot_ref: Some(snapshot_ref),
                 display_name: None,
@@ -503,16 +502,6 @@ async fn validate_workspace_attachments(
     let Some(attachments) = profile_workspace_attachments(&document.profile) else {
         return;
     };
-    // The gateway keeps a snapshot admitted while the stored profile holds
-    // it; any other snapshot must be the caller's own upload.
-    let held = if attachments
-        .iter()
-        .any(|attachment| attachment.workspace_id.is_none() && attachment.snapshot_ref.is_some())
-    {
-        stored_snapshot_refs(api, &document.profile.profile_id).await
-    } else {
-        BTreeSet::new()
-    };
     for attachment in attachments {
         if !provision_has_run && local_paths.contains(attachment.path.as_str()) {
             continue;
@@ -534,18 +523,14 @@ async fn validate_workspace_attachments(
                 }
             }
             (None, Some(snapshot_ref)) => {
-                if held.contains(snapshot_ref) {
-                    continue;
-                }
                 if let Err(error) = api
                     .read_vfs_snapshot(api::VfsSnapshotReadParams {
-                        workspace_id: None,
                         snapshot_ref: snapshot_ref.clone(),
                     })
                     .await
                 {
                     report.error(format!(
-                        "workspace attachment {} references snapshot {} that is missing or not your upload (attach its workspace instead): {}",
+                        "workspace attachment {} references missing snapshot {}: {}",
                         attachment.path,
                         snapshot_ref,
                         api_error(error)
@@ -729,13 +714,8 @@ fn upsert_profile_attachment(
 }
 
 fn profile_workspace_attachments(profile: &AgentProfileInput) -> Option<&[WorkspaceAttachment]> {
-    document_workspace_attachments(&profile.document)
-}
-
-fn document_workspace_attachments(
-    document: &api::ProfileDocument,
-) -> Option<&[WorkspaceAttachment]> {
-    document
+    profile
+        .document
         .config
         .as_ref()?
         .features
@@ -743,24 +723,6 @@ fn document_workspace_attachments(
         .vfs
         .as_ref()
         .map(|vfs| vfs.workspaces.as_slice())
-}
-
-/// Snapshot refs the stored revision of a profile attaches; none when it
-/// does not exist yet or cannot be read.
-async fn stored_snapshot_refs(api: &HttpAgentApi, profile_id: &api::ProfileId) -> BTreeSet<String> {
-    let Ok(response) = api
-        .read_profile(api::ProfileReadParams {
-            profile_id: profile_id.clone(),
-        })
-        .await
-    else {
-        return BTreeSet::new();
-    };
-    document_workspace_attachments(&response.result.profile.document)
-        .into_iter()
-        .flatten()
-        .filter_map(|attachment| attachment.snapshot_ref.clone())
-        .collect()
 }
 
 fn provision_workspace_id(profile: &AgentProfileInput, entry: &ProvisionVfs) -> String {

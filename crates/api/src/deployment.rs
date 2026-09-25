@@ -4,9 +4,8 @@
 //! rather than acting inside one universe, so they form a second scope class
 //! with its own service trait and dispatcher. They share the JSON-RPC
 //! envelope, error model, and `/rpc` endpoint with the universe-scoped API;
-//! the `deployment/` method-name prefix is what routes a request here, and the
-//! gateway enforces each method's declared authentication requirement before dispatch.
-//! Key management additionally checks scope and ownership in its handler.
+//! the `deployment/` method-name prefix is what routes a request here. Only a
+//! deployment key holding the method's group reaches them.
 
 use super::*;
 
@@ -20,9 +19,6 @@ pub const METHOD_DEPLOYMENT_UNIVERSES_READ: &str = "deployment/universes/read";
 pub const METHOD_DEPLOYMENT_UNIVERSES_DELETE: &str = "deployment/universes/delete";
 pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST: &str =
     "deployment/environment-provider-bindings/list";
-pub const METHOD_DEPLOYMENT_IDENTITY_SELF: &str = "deployment/identity/self";
-pub const METHOD_DEPLOYMENT_IDENTITY_DIRECTORY: &str = "deployment/identity/directory";
-pub const METHOD_DEPLOYMENT_IDENTITY_APPLY: &str = "deployment/identity/apply";
 
 pub const METHOD_DEPLOYMENT_API_KEYS_CREATE: &str = "deployment/api-keys/create";
 pub const METHOD_DEPLOYMENT_API_KEYS_LIST: &str = "deployment/api-keys/list";
@@ -121,14 +117,16 @@ pub struct DeploymentUniverseDeleteResponse {
     pub blob_objects_deleted: u64,
 }
 
-/// Non-secret scoped key metadata, including authenticated identity and issuer.
+/// Non-secret key metadata: what the key reaches and may call, and who
+/// minted it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentApiKeyView {
     pub key_prefix: String,
     pub scope: AccessScope,
-    pub principal_id: uuid::Uuid,
-    pub created_by: uuid::Uuid,
+    pub groups: Vec<MethodGroup>,
+    pub assert_actor: bool,
+    pub created_by: Attribution,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     pub created_at_ms: u64,
@@ -139,13 +137,23 @@ pub struct DeploymentApiKeyView {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeploymentApiKeyCreateParams {
+    /// A universe, or the deployment. A deployment key addresses a universe
+    /// with the `x-lightspeed-universe` header and may hold deployment groups.
     pub scope: AccessScope,
+    /// The method groups the key may call; absent grants every group its
+    /// scope allows. Keys never change: to change what a key may do, revoke
+    /// it and mint another.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub groups: Option<Vec<MethodGroup>>,
+    /// Whether the key may name the actor a request acts for with the
+    /// `x-lightspeed-actor` header. Give it only to a gate that authenticates
+    /// people, such as the Platform.
+    #[serde(default)]
+    pub assert_actor: bool,
     /// Human-readable purpose shown in key-management interfaces.
     pub display_name: String,
-    /// Canonical identity authenticated by this credential.
-    pub principal_id: uuid::Uuid,
 }
 
 /// A newly minted key. `secret` is returned only by create and cannot be
@@ -169,10 +177,12 @@ impl fmt::Debug for DeploymentApiKeyCreateResponse {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeploymentApiKeyListParams {
-    pub scope: AccessScope,
+    /// Only keys of this scope; absent lists every key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<AccessScope>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -183,9 +193,8 @@ pub struct DeploymentApiKeyListResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeploymentApiKeyRevokeParams {
-    pub scope: AccessScope,
     pub key_prefix: String,
 }
 
@@ -373,28 +382,6 @@ pub trait DeploymentApiService: Send + Sync {
             "deployment binding inventory unavailable",
         ))
     }
-    async fn identity_self(
-        &self,
-        _params: IdentityScopeParams,
-    ) -> Result<AgentApiOutcome<IdentitySelfResponse>, AgentApiError> {
-        Err(AgentApiError::rejected("identity queries unavailable"))
-    }
-    async fn identity_directory(
-        &self,
-        _params: IdentityScopeParams,
-    ) -> Result<AgentApiOutcome<AccessDirectory>, AgentApiError> {
-        Err(AgentApiError::rejected("identity queries unavailable"))
-    }
-
-    async fn apply_identity(
-        &self,
-        _params: AccessChange,
-    ) -> Result<AgentApiOutcome<AccessChangeResult>, AgentApiError> {
-        Err(AgentApiError::rejected(
-            "identity administration unavailable",
-        ))
-    }
-
     async fn create_universe(
         &self,
         params: DeploymentUniverseCreateParams,
@@ -503,7 +490,7 @@ pub trait DeploymentApiService: Send + Sync {
 
 macro_rules! deployment_api_methods {
     ($($method_const:ident => $service_fn:ident($params:ty) -> $response:ty =>
-        [$summary:expr, $description:expr], access: $access:expr, audit: $audit:expr),+ $(,)?) => {
+        [$summary:expr, $description:expr], access: $access:expr),+ $(,)?) => {
         pub(crate) fn deployment_method_access(method: &str) -> Option<MethodAccess> {
             match method {
                 $($method_const => Some($access),)+
@@ -511,12 +498,6 @@ macro_rules! deployment_api_methods {
             }
         }
 
-        pub(crate) fn deployment_method_audited(method: &str) -> Option<bool> {
-            match method {
-                $($method_const => Some($audit),)+
-                _ => None,
-            }
-        }
 
         pub async fn dispatch_deployment_json_rpc(
             service: &dyn DeploymentApiService,
@@ -544,7 +525,6 @@ macro_rules! deployment_api_methods {
                         method: $method_const,
                         scope: ($access).scope(),
                         access: $access,
-                        audited: $audit,
                         summary: $summary,
                         description: $description,
                         params_type: stringify!($params),
@@ -562,43 +542,36 @@ macro_rules! deployment_api_methods {
 
 deployment_api_methods! {
     METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST => list_deployment_provider_bindings(DeploymentUniverseReadParams) -> EnvironmentProviderBindingListResponse =>
-        ["List a universe's deployment provider bindings", "Deployment configuration inventory; requires DeploymentAdmin without granting universe content access."], access: MethodAccess::DeploymentAdmin, audit: false,
-
-    METHOD_DEPLOYMENT_IDENTITY_SELF => identity_self(IdentityScopeParams) -> IdentitySelfResponse =>
-        ["Read own access", "Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected."], access: MethodAccess::Identity, audit: false,
-    METHOD_DEPLOYMENT_IDENTITY_DIRECTORY => identity_directory(IdentityScopeParams) -> AccessDirectory =>
-        ["Read the access directory", "Requires administration of the requested scope. In universe scope the directory holds only that universe's subjects: principals and groups holding a role there, their members, and service principals it manages. The deployment-wide directory requires deployment administration or the manage_identity capability."], access: MethodAccess::Identity, audit: false,
+        ["List a universe's deployment provider bindings", "Deployment configuration inventory of one universe's provider bindings."], access: MethodAccess::Deployment,
 
     METHOD_DEPLOYMENT_UNIVERSES_CREATE => create_universe(DeploymentUniverseCreateParams) -> DeploymentUniverseCreateResponse =>
-        ["Create a universe", "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created."], access: MethodAccess::DeploymentAdmin, audit: true,
+        ["Create a universe", "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_LIST => list_universes(DeploymentUniverseListParams) -> DeploymentUniverseListResponse =>
-        ["List universes", "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity."], access: MethodAccess::DeploymentAdmin, audit: false,
+        ["List universes", "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_READ => read_universe(DeploymentUniverseReadParams) -> DeploymentUniverseReadResponse =>
-        ["Read a universe", "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage."], access: MethodAccess::DeploymentAdmin, audit: false,
+        ["Read a universe", "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_DELETE => delete_universe(DeploymentUniverseDeleteParams) -> DeploymentUniverseDeleteResponse =>
-        ["Purge a universe", "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure."], access: MethodAccess::DeploymentAdmin, audit: true,
-    METHOD_DEPLOYMENT_IDENTITY_APPLY => apply_identity(AccessChange) -> AccessChangeResult =>
-        ["Apply identity and access changes", "Applies a canonical identity change with current actor permissions and durable access auditing."], access: MethodAccess::Identity, audit: true,
+        ["Purge a universe", "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_API_KEYS_CREATE => create_api_key(DeploymentApiKeyCreateParams) -> DeploymentApiKeyCreateResponse =>
-        ["Create a scoped API key", "Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification."], access: MethodAccess::CredentialManagement, audit: true,
+        ["Create a scoped API key", "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_API_KEYS_LIST => list_api_keys(DeploymentApiKeyListParams) -> DeploymentApiKeyListResponse =>
-        ["List scoped API keys", "Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned."], access: MethodAccess::CredentialManagement, audit: false,
+        ["List scoped API keys", "Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_API_KEYS_REVOKE => revoke_api_key(DeploymentApiKeyRevokeParams) -> DeploymentApiKeyRevokeResponse =>
-        ["Revoke a scoped API key", "Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found."], access: MethodAccess::CredentialManagement, audit: true,
+        ["Revoke a scoped API key", "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider(DeploymentEnvironmentProviderPutParams) -> DeploymentEnvironmentProviderPutResponse =>
-        ["Put an environment provider", "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed."], access: MethodAccess::DeploymentAdmin, audit: true,
+        ["Put an environment provider", "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers(DeploymentEnvironmentProviderListParams) -> DeploymentEnvironmentProviderListResponse =>
-        ["List environment providers", "Returns every deployment-registered deployment provider and its controller connection."], access: MethodAccess::DeploymentAdmin, audit: false,
+        ["List environment providers", "Returns every deployment-registered deployment provider and its controller connection."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ => read_environment_provider(DeploymentEnvironmentProviderReadParams) -> DeploymentEnvironmentProviderReadResponse =>
-        ["Read an environment provider", "Returns one deployment-registered deployment provider and its controller connection."], access: MethodAccess::DeploymentAdmin, audit: false,
+        ["Read an environment provider", "Returns one deployment-registered deployment provider and its controller connection."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE => delete_environment_provider(DeploymentEnvironmentProviderDeleteParams) -> DeploymentEnvironmentProviderDeleteResponse =>
-        ["Delete an environment provider", "Deletes a deployment provider only when no universe binding references it."], access: MethodAccess::DeploymentAdmin, audit: true,
+        ["Delete an environment provider", "Deletes a deployment provider only when no universe binding references it."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT => put_environment_provider_binding(DeploymentProviderBindingPutParams) -> DeploymentProviderBindingPutResponse =>
-        ["Put an environment provider binding", "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe."], access: MethodAccess::DeploymentAdmin, audit: true,
+        ["Put an environment provider binding", "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE => delete_environment_provider_binding(DeploymentProviderBindingDeleteParams) -> DeploymentProviderBindingDeleteResponse =>
-        ["Delete an environment provider binding", "Deletes a universe provider binding only after every referencing environment has reached Closed."], access: MethodAccess::DeploymentAdmin, audit: true,
+        ["Delete an environment provider binding", "Deletes a universe provider binding only after every referencing environment has reached Closed."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENTS_ADOPT => adopt_environment(DeploymentEnvironmentAdoptParams) -> DeploymentEnvironmentAdoptResponse =>
-        ["Adopt a provider environment", "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer."], access: MethodAccess::DeploymentAdmin, audit: true,
+        ["Adopt a provider environment", "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST => list_deployment_channel_accounts(DeploymentChannelAccountListParams) -> DeploymentChannelAccountListResponse =>
-        ["List channel accounts across universes", "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since."], access: MethodAccess::DeploymentAdminOrCapability(Capability::DiscoverChannelAccounts), audit: false,
+        ["List channel accounts across universes", "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since."], access: MethodAccess::Deployment,
 }

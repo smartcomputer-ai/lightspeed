@@ -599,7 +599,7 @@ mod tests {
     use crate::{
         CreateAuthGrantRecord, CreateOAuthClientRecord, InMemoryAuthGrantStore, InMemoryGrantLocks,
         InMemoryOAuthClientStore, InMemorySecretStore, OAuthClientId, OAuthTokenResponse,
-        PrincipalRef, SECRET_KIND_STATIC_BEARER, TokenEndpointAuthMethod,
+        SECRET_KIND_STATIC_BEARER, TokenEndpointAuthMethod,
     };
 
     fn grant_request(grant_id: &str, audience: Option<&str>) -> CreateAuthGrantRecord {
@@ -608,10 +608,7 @@ mod tests {
             provider_id: "static".to_owned(),
             provider_kind: AuthProviderKind::StaticBearer,
             exposure: crate::AuthGrantExposure::Brokered,
-            principal: PrincipalRef {
-                kind: crate::PrincipalKind::ServiceAccount,
-                id: Some("test-service".into()),
-            },
+            created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: None,
             scopes: Vec::new(),
@@ -864,10 +861,7 @@ mod tests {
                 provider_id: "crm".to_owned(),
                 provider_kind: AuthProviderKind::McpOAuth,
                 exposure: crate::AuthGrantExposure::Brokered,
-                principal: PrincipalRef {
-                    kind: crate::PrincipalKind::ServiceAccount,
-                    id: Some("test-service".into()),
-                },
+                created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
                 scopes: Vec::new(),

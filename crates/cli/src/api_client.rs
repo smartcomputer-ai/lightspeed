@@ -38,14 +38,14 @@ use api::{
     METHOD_SESSION_RUNS_CANCEL, METHOD_SESSION_RUNS_START, METHOD_SESSION_RUNS_STEER,
     METHOD_SESSION_SKILLS_LIST, METHOD_SESSION_START, METHOD_VFS_SNAPSHOTS_COMMIT,
     METHOD_VFS_SNAPSHOTS_READ, METHOD_VFS_WORKSPACES_CREATE, METHOD_VFS_WORKSPACES_DELETE,
-    METHOD_VFS_WORKSPACES_FILES_READ, METHOD_VFS_WORKSPACES_LIST, METHOD_VFS_WORKSPACES_READ,
-    METHOD_VFS_WORKSPACES_UPDATE, McpServerDeleteParams, McpServerDeleteResponse,
-    McpServerListParams, McpServerListResponse, McpServerPutParams, McpServerPutResponse,
-    McpServerReadParams, McpServerReadResponse, ProfileApplyParams, ProfileApplyResponse,
-    ProfileDeleteParams, ProfileDeleteResponse, ProfileListParams, ProfileListResponse,
-    ProfilePutParams, ProfilePutResponse, ProfileReadParams, ProfileReadResponse, RequestId,
-    RunApprovalsDecideParams, RunApprovalsDecideResponse, RunCancelParams, RunCancelResponse,
-    RunStartParams, RunStartResponse, RunSteerParams, RunSteerResponse, SessionConfigPutParams,
+    METHOD_VFS_WORKSPACES_LIST, METHOD_VFS_WORKSPACES_READ, METHOD_VFS_WORKSPACES_UPDATE,
+    McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams, McpServerListResponse,
+    McpServerPutParams, McpServerPutResponse, McpServerReadParams, McpServerReadResponse,
+    ProfileApplyParams, ProfileApplyResponse, ProfileDeleteParams, ProfileDeleteResponse,
+    ProfileListParams, ProfileListResponse, ProfilePutParams, ProfilePutResponse,
+    ProfileReadParams, ProfileReadResponse, RequestId, RunApprovalsDecideParams,
+    RunApprovalsDecideResponse, RunCancelParams, RunCancelResponse, RunStartParams,
+    RunStartResponse, RunSteerParams, RunSteerResponse, SessionConfigPutParams,
     SessionConfigPutResponse, SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
     SessionEnvironmentDeactivateParams, SessionEnvironmentDeactivateResponse,
     SessionEventsReadParams, SessionEventsReadResponse, SessionListParams, SessionListResponse,
@@ -53,16 +53,15 @@ use api::{
     SkillListParams, SkillListResponse, VfsSnapshotCommitParams, VfsSnapshotCommitResponse,
     VfsSnapshotReadParams, VfsSnapshotReadResponse, VfsWorkspaceCreateParams,
     VfsWorkspaceCreateResponse, VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse,
-    VfsWorkspaceFileReadParams, VfsWorkspaceListParams, VfsWorkspaceListResponse,
-    VfsWorkspaceReadParams, VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams,
-    VfsWorkspaceUpdateResponse,
+    VfsWorkspaceListParams, VfsWorkspaceListResponse, VfsWorkspaceReadParams,
+    VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
 /// Gateway auth headers from the environment, applied to every request:
-/// `LIGHTSPEED_API_KEY` becomes `Authorization: Bearer …` (authenticated
+/// `LIGHTSPEED_API_KEY` becomes `Authorization: Bearer …` (api-key
 /// deployments) and `LIGHTSPEED_UNIVERSE` becomes `x-lightspeed-universe`
-/// (universe selection with a deployment-scoped key). Both are
+/// (trusted-header deployments behind a proxy that forwards it). Both are
 /// optional; a plain `single`-mode gateway needs neither.
 fn auth_headers_from_env() -> reqwest::header::HeaderMap {
     let mut headers = reqwest::header::HeaderMap::new();
@@ -300,13 +299,6 @@ impl HttpAgentApi {
         params: VfsSnapshotReadParams,
     ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError> {
         self.request(METHOD_VFS_SNAPSHOTS_READ, params).await
-    }
-
-    pub(crate) async fn read_vfs_workspace_file(
-        &self,
-        params: VfsWorkspaceFileReadParams,
-    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
-        self.request(METHOD_VFS_WORKSPACES_FILES_READ, params).await
     }
 
     pub(crate) async fn create_vfs_workspace(

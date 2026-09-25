@@ -252,6 +252,7 @@ pub fn admit_command(
                     run_config: request.run_config,
                     config_revision: state.lifecycle.config_revision,
                     notify_on_terminal: request.notify_on_terminal,
+                    requested_by: request.requested_by,
                 })),
             )])
         }
@@ -394,6 +395,7 @@ pub fn admit_command(
                         },
                         CoreAgentEvent::Run(RunEvent::QueuedCancelled {
                             run_id: queued.run_id,
+                            requested_by: None,
                         }),
                     ));
                 }
@@ -416,7 +418,11 @@ pub fn admit_command(
             ));
             Ok(proposals)
         }
-        CoreAgentCommand::RequestRunSteering { run_id, input } => {
+        CoreAgentCommand::RequestRunSteering {
+            run_id,
+            input,
+            requested_by,
+        } => {
             require_open(state)?;
             let active_run = active_run_for_command(state)?;
             if active_run.run_id != run_id {
@@ -446,10 +452,14 @@ pub fn admit_command(
                     run_id: active_run.run_id,
                     steering_id: crate::SteeringId::new(next_steering_id),
                     input,
+                    requested_by,
                 }),
             )])
         }
-        CoreAgentCommand::CancelRun { run_id } => {
+        CoreAgentCommand::CancelRun {
+            run_id,
+            requested_by,
+        } => {
             require_open(state)?;
             if let Some(active_run) = state.runs.active.as_ref()
                 && active_run.run_id == run_id
@@ -465,6 +475,7 @@ pub fn admit_command(
                         },
                         CoreAgentEvent::Run(RunEvent::CancellationRequested {
                             run_id: active_run.run_id,
+                            requested_by,
                         }),
                     )];
                     proposals.extend(active_run.pending_approvals().map(|record| {
@@ -494,7 +505,10 @@ pub fn admit_command(
                         run_id: Some(run_id),
                         ..CoreAgentJoins::default()
                     },
-                    CoreAgentEvent::Run(RunEvent::QueuedCancelled { run_id }),
+                    CoreAgentEvent::Run(RunEvent::QueuedCancelled {
+                        run_id,
+                        requested_by,
+                    }),
                 )]);
             }
             Ok(Vec::new())

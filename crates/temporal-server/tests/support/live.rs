@@ -44,25 +44,18 @@ pub async fn bounded_live_test<T>(
 pub const LIVE_TEST_BUDGET: Duration = Duration::from_secs(180);
 
 /// Explicit test identity for direct in-process clients; never inherited by workers.
-pub async fn local_request_context() -> anyhow::Result<access::RequestContext> {
-    local_request_context_for(access::AccessScope::Universe {
+pub async fn local_request_context()
+-> anyhow::Result<temporal_server::gateway::request_context::RequestContext> {
+    local_request_context_for(api::AccessScope::Universe {
         universe_id: live_universe_id()?,
     })
     .await
 }
 
 pub async fn local_request_context_for(
-    scope: access::AccessScope,
-) -> anyhow::Result<access::RequestContext> {
-    let store = pg_store_from_env().await?;
-    let universe_id = store.config().universe_id;
-    store.ensure_universe().await?;
-    let access = store_pg::PgAccessStore::new(store.pool().clone());
-    let principal = access.initialize_local_development(universe_id, 1).await?;
-    Ok(
-        temporal_server::gateway::authentication::local_context(&access, principal.id, scope)
-            .await?,
-    )
+    scope: api::AccessScope,
+) -> anyhow::Result<temporal_server::gateway::request_context::RequestContext> {
+    Ok(temporal_server::gateway::request_context::RequestContext::local(scope))
 }
 
 pub async fn run_with_live_worker<F, Fut>(
@@ -135,12 +128,12 @@ where
 
     // A fixture may explicitly target a fresh universe. Preserve its request
     // authority on the client only; workers must install controller contexts.
-    let context = match temporal_server::gateway::principal::request_context() {
+    let context = match temporal_server::gateway::request_context::request_context() {
         Ok(context) => context,
         Err(_) => local_request_context().await?,
     };
     // Large client futures must not inflate the stack used to poll the worker.
-    let client_future = temporal_server::gateway::principal::with_request_context(
+    let client_future = temporal_server::gateway::request_context::with_request_context(
         context,
         Box::pin(run_client(client, task_queue, session_id)),
     );
@@ -166,8 +159,8 @@ where
     client_result.and(shutdown_result)
 }
 
-/// Build caller-owned fixtures through the same upload and manifest admission
-/// paths as public clients; writing straight to CAS does not grant access.
+/// Build a snapshot fixture through the same upload and commit paths as
+/// public clients.
 pub async fn upload_snapshot(
     api: &impl AgentApiService,
     files: Vec<vfs::InlineFile>,
@@ -207,7 +200,6 @@ pub async fn upload_snapshot(
     }
     Ok(api
         .commit_vfs_snapshot(api::VfsSnapshotCommitParams {
-            source_workspace_id: None,
             manifest: serde_json::to_value(manifest)?,
         })
         .await?

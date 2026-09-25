@@ -2,79 +2,22 @@
 
 Generated from the Rust API method manifest. Parameter and result field details live in `api.schema.json` and `openrpc.json`; this reference focuses on operation semantics.
 
-Successful HTTP reads that rely on `read_private_content` carry `x-lightspeed-privileged-read: true`. Ordinary reads by the same caller omit it. On lists, the marker means the returned page includes privileged content, not that every item required it. The marker reports the authorization decision; the associated privileged audit event is written best-effort. It grants no additional authority.
+A key calls a method when it holds the method's group. Role and target are metadata for gates that decide for people, such as the Platform; core does not evaluate them.
 
 ## Universe methods
-
-### `access/subjects`
-
-**Find sharing subjects**
-
-Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.
-
-- Access: `{"kind":"universe","requirement":"read"}`
-- Params: `AccessSubjectsParams`
-- Result: `AgentApiOutcome<AccessSubjectsResponse>`
 
 ### `vfs/workspaces/files/read`
 
 **Read a workspace file**
 
-Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.
+Reads bytes at a path in the current workspace head.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `vfs`
+- Role: `viewer`
+- Target: `none`
 - Params: `VfsWorkspaceFileReadParams`
 - Result: `AgentApiOutcome<BlobReadResponse>`
-
-### `access/read`
-
-**Read current action permissions**
-
-Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.
-
-- Access: `{"kind":"universe","requirement":"read"}`
-- Params: `AccessReadParams`
-- Result: `AgentApiOutcome<AccessReadResponse>`
-
-### `access/policy/read`
-
-**Read a resource's access policy**
-
-Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.
-
-- Access: `{"kind":"universe","requirement":"read"}`
-- Params: `AccessPolicyReadParams`
-- Result: `AgentApiOutcome<AccessPolicyReadResponse>`
-
-### `access/policy/put`
-
-**Replace a resource's access policy**
-
-Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.
-
-- Access: `{"kind":"universe","requirement":"share_resource"}`
-- Params: `AccessPolicyPutParams`
-- Result: `AgentApiOutcome<AccessPolicyPutResponse>`
-
-### `access/execution/read`
-
-**Read the universe execution policy**
-
-Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.
-
-- Access: `{"kind":"universe","requirement":"read"}`
-- Params: `AccessExecutionReadParams`
-- Result: `AgentApiOutcome<AccessExecutionReadResponse>`
-
-### `access/execution/update`
-
-**Update the universe execution policy**
-
-Enables or disables personal execution. Existing roots keep the execution identity they were created with.
-
-- Access: `{"kind":"universe","requirement":"manage_access"}`
-- Params: `AccessExecutionUpdateParams`
-- Result: `AgentApiOutcome<AccessExecutionUpdateResponse>`
 
 ### `initialize`
 
@@ -82,7 +25,10 @@ Enables or disables personal execution. Existing roots keep the execution identi
 
 Returns protocol version, server identity, and supported capabilities without changing universe state.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `none`
+- Role: `viewer`
+- Target: `none`
 - Params: `InitializeParams`
 - Result: `AgentApiOutcome<InitializeResponse>`
 
@@ -90,9 +36,12 @@ Returns protocol version, server identity, and supported capabilities without ch
 
 **Create or reopen a session**
 
-Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.
+Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.
 
-- Access: `{"kind":"universe","requirement":"create_session"}`
+- Access: `{"kind":"universe","action":"create_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `SessionStartParams`
 - Result: `AgentApiOutcome<SessionStartResponse>`
 
@@ -102,7 +51,10 @@ Creates a session with optional config/profile setup. Profile metadata and reten
 
 Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.
 
-- Access: `{"kind":"universe","requirement":"create_session"}`
+- Access: `{"kind":"universe","action":"create_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `ManagedSessionStartParams`
 - Result: `AgentApiOutcome<SessionStartResponse>`
 
@@ -112,7 +64,10 @@ Creates a session with immutable lifecycle and workflow-tool declarations using 
 
 Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `session`
+- Role: `viewer`
+- Target: `sessionId`
 - Params: `SessionReadParams`
 - Result: `AgentApiOutcome<SessionReadResponse>`
 
@@ -120,9 +75,12 @@ Returns current state plus a bounded newest-first run-summary page. Follow nextR
 
 **List sessions**
 
-Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.
+Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `session`
+- Role: `viewer`
+- Target: `none`
 - Params: `SessionListParams`
 - Result: `AgentApiOutcome<SessionListResponse>`
 
@@ -132,7 +90,10 @@ Returns a cursor-paginated summary list ordered by most recent update. Pages may
 
 Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `SessionConfigPutParams`
 - Result: `AgentApiOutcome<SessionConfigPutResponse>`
 
@@ -142,7 +103,10 @@ Replaces the complete sparse config while the session is idle. Use the current c
 
 Sets the display name, or clears it when displayName is omitted.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `SessionRenameParams`
 - Result: `AgentApiOutcome<SessionRenameResponse>`
 
@@ -152,7 +116,10 @@ Sets the display name, or clears it when displayName is omitted.
 
 Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `SessionMetadataPutParams`
 - Result: `AgentApiOutcome<SessionMetadataPutResponse>`
 
@@ -162,7 +129,10 @@ Replaces the complete descriptive key/value map (bounded like session/start); an
 
 Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `SessionRetentionPutParams`
 - Result: `AgentApiOutcome<SessionRetentionPutResponse>`
 
@@ -172,7 +142,10 @@ Sets the positive close-relative automatic-deletion duration on a retention root
 
 Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
 
-- Access: `{"kind":"universe","requirement":"stop_session"}`
+- Access: `{"kind":"universe","action":"stop_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `SessionCloseParams`
 - Result: `AgentApiOutcome<SessionCloseResponse>`
 
@@ -182,9 +155,25 @@ Closes an idle session and detaches its environment bindings. Force mode cancels
 
 Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.
 
-- Access: `{"kind":"universe","requirement":"delete_session"}`
+- Access: `{"kind":"universe","action":"delete_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `SessionDeleteParams`
 - Result: `AgentApiOutcome<SessionDeleteResponse>`
+
+### `session/share`
+
+**Share a session with the universe**
+
+Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.
+
+- Access: `{"kind":"universe","action":"share_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
+- Params: `SessionShareParams`
+- Result: `AgentApiOutcome<SessionShareResponse>`
 
 ### `session/events/read`
 
@@ -192,7 +181,10 @@ Permanently removes a closed retention-tree leaf, or its closed history-fork and
 
 Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `session`
+- Role: `viewer`
+- Target: `sessionId`
 - Params: `SessionEventsReadParams`
 - Result: `AgentApiOutcome<SessionEventsReadResponse>`
 
@@ -202,7 +194,10 @@ Returns chronological events. Forward (default) follows after and supports long-
 
 Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `ContextAppendParams`
 - Result: `AgentApiOutcome<ContextAppendResponse>`
 
@@ -212,7 +207,10 @@ Admits a batch of context entries with per-entry results. Stable keys make same-
 
 Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `ContextRemoveParams`
 - Result: `AgentApiOutcome<ContextRemoveResponse>`
 
@@ -222,7 +220,10 @@ Removes active entries by stable key with per-key results. Missing keys are idem
 
 Runs the configured compaction policy on an open idle session and waits for the resulting context revision.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `ContextCompactParams`
 - Result: `AgentApiOutcome<ContextCompactResponse>`
 
@@ -232,7 +233,10 @@ Runs the configured compaction policy on an open idle session and waits for the 
 
 Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `RunStartParams`
 - Result: `AgentApiOutcome<RunStartResponse>`
 
@@ -242,7 +246,10 @@ Accepts input or existing context keys and returns once the run is accepted — 
 
 Returns a newest-first keyset page of bounded run summaries projected from current reducer state.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `session`
+- Role: `viewer`
+- Target: `sessionId`
 - Params: `RunListParams`
 - Result: `AgentApiOutcome<RunListResponse>`
 
@@ -252,7 +259,10 @@ Returns a newest-first keyset page of bounded run summaries projected from curre
 
 Reads and projects one run from its bounded event interval, paged by event sequence.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `session`
+- Role: `viewer`
+- Target: `sessionId`
 - Params: `RunReadParams`
 - Result: `AgentApiOutcome<RunReadResponse>`
 
@@ -262,7 +272,10 @@ Reads and projects one run from its bounded event interval, paged by event seque
 
 Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
 
-- Access: `{"kind":"universe","requirement":"stop_session"}`
+- Access: `{"kind":"universe","action":"stop_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `RunCancelParams`
 - Result: `AgentApiOutcome<RunCancelResponse>`
 
@@ -272,7 +285,10 @@ Requests cancellation of the named queued or active run and returns its current 
 
 Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `RunApprovalsDecideParams`
 - Result: `AgentApiOutcome<RunApprovalsDecideResponse>`
 
@@ -282,7 +298,10 @@ Approves or rejects pending MCP tool calls on the named active run. Valid decisi
 
 Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `RunSteerParams`
 - Result: `AgentApiOutcome<RunSteerResponse>`
 
@@ -292,7 +311,10 @@ Injects input into the named active run; the model sees it at the next turn boun
 
 Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `session`
+- Role: `viewer`
+- Target: `sessionId`
 - Params: `SkillListParams`
 - Result: `AgentApiOutcome<SkillListResponse>`
 
@@ -302,7 +324,10 @@ Returns separate VFS and environment catalogs with source, reference, availabili
 
 Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `ProfileApplyParams`
 - Result: `AgentApiOutcome<ProfileApplyResponse>`
 
@@ -310,9 +335,12 @@ Applies a named or inline profile's config, instructions, and environment setup 
 
 **Activate a session environment**
 
-Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.
+Selects an attached, live universe environment for environment-targeted tools while the session is idle.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `SessionEnvironmentActivateParams`
 - Result: `AgentApiOutcome<SessionEnvironmentActivateResponse>`
 
@@ -322,7 +350,10 @@ Selects an attached, live universe environment for environment-targeted tools wh
 
 Clears active environment selection without changing or closing the universe environment.
 
-- Access: `{"kind":"universe","requirement":"control_session"}`
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
 - Params: `SessionEnvironmentDeactivateParams`
 - Result: `AgentApiOutcome<SessionEnvironmentDeactivateResponse>`
 
@@ -332,7 +363,10 @@ Clears active environment selection without changing or closing the universe env
 
 Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentCredentialBindParams`
 - Result: `AgentApiOutcome<EnvironmentCredentialBindResponse>`
 
@@ -342,7 +376,10 @@ Maps an environment variable name to an existing grant/provider/direct-secret ha
 
 Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentCredentialListParams`
 - Result: `AgentApiOutcome<EnvironmentCredentialListResponse>`
 
@@ -352,7 +389,10 @@ Returns variable names and credential source handles for a universe environment;
 
 Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentCredentialUnbindParams`
 - Result: `AgentApiOutcome<EnvironmentCredentialUnbindResponse>`
 
@@ -360,9 +400,12 @@ Removes one variable-to-credential mapping without deleting the underlying grant
 
 **Create an environment**
 
-Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.
+Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentCreateParams`
 - Result: `AgentApiOutcome<EnvironmentCreateResponse>`
 
@@ -372,7 +415,10 @@ Records an idempotent provisioning intent against an enabled universe binding, o
 
 Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `environments`
+- Role: `viewer`
+- Target: `none`
 - Params: `EnvironmentReadParams`
 - Result: `AgentApiOutcome<EnvironmentReadResponse>`
 
@@ -380,9 +426,12 @@ Returns the durable universe resource, source binding, logical lifecycle state, 
 
 **List environments**
 
-Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.
+Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `environments`
+- Role: `viewer`
+- Target: `none`
 - Params: `EnvironmentListParams`
 - Result: `AgentApiOutcome<EnvironmentListResponse>`
 
@@ -392,7 +441,10 @@ Lists the universe environments the caller may see, optionally filtered by provi
 
 Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentCloseParams`
 - Result: `AgentApiOutcome<EnvironmentCloseResponse>`
 
@@ -400,9 +452,12 @@ Records an asynchronous idempotent close intent. Provider cleanup is resumed by 
 
 **Register an external environment**
 
-Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.
+Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentExternalCreateParams`
 - Result: `AgentApiOutcome<EnvironmentExternalCreateResponse>`
 
@@ -412,7 +467,10 @@ Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint,
 
 Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentIngressPutParams`
 - Result: `AgentApiOutcome<EnvironmentIngressPutResponse>`
 
@@ -422,7 +480,10 @@ Synchronously enables or disables one provider-authorized HTTPS endpoint for a p
 
 Records the desired power state (running, paused, suspended, or stopped) of a provisioned environment; the lifecycle reconciler converges the provider target asynchronously. Powered-down environments wake transparently on their next use. Rejected when the provider does not support the state.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentPowerPutParams`
 - Result: `AgentApiOutcome<EnvironmentPowerPutResponse>`
 
@@ -432,7 +493,10 @@ Records the desired power state (running, paused, suspended, or stopped) of a pr
 
 Replaces or clears the staged idle policy of a provisioned environment. The power reaper measures the daemon's idle duration against the pause/suspend/stop/close thresholds and escalates through the stages the provider supports.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentIdlePolicyPutParams`
 - Result: `AgentApiOutcome<EnvironmentIdlePolicyPutResponse>`
 
@@ -442,7 +506,10 @@ Replaces or clears the staged idle policy of a provisioned environment. The powe
 
 Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `environments`
+- Role: `viewer`
+- Target: `none`
 - Params: `EnvironmentProviderBindingListParams`
 - Result: `AgentApiOutcome<EnvironmentProviderBindingListResponse>`
 
@@ -452,7 +519,10 @@ Lists this universe's revisioned routing and admission bindings to deployment-sc
 
 Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `environments`
+- Role: `viewer`
+- Target: `none`
 - Params: `EnvironmentProviderBindingReadParams`
 - Result: `AgentApiOutcome<EnvironmentProviderBindingReadResponse>`
 
@@ -462,7 +532,10 @@ Returns one universe routing and admission binding. Provider-wide templates and 
 
 Reads immutable templates directly from the selected bound provider controller.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `environments`
+- Role: `viewer`
+- Target: `none`
 - Params: `EnvironmentTemplateListParams`
 - Result: `AgentApiOutcome<EnvironmentTemplateListResponse>`
 
@@ -472,7 +545,10 @@ Reads immutable templates directly from the selected bound provider controller.
 
 Returns one immutable template version from the selected bound provider controller.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `environments`
+- Role: `viewer`
+- Target: `none`
 - Params: `EnvironmentTemplateReadParams`
 - Result: `AgentApiOutcome<EnvironmentTemplateReadResponse>`
 
@@ -482,7 +558,10 @@ Returns one immutable template version from the selected bound provider controll
 
 Starts a dependency-aware job group on one environment instance, injecting the environment's configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance rather than a session. A powered-down environment is woken on use: the call fails with environment_not_ready while the wake is in progress; retry with backoff.
 
-- Access: `{"kind":"universe","requirement":"use_resource"}`
+- Access: `{"kind":"universe","action":"use_resource"}`
+- Group: `environments`
+- Role: `contributor`
+- Target: `none`
 - Params: `EnvironmentJobCreateParams`
 - Result: `AgentApiOutcome<EnvironmentJobCreateResponse>`
 
@@ -492,7 +571,10 @@ Starts a dependency-aware job group on one environment instance, injecting the e
 
 Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `environments`
+- Role: `viewer`
+- Target: `none`
 - Params: `EnvironmentJobReadParams`
 - Result: `AgentApiOutcome<EnvironmentJobReadResponse>`
 
@@ -502,7 +584,10 @@ Reads selected job handles with bounded output, optional sequence continuation, 
 
 Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.
 
-- Access: `{"kind":"universe","requirement":"use_resource"}`
+- Access: `{"kind":"universe","action":"use_resource"}`
+- Group: `environments`
+- Role: `contributor`
+- Target: `none`
 - Params: `EnvironmentJobCancelParams`
 - Result: `AgentApiOutcome<EnvironmentJobCancelResponse>`
 
@@ -512,7 +597,10 @@ Requests cancellation for selected jobs, optionally including dependents. Force 
 
 Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode, active limit, disconnect grace, and expiry are the key's policy. Treat the secret like a cluster-join credential.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentRegistrationKeyCreateParams`
 - Result: `AgentApiOutcome<EnvironmentRegistrationKeyCreateResponse>`
 
@@ -522,7 +610,10 @@ Creates a reusable universe-scoped key that lets outbound envd daemons register 
 
 Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentRegistrationKeyReadParams`
 - Result: `AgentApiOutcome<EnvironmentRegistrationKeyReadResponse>`
 
@@ -532,7 +623,10 @@ Returns the key's display prefix, policy, status, and derived environment counts
 
 Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentRegistrationKeyListParams`
 - Result: `AgentApiOutcome<EnvironmentRegistrationKeyListResponse>`
 
@@ -542,7 +636,10 @@ Lists this universe's registration keys with policy, status, and derived counts.
 
 Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
 - Params: `EnvironmentRegistrationKeyRevokeParams`
 - Result: `AgentApiOutcome<EnvironmentRegistrationKeyRevokeResponse>`
 
@@ -552,7 +649,10 @@ Stops the key from admitting new daemon identities; already registered daemons k
 
 Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `models`
+- Role: `viewer`
+- Target: `none`
 - Params: `ModelListParams`
 - Result: `AgentApiOutcome<ModelListResponse>`
 
@@ -562,7 +662,10 @@ Queries supported providers directly, with a brief process-local burst cache, an
 
 Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.
 
-- Access: `{"kind":"universe","requirement":"create_profile"}`
+- Access: `{"kind":"universe","action":"create_profile"}`
+- Group: `profiles`
+- Role: `operator`
+- Target: `none`
 - Params: `ProfileCreateParams`
 - Result: `AgentApiOutcome<ProfileCreateResponse>`
 
@@ -572,7 +675,10 @@ Creates a new universe-scoped reusable profile document; use profiles/put for cr
 
 Returns the complete profile document and current revision.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `profiles`
+- Role: `viewer`
+- Target: `none`
 - Params: `ProfileReadParams`
 - Result: `AgentApiOutcome<ProfileReadResponse>`
 
@@ -582,7 +688,10 @@ Returns the complete profile document and current revision.
 
 Returns lightweight summaries of universe-scoped reusable profiles.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `profiles`
+- Role: `viewer`
+- Target: `none`
 - Params: `ProfileListParams`
 - Result: `AgentApiOutcome<ProfileListResponse>`
 
@@ -592,7 +701,10 @@ Returns lightweight summaries of universe-scoped reusable profiles.
 
 Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.
 
-- Access: `{"kind":"universe","requirement":"manage_profile"}`
+- Access: `{"kind":"universe","action":"manage_profile"}`
+- Group: `profiles`
+- Role: `operator`
+- Target: `none`
 - Params: `ProfilePutParams`
 - Result: `AgentApiOutcome<ProfilePutResponse>`
 
@@ -602,7 +714,10 @@ Stores the complete profile document. Use expectedRevision from profiles/read wh
 
 Deletes the catalog document; sessions previously created or configured from it retain their materialized state.
 
-- Access: `{"kind":"universe","requirement":"manage_profile"}`
+- Access: `{"kind":"universe","action":"manage_profile"}`
+- Group: `profiles`
+- Role: `operator`
+- Target: `none`
 - Params: `ProfileDeleteParams`
 - Result: `AgentApiOutcome<ProfileDeleteResponse>`
 
@@ -612,7 +727,10 @@ Deletes the catalog document; sessions previously created or configured from it 
 
 Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.
 
-- Access: `{"kind":"universe","requirement":"use_resource"}`
+- Access: `{"kind":"universe","action":"use_resource"}`
+- Group: `blobs/put`
+- Role: `contributor`
+- Target: `none`
 - Params: `BlobPutParams`
 - Result: `AgentApiOutcome<BlobPutResponse>`
 
@@ -620,9 +738,12 @@ Decodes and stores a batch of base64 payloads, returning immutable content refer
 
 **Read a content-addressed blob**
 
-Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.
+Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `session`
+- Role: `viewer`
+- Target: `none`
 - Params: `BlobReadParams`
 - Result: `AgentApiOutcome<BlobReadResponse>`
 
@@ -632,7 +753,10 @@ Returns the complete immutable blob as base64; large values count against gatewa
 
 Checks a batch of content references without returning blob bodies, preserving request order.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `session`
+- Role: `viewer`
+- Target: `none`
 - Params: `BlobHasParams`
 - Result: `AgentApiOutcome<BlobHasResponse>`
 
@@ -642,7 +766,10 @@ Checks a batch of content references without returning blob bodies, preserving r
 
 Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.
 
-- Access: `{"kind":"universe","requirement":"use_resource"}`
+- Access: `{"kind":"universe","action":"use_resource"}`
+- Group: `vfs`
+- Role: `contributor`
+- Target: `none`
 - Params: `VfsSnapshotCommitParams`
 - Result: `AgentApiOutcome<VfsSnapshotCommitResponse>`
 
@@ -650,9 +777,12 @@ Validates and stores an immutable filesystem manifest. Upload referenced file bl
 
 **Read a VFS snapshot**
 
-Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.
+Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `vfs`
+- Role: `viewer`
+- Target: `none`
 - Params: `VfsSnapshotReadParams`
 - Result: `AgentApiOutcome<VfsSnapshotReadResponse>`
 
@@ -660,9 +790,12 @@ Returns an immutable snapshot manifest and aggregate file/byte counts; file bodi
 
 **Create a mutable VFS workspace**
 
-Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.
+Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.
 
-- Access: `{"kind":"universe","requirement":"create_workspace"}`
+- Access: `{"kind":"universe","action":"create_workspace"}`
+- Group: `vfs`
+- Role: `contributor`
+- Target: `none`
 - Params: `VfsWorkspaceCreateParams`
 - Result: `AgentApiOutcome<VfsWorkspaceCreateResponse>`
 
@@ -672,7 +805,10 @@ Creates a universe workspace owned by the caller at an optional seed snapshot; a
 
 Returns workspace metadata, current head snapshot, and revision for safe updates.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `vfs`
+- Role: `viewer`
+- Target: `none`
 - Params: `VfsWorkspaceReadParams`
 - Result: `AgentApiOutcome<VfsWorkspaceReadResponse>`
 
@@ -680,9 +816,12 @@ Returns workspace metadata, current head snapshot, and revision for safe updates
 
 **List VFS workspaces**
 
-Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.
+Lists the mutable universe workspaces with head snapshots, sizes, and revisions.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `vfs`
+- Role: `viewer`
+- Target: `none`
 - Params: `VfsWorkspaceListParams`
 - Result: `AgentApiOutcome<VfsWorkspaceListResponse>`
 
@@ -692,7 +831,10 @@ Lists the mutable universe workspaces the caller may see, with head snapshots, s
 
 Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.
 
-- Access: `{"kind":"universe","requirement":"use_resource"}`
+- Access: `{"kind":"universe","action":"use_resource"}`
+- Group: `vfs`
+- Role: `contributor`
+- Target: `none`
 - Params: `VfsWorkspaceUpdateParams`
 - Result: `AgentApiOutcome<VfsWorkspaceUpdateResponse>`
 
@@ -702,7 +844,10 @@ Moves the workspace head to an existing snapshot, which requires use of the work
 
 Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `vfs`
+- Role: `operator`
+- Target: `none`
 - Params: `VfsWorkspaceDeleteParams`
 - Result: `AgentApiOutcome<VfsWorkspaceDeleteResponse>`
 
@@ -710,9 +855,12 @@ Deletes the mutable workspace record; immutable snapshots and blobs remain conte
 
 **Create or replace an MCP server record**
 
-Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.
+Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `mcp`
+- Role: `operator`
+- Target: `none`
 - Params: `McpServerPutParams`
 - Result: `AgentApiOutcome<McpServerPutResponse>`
 
@@ -722,7 +870,10 @@ Stores the complete catalog document with its optional auth-grant credential. A 
 
 Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `mcp`
+- Role: `operator`
+- Target: `none`
 - Params: `McpServerAuthDiscoverParams`
 - Result: `AgentApiOutcome<McpServerAuthDiscoverResponse>`
 
@@ -732,7 +883,10 @@ Looks for standards-based OAuth protected-resource metadata without creating a s
 
 Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `mcp`
+- Role: `operator`
+- Target: `none`
 - Params: `McpServerToolsDiscoverParams`
 - Result: `AgentApiOutcome<McpServerToolsDiscoverResponse>`
 
@@ -742,7 +896,10 @@ Connects directly to the configured MCP server with its current universe credent
 
 Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `mcp`
+- Role: `viewer`
+- Target: `none`
 - Params: `McpServerReadParams`
 - Result: `AgentApiOutcome<McpServerReadResponse>`
 
@@ -750,9 +907,12 @@ Returns one catalog document with defaults, auth policy, non-secret grant bindin
 
 **List MCP server records**
 
-Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.
+Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `mcp`
+- Role: `viewer`
+- Target: `none`
 - Params: `McpServerListParams`
 - Result: `AgentApiOutcome<McpServerListResponse>`
 
@@ -762,7 +922,10 @@ Lists the universe catalog entries the caller may see, optionally filtered by li
 
 Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `mcp`
+- Role: `operator`
+- Target: `none`
 - Params: `McpServerDeleteParams`
 - Result: `AgentApiOutcome<McpServerDeleteResponse>`
 
@@ -772,7 +935,10 @@ Deletes the catalog document. Existing session configs that reference it are not
 
 Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
 - Params: `AuthGrantImportParams`
 - Result: `AgentApiOutcome<AuthGrantImportResponse>`
 
@@ -785,7 +951,10 @@ Accepts a plaintext token, encrypts it immediately, and returns only grant metad
 
 Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.
 
-- Access: `{"kind":"service","requirement":"lease_credentials"}`
+- Access: `{"kind":"service"}`
+- Group: `auth/lease`
+- Role: `none`
+- Target: `none`
 - Params: `AuthGrantLeaseParams`
 - Result: `AgentApiOutcome<AuthGrantLeaseResponse>`
 
@@ -796,9 +965,12 @@ Service callers only. Resolves the current access token through the broker, reco
 
 **Read authentication grant metadata**
 
-Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
+Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `auth`
+- Role: `viewer`
+- Target: `none`
 - Params: `AuthGrantReadParams`
 - Result: `AgentApiOutcome<AuthGrantReadResponse>`
 
@@ -808,7 +980,10 @@ Returns principal, provider binding, scopes, audience, expiry, status, and token
 
 Lists non-secret grant metadata for the universe, optionally filtered by status.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `auth`
+- Role: `viewer`
+- Target: `none`
 - Params: `AuthGrantListParams`
 - Result: `AgentApiOutcome<AuthGrantListResponse>`
 
@@ -818,7 +993,10 @@ Lists non-secret grant metadata for the universe, optionally filtered by status.
 
 Marks the grant unusable by token consumers while retaining non-secret audit metadata.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
 - Params: `AuthGrantRevokeParams`
 - Result: `AgentApiOutcome<AuthGrantRevokeResponse>`
 
@@ -828,7 +1006,10 @@ Marks the grant unusable by token consumers while retaining non-secret audit met
 
 Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
 - Params: `AuthClientCreateParams`
 - Result: `AgentApiOutcome<AuthClientCreateResponse>`
 
@@ -838,7 +1019,10 @@ Stores provider endpoints and client identity; an optional plaintext client secr
 
 Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `auth`
+- Role: `viewer`
+- Target: `none`
 - Params: `AuthClientReadParams`
 - Result: `AgentApiOutcome<AuthClientReadResponse>`
 
@@ -848,7 +1032,10 @@ Returns endpoints, public client identity, defaults, and secret-presence state; 
 
 Lists non-secret OAuth client registrations in the universe.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `auth`
+- Role: `viewer`
+- Target: `none`
 - Params: `AuthClientListParams`
 - Result: `AgentApiOutcome<AuthClientListResponse>`
 
@@ -858,7 +1045,10 @@ Lists non-secret OAuth client registrations in the universe.
 
 Deletes the client registration and its stored client secret; grants already created from it remain separate records.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
 - Params: `AuthClientDeleteParams`
 - Result: `AgentApiOutcome<AuthClientDeleteResponse>`
 
@@ -868,7 +1058,10 @@ Deletes the client registration and its stored client secret; grants already cre
 
 Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
 - Params: `AuthFlowStartParams`
 - Result: `AgentApiOutcome<AuthFlowStartResponse>`
 
@@ -878,7 +1071,10 @@ Creates a short-lived PKCE flow carrying the immutable grant exposure choice and
 
 Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
 - Params: `AuthFlowStatusParams`
 - Result: `AgentApiOutcome<AuthFlowStatusResponse>`
 
@@ -888,7 +1084,10 @@ Polls a flow's pending/completed/failed/expired state and returns the resulting 
 
 Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
 - Params: `AuthProviderCreateParams`
 - Result: `AgentApiOutcome<AuthProviderCreateResponse>`
 
@@ -898,7 +1097,10 @@ Creates a model or GitHub credential source. Plaintext API keys/private keys are
 
 Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `auth`
+- Role: `viewer`
+- Target: `none`
 - Params: `AuthProviderReadParams`
 - Result: `AgentApiOutcome<AuthProviderReadResponse>`
 
@@ -908,7 +1110,10 @@ Returns provider kind, non-secret configuration, credential-presence state, and 
 
 Lists non-secret model/GitHub provider registrations for the universe.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `auth`
+- Role: `viewer`
+- Target: `none`
 - Params: `AuthProviderListParams`
 - Result: `AgentApiOutcome<AuthProviderListResponse>`
 
@@ -918,7 +1123,10 @@ Lists non-secret model/GitHub provider registrations for the universe.
 
 Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
 - Params: `AuthProviderDeleteParams`
 - Result: `AgentApiOutcome<AuthProviderDeleteResponse>`
 
@@ -928,7 +1136,10 @@ Deletes the provider registration and its directly stored credential; separately
 
 Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
 - Params: `AuthGitHubInstallationListParams`
 - Result: `AgentApiOutcome<AuthGitHubInstallationListResponse>`
 
@@ -938,7 +1149,10 @@ Uses the registered GitHub App provider credential to query accessible installat
 
 Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
 - Params: `AuthGitHubInstallationGrantParams`
 - Result: `AgentApiOutcome<AuthGitHubInstallationGrantResponse>`
 
@@ -948,7 +1162,10 @@ Creates or refreshes a universe auth grant for one accessible installation. The 
 
 Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.
 
-- Access: `{"kind":"universe","requirement":"create_bot"}`
+- Access: `{"kind":"universe","action":"create_bot"}`
+- Group: `bots`
+- Role: `operator`
+- Target: `none`
 - Params: `BotCreateParams`
 - Result: `AgentApiOutcome<BotCreateResponse>`
 
@@ -958,7 +1175,10 @@ Creates the bot record, optionally with its triggers, and starts its controller.
 
 Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.
 
-- Access: `{"kind":"universe","requirement":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manage_bot"}`
+- Group: `bots`
+- Role: `operator`
+- Target: `none`
 - Params: `BotPutParams`
 - Result: `AgentApiOutcome<BotPutResponse>`
 
@@ -968,7 +1188,10 @@ Replaces the mutable configuration whole and signals the controller, which appli
 
 Returns the bot record, its current revision, and lifecycle columns.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `bots`
+- Role: `viewer`
+- Target: `none`
 - Params: `BotReadParams`
 - Result: `AgentApiOutcome<BotReadResponse>`
 
@@ -976,9 +1199,12 @@ Returns the bot record, its current revision, and lifecycle columns.
 
 **List bots**
 
-Returns the roster: every bot with its trigger count, pending event count, and latest event.
+Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `bots`
+- Role: `viewer`
+- Target: `none`
 - Params: `BotListParams`
 - Result: `AgentApiOutcome<BotListResponse>`
 
@@ -988,7 +1214,10 @@ Returns the roster: every bot with its trigger count, pending event count, and l
 
 Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.
 
-- Access: `{"kind":"universe","requirement":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manage_bot"}`
+- Group: `bots`
+- Role: `operator`
+- Target: `none`
 - Params: `BotCloseParams`
 - Result: `AgentApiOutcome<BotCloseResponse>`
 
@@ -998,7 +1227,10 @@ Terminal and idempotent: disables every trigger, drops schedules, and tells the 
 
 Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.
 
-- Access: `{"kind":"universe","requirement":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manage_bot"}`
+- Group: `bots`
+- Role: `operator`
+- Target: `none`
 - Params: `BotDeleteParams`
 - Result: `AgentApiOutcome<BotDeleteResponse>`
 
@@ -1008,7 +1240,10 @@ Closes the bot if needed, waits for its controller to complete, deletes the sess
 
 Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `bots`
+- Role: `viewer`
+- Target: `none`
 - Params: `BotStateReadParams`
 - Result: `AgentApiOutcome<BotStateReadResponse>`
 
@@ -1018,7 +1253,10 @@ Queries the controller workflow for its live snapshot (sessions, buffers, active
 
 Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.
 
-- Access: `{"kind":"universe","requirement":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manage_bot"}`
+- Group: `bots`
+- Role: `operator`
+- Target: `none`
 - Params: `BotSessionRotateParams`
 - Result: `AgentApiOutcome<BotSessionRotateResponse>`
 
@@ -1028,7 +1266,10 @@ Asks the controller to close one of the bot's sessions at its next idle boundary
 
 Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.
 
-- Access: `{"kind":"universe","requirement":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manage_bot"}`
+- Group: `bots`
+- Role: `operator`
+- Target: `none`
 - Params: `BotTriggerPutParams`
 - Result: `AgentApiOutcome<BotTriggerPutResponse>`
 
@@ -1036,9 +1277,12 @@ Validates the trigger document (CEL parses, grants exist, one inbox per bot, cha
 
 **Read a trigger**
 
-Returns one trigger with its incidents and cursor; the ingest path and pairing code are shown only to managing principals.
+Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `bots`
+- Role: `viewer`
+- Target: `none`
 - Params: `BotTriggerReadParams`
 - Result: `AgentApiOutcome<BotTriggerReadResponse>`
 
@@ -1046,9 +1290,12 @@ Returns one trigger with its incidents and cursor; the ingest path and pairing c
 
 **List a bot's triggers**
 
-Returns every trigger of the bot ordered by id, secrets redacted for non-managing principals.
+Returns every trigger of the bot ordered by id, secrets included for bot-management callers.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `bots`
+- Role: `viewer`
+- Target: `none`
 - Params: `BotTriggerListParams`
 - Result: `AgentApiOutcome<BotTriggerListResponse>`
 
@@ -1058,7 +1305,10 @@ Returns every trigger of the bot ordered by id, secrets redacted for non-managin
 
 Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.
 
-- Access: `{"kind":"universe","requirement":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manage_bot"}`
+- Group: `bots`
+- Role: `operator`
+- Target: `none`
 - Params: `BotTriggerDeleteParams`
 - Result: `AgentApiOutcome<BotTriggerDeleteResponse>`
 
@@ -1068,7 +1318,10 @@ Drops the trigger's Temporal Schedule and pairings, then the record; stored even
 
 Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.
 
-- Access: `{"kind":"universe","requirement":"invoke_bot"}`
+- Access: `{"kind":"universe","action":"invoke_bot"}`
+- Group: `bots`
+- Role: `contributor`
+- Target: `none`
 - Params: `BotEventAdmitParams`
 - Result: `AgentApiOutcome<BotEventAdmitResponse>`
 
@@ -1078,7 +1331,10 @@ Stores an operator-authored event for the bot's main session and wakes the contr
 
 Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.
 
-- Access: `{"kind":"universe","requirement":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manage_bot"}`
+- Group: `bots`
+- Role: `operator`
+- Target: `none`
 - Params: `BotEventReplayParams`
 - Result: `AgentApiOutcome<BotEventReplayResponse>`
 
@@ -1088,7 +1344,10 @@ Re-admits the stored envelope as a fresh event with the original routing; the re
 
 Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `bots`
+- Role: `viewer`
+- Target: `none`
 - Params: `BotEventListParams`
 - Result: `AgentApiOutcome<BotEventListResponse>`
 
@@ -1098,7 +1357,10 @@ Cursor-paginated event log, newest first, with outcomes; payload documents stay 
 
 Returns the event row and its full stored envelope document.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `bots`
+- Role: `viewer`
+- Target: `none`
 - Params: `BotEventReadParams`
 - Result: `AgentApiOutcome<BotEventReadResponse>`
 
@@ -1108,7 +1370,10 @@ Returns the event row and its full stored envelope document.
 
 Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.
 
-- Access: `{"kind":"universe","requirement":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manage_bot"}`
+- Group: `bots`
+- Role: `operator`
+- Target: `none`
 - Params: `BotFilterTestParams`
 - Result: `AgentApiOutcome<BotFilterTestResponse>`
 
@@ -1118,7 +1383,10 @@ Evaluates a filter against one payload or a sample of recent stored events, repo
 
 Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `channels`
+- Role: `operator`
+- Target: `none`
 - Params: `ChannelAccountCreateParams`
 - Result: `AgentApiOutcome<ChannelAccountCreateResponse>`
 
@@ -1128,7 +1396,10 @@ Registers a provider account (Telegram, WhatsApp) for this universe. The credent
 
 Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `channels`
+- Role: `operator`
+- Target: `none`
 - Params: `ChannelAccountPutParams`
 - Result: `AgentApiOutcome<ChannelAccountPutResponse>`
 
@@ -1138,7 +1409,10 @@ Replaces the account document whole; pass expectedRevision when replacing. The c
 
 Returns the account document and revision.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `channels`
+- Role: `viewer`
+- Target: `none`
 - Params: `ChannelAccountReadParams`
 - Result: `AgentApiOutcome<ChannelAccountReadResponse>`
 
@@ -1148,7 +1422,10 @@ Returns the account document and revision.
 
 Lists this universe's provider accounts, optionally by provider.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `channels`
+- Role: `viewer`
+- Target: `none`
 - Params: `ChannelAccountListParams`
 - Result: `AgentApiOutcome<ChannelAccountListResponse>`
 
@@ -1158,7 +1435,10 @@ Lists this universe's provider accounts, optionally by provider.
 
 Removes the account and its pairings; chat triggers that reference it stop serving conversations.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `channels`
+- Role: `operator`
+- Target: `none`
 - Params: `ChannelAccountDeleteParams`
 - Result: `AgentApiOutcome<ChannelAccountDeleteResponse>`
 
@@ -1171,7 +1451,10 @@ Removes the account and its pairings; chat triggers that reference it stop servi
 
 Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.
 
-- Access: `{"kind":"service","requirement":"admit_channel_inbound"}`
+- Access: `{"kind":"service"}`
+- Group: `channels/inbound`
+- Role: `none`
+- Target: `none`
 - Params: `ChannelInboundAdmitParams`
 - Result: `AgentApiOutcome<ChannelInboundAdmitResponse>`
 
@@ -1184,7 +1467,10 @@ Service callers only. Resolves the chat trigger for the conversation, applies pa
 
 Lists conversations paired to chat triggers, optionally by account or bot.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `channels`
+- Role: `viewer`
+- Target: `none`
 - Params: `ChannelPairingListParams`
 - Result: `AgentApiOutcome<ChannelPairingListResponse>`
 
@@ -1194,7 +1480,10 @@ Lists conversations paired to chat triggers, optionally by account or bot.
 
 Removes one pairing; the conversation must present the pairing code again to reconnect.
 
-- Access: `{"kind":"universe","requirement":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `channels`
+- Role: `operator`
+- Target: `none`
 - Params: `ChannelPairingDeleteParams`
 - Result: `AgentApiOutcome<ChannelPairingDeleteResponse>`
 
@@ -1204,7 +1493,10 @@ Removes one pairing; the conversation must present the pairing code again to rec
 
 Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.
 
-- Access: `{"kind":"universe","requirement":"read"}`
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `channels`
+- Role: `viewer`
+- Target: `none`
 - Params: `ChannelConversationReadParams`
 - Result: `AgentApiOutcome<ChannelConversationReadResponse>`
 
@@ -1215,31 +1507,14 @@ Queries the conversation workflow's live state for one chat, for debugging; abse
 
 **List a universe's deployment provider bindings**
 
-Deployment configuration inventory; requires DeploymentAdmin without granting universe content access.
+Deployment configuration inventory of one universe's provider bindings.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/environment-providers`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentUniverseReadParams`
 - Result: `AgentApiOutcome<EnvironmentProviderBindingListResponse>`
-
-### `deployment/identity/self`
-
-**Read own access**
-
-Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected.
-
-- Access: `{"kind":"identity"}`
-- Params: `IdentityScopeParams`
-- Result: `AgentApiOutcome<IdentitySelfResponse>`
-
-### `deployment/identity/directory`
-
-**Read the access directory**
-
-Requires administration of the requested scope. In universe scope the directory holds only that universe's subjects: principals and groups holding a role there, their members, and service principals it manages. The deployment-wide directory requires deployment administration or the manage_identity capability.
-
-- Access: `{"kind":"identity"}`
-- Params: `IdentityScopeParams`
-- Result: `AgentApiOutcome<AccessDirectory>`
 
 ### `deployment/universes/create`
 
@@ -1247,7 +1522,10 @@ Requires administration of the requested scope. In universe scope the directory 
 
 Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/universes`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentUniverseCreateParams`
 - Result: `AgentApiOutcome<DeploymentUniverseCreateResponse>`
 
@@ -1257,7 +1535,10 @@ Creates the deployment tenant boundary for an explicit UUID. The operation is id
 
 Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/universes`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentUniverseListParams`
 - Result: `AgentApiOutcome<DeploymentUniverseListResponse>`
 
@@ -1267,7 +1548,10 @@ Returns deployment-wide universe summaries with approximate live aggregate count
 
 Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/universes`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentUniverseReadParams`
 - Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
 
@@ -1277,27 +1561,23 @@ Returns one deployment tenant summary with aggregate session, workspace, profile
 
 Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/universes`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentUniverseDeleteParams`
 - Result: `AgentApiOutcome<DeploymentUniverseDeleteResponse>`
-
-### `deployment/identity/apply`
-
-**Apply identity and access changes**
-
-Applies a canonical identity change with current actor permissions and durable access auditing.
-
-- Access: `{"kind":"identity"}`
-- Params: `AccessChange`
-- Result: `AgentApiOutcome<AccessChangeResult>`
 
 ### `deployment/api-keys/create`
 
 **Create a scoped API key**
 
-Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
+Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do.
 
-- Access: `{"kind":"credential_management"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/api-keys`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentApiKeyCreateParams`
 - Result: `AgentApiOutcome<DeploymentApiKeyCreateResponse>`
 
@@ -1305,9 +1585,12 @@ Mints a credential for an explicit canonical principal within a universe or depl
 
 **List scoped API keys**
 
-Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
+Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.
 
-- Access: `{"kind":"credential_management"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/api-keys`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentApiKeyListParams`
 - Result: `AgentApiOutcome<DeploymentApiKeyListResponse>`
 
@@ -1315,9 +1598,12 @@ Returns visible non-secret key metadata for the requested scope, including revoc
 
 **Revoke a scoped API key**
 
-Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found.
+Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.
 
-- Access: `{"kind":"credential_management"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/api-keys`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentApiKeyRevokeParams`
 - Result: `AgentApiOutcome<DeploymentApiKeyRevokeResponse>`
 
@@ -1327,7 +1613,10 @@ Revokes a matching scoped key when the actor owns it or administers its scope. U
 
 Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/environment-providers`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentEnvironmentProviderPutParams`
 - Result: `AgentApiOutcome<DeploymentEnvironmentProviderPutResponse>`
 
@@ -1337,7 +1626,10 @@ Registers or replaces one deployment provider and its controller connection. The
 
 Returns every deployment-registered deployment provider and its controller connection.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/environment-providers`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentEnvironmentProviderListParams`
 - Result: `AgentApiOutcome<DeploymentEnvironmentProviderListResponse>`
 
@@ -1347,7 +1639,10 @@ Returns every deployment-registered deployment provider and its controller conne
 
 Returns one deployment-registered deployment provider and its controller connection.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/environment-providers`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentEnvironmentProviderReadParams`
 - Result: `AgentApiOutcome<DeploymentEnvironmentProviderReadResponse>`
 
@@ -1357,7 +1652,10 @@ Returns one deployment-registered deployment provider and its controller connect
 
 Deletes a deployment provider only when no universe binding references it.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/environment-providers`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentEnvironmentProviderDeleteParams`
 - Result: `AgentApiOutcome<DeploymentEnvironmentProviderDeleteResponse>`
 
@@ -1367,7 +1665,10 @@ Deletes a deployment provider only when no universe binding references it.
 
 Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/environment-providers`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentProviderBindingPutParams`
 - Result: `AgentApiOutcome<DeploymentProviderBindingPutResponse>`
 
@@ -1377,7 +1678,10 @@ Creates or replaces one universe's complete revisioned routing and admission bin
 
 Deletes a universe provider binding only after every referencing environment has reached Closed.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/environment-providers`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentProviderBindingDeleteParams`
 - Result: `AgentApiOutcome<DeploymentProviderBindingDeleteResponse>`
 
@@ -1387,7 +1691,10 @@ Deletes a universe provider binding only after every referencing environment has
 
 Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.
 
-- Access: `{"kind":"deployment_admin"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/environment-providers`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentEnvironmentAdoptParams`
 - Result: `AgentApiOutcome<DeploymentEnvironmentAdoptResponse>`
 
@@ -1397,7 +1704,10 @@ Creates a universe environment by transferring an existing provider target into 
 
 The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.
 
-- Access: `{"kind":"deployment_admin_or_capability","requirement":"discover_channel_accounts"}`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/channels`
+- Role: `none`
+- Target: `none`
 - Params: `DeploymentChannelAccountListParams`
 - Result: `AgentApiOutcome<DeploymentChannelAccountListResponse>`
 

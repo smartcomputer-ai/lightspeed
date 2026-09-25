@@ -6,13 +6,14 @@
 //! the code, stores encrypted tokens, and creates the grant. Gateways stay
 //! thin adapters over this service.
 
+use api::Attribution;
 use std::sync::Arc;
 
 use crate::{
     AuthFlowId, AuthFlowRecord, AuthFlowStore, AuthGrantExposure, AuthGrantId, AuthGrantStatus,
     AuthGrantStore, AuthProviderKind, AuthRegistryError, CreateAuthFlowRecord,
     CreateAuthGrantRecord, FinishAuthFlow, McpOAuthTokenContext, OAuthClientId, OAuthClientStore,
-    OAuthTokenClient, OAuthTokenGrant, OAuthTokenRequest, PrincipalRef, PutSecretRecord,
+    OAuthTokenClient, OAuthTokenGrant, OAuthTokenRequest, PutSecretRecord,
     SECRET_KIND_OAUTH_ACCESS_TOKEN, SECRET_KIND_OAUTH_PKCE_VERIFIER,
     SECRET_KIND_OAUTH_REFRESH_TOKEN, SecretId, SecretStore, SecretValue, build_authorization_url,
     generate_pkce_verifier, generate_state, pkce_challenge_s256, random_auth_id, state_hash,
@@ -34,7 +35,7 @@ pub struct StartAuthFlow {
     /// Overrides the client's default audience when set.
     pub audience: Option<String>,
     pub grant_exposure: AuthGrantExposure,
-    pub principal: PrincipalRef,
+    pub created_by: Attribution,
 }
 
 #[derive(Clone, Debug)]
@@ -103,7 +104,6 @@ impl OAuthFlowService {
         request: StartAuthFlow,
     ) -> Result<StartedAuthFlow, AuthRegistryError> {
         let client = self.clients.read_oauth_client(&request.client_id).await?;
-        request.principal.validate()?;
         let scopes = request
             .scopes
             .unwrap_or_else(|| client.scopes_default.clone());
@@ -192,7 +192,7 @@ impl OAuthFlowService {
             provider_id: client.provider_id.clone(),
             provider_kind: client.provider_kind,
             grant_exposure: request.grant_exposure,
-            principal: request.principal,
+            created_by: request.created_by,
             state_hash: state_hash(&state),
             pkce_verifier_secret: verifier_secret_id.clone(),
             redirect_uri: request.redirect_uri.clone(),
@@ -361,7 +361,7 @@ impl OAuthFlowService {
             provider_id: flow.provider_id.clone(),
             provider_kind: flow.provider_kind,
             exposure: flow.grant_exposure,
-            principal: flow.principal.clone(),
+            created_by: flow.created_by.clone(),
             display_name: client.display_name.clone(),
             subject_hint: None,
             scopes,
@@ -549,10 +549,7 @@ mod tests {
             scopes: None,
             audience: None,
             grant_exposure: AuthGrantExposure::Brokered,
-            principal: PrincipalRef {
-                kind: crate::PrincipalKind::ServiceAccount,
-                id: Some("test-service".into()),
-            },
+            created_by: Attribution::Local,
         }
     }
 

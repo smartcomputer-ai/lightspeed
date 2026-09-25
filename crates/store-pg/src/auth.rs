@@ -8,11 +8,12 @@
 use ::auth::{
     AuthGrantExposure, AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore,
     AuthGrantTokenRefresh, AuthProviderKind, AuthRegistryError, CreateAuthGrantRecord,
-    ListAuthGrants, OAuthClientId, PrincipalKind, PrincipalRef, PutSecretRecord, SecretId,
-    SecretRecordMeta, SecretStore, SecretValue,
+    ListAuthGrants, OAuthClientId, PutSecretRecord, SecretId, SecretRecordMeta, SecretStore,
+    SecretValue,
 };
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+use api::Attribution;
 use async_trait::async_trait;
 use rand::RngCore;
 use sqlx::Row;
@@ -215,8 +216,7 @@ const GRANT_COLUMNS: &str = r#"
     provider_id,
     provider_kind,
     exposure,
-    principal_kind,
-    principal_id,
+    created_by,
     display_name,
     subject_hint,
     scopes,
@@ -252,8 +252,7 @@ impl AuthGrantStore for PgStore {
                 provider_id,
                 provider_kind,
                 exposure,
-                principal_kind,
-                principal_id,
+                created_by,
                 display_name,
                 subject_hint,
                 scopes,
@@ -269,7 +268,7 @@ impl AuthGrantStore for PgStore {
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $20)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $19)
             ON CONFLICT (universe_id, grant_id) DO NOTHING
             RETURNING {GRANT_COLUMNS}
             "#
@@ -280,8 +279,7 @@ impl AuthGrantStore for PgStore {
             .bind(&record.provider_id)
             .bind(provider_kind_to_str(record.provider_kind))
             .bind(grant_exposure_to_str(record.exposure))
-            .bind(principal_kind_to_str(record.principal.kind))
-            .bind(record.principal.id.as_deref())
+            .bind(sqlx::types::Json(&record.created_by))
             .bind(record.display_name.as_deref())
             .bind(record.subject_hint.as_deref())
             .bind(&record.scopes)
@@ -566,9 +564,6 @@ fn grant_record_from_row(
     let exposure: String = row
         .try_get("exposure")
         .map_err(|error| auth_sql_error("decode grant exposure", error))?;
-    let principal_kind: String = row
-        .try_get("principal_kind")
-        .map_err(|error| auth_sql_error("decode grant principal kind", error))?;
     let status: String = row
         .try_get("status")
         .map_err(|error| auth_sql_error("decode grant status", error))?;
@@ -591,12 +586,10 @@ fn grant_record_from_row(
             .map_err(|error| auth_sql_error("decode grant provider id", error))?,
         provider_kind: provider_kind_from_str(&provider_kind)?,
         exposure: grant_exposure_from_str(&exposure)?,
-        principal: PrincipalRef {
-            kind: principal_kind_from_str(&principal_kind)?,
-            id: row
-                .try_get("principal_id")
-                .map_err(|error| auth_sql_error("decode grant principal id", error))?,
-        },
+        created_by: row
+            .try_get::<sqlx::types::Json<Attribution>, _>("created_by")
+            .map_err(|error| auth_sql_error("decode grant creator", error))?
+            .0,
         display_name: row
             .try_get("display_name")
             .map_err(|error| auth_sql_error("decode grant display name", error))?,
@@ -695,23 +688,6 @@ pub(crate) fn provider_kind_from_str(value: &str) -> Result<AuthProviderKind, Au
         "model_endpoint" => Ok(AuthProviderKind::ModelEndpoint),
         other => Err(AuthRegistryError::Store {
             message: format!("unsupported auth provider kind '{other}'"),
-        }),
-    }
-}
-
-pub(crate) fn principal_kind_to_str(value: PrincipalKind) -> &'static str {
-    match value {
-        PrincipalKind::User => "user",
-        PrincipalKind::ServiceAccount => "service_account",
-    }
-}
-
-pub(crate) fn principal_kind_from_str(value: &str) -> Result<PrincipalKind, AuthRegistryError> {
-    match value {
-        "user" => Ok(PrincipalKind::User),
-        "service_account" => Ok(PrincipalKind::ServiceAccount),
-        other => Err(AuthRegistryError::Store {
-            message: format!("unsupported auth principal kind '{other}'"),
         }),
     }
 }

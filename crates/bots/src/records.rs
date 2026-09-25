@@ -155,7 +155,7 @@ impl BotTriggerRecord {
     }
 
     /// The wire view. `redact` hides the ingest path and pairing code
-    /// (non-managing principals); `ingest_path` is the webhook route when
+    /// (channel-facing views); `ingest_path` is the webhook route when
     /// the caller can build one.
     pub fn view(&self, redact: bool, ingest_path: Option<String>) -> BotTriggerView {
         BotTriggerView {

@@ -246,7 +246,7 @@ pub(super) fn github_installation_grant_draft(
         provider_id: provider.provider_id.as_str().to_owned(),
         provider_kind: auth::AuthProviderKind::GitHubApp,
         exposure,
-        principal: crate::gateway::principal::request_principal()?,
+        created_by: crate::gateway::request_context::request_attribution()?,
         display_name,
         subject_hint: installation.account_login.clone(),
         scopes: Vec::new(),

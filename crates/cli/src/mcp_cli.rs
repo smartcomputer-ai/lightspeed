@@ -499,7 +499,6 @@ async fn put_server_credential(
     }
     let response = api
         .put_mcp_server(api::McpServerPutParams {
-            access: None,
             server,
             expected_revision: Some(current.revision),
         })
@@ -606,7 +605,6 @@ async fn server_put(args: McpServerPutArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
         .put_mcp_server(api::McpServerPutParams {
-            access: None,
             server: api::McpServerInput {
                 server_id: args.server_id,
                 display_name: args.display_name,

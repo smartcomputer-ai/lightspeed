@@ -13,8 +13,8 @@ pub struct SessionView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_at_ms: Option<u64>,
     pub retention: SessionRetentionView,
-    /// The root governing this session, its owner and visibility, and who
-    /// its work runs as.
+    /// The audience of the session's root: whether it is shared with the
+    /// universe, and who created it.
     pub access: ResourceAccessSummary,
     /// True only when immutable lifecycle ownership was admitted with a
     /// lifecycle controller at managed-session creation.

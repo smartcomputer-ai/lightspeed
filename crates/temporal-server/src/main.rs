@@ -1,5 +1,3 @@
-mod identity_cli;
-
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::{Args, Parser, Subcommand};
@@ -62,11 +60,6 @@ enum Command {
         about = "Manage inbound gateway API keys"
     )]
     ApiKey(ApiKeyCommand),
-    #[command(
-        subcommand,
-        about = "Host administration of canonical identity and access records"
-    )]
-    Identity(identity_cli::IdentityCommand),
 }
 
 #[derive(Debug, Subcommand)]
@@ -75,9 +68,6 @@ enum UniverseCommand {
     Create {
         #[arg(long)]
         universe_id: Option<uuid::Uuid>,
-        /// Active deployment administrator that becomes this universe's Admin.
-        #[arg(long)]
-        creator_principal: uuid::Uuid,
         #[arg(long)]
         slug: Option<String>,
     },
@@ -87,33 +77,42 @@ enum UniverseCommand {
 
 #[derive(Debug, Subcommand)]
 enum ApiKeyCommand {
-    #[command(about = "Mint an API key for a universe; the secret prints exactly once")]
+    #[command(about = "Mint an API key; the secret prints exactly once")]
     Create {
+        /// The one universe the key reaches.
         #[arg(
             long,
             required_unless_present = "deployment",
             conflicts_with = "deployment"
         )]
         universe_id: Option<uuid::Uuid>,
+        /// A deployment key, which names a universe per request by header.
         #[arg(long)]
         deployment: bool,
         #[arg(long)]
         name: Option<String>,
-        /// Canonical principal authenticated by this key.
+        /// A method group the key may call (repeatable); omitted grants
+        /// every group the scope allows.
+        #[arg(long = "group")]
+        groups: Vec<String>,
+        /// Let the key name the actor a request acts for.
         #[arg(long)]
-        principal: uuid::Uuid,
-        /// Active issuing actor (trusted host administration).
+        assert_actor: bool,
+    },
+    #[command(
+        about = "Create the local universe if needed and mint the launcher's deployment key; prints JSON once"
+    )]
+    Bootstrap {
         #[arg(long)]
-        actor_principal: uuid::Uuid,
+        universe_id: uuid::Uuid,
+        /// Keys of this name that are still active are revoked first.
+        #[arg(long, default_value = "Local development launcher")]
+        name: String,
     },
     #[command(about = "List API keys (prefixes only; secrets are never stored)")]
     List,
     #[command(about = "Revoke an API key by its display prefix")]
-    Revoke {
-        key_prefix: String,
-        #[arg(long)]
-        actor_principal: uuid::Uuid,
-    },
+    Revoke { key_prefix: String },
 }
 
 #[derive(Clone, Debug, Args)]
@@ -205,7 +204,6 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::CasSweep { dry_run }) => run_cas_sweep(dry_run).await,
         Some(Command::Universe(command)) => run_universe_command(command).await,
         Some(Command::ApiKey(command)) => run_api_key_command(command).await,
-        Some(Command::Identity(command)) => identity_cli::run(command).await,
         None => run_roles(cli.run).await,
     }
 }
@@ -264,22 +262,11 @@ async fn run_cas_sweep(dry_run: bool) -> anyhow::Result<()> {
 async fn run_universe_command(command: UniverseCommand) -> anyhow::Result<()> {
     let stores = DeploymentStores::from_env().await?;
     match command {
-        UniverseCommand::Create {
-            universe_id,
-            creator_principal,
-            slug,
-        } => {
+        UniverseCommand::Create { universe_id, slug } => {
             let universe_id = universe_id.unwrap_or_else(uuid::Uuid::new_v4);
-            use access::AccessStore as _;
-            store_pg::PgAccessStore::new(stores.pool().clone())
-                .apply(
-                    creator_principal,
-                    access::AccessChange::CreateUniverse {
-                        universe_id,
-                        slug: slug.clone(),
-                    },
-                    identity_cli::now_ms()?,
-                )
+            stores
+                .store_for_with_slug(universe_id, slug.clone())
+                .ensure_universe()
                 .await?;
             println!("universe_id: {universe_id}");
             if let Some(slug) = slug {
@@ -300,73 +287,121 @@ async fn run_universe_command(command: UniverseCommand) -> anyhow::Result<()> {
 }
 
 async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
-    use auth::ApiKeyStore as _;
-
     let stores = DeploymentStores::from_env().await?;
     let api_keys = store_pg::PgApiKeyStore::new(stores.pool().clone());
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis() as u64;
+    let host = |command: &str| api::Attribution::Internal {
+        component: "cli".into(),
+        cause: command.into(),
+    };
     match command {
         ApiKeyCommand::Create {
             universe_id,
             name,
-            principal,
-            actor_principal,
+            groups,
+            assert_actor,
             deployment: _,
         } => {
-            let scope = universe_id.map_or(access::AccessScope::Deployment, |universe_id| {
-                access::AccessScope::Universe { universe_id }
-            });
-            let minted = auth::mint_api_key(scope, principal, actor_principal, name, now_ms);
-            api_keys
-                .create_api_key(auth::CreateApiKey {
-                    authority_scope: access::AccessScope::Deployment,
-                    key_hash: minted.key_hash,
-                    record: minted.record.clone(),
-                })
-                .await?;
+            let scope = match universe_id {
+                Some(universe_id) => {
+                    if !store_pg::universe_exists(stores.pool(), universe_id).await? {
+                        anyhow::bail!(
+                            "unknown universe: {universe_id} (create it first: server universe create)"
+                        );
+                    }
+                    api::AccessScope::Universe { universe_id }
+                }
+                None => api::AccessScope::Deployment,
+            };
+            let groups = (!groups.is_empty())
+                .then(|| parse_groups(&groups))
+                .transpose()?;
+            let minted = mint(
+                &api_keys,
+                auth::ApiKeySpec {
+                    scope,
+                    groups,
+                    assert_actor,
+                    created_by: host("api-key create"),
+                    display_name: name,
+                },
+                now_ms,
+            )
+            .await?;
             println!("key_prefix: {}", minted.record.key_prefix);
             println!("scope: {}", serde_json::to_string(&scope)?);
             // The one and only time the secret leaves the process.
             println!("secret: {}", minted.secret.expose());
             Ok(())
         }
+        ApiKeyCommand::Bootstrap { universe_id, name } => {
+            stores.store_for(universe_id).ensure_universe().await?;
+            // One local stack at a time: retire keys from previous launcher
+            // runs without ever persisting their secrets.
+            for previous in api_keys
+                .list_api_keys(Some(api::AccessScope::Deployment))
+                .await?
+            {
+                if previous.display_name.as_deref() == Some(name.as_str())
+                    && previous.revoked_at_ms.is_none()
+                {
+                    api_keys
+                        .revoke_api_key(&previous.key_prefix, now_ms)
+                        .await?;
+                }
+            }
+            let minted = mint(
+                &api_keys,
+                auth::ApiKeySpec {
+                    scope: api::AccessScope::Deployment,
+                    groups: None,
+                    assert_actor: true,
+                    created_by: host("api-key bootstrap"),
+                    display_name: Some(name),
+                },
+                now_ms,
+            )
+            .await?;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "universeId": universe_id,
+                    "keyPrefix": minted.record.key_prefix,
+                    "secret": minted.secret.expose(),
+                })
+            );
+            Ok(())
+        }
         ApiKeyCommand::List => {
-            for record in api_keys.list_api_keys().await? {
+            for record in api_keys.list_api_keys(None).await? {
                 let status = if record.revoked_at_ms.is_some() {
                     "revoked"
                 } else {
                     "active"
                 };
+                let groups = record
+                    .groups
+                    .iter()
+                    .map(|group| group.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",");
                 println!(
-                    "{}  {}  {}  {}",
+                    "{}  {}  {}  {}{}  {}",
                     record.key_prefix,
                     serde_json::to_string(&record.scope)?,
                     status,
+                    groups,
+                    if record.assert_actor { "  +actor" } else { "" },
                     record.display_name.as_deref().unwrap_or("-"),
                 );
             }
             Ok(())
         }
-        ApiKeyCommand::Revoke {
-            key_prefix,
-            actor_principal,
-        } => {
-            let record = api_keys
-                .list_api_keys()
-                .await?
-                .into_iter()
-                .find(|key| key.key_prefix == key_prefix)
-                .ok_or_else(|| anyhow::anyhow!("unknown api key prefix"))?;
+        ApiKeyCommand::Revoke { key_prefix } => {
             if api_keys
-                .revoke_managed_key(
-                    actor_principal,
-                    access::AccessScope::Deployment,
-                    record.scope,
-                    &key_prefix,
-                    now_ms,
-                )
+                .revoke_api_key(&key_prefix, now_ms)
                 .await?
                 .is_some()
             {
@@ -377,6 +412,37 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             }
         }
     }
+}
+
+fn parse_groups(names: &[String]) -> anyhow::Result<std::collections::BTreeSet<api::MethodGroup>> {
+    names
+        .iter()
+        .map(|name| {
+            api::MethodGroup::parse(name)
+                .ok_or_else(|| anyhow::anyhow!("unknown method group: {name}"))
+        })
+        .collect()
+}
+
+/// Mint and persist a key, minting again on the rare display-prefix
+/// collision.
+async fn mint(
+    api_keys: &store_pg::PgApiKeyStore,
+    spec: auth::ApiKeySpec,
+    now_ms: u64,
+) -> anyhow::Result<auth::MintedApiKey> {
+    for _ in 0..3 {
+        let minted = auth::mint_api_key(spec.clone(), now_ms)?;
+        match api_keys
+            .create_api_key(&minted.key_hash, &minted.record)
+            .await
+        {
+            Ok(()) => return Ok(minted),
+            Err(auth::ApiKeyError::AlreadyExists { .. }) => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    anyhow::bail!("could not allocate a unique api key prefix")
 }
 
 /// Compose the selected roles in one process over one universe registry,
@@ -608,4 +674,69 @@ fn init_logging() -> anyhow::Result<()> {
         ),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_key_names_exactly_one_scope_and_its_groups() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        assert!(Cli::try_parse_from(["server", "api-key", "create"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "server",
+                "api-key",
+                "create",
+                "--universe-id",
+                id,
+                "--deployment"
+            ])
+            .is_err()
+        );
+        let parsed = Cli::try_parse_from([
+            "server",
+            "api-key",
+            "create",
+            "--deployment",
+            "--group",
+            "channels/inbound",
+            "--group",
+            "deployment/channels",
+            "--assert-actor",
+        ])
+        .unwrap();
+        let Some(Command::ApiKey(ApiKeyCommand::Create {
+            groups,
+            assert_actor,
+            universe_id: None,
+            ..
+        })) = parsed.command
+        else {
+            panic!("expected a deployment key");
+        };
+        assert!(assert_actor);
+        assert_eq!(
+            parse_groups(&groups).unwrap(),
+            [
+                api::MethodGroup::ChannelsInbound,
+                api::MethodGroup::DeploymentChannels
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert!(parse_groups(&["identity".into()]).is_err());
+    }
+
+    #[test]
+    fn bootstrap_and_universe_creation_need_no_identity() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        assert!(Cli::try_parse_from(["server", "api-key", "bootstrap"]).is_err());
+        assert!(
+            Cli::try_parse_from(["server", "api-key", "bootstrap", "--universe-id", id]).is_ok()
+        );
+        assert!(Cli::try_parse_from(["server", "universe", "create"]).is_ok());
+        assert!(Cli::try_parse_from(["server", "identity", "development"]).is_err());
+    }
 }

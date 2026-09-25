@@ -1178,6 +1178,7 @@ mod tests {
 
     fn request_run_command(content_ref: BlobRef) -> CoreAgentCommand {
         CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+            requested_by: None,
             notify_on_terminal: Vec::new(),
             submission_id: None,
             source: engine::RunRequestSource::Input {
@@ -2390,8 +2391,7 @@ mod tests {
                 &entry.event,
                 CoreAgentEvent::Turn(TurnEvent::Completed {
                     outcome: engine::TurnOutcome::Failed {
-                        failure_ref: Some(_),
-                        ..
+                        failure_ref: Some(_)
                     },
                     ..
                 })

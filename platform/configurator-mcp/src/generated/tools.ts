@@ -6,32 +6,10 @@ import type { GeneratedToolDescriptor } from "../tool-descriptor.js";
 
 export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
-    "name": "lightspeed_access_subjects",
-    "method": "access/subjects",
-    "summary": "Find sharing subjects",
-    "description": "Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.",
-    "paramsType": "AccessSubjectsParams",
-    "resultType": "AgentApiOutcome<AccessSubjectsResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": {
-        "not": {}
-      },
-      "description": "Search eligible sharing subjects in the selected universe. This exposes\nnames and identifiers only, never the administrative identity directory.",
-      "properties": {
-        "query": {
-          "default": "",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    }
-  },
-  {
     "name": "lightspeed_vfs_workspaces_files_read",
     "method": "vfs/workspaces/files/read",
     "summary": "Read a workspace file",
-    "description": "Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.",
+    "description": "Reads bytes at a path in the current workspace head.",
     "paramsType": "VfsWorkspaceFileReadParams",
     "resultType": "AgentApiOutcome<BlobReadResponse>",
     "inputSchema": {
@@ -39,7 +17,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "additionalProperties": {
         "not": {}
       },
-      "description": "Read a file from a workspace's current head. The caller must be able to\nsee the workspace; this does not authorize arbitrary blobs or snapshot\nreferences.",
+      "description": "Read a file from a workspace's current head, by path.",
       "properties": {
         "path": {
           "type": "string"
@@ -56,565 +34,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_access_read",
-    "method": "access/read",
-    "summary": "Read current action permissions",
-    "description": "Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.",
-    "paramsType": "AccessReadParams",
-    "resultType": "AgentApiOutcome<AccessReadResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": {
-        "not": {}
-      },
-      "description": "Current caller's action permissions. This is an advisory snapshot: mutations\nalways authorize again, and runtime prerequisites still apply.",
-      "properties": {
-        "as": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AccessReadAs"
-            }
-          ],
-          "default": "caller",
-          "description": "Whose resource actions to report. Universe-level `actions` are always\nthe caller's."
-        },
-        "resources": {
-          "default": [],
-          "description": "Up to 100 existing sessions, bots, profiles, workspaces, environments\nor MCP servers in the selected universe. Missing resources return no\nactions.",
-          "items": {
-            "$ref": "#/definitions/ResourceRef"
-          },
-          "type": "array"
-        },
-        "sessionDeleteCascade": {
-          "default": false,
-          "description": "Include every retention descendant when previewing session deletion.",
-          "type": "boolean"
-        }
-      },
-      "type": "object",
-      "definitions": {
-        "AccessReadAs": {
-          "description": "The identity `access/read` decides resource actions for.",
-          "oneOf": [
-            {
-              "const": "caller",
-              "description": "The caller itself.",
-              "type": "string"
-            },
-            {
-              "const": "execution_service",
-              "description": "The universe's execution service, the default agent identity that\nsessions and bots run as unless they run as their owner. Only\nresources the caller may see are decided; the others return no\nactions. Session setup uses it to show what the default agent\nidentity may use.",
-              "type": "string"
-            }
-          ]
-        },
-        "ResourceRef": {
-          "description": "Durable control facts, distinct from an agent's execution credentials.",
-          "oneOf": [
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "session",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "bot",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "profile",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "workspace",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "environment",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "mcp_server",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_access_policy_read",
-    "method": "access/policy/read",
-    "summary": "Read a resource's access policy",
-    "description": "Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.",
-    "paramsType": "AccessPolicyReadParams",
-    "resultType": "AgentApiOutcome<AccessPolicyReadResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": {
-        "not": {}
-      },
-      "properties": {
-        "resource": {
-          "$ref": "#/definitions/ResourceRef"
-        }
-      },
-      "required": [
-        "resource"
-      ],
-      "type": "object",
-      "definitions": {
-        "ResourceRef": {
-          "description": "Durable control facts, distinct from an agent's execution credentials.",
-          "oneOf": [
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "session",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "bot",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "profile",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "workspace",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "environment",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "mcp_server",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_access_policy_put",
-    "method": "access/policy/put",
-    "summary": "Replace a resource's access policy",
-    "description": "Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.",
-    "paramsType": "AccessPolicyPutParams",
-    "resultType": "AgentApiOutcome<AccessPolicyPutResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": {
-        "not": {}
-      },
-      "description": "Replace a root's visibility and grant set. On a session or bot only the\nowner may add or remove `write`; writers may share `read` and change\nvisibility; readers change nothing. On a workspace, environment or MCP\nserver only the owner or an Admin changes access, and `use` is the only\ngrant.",
-      "properties": {
-        "expectedRevision": {
-          "description": "The revision from `access/policy/read`; absent replaces unconditionally.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "grants": {
-          "items": {
-            "$ref": "#/definitions/AccessGrantInput"
-          },
-          "type": "array"
-        },
-        "owner": {
-          "description": "Hand the root to another member of the universe. Only the current\nowner may set it; the previous owner keeps no permission of its own.",
-          "format": "uuid",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "resource": {
-          "$ref": "#/definitions/ResourceRef"
-        },
-        "visibility": {
-          "$ref": "#/definitions/Visibility"
-        }
-      },
-      "required": [
-        "resource",
-        "visibility"
-      ],
-      "type": "object",
-      "definitions": {
-        "AccessGrantInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "properties": {
-            "permission": {
-              "$ref": "#/definitions/ResourcePermission"
-            },
-            "subject": {
-              "$ref": "#/definitions/Subject"
-            }
-          },
-          "required": [
-            "subject",
-            "permission"
-          ],
-          "type": "object"
-        },
-        "ResourcePermission": {
-          "description": "One permission a grant confers on a root. On sessions and bots `Read`\nsees the tree and `Write` also controls it; on workspaces, environments\nand MCP servers `Use` is the only permission.",
-          "enum": [
-            "read",
-            "write",
-            "use"
-          ],
-          "type": "string"
-        },
-        "ResourceRef": {
-          "description": "Durable control facts, distinct from an agent's execution credentials.",
-          "oneOf": [
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "session",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "bot",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "profile",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "workspace",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "environment",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "mcp_server",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "Subject": {
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "principal",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "group",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "Visibility": {
-          "description": "Who may see a root's tree without a grant.",
-          "enum": [
-            "universe",
-            "restricted"
-          ],
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_access_execution_read",
-    "method": "access/execution/read",
-    "summary": "Read the universe execution policy",
-    "description": "Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.",
-    "paramsType": "AccessExecutionReadParams",
-    "resultType": "AgentApiOutcome<AccessExecutionReadResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": {
-        "not": {}
-      },
-      "type": "object"
-    }
-  },
-  {
-    "name": "lightspeed_access_execution_update",
-    "method": "access/execution/update",
-    "summary": "Update the universe execution policy",
-    "description": "Enables or disables personal execution. Existing roots keep the execution identity they were created with.",
-    "paramsType": "AccessExecutionUpdateParams",
-    "resultType": "AgentApiOutcome<AccessExecutionUpdateResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": {
-        "not": {}
-      },
-      "properties": {
-        "personalExecutionEnabled": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "personalExecutionEnabled"
-      ],
-      "type": "object"
-    }
-  },
-  {
     "name": "lightspeed_session_start",
     "method": "session/start",
     "summary": "Create or reopen a session",
-    "description": "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.",
+    "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.",
     "paramsType": "SessionStartParams",
     "resultType": "AgentApiOutcome<SessionStartResponse>",
     "inputSchema": {
@@ -632,7 +55,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "null"
             }
           ],
-          "description": "Audience of the new session, set atomically with its creation. Absent\nmeans universe-visible."
+          "description": "Audience of the new session, set atomically with its creation. Absent\nmeans unshared until `session/share`; a retry keeps the original."
         },
         "config": {
           "anyOf": [
@@ -660,17 +83,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "null"
           ]
         },
-        "execution": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ExecutionInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Execution identity of the new session; absent means the universe's\nexecution service."
-        },
         "metadata": {
           "additionalProperties": {
             "type": "string"
@@ -697,37 +109,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       },
       "type": "object",
       "definitions": {
-        "AccessGrantInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "properties": {
-            "permission": {
-              "$ref": "#/definitions/ResourcePermission"
-            },
-            "subject": {
-              "$ref": "#/definitions/Subject"
-            }
-          },
-          "required": [
-            "subject",
-            "permission"
-          ],
-          "type": "object"
-        },
         "AccessInput": {
           "additionalProperties": {
             "not": {}
           },
-          "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
+          "description": "The audience of a new session, requested at creation. Absent means\nunshared: visible to its creator until it is shared with the universe. A\nsession created under another root (a bot's session, a delegated child)\nfollows that root and refuses this.",
           "properties": {
-            "grants": {
-              "description": "Grants on the root: `read` or `write` on a session or bot, `use` on\na workspace, environment or MCP server. Each subject must currently\nhold a role in the universe.",
-              "items": {
-                "$ref": "#/definitions/AccessGrantInput"
-              },
-              "type": "array"
-            },
             "visibility": {
               "anyOf": [
                 {
@@ -736,8 +123,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 {
                   "type": "null"
                 }
-              ],
-              "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
+              ]
             }
           },
           "type": "object"
@@ -957,29 +343,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           },
           "type": "object"
-        },
-        "ExecutionInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "description": "Requested execution identity of a new root. `service` runs as the\nuniverse's execution service; `personal` runs as the creating person and\nneeds the universe to allow it. Absent means `service`. A resource\ncreated under another root inherits and refuses this.",
-          "properties": {
-            "kind": {
-              "$ref": "#/definitions/ExecutionKind"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        "ExecutionKind": {
-          "description": "Under whose authority a root's work runs: the universe's execution\nservice, or the person who created it.",
-          "enum": [
-            "service",
-            "personal"
-          ],
-          "type": "string"
         },
         "FeaturesConfig": {
           "additionalProperties": {
@@ -1352,15 +715,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           ]
         },
-        "ResourcePermission": {
-          "description": "One permission a grant confers on a root. On sessions and bots `Read`\nsees the tree and `Write` also controls it; on workspaces, environments\nand MCP servers `Use` is the only permission.",
-          "enum": [
-            "read",
-            "write",
-            "use"
-          ],
-          "type": "string"
-        },
         "SessionConfig": {
           "additionalProperties": {
             "not": {}
@@ -1487,50 +841,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "agents"
           ],
           "type": "object"
-        },
-        "Subject": {
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "principal",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "group",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "TimersFeature": {
           "additionalProperties": {
@@ -1692,7 +1002,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "type": "object"
         },
         "Visibility": {
-          "description": "Who may see a root's tree without a grant.",
+          "description": "Who sees a root's tree. Sessions start unshared (`restricted`) and are\nshared with the universe once, one way; everything else is shared.",
           "enum": [
             "universe",
             "restricted"
@@ -1839,12 +1149,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_session_list",
     "method": "session/list",
     "summary": "List sessions",
-    "description": "Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.",
+    "description": "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.",
     "paramsType": "SessionListParams",
     "resultType": "AgentApiOutcome<SessionListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
+        "createdBy": {
+          "description": "Only sessions whose root this actor created.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "cursor": {
           "description": "Opaque cursor from the previous page's `nextCursor`.",
           "type": [
@@ -1884,9 +1201,37 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "string",
             "null"
           ]
+        },
+        "visibility": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Visibility"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Only sessions whose root has this visibility."
+        },
+        "visibleTo": {
+          "description": "Only sessions whose root is shared with the universe or was created\nby this actor: what that actor sees as a non-administrator.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "type": "object"
+      "type": "object",
+      "definitions": {
+        "Visibility": {
+          "description": "Who sees a root's tree. Sessions start unshared (`restricted`) and are\nshared with the universe once, one way; everything else is shared.",
+          "enum": [
+            "universe",
+            "restricted"
+          ],
+          "type": "string"
+        }
+      }
     }
   },
   {
@@ -2882,6 +2227,29 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "description": "Delete history forks and delegated descendants too. False requires the\ntarget to be a closed retention-tree leaf.",
           "type": "boolean"
         },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_session_share",
+    "method": "session/share",
+    "summary": "Share a session with the universe",
+    "description": "Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.",
+    "paramsType": "SessionShareParams",
+    "resultType": "AgentApiOutcome<SessionShareResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "properties": {
         "sessionId": {
           "type": "string"
         }
@@ -4932,7 +4300,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_session_environments_activate",
     "method": "session/environments/activate",
     "summary": "Activate a session environment",
-    "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.",
+    "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
     "paramsType": "SessionEnvironmentActivateParams",
     "resultType": "AgentApiOutcome<SessionEnvironmentActivateResponse>",
     "inputSchema": {
@@ -5102,23 +4470,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_environments_create",
     "method": "environments/create",
     "summary": "Create an environment",
-    "description": "Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.",
+    "description": "Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.",
     "paramsType": "EnvironmentCreateParams",
     "resultType": "AgentApiOutcome<EnvironmentCreateResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "access": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AccessInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Who may see and use the new environment, set atomically with its\ncreation; the caller owns it. Absent means universe-visible. Grants\ntake the `use` permission only. A retried `requestId` returns the\nenvironment it created before and ignores this."
-        },
         "bindingId": {
           "type": "string"
         },
@@ -5161,51 +4518,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AccessGrantInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "properties": {
-            "permission": {
-              "$ref": "#/definitions/ResourcePermission"
-            },
-            "subject": {
-              "$ref": "#/definitions/Subject"
-            }
-          },
-          "required": [
-            "subject",
-            "permission"
-          ],
-          "type": "object"
-        },
-        "AccessInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
-          "properties": {
-            "grants": {
-              "description": "Grants on the root: `read` or `write` on a session or bot, `use` on\na workspace, environment or MCP server. Each subject must currently\nhold a role in the universe.",
-              "items": {
-                "$ref": "#/definitions/AccessGrantInput"
-              },
-              "type": "array"
-            },
-            "visibility": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/Visibility"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
-            }
-          },
-          "type": "object"
-        },
         "EnvironmentIdlePolicyView": {
           "description": "Staged idle policy. Thresholds are milliseconds of daemon-reported idle\ntime and must be non-decreasing in the order pause, suspend, stop, close.\nStages whose power state the provider does not support are skipped.",
           "properties": {
@@ -5243,67 +4555,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           },
           "type": "object"
-        },
-        "ResourcePermission": {
-          "description": "One permission a grant confers on a root. On sessions and bots `Read`\nsees the tree and `Write` also controls it; on workspaces, environments\nand MCP servers `Use` is the only permission.",
-          "enum": [
-            "read",
-            "write",
-            "use"
-          ],
-          "type": "string"
-        },
-        "Subject": {
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "principal",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "group",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "Visibility": {
-          "description": "Who may see a root's tree without a grant.",
-          "enum": [
-            "universe",
-            "restricted"
-          ],
-          "type": "string"
         }
       }
     }
@@ -5332,7 +4583,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_environments_list",
     "method": "environments/list",
     "summary": "List environments",
-    "description": "Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.",
+    "description": "Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.",
     "paramsType": "EnvironmentListParams",
     "resultType": "AgentApiOutcome<EnvironmentListResponse>",
     "inputSchema": {
@@ -5435,23 +4686,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_environments_external_create",
     "method": "environments/external/create",
     "summary": "Register an external environment",
-    "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.",
+    "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.",
     "paramsType": "EnvironmentExternalCreateParams",
     "resultType": "AgentApiOutcome<EnvironmentExternalCreateResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "access": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AccessInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Who may see and use the new environment, as for\n`environments/create`."
-        },
         "connection": {
           "allOf": [
             {
@@ -5482,51 +4722,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AccessGrantInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "properties": {
-            "permission": {
-              "$ref": "#/definitions/ResourcePermission"
-            },
-            "subject": {
-              "$ref": "#/definitions/Subject"
-            }
-          },
-          "required": [
-            "subject",
-            "permission"
-          ],
-          "type": "object"
-        },
-        "AccessInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
-          "properties": {
-            "grants": {
-              "description": "Grants on the root: `read` or `write` on a session or bot, `use` on\na workspace, environment or MCP server. Each subject must currently\nhold a role in the universe.",
-              "items": {
-                "$ref": "#/definitions/AccessGrantInput"
-              },
-              "type": "array"
-            },
-            "visibility": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/Visibility"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
-            }
-          },
-          "type": "object"
-        },
         "EnvironmentConnectionTransportView": {
           "oneOf": [
             {
@@ -5576,67 +4771,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "transport"
           ],
           "type": "object"
-        },
-        "ResourcePermission": {
-          "description": "One permission a grant confers on a root. On sessions and bots `Read`\nsees the tree and `Write` also controls it; on workspaces, environments\nand MCP servers `Use` is the only permission.",
-          "enum": [
-            "read",
-            "write",
-            "use"
-          ],
-          "type": "string"
-        },
-        "Subject": {
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "principal",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "group",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "Visibility": {
-          "description": "Who may see a root's tree without a grant.",
-          "enum": [
-            "universe",
-            "restricted"
-          ],
-          "type": "string"
         }
       }
     }
@@ -7936,7 +7070,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_blobs_read",
     "method": "blobs/read",
     "summary": "Read a content-addressed blob",
-    "description": "Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.",
+    "description": "Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.",
     "paramsType": "BlobReadParams",
     "resultType": "AgentApiOutcome<BlobReadResponse>",
     "inputSchema": {
@@ -7944,126 +7078,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "properties": {
         "blobRef": {
           "type": "string"
-        },
-        "resource": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ResourceRef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The session or bot the blob is read through: the caller\nmust be able to read it and the blob must be admitted content of it.\nWithout a resource only a blob the caller uploaded is readable. A\nresource that does not authorize the read is a refusal, not a prompt\nto try another. Workspaces, environments and MCP servers are refused\nhere; read a workspace's files with `vfs/workspaces/files/read`."
         }
       },
       "required": [
         "blobRef"
       ],
-      "type": "object",
-      "definitions": {
-        "ResourceRef": {
-          "description": "Durable control facts, distinct from an agent's execution credentials.",
-          "oneOf": [
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "session",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "bot",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "profile",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "workspace",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "environment",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "mcp_server",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
-        }
-      }
+      "type": "object"
     }
   },
   {
@@ -8082,123 +7102,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "type": "string"
           },
           "type": "array"
-        },
-        "resource": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ResourceRef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "As for `blobs/read`; a blob the caller may not read through the\nresource reports as absent."
         }
       },
-      "type": "object",
-      "definitions": {
-        "ResourceRef": {
-          "description": "Durable control facts, distinct from an agent's execution credentials.",
-          "oneOf": [
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "session",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "bot",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "profile",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "workspace",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "environment",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "mcp_server",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
-        }
-      }
+      "type": "object"
     }
   },
   {
@@ -8211,14 +7117,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "manifest": {},
-        "sourceWorkspaceId": {
-          "description": "Admit unchanged files from this readable workspace's current head.\nEvery other file must still be an upload of the caller. This does not\nchange the workspace; updating its head has its own permission and\nrevision check.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
+        "manifest": {}
       },
       "required": [
         "manifest"
@@ -8230,7 +7129,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_vfs_snapshots_read",
     "method": "vfs/snapshots/read",
     "summary": "Read a VFS snapshot",
-    "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.",
+    "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
     "paramsType": "VfsSnapshotReadParams",
     "resultType": "AgentApiOutcome<VfsSnapshotReadResponse>",
     "inputSchema": {
@@ -8238,13 +7137,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "properties": {
         "snapshotRef": {
           "type": "string"
-        },
-        "workspaceId": {
-          "description": "The workspace the snapshot is read through: the caller must be able\nto see it, and the snapshot must be its current head or base.\nWithout a workspace only a snapshot the caller committed or uploaded\nis readable. A snapshot reference alone confers nothing.",
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "required": [
@@ -8257,23 +7149,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_vfs_workspaces_create",
     "method": "vfs/workspaces/create",
     "summary": "Create a mutable VFS workspace",
-    "description": "Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.",
+    "description": "Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.",
     "paramsType": "VfsWorkspaceCreateParams",
     "resultType": "AgentApiOutcome<VfsWorkspaceCreateResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "access": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AccessInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Who may see and use the new workspace, set atomically with its\ncreation; the caller owns it. Absent means universe-visible. Grants\ntake the `use` permission only."
-        },
         "displayName": {
           "type": [
             "string",
@@ -8294,115 +7175,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         }
       },
-      "type": "object",
-      "definitions": {
-        "AccessGrantInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "properties": {
-            "permission": {
-              "$ref": "#/definitions/ResourcePermission"
-            },
-            "subject": {
-              "$ref": "#/definitions/Subject"
-            }
-          },
-          "required": [
-            "subject",
-            "permission"
-          ],
-          "type": "object"
-        },
-        "AccessInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
-          "properties": {
-            "grants": {
-              "description": "Grants on the root: `read` or `write` on a session or bot, `use` on\na workspace, environment or MCP server. Each subject must currently\nhold a role in the universe.",
-              "items": {
-                "$ref": "#/definitions/AccessGrantInput"
-              },
-              "type": "array"
-            },
-            "visibility": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/Visibility"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
-            }
-          },
-          "type": "object"
-        },
-        "ResourcePermission": {
-          "description": "One permission a grant confers on a root. On sessions and bots `Read`\nsees the tree and `Write` also controls it; on workspaces, environments\nand MCP servers `Use` is the only permission.",
-          "enum": [
-            "read",
-            "write",
-            "use"
-          ],
-          "type": "string"
-        },
-        "Subject": {
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "principal",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "group",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "Visibility": {
-          "description": "Who may see a root's tree without a grant.",
-          "enum": [
-            "universe",
-            "restricted"
-          ],
-          "type": "string"
-        }
-      }
+      "type": "object"
     }
   },
   {
@@ -8429,7 +7202,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_vfs_workspaces_list",
     "method": "vfs/workspaces/list",
     "summary": "List VFS workspaces",
-    "description": "Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.",
+    "description": "Lists the mutable universe workspaces with head snapshots, sizes, and revisions.",
     "paramsType": "VfsWorkspaceListParams",
     "resultType": "AgentApiOutcome<VfsWorkspaceListResponse>",
     "inputSchema": {
@@ -8448,7 +7221,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "displayName": {
-          "description": "Renames the workspace, which requires configuring it; absent keeps\nthe current name.",
           "type": [
             "string",
             "null"
@@ -8463,7 +7235,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         },
         "snapshotRef": {
-          "description": "The new head; moving it requires use of the workspace.",
           "type": "string"
         },
         "workspaceId": {
@@ -8501,23 +7272,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_mcp_servers_put",
     "method": "mcp/servers/put",
     "summary": "Create or replace an MCP server record",
-    "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.",
+    "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.",
     "paramsType": "McpServerPutParams",
     "resultType": "AgentApiOutcome<McpServerPutResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "access": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AccessInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Who may see and use a server this call creates; the caller owns it.\nAbsent means universe-visible. Grants take the `use` permission only.\nRefused when the server already exists: change its access with\n`access/policy/put`."
-        },
         "expectedRevision": {
           "description": "Checked only when the server already exists; absent replaces (or\ncreates) unconditionally.",
           "format": "uint64",
@@ -8536,51 +7296,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AccessGrantInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "properties": {
-            "permission": {
-              "$ref": "#/definitions/ResourcePermission"
-            },
-            "subject": {
-              "$ref": "#/definitions/Subject"
-            }
-          },
-          "required": [
-            "subject",
-            "permission"
-          ],
-          "type": "object"
-        },
-        "AccessInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
-          "properties": {
-            "grants": {
-              "description": "Grants on the root: `read` or `write` on a session or bot, `use` on\na workspace, environment or MCP server. Each subject must currently\nhold a role in the universe.",
-              "items": {
-                "$ref": "#/definitions/AccessGrantInput"
-              },
-              "type": "array"
-            },
-            "visibility": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/Visibility"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
-            }
-          },
-          "type": "object"
-        },
         "McpServerAuthPolicy": {
           "oneOf": [
             {
@@ -8849,67 +7564,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "search"
           ],
           "type": "string"
-        },
-        "ResourcePermission": {
-          "description": "One permission a grant confers on a root. On sessions and bots `Read`\nsees the tree and `Write` also controls it; on workspaces, environments\nand MCP servers `Use` is the only permission.",
-          "enum": [
-            "read",
-            "write",
-            "use"
-          ],
-          "type": "string"
-        },
-        "Subject": {
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "principal",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "group",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "Visibility": {
-          "description": "Who may see a root's tree without a grant.",
-          "enum": [
-            "universe",
-            "restricted"
-          ],
-          "type": "string"
         }
       }
     }
@@ -8983,7 +7637,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_mcp_servers_list",
     "method": "mcp/servers/list",
     "summary": "List MCP server records",
-    "description": "Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.",
+    "description": "Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.",
     "paramsType": "McpServerListParams",
     "resultType": "AgentApiOutcome<McpServerListResponse>",
     "inputSchema": {
@@ -9122,7 +7776,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_auth_grants_read",
     "method": "auth/grants/read",
     "summary": "Read authentication grant metadata",
-    "description": "Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
+    "description": "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
     "paramsType": "AuthGrantReadParams",
     "resultType": "AgentApiOutcome<AuthGrantReadResponse>",
     "inputSchema": {
@@ -9734,30 +8388,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "access": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AccessInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Audience of the bot, its events and every session it creates, set\natomically with its creation. Absent means universe-visible."
-        },
         "bot": {
           "$ref": "#/definitions/BotInput"
-        },
-        "execution": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ExecutionInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Execution identity of the bot and every session it creates; absent\nmeans the universe's execution service."
         },
         "triggers": {
           "description": "Triggers created with the bot in one go; a failure rolls the bot\nback.",
@@ -9772,51 +8404,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AccessGrantInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "properties": {
-            "permission": {
-              "$ref": "#/definitions/ResourcePermission"
-            },
-            "subject": {
-              "$ref": "#/definitions/Subject"
-            }
-          },
-          "required": [
-            "subject",
-            "permission"
-          ],
-          "type": "object"
-        },
-        "AccessInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
-          "properties": {
-            "grants": {
-              "description": "Grants on the root: `read` or `write` on a session or bot, `use` on\na workspace, environment or MCP server. Each subject must currently\nhold a role in the universe.",
-              "items": {
-                "$ref": "#/definitions/AccessGrantInput"
-              },
-              "type": "array"
-            },
-            "visibility": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/Visibility"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
-            }
-          },
-          "type": "object"
-        },
         "BotBreaker": {
           "description": "Per-trigger flood breaker: a trigger that admits more than `fires`\nevents inside `window_ms` is disabled until a human re-enables it.",
           "properties": {
@@ -10183,7 +8770,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ]
             },
             "pairingCode": {
-              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nnon-managing principals.",
+              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nchannel-facing views.",
               "type": [
                 "string",
                 "null"
@@ -10391,29 +8978,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           ]
         },
-        "ExecutionInput": {
-          "additionalProperties": {
-            "not": {}
-          },
-          "description": "Requested execution identity of a new root. `service` runs as the\nuniverse's execution service; `personal` runs as the creating person and\nneeds the universe to allow it. Absent means `service`. A resource\ncreated under another root inherits and refuses this.",
-          "properties": {
-            "kind": {
-              "$ref": "#/definitions/ExecutionKind"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        "ExecutionKind": {
-          "description": "Under whose authority a root's work runs: the universe's execution\nservice, or the person who created it.",
-          "enum": [
-            "service",
-            "personal"
-          ],
-          "type": "string"
-        },
         "PollCursorSpec": {
           "description": "Dedupe discipline of a poll: an id set for unordered feeds, a watermark\nfor ordered ones.",
           "oneOf": [
@@ -10586,67 +9150,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         },
         "ProfileId": {
-          "type": "string"
-        },
-        "ResourcePermission": {
-          "description": "One permission a grant confers on a root. On sessions and bots `Read`\nsees the tree and `Write` also controls it; on workspaces, environments\nand MCP servers `Use` is the only permission.",
-          "enum": [
-            "read",
-            "write",
-            "use"
-          ],
-          "type": "string"
-        },
-        "Subject": {
-          "oneOf": [
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "principal",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "kind": {
-                  "const": "group",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "id"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "Visibility": {
-          "description": "Who may see a root's tree without a grant.",
-          "enum": [
-            "universe",
-            "restricted"
-          ],
           "type": "string"
         },
         "WebhookPreset": {
@@ -10873,11 +9376,20 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_bots_list",
     "method": "bots/list",
     "summary": "List bots",
-    "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event.",
+    "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.",
     "paramsType": "BotListParams",
     "resultType": "AgentApiOutcome<BotListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "createdBy": {
+          "description": "Only bots this actor created.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     }
   },
@@ -11284,7 +9796,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ]
             },
             "pairingCode": {
-              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nnon-managing principals.",
+              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nchannel-facing views.",
               "type": [
                 "string",
                 "null"
@@ -11725,7 +10237,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_bots_triggers_read",
     "method": "bots/triggers/read",
     "summary": "Read a trigger",
-    "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are shown only to managing principals.",
+    "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.",
     "paramsType": "BotTriggerReadParams",
     "resultType": "AgentApiOutcome<BotTriggerReadResponse>",
     "inputSchema": {
@@ -11757,7 +10269,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_bots_triggers_list",
     "method": "bots/triggers/list",
     "summary": "List a bot's triggers",
-    "description": "Returns every trigger of the bot ordered by id, secrets redacted for non-managing principals.",
+    "description": "Returns every trigger of the bot ordered by id, secrets included for bot-management callers.",
     "paramsType": "BotTriggerListParams",
     "resultType": "AgentApiOutcome<BotTriggerListResponse>",
     "inputSchema": {

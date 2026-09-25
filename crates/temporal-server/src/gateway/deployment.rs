@@ -10,8 +10,9 @@
 //! platform archives first); a write racing the purge can lazily re-insert an
 //! empty universe row via `ensure_universe`, which a re-run removes.
 
-use access::{AccessScope, AccessStore};
 use std::sync::Arc;
+
+use api::AccessScope;
 
 use api::{
     AgentApiError, AgentApiOutcome, DeploymentApiKeyCreateParams, DeploymentApiKeyCreateResponse,
@@ -31,7 +32,6 @@ use api::{
     DeploymentUniverseReadParams, DeploymentUniverseReadResponse, DeploymentUniverseView,
 };
 use async_trait::async_trait;
-use auth::ApiKeyStore as _;
 use engine::SessionId;
 use environment_protocol::shared::EnvironmentTransport;
 use environments::{
@@ -62,9 +62,8 @@ impl GatewayDeploymentApi {
         self.runtime.stores().pool()
     }
 
-    /// Deployment handlers decide from the context resolved at the boundary,
-    /// so a direct caller must install one. Contextual identity and key policy
-    /// remains transactional in the store.
+    /// Deployment handlers run for a deployment request whose key holds the
+    /// method's group; a direct caller must install such a context.
     async fn admitted<T>(
         &self,
         method: &str,
@@ -164,101 +163,15 @@ impl DeploymentApiService for GatewayDeploymentApi {
         .await
     }
 
-    async fn identity_self(
-        &self,
-        params: api::IdentityScopeParams,
-    ) -> Result<AgentApiOutcome<api::IdentitySelfResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_IDENTITY_SELF, async {
-            let context = scoped_context(params.scope)?;
-            let store = store_pg::PgAccessStore::new(self.pool().clone());
-            let access = store
-                .effective_access(context.acting_principal().id, params.scope)
-                .await
-                .map_err(identity_error)?;
-            let mut universes = Vec::new();
-            for universe_id in store
-                .accessible_universes(context.acting_principal().id)
-                .await
-                .map_err(identity_error)?
-            {
-                let scope = AccessScope::Universe { universe_id };
-                if scope_allowed(&context, scope) {
-                    universes.push(
-                        store
-                            .effective_access(context.acting_principal().id, scope)
-                            .await
-                            .map_err(identity_error)?,
-                    );
-                }
-            }
-            Ok(AgentApiOutcome::new(api::IdentitySelfResponse {
-                access,
-                universes,
-            }))
-        })
-        .await
-    }
-
-    async fn identity_directory(
-        &self,
-        params: api::IdentityScopeParams,
-    ) -> Result<AgentApiOutcome<api::AccessDirectory>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_IDENTITY_DIRECTORY, async {
-            let context = scoped_context(params.scope)?;
-            store_pg::PgAccessStore::new(self.pool().clone())
-                .directory(context.acting_principal().id, params.scope)
-                .await
-                .map(AgentApiOutcome::new)
-                .map_err(identity_error)
-        })
-        .await
-    }
-
-    async fn apply_identity(
-        &self,
-        change: access::AccessChange,
-    ) -> Result<AgentApiOutcome<access::AccessChangeResult>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_IDENTITY_APPLY, async {
-            let scope = match &change {
-                access::AccessChange::AssignRole { assignment }
-                | access::AccessChange::RevokeRole { assignment }
-                | access::AccessChange::ReplaceRole { assignment, .. } => assignment.scope,
-                access::AccessChange::AssignCapability { assignment }
-                | access::AccessChange::RevokeCapability { assignment } => assignment.scope,
-                access::AccessChange::CreatePrincipal {
-                    management_scope, ..
-                } => *management_scope,
-                _ => AccessScope::Deployment,
-            };
-            let context = scoped_context(scope)?;
-            store_pg::PgAccessStore::new(self.pool().clone())
-                .apply(context.acting_principal().id, change, current_time_ms()?)
-                .await
-                .map(AgentApiOutcome::new)
-                .map_err(identity_error)
-        })
-        .await
-    }
-
     async fn create_universe(
         &self,
         params: DeploymentUniverseCreateParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseCreateResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_CREATE, async {
             let universe_id = parse_universe_id(&params.universe_id)?;
-            let actor = super::principal::request_context()?.acting_principal().id;
-            let created = store_pg::PgAccessStore::new(self.pool().clone())
-                .apply(
-                    actor,
-                    access::AccessChange::CreateUniverse {
-                        universe_id,
-                        slug: None,
-                    },
-                    current_time_ms()?,
-                )
+            let created = store_pg::create_universe(self.pool(), universe_id)
                 .await
-                .map_err(identity_error)?
-                .changed;
+                .map_err(map_store_error)?;
             let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
                 AgentApiError::internal(format!("universe disappeared after create: {universe_id}"))
             })?;
@@ -455,52 +368,30 @@ impl DeploymentApiService for GatewayDeploymentApi {
             })?;
         validate_adoption_source(&params.source_target)?;
         let store = self.runtime.stores().store_for(universe_id);
-        let environment_id = EnvironmentId::new(format!(
-            "environment_{}",
-            Uuid::new_v4().simple()
-        ));
-        let created_at_ms = i64::try_from(current_time_ms()?)
-            .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?;
-        // The adopting deployment administrator owns what it adopted.
-        let owner = super::principal::request_context()?.acting_principal().id;
-        let environment = super::service::authorization::OperationalAnchor {
-            resource: access::ResourceRef::Environment(environment_id.to_string()),
-            created_by: access::ActionActor::Principal { id: owner },
-            owner,
-            visibility: None,
-        }
-        .create(
-            &store_pg::PgAccessStore::new(self.pool().clone()),
-            universe_id,
-            async {
-                EnvironmentStore::adopt_environment(
-                    store.as_ref(),
-                    AdoptEnvironment {
-                        request_id,
-                        environment_id: environment_id.clone(),
-                        incarnation_id: EnvironmentIncarnationId::new(format!(
-                            "incarnation_{}",
-                            Uuid::new_v4().simple()
-                        )),
-                        binding_id,
-                        source_target: params.source_target,
-                        display_name: params.display_name,
-                        metadata: params.metadata,
-                        created_at_ms,
-                    },
-                )
-                .await
-                .map_err(super::service::environment_providers::map_environments_error)
+        let environment = EnvironmentStore::adopt_environment(
+            store.as_ref(),
+            AdoptEnvironment {
+                request_id,
+                environment_id: EnvironmentId::new(format!(
+                    "environment_{}",
+                    Uuid::new_v4().simple()
+                )),
+                incarnation_id: EnvironmentIncarnationId::new(format!(
+                    "incarnation_{}",
+                    Uuid::new_v4().simple()
+                )),
+                binding_id,
+                source_target: params.source_target,
+                display_name: params.display_name,
+                metadata: params.metadata,
+                created_at_ms: i64::try_from(current_time_ms()?)
+                    .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?,
             },
-            |environment| environment.environment_id == environment_id,
         )
-        .await?;
+        .await
+        .map_err(super::service::environment_providers::map_environments_error)?;
         Ok(AgentApiOutcome::new(DeploymentEnvironmentAdoptResponse {
-            environment: super::service::environment_providers::load_environment_view(
-                &store,
-                &environment,
-            )
-            .await?,
+            environment: super::service::environment_providers::environment_view(&environment),
         }))
         }).await
     }
@@ -660,30 +551,33 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentApiKeyCreateParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_CREATE, async {
-            let context = scoped_context(params.scope)?;
             let display_name = params.display_name.trim();
             if display_name.is_empty() {
                 return Err(AgentApiError::invalid_request(
                     "api key displayName must not be empty",
                 ));
             }
+            if let AccessScope::Universe { universe_id } = params.scope {
+                self.require_universe(universe_id).await?;
+            }
+            let created_by = super::request_context::request_context()?.attribution();
             let store = store_pg::PgApiKeyStore::new(self.pool().clone());
             for _ in 0..3 {
                 let minted = auth::mint_api_key(
-                    params.scope,
-                    params.principal_id,
-                    context.acting_principal().id,
-                    Some(display_name.to_owned()),
+                    auth::ApiKeySpec {
+                        scope: params.scope,
+                        groups: params
+                            .groups
+                            .as_ref()
+                            .map(|groups| groups.iter().copied().collect()),
+                        assert_actor: params.assert_actor,
+                        created_by: created_by.clone(),
+                        display_name: Some(display_name.to_owned()),
+                    },
                     current_time_ms()?,
-                );
-                match store
-                    .create_api_key(auth::CreateApiKey {
-                        authority_scope: context.credential_scope,
-                        key_hash: minted.key_hash,
-                        record: minted.record.clone(),
-                    })
-                    .await
-                {
+                )
+                .map_err(map_api_key_error)?;
+                match store.create_api_key(&minted.key_hash, &minted.record).await {
                     Ok(()) => {
                         return Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
                             api_key: api_key_view(minted.record),
@@ -708,13 +602,8 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentApiKeyListParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyListResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_LIST, async {
-            let context = scoped_context(params.scope)?;
             let api_keys = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .list_managed_keys(
-                    context.acting_principal().id,
-                    context.credential_scope,
-                    params.scope,
-                )
+                .list_api_keys(params.scope)
                 .await
                 .map_err(map_api_key_error)?
                 .into_iter()
@@ -732,7 +621,6 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentApiKeyRevokeParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyRevokeResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_REVOKE, async {
-            let context = scoped_context(params.scope)?;
             let key_prefix = params.key_prefix.trim();
             if key_prefix.is_empty() {
                 return Err(AgentApiError::invalid_request(
@@ -740,13 +628,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 ));
             }
             let record = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .revoke_managed_key(
-                    context.acting_principal().id,
-                    context.credential_scope,
-                    params.scope,
-                    key_prefix,
-                    current_time_ms()?,
-                )
+                .revoke_api_key(key_prefix, current_time_ms()?)
                 .await
                 .map_err(map_api_key_error)?
                 .ok_or_else(|| AgentApiError::not_found("unknown api key prefix"))?;
@@ -839,7 +721,8 @@ fn api_key_view(record: auth::ApiKeyRecord) -> DeploymentApiKeyView {
     DeploymentApiKeyView {
         key_prefix: record.key_prefix,
         scope: record.scope,
-        principal_id: record.principal_id,
+        groups: record.groups.into_iter().collect(),
+        assert_actor: record.assert_actor,
         created_by: record.created_by,
         display_name: record.display_name,
         created_at_ms: record.created_at_ms,
@@ -862,7 +745,7 @@ fn map_api_key_error(error: auth::ApiKeyError) -> AgentApiError {
         auth::ApiKeyError::AlreadyExists { .. } => {
             AgentApiError::internal("generated api key prefix collision")
         }
-        auth::ApiKeyError::Denied => AgentApiError::forbidden(),
+        auth::ApiKeyError::Invalid { message } => AgentApiError::invalid_request(message),
         auth::ApiKeyError::Store { message } => AgentApiError::internal(message),
     }
 }
@@ -871,49 +754,13 @@ fn map_store_error(error: store_pg::PgStoreError) -> AgentApiError {
     AgentApiError::internal(error.to_string())
 }
 
-/// The role- or capability-level decision for a deployment method.
-fn admit(method: &str) -> Result<access::RequestContext, AgentApiError> {
-    let context = super::principal::request_context()?;
-    let requirement = api::method_access(method).ok_or_else(AgentApiError::forbidden)?;
-    let deployment_only = matches!(
-        requirement,
-        api::MethodAccess::DeploymentAdmin | api::MethodAccess::DeploymentAdminOrCapability(_)
-    );
-    if (deployment_only
-        && (context.credential_scope != AccessScope::Deployment
-            || context.target_scope() != AccessScope::Deployment))
-        || !super::authentication::method_permitted(&context.rights, requirement)
-    {
+/// A deployment method runs for a deployment request whose key, if any,
+/// holds its group; the boundary checked both, and an in-process caller must
+/// install the same context.
+fn admit(method: &str) -> Result<super::request_context::RequestContext, AgentApiError> {
+    let context = super::request_context::request_context()?;
+    if context.scope != AccessScope::Deployment || !context.permits(method) {
         return Err(AgentApiError::forbidden());
     }
     Ok(context)
-}
-
-/// Identity and key management name the scope they act in. It must lie within
-/// the credential's ceiling, and an asserted user is confined to the scope the
-/// assertion was authorized for.
-fn scope_allowed(context: &access::RequestContext, scope: AccessScope) -> bool {
-    let asserted_elsewhere = context.asserted()
-        && context.target_scope() != AccessScope::Deployment
-        && context.target_scope() != scope;
-    context.credential_scope.permits(scope) && !asserted_elsewhere
-}
-
-fn scoped_context(scope: AccessScope) -> Result<access::RequestContext, AgentApiError> {
-    let context = super::principal::request_context()?;
-    if !scope_allowed(&context, scope) {
-        return Err(AgentApiError::forbidden());
-    }
-    Ok(context)
-}
-fn identity_error(error: access::AccessError) -> AgentApiError {
-    match error {
-        access::AccessError::NotFound => AgentApiError::not_found(error.to_string()),
-        access::AccessError::Conflict | access::AccessError::LastAdministrator { .. } => {
-            AgentApiError::conflict(error.to_string())
-        }
-        access::AccessError::Store(_) => AgentApiError::internal(error.to_string()),
-        access::AccessError::Denied => AgentApiError::forbidden(),
-        _ => AgentApiError::rejected(error.to_string()),
-    }
 }

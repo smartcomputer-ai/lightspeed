@@ -4,7 +4,6 @@
 //! CAS catalog; across universes, both metadata and object keys are isolated.
 
 mod access;
-mod access_audit;
 mod api_keys;
 mod auth;
 mod blob;
@@ -21,7 +20,6 @@ mod oauth;
 mod object;
 mod profile;
 mod providers;
-mod resources;
 mod session;
 mod shared;
 mod vfs;
@@ -36,20 +34,14 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub use access::{LOCAL_DEVELOPMENT_PRINCIPAL, PgAccessStore};
-pub use resources::{Reader, ResourcePolicyRecord, UseCheck, UseRefusal};
+pub use access::AccessFilter;
+pub use access::{AccessStoreError, PgAccessStore, ResourceAccess};
 
-/// A session page for one reader: each record with the access summary its
-/// view carries.
+/// A session page with the access summary each view carries.
 #[derive(Clone, Debug)]
 pub struct SessionListPageWithAccess {
-    pub sessions: Vec<(
-        engine::storage::SessionRecord,
-        ::access::ResourceAccessSummary,
-    )>,
+    pub sessions: Vec<(engine::storage::SessionRecord, api::ResourceAccessSummary)>,
     pub next_cursor: Option<engine::storage::SessionListCursor>,
-    /// The page holds a session listed only through `read_private_content`.
-    pub privileged: bool,
 }
 
 pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");
@@ -58,7 +50,7 @@ pub const MCP_SCHEMA_SQL: &str = include_str!("../migrations/003_mcp.sql");
 pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/004_auth.sql");
 pub const ENVIRONMENT_SCHEMA_SQL: &str = include_str!("../migrations/005_environments.sql");
 pub const PROFILE_SCHEMA_SQL: &str = include_str!("../migrations/006_agent_profiles.sql");
-pub const IDENTITY_ACCESS_SCHEMA_SQL: &str = include_str!("../migrations/007_identity_access.sql");
+pub const API_KEYS_SCHEMA_SQL: &str = include_str!("../migrations/007_api_keys.sql");
 pub const BOTS_SCHEMA_SQL: &str = include_str!("../migrations/008_bots.sql");
 pub const CHANNELS_SCHEMA_SQL: &str = include_str!("../migrations/009_channels.sql");
 

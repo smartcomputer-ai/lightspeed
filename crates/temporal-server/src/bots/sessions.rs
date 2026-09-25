@@ -66,8 +66,8 @@ pub(super) fn retryable(message: impl std::fmt::Display) -> ActivityError {
 }
 
 /// Classify a core API error. Invalid requests, missing referents and
-/// refusals (a resource the bot's execution identity may not use) never
-/// heal on retry: the failure is recorded at once. A rejection (a busy
+/// refusals of the bot's own work never heal on retry: the failure is
+/// recorded at once. A rejection (a busy
 /// session), a conflict (a lost race), or an internal / transport failure
 /// may heal.
 pub(super) fn activity_error(context: &str, error: AgentApiError) -> ActivityError {
@@ -236,12 +236,10 @@ async fn list_descendants(
     for _ in 0..DESCENDANT_MAX_PAGES {
         let page = api
             .list_sessions(SessionListParams {
-                metadata: Default::default(),
                 cursor: cursor.take(),
                 limit: Some(DESCENDANT_PAGE_LIMIT),
                 root_session_id: Some(root_session_id.to_owned()),
-                parent_session_id: None,
-                exclude_closed: false,
+                ..Default::default()
             })
             .await
             .map_err(|error| activity_error("list descendant sessions", error))?
@@ -463,7 +461,6 @@ pub async fn ensure_session(
     if let Err(error) = api
         .start_managed_session(ManagedSessionStartParams {
             access: None,
-            execution: None,
             session_id: Some(request.session_id.clone()),
             display_name: request.display_name.clone(),
             metadata: bot_session_metadata(&request.bot_id),
@@ -616,14 +613,10 @@ pub async fn start_run(
         Ok(response) => Ok(BotStartRunResult::Started {
             run_id: response.result.run.id,
         }),
-        // A refused admission (the bot's execution authority no longer holds)
-        // is recorded on the fire like any refusal, not retried as a fault.
         Err(error)
             if matches!(
                 error.kind,
-                AgentApiErrorKind::Rejected
-                    | AgentApiErrorKind::Conflict
-                    | AgentApiErrorKind::Forbidden
+                AgentApiErrorKind::Rejected | AgentApiErrorKind::Conflict
             ) =>
         {
             Ok(BotStartRunResult::Rejected {
@@ -853,11 +846,9 @@ mod tests {
             .find(|run| matches!(run.status, RunStatus::Running | RunStatus::Parked))
             .cloned();
         SessionView {
-            access: access::ResourceAccessSummary {
-                root: access::ResourceRef::Bot("triage".to_owned()),
-                owner: uuid::Uuid::nil(),
-                visibility: access::Visibility::Universe,
-                execution: None,
+            access: api::ResourceAccessSummary {
+                visibility: api::Visibility::Universe,
+                created_by: Some(api::Attribution::Local),
             },
             metadata: Default::default(),
             id: "bot:v1:triage".to_owned(),
@@ -1022,10 +1013,7 @@ mod tests {
         )));
         assert!(is_non_retryable(&activity_error(
             "x",
-            AgentApiError::new(
-                AgentApiErrorKind::Forbidden,
-                "environment prod-1 is not available to Default agent identity"
-            )
+            AgentApiError::forbidden()
         )));
         assert!(!is_non_retryable(&activity_error(
             "x",

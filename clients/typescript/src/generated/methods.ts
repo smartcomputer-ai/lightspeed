@@ -5,13 +5,7 @@
 import type * as Api from "./types.js";
 
 export const METHODS = [
-  "access/subjects",
   "vfs/workspaces/files/read",
-  "access/read",
-  "access/policy/read",
-  "access/policy/put",
-  "access/execution/read",
-  "access/execution/update",
   "initialize",
   "session/start",
   "session/managed/start",
@@ -23,6 +17,7 @@ export const METHODS = [
   "session/retention/put",
   "session/close",
   "session/delete",
+  "session/share",
   "session/events/read",
   "session/context/append",
   "session/context/remove",
@@ -125,13 +120,10 @@ export const METHODS = [
   "channels/pairings/delete",
   "channels/conversations/read",
   "deployment/environment-provider-bindings/list",
-  "deployment/identity/self",
-  "deployment/identity/directory",
   "deployment/universes/create",
   "deployment/universes/list",
   "deployment/universes/read",
   "deployment/universes/delete",
-  "deployment/identity/apply",
   "deployment/api-keys/create",
   "deployment/api-keys/list",
   "deployment/api-keys/revoke",
@@ -146,831 +138,783 @@ export const METHODS = [
 ] as const;
 
 export const METHOD_INFO = {
-  "access/subjects": {
-    scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
-    summary: "Find sharing subjects",
-    description: "Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.",
-  },
   "vfs/workspaces/files/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read a workspace file",
-    description: "Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.",
-  },
-  "access/read": {
-    scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
-    summary: "Read current action permissions",
-    description: "Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.",
-  },
-  "access/policy/read": {
-    scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
-    summary: "Read a resource's access policy",
-    description: "Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.",
-  },
-  "access/policy/put": {
-    scope: "universe",
-    access: {"kind":"universe","requirement":"share_resource"},
-    summary: "Replace a resource's access policy",
-    description: "Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.",
-  },
-  "access/execution/read": {
-    scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
-    summary: "Read the universe execution policy",
-    description: "Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.",
-  },
-  "access/execution/update": {
-    scope: "universe",
-    access: {"kind":"universe","requirement":"manage_access"},
-    summary: "Update the universe execution policy",
-    description: "Enables or disables personal execution. Existing roots keep the execution identity they were created with.",
+    description: "Reads bytes at a path in the current workspace head.",
   },
   "initialize": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Inspect the Lightspeed protocol",
     description: "Returns protocol version, server identity, and supported capabilities without changing universe state.",
   },
   "session/start": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"create_session"},
+    access: {"action":"create_session","kind":"universe"},
     summary: "Create or reopen a session",
-    description: "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.",
+    description: "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.",
   },
   "session/managed/start": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"create_session"},
+    access: {"action":"create_session","kind":"universe"},
     summary: "Create or reopen a managed session",
     description: "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.",
   },
   "session/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read a session",
     description: "Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
   },
   "session/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List sessions",
-    description: "Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.",
+    description: "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.",
   },
   "session/config/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Replace session configuration",
     description: "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
   },
   "session/rename": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Rename a session",
     description: "Sets the display name, or clears it when displayName is omitted.",
   },
   "session/metadata/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Replace session metadata",
     description: "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.",
   },
   "session/retention/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Replace session retention",
     description: "Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.",
   },
   "session/close": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"stop_session"},
+    access: {"action":"stop_session","kind":"universe"},
     summary: "Close a session",
     description: "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
   },
   "session/delete": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"delete_session"},
+    access: {"action":"delete_session","kind":"universe"},
     summary: "Delete closed sessions",
     description: "Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.",
   },
+  "session/share": {
+    scope: "universe",
+    access: {"action":"share_session","kind":"universe"},
+    summary: "Share a session with the universe",
+    description: "Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.",
+  },
   "session/events/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read the session event stream",
     description: "Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls.",
   },
   "session/context/append": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Append keyed session context",
     description: "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.",
   },
   "session/context/remove": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Remove keyed session context",
     description: "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
   },
   "session/context/compact": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Compact session context",
     description: "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
   },
   "session/runs/start": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Start an agent run",
     description: "Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
   },
   "session/runs/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List session runs",
     description: "Returns a newest-first keyset page of bounded run summaries projected from current reducer state.",
   },
   "session/runs/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read one session run",
     description: "Reads and projects one run from its bounded event interval, paged by event sequence.",
   },
   "session/runs/cancel": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"stop_session"},
+    access: {"action":"stop_session","kind":"universe"},
     summary: "Cancel a run",
     description: "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
   },
   "session/runs/approvals/decide": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Decide pending run approvals",
     description: "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.",
   },
   "session/runs/steer": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Steer the active run",
     description: "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.",
   },
   "session/skills/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List available session skills",
     description: "Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted.",
   },
   "session/profiles/apply": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Apply a profile to a session",
     description: "Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
   },
   "session/environments/activate": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Activate a session environment",
-    description: "Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.",
+    description: "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
   },
   "session/environments/deactivate": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"control_session"},
+    access: {"action":"control_session","kind":"universe"},
     summary: "Deactivate the session environment",
     description: "Clears active environment selection without changing or closing the universe environment.",
   },
   "environments/credentials/bind": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Bind a credential into an environment",
     description: "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
   },
   "environments/credentials/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "List environment credential bindings",
     description: "Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.",
   },
   "environments/credentials/unbind": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Unbind an environment credential",
     description: "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
   },
   "environments/create": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Create an environment",
-    description: "Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.",
+    description: "Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.",
   },
   "environments/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read an environment",
     description: "Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.",
   },
   "environments/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List environments",
-    description: "Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.",
+    description: "Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.",
   },
   "environments/close": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Close an environment",
     description: "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.",
   },
   "environments/external/create": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Register an external environment",
-    description: "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.",
+    description: "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.",
   },
   "environments/ingress/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Configure environment public ingress",
     description: "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
   },
   "environments/power/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Set environment power intent",
     description: "Records the desired power state (running, paused, suspended, or stopped) of a provisioned environment; the lifecycle reconciler converges the provider target asynchronously. Powered-down environments wake transparently on their next use. Rejected when the provider does not support the state.",
   },
   "environments/idle-policy/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Set environment idle policy",
     description: "Replaces or clears the staged idle policy of a provisioned environment. The power reaper measures the daemon's idle duration against the pause/suspend/stop/close thresholds and escalates through the stages the provider supports.",
   },
   "environments/provider-bindings/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List environment provider bindings",
     description: "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",
   },
   "environments/provider-bindings/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read an environment provider binding",
     description: "Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.",
   },
   "environments/templates/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List environment templates",
     description: "Reads immutable templates directly from the selected bound provider controller.",
   },
   "environments/templates/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read an environment template",
     description: "Returns one immutable template version from the selected bound provider controller.",
   },
   "environments/jobs/create": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"use_resource"},
+    access: {"action":"use_resource","kind":"universe"},
     summary: "Create environment jobs",
     description: "Starts a dependency-aware job group on one environment instance, injecting the environment's configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance rather than a session. A powered-down environment is woken on use: the call fails with environment_not_ready while the wake is in progress; retry with backoff.",
   },
   "environments/jobs/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read environment jobs",
     description: "Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.",
   },
   "environments/jobs/cancel": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"use_resource"},
+    access: {"action":"use_resource","kind":"universe"},
     summary: "Cancel environment jobs",
     description: "Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.",
   },
   "environments/registration-keys/create": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Mint an environment registration key",
     description: "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode, active limit, disconnect grace, and expiry are the key's policy. Treat the secret like a cluster-join credential.",
   },
   "environments/registration-keys/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Read an environment registration key",
     description: "Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.",
   },
   "environments/registration-keys/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "List environment registration keys",
     description: "Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.",
   },
   "environments/registration-keys/revoke": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Revoke an environment registration key",
     description: "Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.",
   },
   "models/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Discover available models",
     description: "Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others.",
   },
   "profiles/create": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"create_profile"},
+    access: {"action":"create_profile","kind":"universe"},
     summary: "Create an agent profile",
     description: "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
   },
   "profiles/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read an agent profile",
     description: "Returns the complete profile document and current revision.",
   },
   "profiles/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List agent profiles",
     description: "Returns lightweight summaries of universe-scoped reusable profiles.",
   },
   "profiles/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"manage_profile"},
+    access: {"action":"manage_profile","kind":"universe"},
     summary: "Create or replace an agent profile",
     description: "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
   },
   "profiles/delete": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"manage_profile"},
+    access: {"action":"manage_profile","kind":"universe"},
     summary: "Delete an agent profile",
     description: "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
   },
   "blobs/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"use_resource"},
+    access: {"action":"use_resource","kind":"universe"},
     summary: "Store content-addressed blobs",
     description: "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
   },
   "blobs/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read a content-addressed blob",
-    description: "Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.",
+    description: "Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.",
   },
   "blobs/has": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Check blob availability",
     description: "Checks a batch of content references without returning blob bodies, preserving request order.",
   },
   "vfs/snapshots/commit": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"use_resource"},
+    access: {"action":"use_resource","kind":"universe"},
     summary: "Commit a VFS snapshot",
     description: "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
   },
   "vfs/snapshots/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read a VFS snapshot",
-    description: "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.",
+    description: "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
   },
   "vfs/workspaces/create": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"create_workspace"},
+    access: {"action":"create_workspace","kind":"universe"},
     summary: "Create a mutable VFS workspace",
-    description: "Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.",
+    description: "Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.",
   },
   "vfs/workspaces/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read a VFS workspace",
     description: "Returns workspace metadata, current head snapshot, and revision for safe updates.",
   },
   "vfs/workspaces/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List VFS workspaces",
-    description: "Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.",
+    description: "Lists the mutable universe workspaces with head snapshots, sizes, and revisions.",
   },
   "vfs/workspaces/update": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"use_resource"},
+    access: {"action":"use_resource","kind":"universe"},
     summary: "Update a VFS workspace",
     description: "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
   },
   "vfs/workspaces/delete": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Delete a VFS workspace",
     description: "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
   },
   "mcp/servers/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Create or replace an MCP server record",
-    description: "Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.",
+    description: "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.",
   },
   "mcp/servers/auth/discover": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Discover MCP server authentication",
     description: "Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.",
   },
   "mcp/servers/tools/discover": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Discover MCP server tools",
     description: "Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.",
   },
   "mcp/servers/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read an MCP server record",
     description: "Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.",
   },
   "mcp/servers/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List MCP server records",
-    description: "Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.",
+    description: "Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.",
   },
   "mcp/servers/delete": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Delete an MCP server record",
     description: "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
   },
   "auth/grants/import": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Import a static bearer grant",
     description: "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
   },
   "auth/grants/lease": {
     scope: "service",
-    access: {"kind":"service","requirement":"lease_credentials"},
+    access: {"kind":"service"},
     summary: "Lease a retrievable authentication grant",
     description: "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.",
   },
   "auth/grants/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read authentication grant metadata",
-    description: "Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
+    description: "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
   },
   "auth/grants/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List authentication grants",
     description: "Lists non-secret grant metadata for the universe, optionally filtered by status.",
   },
   "auth/grants/revoke": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Revoke an authentication grant",
     description: "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
   },
   "auth/clients/create": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Register an OAuth client",
     description: "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
   },
   "auth/clients/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read OAuth client metadata",
     description: "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
   },
   "auth/clients/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List OAuth clients",
     description: "Lists non-secret OAuth client registrations in the universe.",
   },
   "auth/clients/delete": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Delete an OAuth client",
     description: "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
   },
   "auth/flows/start": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Start an OAuth authorization flow",
     description: "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
   },
   "auth/flows/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Read OAuth flow status",
     description: "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
   },
   "auth/providers/create": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Register an authentication provider",
     description: "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
   },
   "auth/providers/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read authentication provider metadata",
     description: "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
   },
   "auth/providers/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List authentication providers",
     description: "Lists non-secret model/GitHub provider registrations for the universe.",
   },
   "auth/providers/delete": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Delete an authentication provider",
     description: "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
   },
   "auth/github/installations/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "List GitHub App installations",
     description: "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
   },
   "auth/github/installations/grant": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Grant access to a GitHub App installation",
     description: "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
   },
   "bots/create": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"create_bot"},
+    access: {"action":"create_bot","kind":"universe"},
     summary: "Create a bot",
     description: "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
   },
   "bots/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"manage_bot"},
+    access: {"action":"manage_bot","kind":"universe"},
     summary: "Create or replace a bot document",
     description: "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.",
   },
   "bots/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read a bot",
     description: "Returns the bot record, its current revision, and lifecycle columns.",
   },
   "bots/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List bots",
-    description: "Returns the roster: every bot with its trigger count, pending event count, and latest event.",
+    description: "Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.",
   },
   "bots/close": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"manage_bot"},
+    access: {"action":"manage_bot","kind":"universe"},
     summary: "Close a bot",
     description: "Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.",
   },
   "bots/delete": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"manage_bot"},
+    access: {"action":"manage_bot","kind":"universe"},
     summary: "Delete a bot",
     description: "Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.",
   },
   "bots/state/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read bot controller state",
     description: "Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.",
   },
   "bots/sessions/rotate": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"manage_bot"},
+    access: {"action":"manage_bot","kind":"universe"},
     summary: "Rotate a bot session",
     description: "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.",
   },
   "bots/triggers/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"manage_bot"},
+    access: {"action":"manage_bot","kind":"universe"},
     summary: "Create or replace a trigger",
     description: "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
   },
   "bots/triggers/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read a trigger",
-    description: "Returns one trigger with its incidents and cursor; the ingest path and pairing code are shown only to managing principals.",
+    description: "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.",
   },
   "bots/triggers/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List a bot's triggers",
-    description: "Returns every trigger of the bot ordered by id, secrets redacted for non-managing principals.",
+    description: "Returns every trigger of the bot ordered by id, secrets included for bot-management callers.",
   },
   "bots/triggers/delete": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"manage_bot"},
+    access: {"action":"manage_bot","kind":"universe"},
     summary: "Delete a trigger",
     description: "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.",
   },
   "bots/events/admit": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"invoke_bot"},
+    access: {"action":"invoke_bot","kind":"universe"},
     summary: "Admit an event manually",
     description: "Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.",
   },
   "bots/events/replay": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"manage_bot"},
+    access: {"action":"manage_bot","kind":"universe"},
     summary: "Replay a stored event",
     description: "Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.",
   },
   "bots/events/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List a bot's events",
     description: "Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.",
   },
   "bots/events/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read an event by number",
     description: "Returns the event row and its full stored envelope document.",
   },
   "bots/filters/test": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"manage_bot"},
+    access: {"action":"manage_bot","kind":"universe"},
     summary: "Test a CEL filter",
     description: "Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.",
   },
   "channels/accounts/create": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Create a channel account",
     description: "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.",
   },
   "channels/accounts/put": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Create or replace a channel account",
     description: "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.",
   },
   "channels/accounts/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read a channel account",
     description: "Returns the account document and revision.",
   },
   "channels/accounts/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List channel accounts",
     description: "Lists this universe's provider accounts, optionally by provider.",
   },
   "channels/accounts/delete": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Delete a channel account",
     description: "Removes the account and its pairings; chat triggers that reference it stop serving conversations.",
   },
   "channels/inbound/admit": {
     scope: "service",
-    access: {"kind":"service","requirement":"admit_channel_inbound"},
+    access: {"kind":"service"},
     summary: "Admit a provider message",
     description: "Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.",
   },
   "channels/pairings/list": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "List chat pairings",
     description: "Lists conversations paired to chat triggers, optionally by account or bot.",
   },
   "channels/pairings/delete": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"configure_resource"},
+    access: {"action":"configure_resource","kind":"universe"},
     summary: "Unpair a conversation",
     description: "Removes one pairing; the conversation must present the pairing code again to reconnect.",
   },
   "channels/conversations/read": {
     scope: "universe",
-    access: {"kind":"universe","requirement":"read"},
+    access: {"action":"read","kind":"universe"},
     summary: "Read a conversation snapshot",
     description: "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
   },
   "deployment/environment-provider-bindings/list": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "List a universe's deployment provider bindings",
-    description: "Deployment configuration inventory; requires DeploymentAdmin without granting universe content access.",
-  },
-  "deployment/identity/self": {
-    scope: "deployment",
-    access: {"kind":"identity"},
-    summary: "Read own access",
-    description: "Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected.",
-  },
-  "deployment/identity/directory": {
-    scope: "deployment",
-    access: {"kind":"identity"},
-    summary: "Read the access directory",
-    description: "Requires administration of the requested scope. In universe scope the directory holds only that universe's subjects: principals and groups holding a role there, their members, and service principals it manages. The deployment-wide directory requires deployment administration or the manage_identity capability.",
+    description: "Deployment configuration inventory of one universe's provider bindings.",
   },
   "deployment/universes/create": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "Create a universe",
     description: "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
   },
   "deployment/universes/list": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "List universes",
     description: "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.",
   },
   "deployment/universes/read": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "Read a universe",
     description: "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
   },
   "deployment/universes/delete": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "Purge a universe",
     description: "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
   },
-  "deployment/identity/apply": {
-    scope: "deployment",
-    access: {"kind":"identity"},
-    summary: "Apply identity and access changes",
-    description: "Applies a canonical identity change with current actor permissions and durable access auditing.",
-  },
   "deployment/api-keys/create": {
     scope: "deployment",
-    access: {"kind":"credential_management"},
+    access: {"kind":"deployment"},
     summary: "Create a scoped API key",
-    description: "Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
+    description: "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do.",
   },
   "deployment/api-keys/list": {
     scope: "deployment",
-    access: {"kind":"credential_management"},
+    access: {"kind":"deployment"},
     summary: "List scoped API keys",
-    description: "Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
+    description: "Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
   },
   "deployment/api-keys/revoke": {
     scope: "deployment",
-    access: {"kind":"credential_management"},
+    access: {"kind":"deployment"},
     summary: "Revoke a scoped API key",
-    description: "Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found.",
+    description: "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.",
   },
   "deployment/environment-providers/put": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "Put an environment provider",
     description: "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
   },
   "deployment/environment-providers/list": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "List environment providers",
     description: "Returns every deployment-registered deployment provider and its controller connection.",
   },
   "deployment/environment-providers/read": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "Read an environment provider",
     description: "Returns one deployment-registered deployment provider and its controller connection.",
   },
   "deployment/environment-providers/delete": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "Delete an environment provider",
     description: "Deletes a deployment provider only when no universe binding references it.",
   },
   "deployment/environment-providers/bindings/put": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "Put an environment provider binding",
     description: "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.",
   },
   "deployment/environment-providers/bindings/delete": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "Delete an environment provider binding",
     description: "Deletes a universe provider binding only after every referencing environment has reached Closed.",
   },
   "deployment/environments/adopt": {
     scope: "deployment",
-    access: {"kind":"deployment_admin"},
+    access: {"kind":"deployment"},
     summary: "Adopt a provider environment",
     description: "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.",
   },
   "deployment/channels/accounts/list": {
     scope: "deployment",
-    access: {"kind":"deployment_admin_or_capability","requirement":"discover_channel_accounts"},
+    access: {"kind":"deployment"},
     summary: "List channel accounts across universes",
     description: "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.",
   },
@@ -990,67 +934,13 @@ export type NotificationMethod = (typeof NOTIFICATIONS)[number];
 
 export interface MethodMap {
   /**
-   * Find sharing subjects
-   *
-   * Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.
-   */
-  "access/subjects": {
-    params: Api.AccessSubjectsParams;
-    result: Api.AgentApiOutcomeOfAccessSubjectsResponse;
-  };
-  /**
    * Read a workspace file
    *
-   * Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.
+   * Reads bytes at a path in the current workspace head.
    */
   "vfs/workspaces/files/read": {
     params: Api.VfsWorkspaceFileReadParams;
     result: Api.AgentApiOutcomeOfBlobReadResponse;
-  };
-  /**
-   * Read current action permissions
-   *
-   * Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.
-   */
-  "access/read": {
-    params: Api.AccessReadParams;
-    result: Api.AgentApiOutcomeOfAccessReadResponse;
-  };
-  /**
-   * Read a resource's access policy
-   *
-   * Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.
-   */
-  "access/policy/read": {
-    params: Api.AccessPolicyReadParams;
-    result: Api.AgentApiOutcomeOfAccessPolicyReadResponse;
-  };
-  /**
-   * Replace a resource's access policy
-   *
-   * Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.
-   */
-  "access/policy/put": {
-    params: Api.AccessPolicyPutParams;
-    result: Api.AgentApiOutcomeOfAccessPolicyPutResponse;
-  };
-  /**
-   * Read the universe execution policy
-   *
-   * Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.
-   */
-  "access/execution/read": {
-    params: Api.AccessExecutionReadParams;
-    result: Api.AgentApiOutcomeOfAccessExecutionReadResponse;
-  };
-  /**
-   * Update the universe execution policy
-   *
-   * Enables or disables personal execution. Existing roots keep the execution identity they were created with.
-   */
-  "access/execution/update": {
-    params: Api.AccessExecutionUpdateParams;
-    result: Api.AgentApiOutcomeOfAccessExecutionUpdateResponse;
   };
   /**
    * Inspect the Lightspeed protocol
@@ -1064,7 +954,7 @@ export interface MethodMap {
   /**
    * Create or reopen a session
    *
-   * Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.
+   * Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.
    */
   "session/start": {
     params: Api.SessionStartParams;
@@ -1091,7 +981,7 @@ export interface MethodMap {
   /**
    * List sessions
    *
-   * Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.
+   * Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.
    */
   "session/list": {
     params: Api.SessionListParams;
@@ -1150,6 +1040,15 @@ export interface MethodMap {
   "session/delete": {
     params: Api.SessionDeleteParams;
     result: Api.AgentApiOutcomeOfSessionDeleteResponse;
+  };
+  /**
+   * Share a session with the universe
+   *
+   * Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.
+   */
+  "session/share": {
+    params: Api.SessionShareParams;
+    result: Api.AgentApiOutcomeOfSessionShareResponse;
   };
   /**
    * Read the session event stream
@@ -1262,7 +1161,7 @@ export interface MethodMap {
   /**
    * Activate a session environment
    *
-   * Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.
+   * Selects an attached, live universe environment for environment-targeted tools while the session is idle.
    */
   "session/environments/activate": {
     params: Api.SessionEnvironmentActivateParams;
@@ -1307,7 +1206,7 @@ export interface MethodMap {
   /**
    * Create an environment
    *
-   * Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.
+   * Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.
    */
   "environments/create": {
     params: Api.EnvironmentCreateParams;
@@ -1325,7 +1224,7 @@ export interface MethodMap {
   /**
    * List environments
    *
-   * Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.
+   * Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.
    */
   "environments/list": {
     params: Api.EnvironmentListParams;
@@ -1343,7 +1242,7 @@ export interface MethodMap {
   /**
    * Register an external environment
    *
-   * Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.
+   * Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.
    */
   "environments/external/create": {
     params: Api.EnvironmentExternalCreateParams;
@@ -1541,7 +1440,7 @@ export interface MethodMap {
   /**
    * Read a content-addressed blob
    *
-   * Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.
+   * Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.
    */
   "blobs/read": {
     params: Api.BlobReadParams;
@@ -1568,7 +1467,7 @@ export interface MethodMap {
   /**
    * Read a VFS snapshot
    *
-   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.
+   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.
    */
   "vfs/snapshots/read": {
     params: Api.VfsSnapshotReadParams;
@@ -1577,7 +1476,7 @@ export interface MethodMap {
   /**
    * Create a mutable VFS workspace
    *
-   * Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.
+   * Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.
    */
   "vfs/workspaces/create": {
     params: Api.VfsWorkspaceCreateParams;
@@ -1595,7 +1494,7 @@ export interface MethodMap {
   /**
    * List VFS workspaces
    *
-   * Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.
+   * Lists the mutable universe workspaces with head snapshots, sizes, and revisions.
    */
   "vfs/workspaces/list": {
     params: Api.VfsWorkspaceListParams;
@@ -1622,7 +1521,7 @@ export interface MethodMap {
   /**
    * Create or replace an MCP server record
    *
-   * Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.
+   * Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.
    */
   "mcp/servers/put": {
     params: Api.McpServerPutParams;
@@ -1658,7 +1557,7 @@ export interface MethodMap {
   /**
    * List MCP server records
    *
-   * Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.
+   * Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.
    */
   "mcp/servers/list": {
     params: Api.McpServerListParams;
@@ -1694,7 +1593,7 @@ export interface MethodMap {
   /**
    * Read authentication grant metadata
    *
-   * Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
+   * Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
    */
   "auth/grants/read": {
     params: Api.AuthGrantReadParams;
@@ -1856,7 +1755,7 @@ export interface MethodMap {
   /**
    * List bots
    *
-   * Returns the roster: every bot with its trigger count, pending event count, and latest event.
+   * Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.
    */
   "bots/list": {
     params: Api.BotListParams;
@@ -1910,7 +1809,7 @@ export interface MethodMap {
   /**
    * Read a trigger
    *
-   * Returns one trigger with its incidents and cursor; the ingest path and pairing code are shown only to managing principals.
+   * Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.
    */
   "bots/triggers/read": {
     params: Api.BotTriggerReadParams;
@@ -1919,7 +1818,7 @@ export interface MethodMap {
   /**
    * List a bot's triggers
    *
-   * Returns every trigger of the bot ordered by id, secrets redacted for non-managing principals.
+   * Returns every trigger of the bot ordered by id, secrets included for bot-management callers.
    */
   "bots/triggers/list": {
     params: Api.BotTriggerListParams;
@@ -2063,29 +1962,11 @@ export interface MethodMap {
   /**
    * List a universe's deployment provider bindings
    *
-   * Deployment configuration inventory; requires DeploymentAdmin without granting universe content access.
+   * Deployment configuration inventory of one universe's provider bindings.
    */
   "deployment/environment-provider-bindings/list": {
     params: Api.DeploymentUniverseReadParams;
     result: Api.AgentApiOutcomeOfEnvironmentProviderBindingListResponse;
-  };
-  /**
-   * Read own access
-   *
-   * Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected.
-   */
-  "deployment/identity/self": {
-    params: Api.IdentityScopeParams;
-    result: Api.AgentApiOutcomeOfIdentitySelfResponse;
-  };
-  /**
-   * Read the access directory
-   *
-   * Requires administration of the requested scope. In universe scope the directory holds only that universe's subjects: principals and groups holding a role there, their members, and service principals it manages. The deployment-wide directory requires deployment administration or the manage_identity capability.
-   */
-  "deployment/identity/directory": {
-    params: Api.IdentityScopeParams;
-    result: Api.AgentApiOutcomeOfAccessDirectory;
   };
   /**
    * Create a universe
@@ -2124,18 +2005,9 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfDeploymentUniverseDeleteResponse;
   };
   /**
-   * Apply identity and access changes
-   *
-   * Applies a canonical identity change with current actor permissions and durable access auditing.
-   */
-  "deployment/identity/apply": {
-    params: Api.AccessChange;
-    result: Api.AgentApiOutcomeOfAccessChangeResult;
-  };
-  /**
    * Create a scoped API key
    *
-   * Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
+   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do.
    */
   "deployment/api-keys/create": {
     params: Api.DeploymentApiKeyCreateParams;
@@ -2144,7 +2016,7 @@ export interface MethodMap {
   /**
    * List scoped API keys
    *
-   * Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
+   * Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.
    */
   "deployment/api-keys/list": {
     params: Api.DeploymentApiKeyListParams;
@@ -2153,7 +2025,7 @@ export interface MethodMap {
   /**
    * Revoke a scoped API key
    *
-   * Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found.
+   * Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.
    */
   "deployment/api-keys/revoke": {
     params: Api.DeploymentApiKeyRevokeParams;
@@ -2242,60 +2114,12 @@ export interface RpcCaller {
 
 export const rpc = {
   /**
-   * Find sharing subjects
-   *
-   * Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.
-   */
-  accessSubjects(client: RpcCaller, params: Api.AccessSubjectsParams): Promise<Api.AgentApiOutcomeOfAccessSubjectsResponse> {
-    return client.call("access/subjects", params);
-  },
-  /**
    * Read a workspace file
    *
-   * Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.
+   * Reads bytes at a path in the current workspace head.
    */
   vfsWorkspacesFilesRead(client: RpcCaller, params: Api.VfsWorkspaceFileReadParams): Promise<Api.AgentApiOutcomeOfBlobReadResponse> {
     return client.call("vfs/workspaces/files/read", params);
-  },
-  /**
-   * Read current action permissions
-   *
-   * Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.
-   */
-  accessRead(client: RpcCaller, params: Api.AccessReadParams): Promise<Api.AgentApiOutcomeOfAccessReadResponse> {
-    return client.call("access/read", params);
-  },
-  /**
-   * Read a resource's access policy
-   *
-   * Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.
-   */
-  accessPolicyRead(client: RpcCaller, params: Api.AccessPolicyReadParams): Promise<Api.AgentApiOutcomeOfAccessPolicyReadResponse> {
-    return client.call("access/policy/read", params);
-  },
-  /**
-   * Replace a resource's access policy
-   *
-   * Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.
-   */
-  accessPolicyPut(client: RpcCaller, params: Api.AccessPolicyPutParams): Promise<Api.AgentApiOutcomeOfAccessPolicyPutResponse> {
-    return client.call("access/policy/put", params);
-  },
-  /**
-   * Read the universe execution policy
-   *
-   * Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.
-   */
-  accessExecutionRead(client: RpcCaller, params: Api.AccessExecutionReadParams): Promise<Api.AgentApiOutcomeOfAccessExecutionReadResponse> {
-    return client.call("access/execution/read", params);
-  },
-  /**
-   * Update the universe execution policy
-   *
-   * Enables or disables personal execution. Existing roots keep the execution identity they were created with.
-   */
-  accessExecutionUpdate(client: RpcCaller, params: Api.AccessExecutionUpdateParams): Promise<Api.AgentApiOutcomeOfAccessExecutionUpdateResponse> {
-    return client.call("access/execution/update", params);
   },
   /**
    * Inspect the Lightspeed protocol
@@ -2308,7 +2132,7 @@ export const rpc = {
   /**
    * Create or reopen a session
    *
-   * Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.
+   * Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.
    */
   sessionStart(client: RpcCaller, params: Api.SessionStartParams): Promise<Api.AgentApiOutcomeOfSessionStartResponse> {
     return client.call("session/start", params);
@@ -2332,7 +2156,7 @@ export const rpc = {
   /**
    * List sessions
    *
-   * Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.
+   * Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.
    */
   sessionList(client: RpcCaller, params: Api.SessionListParams): Promise<Api.AgentApiOutcomeOfSessionListResponse> {
     return client.call("session/list", params);
@@ -2384,6 +2208,14 @@ export const rpc = {
    */
   sessionDelete(client: RpcCaller, params: Api.SessionDeleteParams): Promise<Api.AgentApiOutcomeOfSessionDeleteResponse> {
     return client.call("session/delete", params);
+  },
+  /**
+   * Share a session with the universe
+   *
+   * Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.
+   */
+  sessionShare(client: RpcCaller, params: Api.SessionShareParams): Promise<Api.AgentApiOutcomeOfSessionShareResponse> {
+    return client.call("session/share", params);
   },
   /**
    * Read the session event stream
@@ -2484,7 +2316,7 @@ export const rpc = {
   /**
    * Activate a session environment
    *
-   * Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.
+   * Selects an attached, live universe environment for environment-targeted tools while the session is idle.
    */
   sessionEnvironmentsActivate(client: RpcCaller, params: Api.SessionEnvironmentActivateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentActivateResponse> {
     return client.call("session/environments/activate", params);
@@ -2524,7 +2356,7 @@ export const rpc = {
   /**
    * Create an environment
    *
-   * Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.
+   * Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.
    */
   environmentsCreate(client: RpcCaller, params: Api.EnvironmentCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentCreateResponse> {
     return client.call("environments/create", params);
@@ -2540,7 +2372,7 @@ export const rpc = {
   /**
    * List environments
    *
-   * Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.
+   * Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.
    */
   environmentsList(client: RpcCaller, params: Api.EnvironmentListParams): Promise<Api.AgentApiOutcomeOfEnvironmentListResponse> {
     return client.call("environments/list", params);
@@ -2556,7 +2388,7 @@ export const rpc = {
   /**
    * Register an external environment
    *
-   * Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.
+   * Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.
    */
   environmentsExternalCreate(client: RpcCaller, params: Api.EnvironmentExternalCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentExternalCreateResponse> {
     return client.call("environments/external/create", params);
@@ -2732,7 +2564,7 @@ export const rpc = {
   /**
    * Read a content-addressed blob
    *
-   * Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.
+   * Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.
    */
   blobsRead(client: RpcCaller, params: Api.BlobReadParams): Promise<Api.AgentApiOutcomeOfBlobReadResponse> {
     return client.call("blobs/read", params);
@@ -2756,7 +2588,7 @@ export const rpc = {
   /**
    * Read a VFS snapshot
    *
-   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.
+   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.
    */
   vfsSnapshotsRead(client: RpcCaller, params: Api.VfsSnapshotReadParams): Promise<Api.AgentApiOutcomeOfVfsSnapshotReadResponse> {
     return client.call("vfs/snapshots/read", params);
@@ -2764,7 +2596,7 @@ export const rpc = {
   /**
    * Create a mutable VFS workspace
    *
-   * Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.
+   * Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.
    */
   vfsWorkspacesCreate(client: RpcCaller, params: Api.VfsWorkspaceCreateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceCreateResponse> {
     return client.call("vfs/workspaces/create", params);
@@ -2780,7 +2612,7 @@ export const rpc = {
   /**
    * List VFS workspaces
    *
-   * Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.
+   * Lists the mutable universe workspaces with head snapshots, sizes, and revisions.
    */
   vfsWorkspacesList(client: RpcCaller, params: Api.VfsWorkspaceListParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceListResponse> {
     return client.call("vfs/workspaces/list", params);
@@ -2804,7 +2636,7 @@ export const rpc = {
   /**
    * Create or replace an MCP server record
    *
-   * Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.
+   * Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.
    */
   mcpServersPut(client: RpcCaller, params: Api.McpServerPutParams): Promise<Api.AgentApiOutcomeOfMcpServerPutResponse> {
     return client.call("mcp/servers/put", params);
@@ -2836,7 +2668,7 @@ export const rpc = {
   /**
    * List MCP server records
    *
-   * Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.
+   * Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.
    */
   mcpServersList(client: RpcCaller, params: Api.McpServerListParams): Promise<Api.AgentApiOutcomeOfMcpServerListResponse> {
     return client.call("mcp/servers/list", params);
@@ -2868,7 +2700,7 @@ export const rpc = {
   /**
    * Read authentication grant metadata
    *
-   * Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
+   * Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
    */
   authGrantsRead(client: RpcCaller, params: Api.AuthGrantReadParams): Promise<Api.AgentApiOutcomeOfAuthGrantReadResponse> {
     return client.call("auth/grants/read", params);
@@ -3012,7 +2844,7 @@ export const rpc = {
   /**
    * List bots
    *
-   * Returns the roster: every bot with its trigger count, pending event count, and latest event.
+   * Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.
    */
   botsList(client: RpcCaller, params: Api.BotListParams): Promise<Api.AgentApiOutcomeOfBotListResponse> {
     return client.call("bots/list", params);
@@ -3060,7 +2892,7 @@ export const rpc = {
   /**
    * Read a trigger
    *
-   * Returns one trigger with its incidents and cursor; the ingest path and pairing code are shown only to managing principals.
+   * Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.
    */
   botsTriggersRead(client: RpcCaller, params: Api.BotTriggerReadParams): Promise<Api.AgentApiOutcomeOfBotTriggerReadResponse> {
     return client.call("bots/triggers/read", params);
@@ -3068,7 +2900,7 @@ export const rpc = {
   /**
    * List a bot's triggers
    *
-   * Returns every trigger of the bot ordered by id, secrets redacted for non-managing principals.
+   * Returns every trigger of the bot ordered by id, secrets included for bot-management callers.
    */
   botsTriggersList(client: RpcCaller, params: Api.BotTriggerListParams): Promise<Api.AgentApiOutcomeOfBotTriggerListResponse> {
     return client.call("bots/triggers/list", params);
@@ -3196,26 +3028,10 @@ export const rpc = {
   /**
    * List a universe's deployment provider bindings
    *
-   * Deployment configuration inventory; requires DeploymentAdmin without granting universe content access.
+   * Deployment configuration inventory of one universe's provider bindings.
    */
   deploymentEnvironmentProviderBindingsList(client: RpcCaller, params: Api.DeploymentUniverseReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderBindingListResponse> {
     return client.call("deployment/environment-provider-bindings/list", params);
-  },
-  /**
-   * Read own access
-   *
-   * Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected.
-   */
-  deploymentIdentitySelf(client: RpcCaller, params: Api.IdentityScopeParams): Promise<Api.AgentApiOutcomeOfIdentitySelfResponse> {
-    return client.call("deployment/identity/self", params);
-  },
-  /**
-   * Read the access directory
-   *
-   * Requires administration of the requested scope. In universe scope the directory holds only that universe's subjects: principals and groups holding a role there, their members, and service principals it manages. The deployment-wide directory requires deployment administration or the manage_identity capability.
-   */
-  deploymentIdentityDirectory(client: RpcCaller, params: Api.IdentityScopeParams): Promise<Api.AgentApiOutcomeOfAccessDirectory> {
-    return client.call("deployment/identity/directory", params);
   },
   /**
    * Create a universe
@@ -3250,17 +3066,9 @@ export const rpc = {
     return client.call("deployment/universes/delete", params);
   },
   /**
-   * Apply identity and access changes
-   *
-   * Applies a canonical identity change with current actor permissions and durable access auditing.
-   */
-  deploymentIdentityApply(client: RpcCaller, params: Api.AccessChange): Promise<Api.AgentApiOutcomeOfAccessChangeResult> {
-    return client.call("deployment/identity/apply", params);
-  },
-  /**
    * Create a scoped API key
    *
-   * Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
+   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do.
    */
   deploymentApiKeysCreate(client: RpcCaller, params: Api.DeploymentApiKeyCreateParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse> {
     return client.call("deployment/api-keys/create", params);
@@ -3268,7 +3076,7 @@ export const rpc = {
   /**
    * List scoped API keys
    *
-   * Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
+   * Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.
    */
   deploymentApiKeysList(client: RpcCaller, params: Api.DeploymentApiKeyListParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyListResponse> {
     return client.call("deployment/api-keys/list", params);
@@ -3276,7 +3084,7 @@ export const rpc = {
   /**
    * Revoke a scoped API key
    *
-   * Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found.
+   * Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.
    */
   deploymentApiKeysRevoke(client: RpcCaller, params: Api.DeploymentApiKeyRevokeParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyRevokeResponse> {
     return client.call("deployment/api-keys/revoke", params);

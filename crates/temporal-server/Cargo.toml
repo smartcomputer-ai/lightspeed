@@ -4,7 +4,6 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-access = { path = "../access" }
 temporal-workflow = { path = "../temporal-workflow" }
 jsonschema = { version = "0.33", default-features = false }
 ipnet = "2"

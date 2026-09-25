@@ -1,21 +1,25 @@
-//! Request identity and key authorization against a disposable schema; no .env,
+//! Key authentication against a disposable schema: scope, universe header,
+//! method groups, asserted actors and revocation. No .env,
 //! Temporal, model providers or external credentials are used.
-use access::*;
-use auth::{ApiKeyStore, CreateApiKey, MintedApiKey};
+use std::collections::BTreeSet;
+use std::{panic::AssertUnwindSafe, str::FromStr};
+
+use api::AgentApiErrorKind;
+use api::{AccessScope, Attribution, MethodGroup};
+use auth::{ApiKeySpec, MintedApiKey};
 use axum::http::HeaderMap;
 use futures_util::FutureExt as _;
 use sqlx::{
     Executor as _,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
-use std::{panic::AssertUnwindSafe, str::FromStr};
-use store_pg::{PgAccessStore, PgApiKeyStore, PgStore};
-use temporal_server::gateway::authentication::{PRINCIPAL_HEADER, UNIVERSE_HEADER, authenticate};
+use store_pg::{PgApiKeyStore, PgStore};
+use temporal_server::gateway::authentication::{ACTOR_HEADER, UNIVERSE_HEADER, authenticate};
 use uuid::Uuid;
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires explicitly approved LIGHTSPEED_TEST_POSTGRES_URL; isolated schema"]
-async fn request_identity_keys_assertions_and_revocation() {
+async fn keys_scope_groups_actors_and_revocation() {
     let url =
         std::env::var("LIGHTSPEED_TEST_POSTGRES_URL").expect("explicit test Postgres URL required");
     let admin = PgPoolOptions::new()
@@ -49,7 +53,7 @@ async fn request_identity_keys_assertions_and_revocation() {
     }
 }
 
-fn headers(key: &MintedApiKey, universe: Option<Uuid>, asserted: Option<Uuid>) -> HeaderMap {
+fn headers(key: &MintedApiKey, universe: Option<Uuid>, actor: Option<&str>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
         "authorization",
@@ -58,504 +62,199 @@ fn headers(key: &MintedApiKey, universe: Option<Uuid>, asserted: Option<Uuid>) -
     if let Some(id) = universe {
         headers.insert(UNIVERSE_HEADER, id.to_string().parse().unwrap());
     }
-    if let Some(id) = asserted {
-        headers.insert(PRINCIPAL_HEADER, format!("user:{id}").parse().unwrap());
+    if let Some(actor) = actor {
+        headers.insert(ACTOR_HEADER, actor.parse().unwrap());
     }
     headers
 }
+
 async fn issue(
     keys: &PgApiKeyStore,
     scope: AccessScope,
-    principal: Uuid,
-    actor: Uuid,
+    groups: Option<&[MethodGroup]>,
+    assert_actor: bool,
 ) -> MintedApiKey {
-    let key = auth::mint_api_key(scope, principal, actor, None, 10);
-    keys.create_api_key(CreateApiKey {
-        authority_scope: access::AccessScope::Deployment,
-        key_hash: key.key_hash.clone(),
-        record: key.record.clone(),
-    })
-    .await
+    let key = auth::mint_api_key(
+        ApiKeySpec {
+            scope,
+            groups: groups.map(|groups| groups.iter().copied().collect::<BTreeSet<_>>()),
+            assert_actor,
+            created_by: Attribution::Local,
+            display_name: None,
+        },
+        10,
+    )
     .unwrap();
-    key
-}
-async fn exercise(pool: &sqlx::PgPool) {
-    PgStore::migrate(pool).await.unwrap();
-    let identities = PgAccessStore::new(pool.clone());
-    let keys = PgApiKeyStore::new(pool.clone());
-    let disabled_bootstrap = Uuid::new_v4();
-    sqlx::query("INSERT INTO access_principals(principal_id,kind,status,display_name,created_at_ms) VALUES($1,'user','disabled','Disabled bootstrap',0)")
-        .bind(disabled_bootstrap).execute(pool).await.unwrap();
-    assert!(matches!(
-        identities
-            .bootstrap(disabled_bootstrap, "Disabled bootstrap".into(), 1)
-            .await,
-        Err(AccessError::Denied)
-    ));
-    let admin = Uuid::new_v4();
-    identities
-        .bootstrap(admin, "Administrator".into(), 1)
+    keys.create_api_key(&key.key_hash, &key.record)
         .await
         .unwrap();
+    key
+}
+
+async fn exercise(pool: &sqlx::PgPool) {
+    PgStore::migrate(pool).await.unwrap();
+    let keys = PgApiKeyStore::new(pool.clone());
     let universe = Uuid::new_v4();
     let other = Uuid::new_v4();
     for id in [universe, other] {
-        identities
-            .apply(
-                admin,
-                AccessChange::CreateUniverse {
-                    universe_id: id,
-                    slug: None,
-                },
-                2,
-            )
-            .await
-            .unwrap();
+        store_pg::create_universe(pool, id).await.unwrap();
     }
     let scope = AccessScope::Universe {
         universe_id: universe,
     };
-    let user = Uuid::new_v4();
-    let service = Uuid::new_v4();
-    let managed = Uuid::new_v4();
-    let outsider = Uuid::new_v4();
-    for (id, kind, management_scope) in [
-        (user, PrincipalKind::User, AccessScope::Deployment),
-        (service, PrincipalKind::Service, AccessScope::Deployment),
-        (managed, PrincipalKind::Service, scope),
-        (outsider, PrincipalKind::User, AccessScope::Deployment),
-    ] {
-        identities
-            .apply(
-                admin,
-                AccessChange::CreatePrincipal {
-                    id,
-                    kind,
-                    management_scope,
-                    display_name: format!("Identity {id}"),
-                },
-                3,
-            )
-            .await
-            .unwrap();
-    }
-    let retry = AccessChange::CreatePrincipal {
-        id: service,
-        kind: PrincipalKind::Service,
-        management_scope: AccessScope::Deployment,
-        display_name: format!("Identity {service}"),
-    };
-    assert!(!identities.apply(admin, retry, 4).await.unwrap().changed);
-    assert!(matches!(
-        identities
-            .apply(
-                admin,
-                AccessChange::CreatePrincipal {
-                    id: service,
-                    kind: PrincipalKind::User,
-                    management_scope: AccessScope::Deployment,
-                    display_name: format!("Identity {service}")
-                },
-                4
-            )
-            .await,
-        Err(AccessError::Conflict)
-    ));
-    let membership = RoleAssignment {
-        scope,
-        subject: Subject::Principal(user),
-        role: Role::Viewer,
-    };
-    identities
-        .apply(
-            admin,
-            AccessChange::AssignRole {
-                assignment: membership,
-            },
-            4,
-        )
-        .await
-        .unwrap();
-    let user_key = issue(&keys, scope, user, user).await;
-    let service_key = issue(&keys, AccessScope::Deployment, service, admin).await;
-    let root_key = issue(&keys, AccessScope::Deployment, admin, admin).await;
-    let read = api::METHOD_SESSION_READ;
-    let lease = api::METHOD_AUTH_GRANTS_LEASE;
-    let user_headers = headers(&user_key, None, None);
-    let context = authenticate(&keys, &identities, &user_headers, read, 20)
-        .await
-        .unwrap();
-    assert_eq!(context.acting_principal().id, user);
-    assert_eq!(context.authenticated_principal.id, user);
-    assert_eq!(context.credential_scope, scope);
-    assert!(matches!(
-        context.authentication,
-        AuthenticationReference::ApiKey { .. }
-    ));
-    // Header claims alone, wrong scopes, missing membership and duplicate credentials fail closed.
-    let mut bare = HeaderMap::new();
-    bare.insert(UNIVERSE_HEADER, universe.to_string().parse().unwrap());
-    bare.insert(PRINCIPAL_HEADER, user.to_string().parse().unwrap());
-    assert!(
-        authenticate(&keys, &identities, &bare, read, 20)
-            .await
-            .is_err()
-    );
-    assert!(
-        authenticate(
-            &keys,
-            &identities,
-            &headers(&user_key, Some(other), None),
-            read,
-            20
-        )
-        .await
-        .is_err()
-    );
-    assert!(
-        authenticate(
-            &keys,
-            &identities,
-            &user_headers,
-            api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
-            20
-        )
-        .await
-        .is_err()
-    );
-    let mut duplicate = user_headers.clone();
-    duplicate.append("authorization", "Bearer lsk_other".parse().unwrap());
-    assert!(
-        authenticate(&keys, &identities, &duplicate, read, 20)
-            .await
-            .is_err()
-    );
-    assert!(
-        authenticate(
-            &keys,
-            &identities,
-            &headers(&service_key, Some(universe), None),
-            read,
-            20
-        )
-        .await
-        .is_err()
-    );
-    // Service kind and administrator role cannot substitute for a service capability.
-    assert!(
-        authenticate(
-            &keys,
-            &identities,
-            &headers(&service_key, Some(universe), None),
-            lease,
-            20
-        )
-        .await
-        .is_err()
-    );
-    assert!(
-        authenticate(
-            &keys,
-            &identities,
-            &headers(&root_key, Some(universe), None),
-            lease,
-            20
-        )
-        .await
-        .is_err()
-    );
-    let assertion = CapabilityAssignment {
-        scope,
-        principal_id: service,
-        capability: Capability::AssertUser,
-    };
-    let asserted_headers = headers(&service_key, Some(universe), Some(user));
-    assert!(
-        authenticate(&keys, &identities, &asserted_headers, read, 20)
-            .await
-            .is_err()
-    );
-    identities
-        .apply(
-            admin,
-            AccessChange::AssignCapability {
-                assignment: assertion,
-            },
-            21,
-        )
-        .await
-        .unwrap();
-    let context = authenticate(&keys, &identities, &asserted_headers, read, 22)
-        .await
-        .unwrap();
-    assert_eq!(context.acting_principal().id, user);
-    assert_eq!(context.authenticated_principal.id, service);
-    assert!(
-        authenticate(
-            &keys,
-            &identities,
-            &headers(&service_key, Some(universe), Some(outsider)),
-            read,
-            22
-        )
-        .await
-        .is_err()
-    );
-    assert!(
-        authenticate(
-            &keys,
-            &identities,
-            &headers(&service_key, Some(other), Some(user)),
-            read,
-            22
-        )
-        .await
-        .is_err()
-    );
-    identities
-        .apply(
-            admin,
-            AccessChange::AssignCapability {
-                assignment: CapabilityAssignment {
-                    scope,
-                    principal_id: service,
-                    capability: Capability::LeaseCredentials,
-                },
-            },
-            23,
-        )
-        .await
-        .unwrap();
-    assert!(
-        authenticate(
-            &keys,
-            &identities,
-            &headers(&service_key, Some(universe), None),
-            lease,
-            24
-        )
-        .await
-        .is_ok()
-    );
-    assert!(
-        authenticate(&keys, &identities, &asserted_headers, lease, 24)
-            .await
-            .is_err(),
-        "service powers never union with asserted user"
-    );
-    assert!(
-        authenticate(
-            &keys,
-            &identities,
-            &headers(&user_key, None, Some(admin)),
-            read,
-            24
-        )
-        .await
-        .is_err()
-    );
-    // Commit membership revocation: the same key and assertion stop admitting immediately.
-    identities
-        .apply(
-            admin,
-            AccessChange::RevokeRole {
-                assignment: membership,
-            },
-            25,
-        )
-        .await
-        .unwrap();
-    assert!(
-        authenticate(&keys, &identities, &user_headers, read, 26)
-            .await
-            .is_err()
-    );
-    assert!(
-        authenticate(&keys, &identities, &asserted_headers, read, 26)
-            .await
-            .is_err()
-    );
-    identities
-        .apply(
-            admin,
-            AccessChange::AssignRole {
-                assignment: membership,
-            },
-            27,
-        )
-        .await
-        .unwrap();
-    identities
-        .apply(
-            admin,
-            AccessChange::RevokeCapability {
-                assignment: assertion,
-            },
-            28,
-        )
-        .await
-        .unwrap();
-    assert!(
-        authenticate(&keys, &identities, &asserted_headers, read, 29)
-            .await
-            .is_err()
-    );
-    identities
-        .apply(
-            admin,
-            AccessChange::SetPrincipalStatus {
-                id: user,
-                status: PrincipalStatus::Disabled,
-            },
-            30,
-        )
-        .await
-        .unwrap();
-    assert!(
-        authenticate(&keys, &identities, &user_headers, read, 31)
-            .await
-            .is_err()
-    );
-    identities
-        .apply(
-            admin,
-            AccessChange::SetPrincipalStatus {
-                id: user,
-                status: PrincipalStatus::Active,
-            },
-            32,
-        )
-        .await
-        .unwrap();
-    assert!(
-        authenticate(&keys, &identities, &user_headers, read, 33)
-            .await
-            .is_ok()
-    );
-    keys.revoke_managed_key(
-        user,
+    let universe_key = issue(&keys, scope, None, false).await;
+    let deployment_key = issue(&keys, AccessScope::Deployment, None, true).await;
+    let connector = issue(
+        &keys,
         AccessScope::Deployment,
-        scope,
-        &user_key.record.key_prefix,
-        34,
+        Some(&[
+            MethodGroup::ChannelsInbound,
+            MethodGroup::BlobsPut,
+            MethodGroup::DeploymentChannels,
+        ]),
+        false,
     )
-    .await
-    .unwrap()
-    .unwrap();
-    assert!(
-        authenticate(&keys, &identities, &user_headers, read, 35)
-            .await
-            .is_err()
-    );
-    // Universe administration can mint a locally managed service, never an integration identity.
-    identities
-        .apply(
-            admin,
-            AccessChange::AssignRole {
-                assignment: RoleAssignment {
-                    scope,
-                    subject: Subject::Principal(user),
-                    role: Role::Admin,
-                },
-            },
-            36,
-        )
-        .await
-        .unwrap();
-    let managed_key = issue(&keys, scope, managed, user).await;
-    assert_eq!(managed_key.record.created_by, user);
-    assert_eq!(managed_key.record.principal_id, managed);
-    for (target, ceiling) in [
-        (service, scope),
-        (user, AccessScope::Deployment),
-        (outsider, scope),
-    ] {
-        let key = auth::mint_api_key(ceiling, target, user, None, 37);
-        assert!(matches!(
-            keys.create_api_key(CreateApiKey {
-                authority_scope: access::AccessScope::Deployment,
-                key_hash: key.key_hash,
-                record: key.record
-            })
-            .await,
-            Err(auth::ApiKeyError::Denied)
-        ));
-    }
-    // A universe credential cannot borrow the holder's deployment privileges
-    // for key issuance, even after that holder becomes a deployment admin.
-    identities
-        .apply(
-            admin,
-            AccessChange::AssignRole {
-                assignment: RoleAssignment {
-                    scope: AccessScope::Deployment,
-                    subject: Subject::Principal(user),
-                    role: Role::DeploymentAdmin,
-                },
-            },
-            37,
-        )
-        .await
-        .unwrap();
-    for (target, requested_scope) in [
-        (service, scope),
-        (user, AccessScope::Deployment),
-        (managed, AccessScope::Universe { universe_id: other }),
-    ] {
-        let key = auth::mint_api_key(requested_scope, target, user, None, 37);
-        assert!(matches!(
-            keys.create_api_key(CreateApiKey {
-                authority_scope: scope,
-                key_hash: key.key_hash,
-                record: key.record
-            })
-            .await,
-            Err(auth::ApiKeyError::Denied)
-        ));
-    }
-    assert!(
-        keys.list_managed_keys(user, scope, AccessScope::Deployment)
-            .await
-            .is_err()
-    );
-    assert!(
-        keys.revoke_managed_key(
-            user,
-            scope,
-            AccessScope::Deployment,
-            &service_key.record.key_prefix,
-            37
-        )
-        .await
-        .is_err()
-    );
-    let local = identities
-        .initialize_local_development(universe, 38)
-        .await
-        .unwrap();
+    .await;
+
+    let allowed = |headers: HeaderMap, method: &'static str| {
+        let keys = keys.clone();
+        async move {
+            authenticate(&keys, &headers, method, 20)
+                .await
+                .unwrap_or_else(|refusal| panic!("{method} refused: {refusal}"))
+        }
+    };
+    let refused = |headers: HeaderMap, method: &'static str| {
+        let keys = keys.clone();
+        async move {
+            authenticate(&keys, &headers, method, 20)
+                .await
+                .expect_err(&format!("{method} allowed"))
+        }
+    };
+
+    // A universe key reaches its universe and takes no universe header,
+    // not even its own.
+    let context = allowed(headers(&universe_key, None, None), "session/read").await;
+    assert_eq!(context.scope, scope);
+    assert_eq!(context.actor, None);
     assert_eq!(
-        identities
-            .initialize_local_development(universe, 39)
-            .await
-            .unwrap()
-            .id,
-        local.id
+        context.attribution(),
+        Attribution::Key {
+            prefix: universe_key.record.key_prefix.clone()
+        }
     );
-    identities
-        .apply(
-            admin,
-            AccessChange::SetPrincipalStatus {
-                id: local.id,
-                status: PrincipalStatus::Disabled,
-            },
-            40,
-        )
+    for selected in [universe, other] {
+        let refusal = refused(headers(&universe_key, Some(selected), None), "session/read").await;
+        assert_eq!(refusal.kind, AgentApiErrorKind::Forbidden);
+    }
+    // It holds no deployment group and never addresses the deployment.
+    refused(
+        headers(&universe_key, None, None),
+        "deployment/universes/list",
+    )
+    .await;
+
+    // A deployment key names the universe of a universe method, and takes
+    // none on a deployment method.
+    refused(headers(&deployment_key, None, None), "session/read").await;
+    let context = allowed(headers(&deployment_key, Some(other), None), "session/read").await;
+    assert_eq!(context.scope, AccessScope::Universe { universe_id: other });
+    let context = allowed(
+        headers(&deployment_key, None, None),
+        "deployment/universes/list",
+    )
+    .await;
+    assert_eq!(context.scope, AccessScope::Deployment);
+    refused(
+        headers(&deployment_key, Some(other), None),
+        "deployment/universes/list",
+    )
+    .await;
+
+    // Only a key allowed to assert actors names one, and only a well-formed
+    // one.
+    let context = allowed(
+        headers(&deployment_key, Some(universe), Some("user-42")),
+        "session/start",
+    )
+    .await;
+    assert_eq!(context.actor.as_deref(), Some("user-42"));
+    assert_eq!(
+        context.attribution(),
+        Attribution::Actor {
+            id: "user-42".into()
+        }
+    );
+    let refusal = refused(
+        headers(&universe_key, None, Some("user-42")),
+        "session/start",
+    )
+    .await;
+    assert_eq!(refusal.kind, AgentApiErrorKind::Forbidden);
+    refused(
+        headers(&deployment_key, Some(universe), Some(&"x".repeat(300))),
+        "session/start",
+    )
+    .await;
+    let mut removed_header = headers(&deployment_key, Some(universe), None);
+    removed_header.insert("x-lightspeed-principal", "user:old".parse().unwrap());
+    refused(removed_header, "session/start").await;
+
+    // A connector's key calls its groups and `initialize`, nothing else.
+    allowed(
+        headers(&connector, Some(universe), None),
+        "channels/inbound/admit",
+    )
+    .await;
+    allowed(headers(&connector, Some(universe), None), "blobs/put").await;
+    allowed(headers(&connector, Some(universe), None), "initialize").await;
+    allowed(
+        headers(&connector, None, None),
+        "deployment/channels/accounts/list",
+    )
+    .await;
+    for method in ["session/read", "blobs/read", "auth/grants/lease"] {
+        let refusal = refused(headers(&connector, Some(universe), None), method).await;
+        assert_eq!(refusal.kind, AgentApiErrorKind::Forbidden);
+    }
+
+    // Unknown methods, missing or duplicated credentials and revoked keys
+    // are refused before anyone is identified.
+    let refusal = refused(headers(&universe_key, None, None), "access/policy/put").await;
+    assert_eq!(refusal.kind, AgentApiErrorKind::InvalidRequest);
+    let refusal = refused(HeaderMap::new(), "session/read").await;
+    assert_eq!(refusal.kind, AgentApiErrorKind::Unauthenticated);
+    let mut duplicated = headers(&universe_key, None, None);
+    duplicated.append(
+        "authorization",
+        format!("Bearer {}", universe_key.secret.expose())
+            .parse()
+            .unwrap(),
+    );
+    assert_eq!(
+        refused(duplicated, "session/read").await.kind,
+        AgentApiErrorKind::Unauthenticated
+    );
+    keys.revoke_api_key(&universe_key.record.key_prefix, 30)
         .await
         .unwrap();
-    assert!(matches!(
-        identities.initialize_local_development(universe, 41).await,
-        Err(AccessError::Denied)
-    ));
-    let audit_count:i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit_changes WHERE event->>'operation' IN ('key_created','key_revoked')").fetch_one(pool).await.unwrap();
-    assert!(audit_count >= 5);
+    let refusal = refused(headers(&universe_key, None, None), "session/read").await;
+    assert_eq!(refusal.kind, AgentApiErrorKind::Unauthenticated);
+
+    // Deleting a universe removes its keys.
+    let scoped = issue(
+        &keys,
+        AccessScope::Universe { universe_id: other },
+        None,
+        false,
+    )
+    .await;
+    store_pg::delete_universe(pool, other).await.unwrap();
+    assert_eq!(
+        refused(headers(&scoped, None, None), "session/read")
+            .await
+            .kind,
+        AgentApiErrorKind::Unauthenticated
+    );
 }

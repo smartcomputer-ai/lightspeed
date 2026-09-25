@@ -15,31 +15,7 @@ pub(super) async fn compact_context(
     attempt: u32,
     request: ContextCompactActivityRequest,
 ) -> Result<ContextCompactionResult, ActivityError> {
-    let ContextCompactActivityRequest {
-        request,
-        attached_resources,
-    } = request;
-    // Compaction calls the model too, so it is held to the same authority
-    // as a turn; a refused compaction fails and the next turn is refused.
-    if let Some((access, universe_id)) = &deps.access
-        && let Some(revoked) = super::llm::revoked_authority(
-            access,
-            *universe_id,
-            &request.session_id,
-            &attached_resources,
-        )
-        .await?
-    {
-        return failed_context_compaction_result_from_error(
-            deps.blobs.as_ref(),
-            request,
-            CoreAgentIoError::Failed {
-                message: format!("run authority revoked before the model call: {revoked}"),
-            },
-        )
-        .await
-        .map_err(activity_error);
-    }
+    let request = request.request;
     match deps.llm.compact_context(request.clone()).await {
         Ok(result) => Ok(result),
         // Transient provider errors become the typed retryable activity

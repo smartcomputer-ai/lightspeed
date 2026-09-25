@@ -1,5 +1,5 @@
 use super::providers::{
-    binding_context, environment_view, load_environment_view, map_environments_error,
+    binding_context, environment_view, map_environments_error,
     parse_environment_provider_binding_id, registry_idle_policy, registry_lifecycle_status,
     registry_power_state,
 };
@@ -138,17 +138,13 @@ impl EnvironmentService {
         .await
         .map_err(map_environments_error)?;
         Ok(EnvironmentIngressPutResponse {
-            environment: self.view(&environment).await?,
+            environment: environment_view(&environment),
         })
     }
 
-    /// Register an external environment under `environment_id`, whose
-    /// access anchor the caller has reserved. A retried request id returns
-    /// the environment it created before, under its own id.
     pub(crate) async fn create_external_environment_record(
         &self,
         params: EnvironmentExternalCreateParams,
-        environment_id: EnvironmentId,
     ) -> Result<EnvironmentExternalCreateResponse, AgentApiError> {
         let request_id =
             EnvironmentProvisionRequestId::try_new(params.request_id).map_err(|error| {
@@ -159,7 +155,7 @@ impl EnvironmentService {
             self.store.as_ref(),
             CreateExternalEnvironment {
                 request_id,
-                environment_id,
+                environment_id: allocate_environment_id(),
                 incarnation_id: allocate_incarnation_id(),
                 connection,
                 display_name: params.display_name,
@@ -170,22 +166,16 @@ impl EnvironmentService {
         .await
         .map_err(map_environments_error)?;
         Ok(EnvironmentExternalCreateResponse {
-            environment: self.view(&environment).await?,
+            environment: environment_view(&environment),
         })
     }
-    /// Accept an environment under `environment_id`, whose access anchor
-    /// the caller has reserved. A retried request id returns the environment
-    /// it created before, under its own id.
     pub(crate) async fn create_environment_record(
         &self,
         params: EnvironmentCreateParams,
-        environment_id: EnvironmentId,
     ) -> Result<EnvironmentCreateResponse, AgentApiError> {
-        let environment = self
-            .accept_environment_create(params, environment_id)
-            .await?;
+        let environment = self.accept_environment_create(params).await?;
         Ok(EnvironmentCreateResponse {
-            environment: self.view(&environment).await?,
+            environment: environment_view(&environment),
         })
     }
 
@@ -193,7 +183,6 @@ impl EnvironmentService {
     pub(crate) async fn accept_environment_create(
         &self,
         params: EnvironmentCreateParams,
-        environment_id: EnvironmentId,
     ) -> Result<EnvironmentRecord, AgentApiError> {
         let request_id =
             EnvironmentProvisionRequestId::try_new(params.request_id).map_err(|error| {
@@ -211,7 +200,7 @@ impl EnvironmentService {
             self.store.as_ref(),
             CreateEnvironment {
                 request_id,
-                environment_id,
+                environment_id: allocate_environment_id(),
                 incarnation_id: allocate_incarnation_id(),
                 binding_id,
                 template_id,
@@ -278,7 +267,7 @@ impl EnvironmentService {
         .await
         .map_err(map_environments_error)?;
         Ok(EnvironmentPowerPutResponse {
-            environment: self.view(&environment).await?,
+            environment: environment_view(&environment),
         })
     }
 
@@ -304,69 +293,51 @@ impl EnvironmentService {
         .await
         .map_err(map_environments_error)?;
         Ok(EnvironmentIdlePolicyPutResponse {
-            environment: self.view(&environment).await?,
+            environment: environment_view(&environment),
         })
     }
 
-    /// Read an environment whose access summary the caller's authorization
-    /// already loaded.
     pub(crate) async fn read_environment_record(
         &self,
         params: EnvironmentReadParams,
-        access: access::ResourceAccessSummary,
     ) -> Result<EnvironmentReadResponse, AgentApiError> {
         let environment_id = parse_registry_environment_id(params.environment_id)?;
         let environment = EnvironmentStore::read_environment(self.store.as_ref(), &environment_id)
             .await
             .map_err(map_environments_error)?;
         Ok(EnvironmentReadResponse {
-            environment: environment_view(&environment, access),
+            environment: environment_view(&environment),
         })
     }
 
-    /// The environments `reader` may see, with their access summaries.
     pub(crate) async fn list_environment_records(
         &self,
         params: EnvironmentListParams,
-        reader: &store_pg::Reader,
     ) -> Result<EnvironmentListResponse, AgentApiError> {
-        let environments = self
-            .store
-            .list_environments_for(
-                reader,
-                ListEnvironments {
-                    metadata: params.metadata,
-                    provider_id: params
-                        .provider_id
-                        .map(parse_environment_provider_id)
-                        .transpose()?,
-                    binding_id: params
-                        .binding_id
-                        .map(parse_environment_provider_binding_id)
-                        .transpose()?,
-                    status: params.status.map(registry_lifecycle_status),
-                    registration_key_id: params
-                        .registration_key_id
-                        .map(parse_registration_key_id)
-                        .transpose()?,
-                },
-            )
-            .await
-            .map_err(map_environments_error)?;
+        let environments = EnvironmentStore::list_environments(
+            self.store.as_ref(),
+            ListEnvironments {
+                metadata: params.metadata,
+                provider_id: params
+                    .provider_id
+                    .map(parse_environment_provider_id)
+                    .transpose()?,
+                binding_id: params
+                    .binding_id
+                    .map(parse_environment_provider_binding_id)
+                    .transpose()?,
+                status: params.status.map(registry_lifecycle_status),
+                registration_key_id: params
+                    .registration_key_id
+                    .map(parse_registration_key_id)
+                    .transpose()?,
+            },
+        )
+        .await
+        .map_err(map_environments_error)?;
         Ok(EnvironmentListResponse {
-            environments: environments
-                .into_iter()
-                .map(|(record, access)| environment_view(&record, access))
-                .collect(),
+            environments: environments.iter().map(environment_view).collect(),
         })
-    }
-
-    /// The view of an environment with the access summary of its anchor.
-    pub(crate) async fn view(
-        &self,
-        record: &EnvironmentRecord,
-    ) -> Result<EnvironmentView, AgentApiError> {
-        load_environment_view(&self.store, record).await
     }
 
     pub(crate) async fn close_environment_record(
@@ -384,7 +355,7 @@ impl EnvironmentService {
         .await
         .map_err(map_environments_error)?;
         Ok(EnvironmentCloseResponse {
-            environment: self.view(&environment).await?,
+            environment: environment_view(&environment),
         })
     }
 

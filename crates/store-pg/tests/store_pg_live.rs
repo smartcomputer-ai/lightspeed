@@ -4,8 +4,8 @@ use auth::{
     AuthFlowId, AuthFlowStore, AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
     AuthProviderKind, AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord,
     CreateOAuthClientRecord, FinishAuthFlow, GrantRefreshLock, ListAuthGrants, OAuthClientId,
-    OAuthClientStore, PrincipalRef, PutSecretRecord, SECRET_KIND_STATIC_BEARER, SecretId,
-    SecretStore, SecretValue, TokenEndpointAuthMethod, state_hash,
+    OAuthClientStore, PutSecretRecord, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore,
+    SecretValue, TokenEndpointAuthMethod, state_hash,
 };
 use engine::{
     BlobRef, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
@@ -245,7 +245,6 @@ async fn pg_live_session_list_pages_newest_first_and_rename_persists() {
         .expect("create other-universe session");
 
     for (name, created_at_ms) in [("list-a", 10), ("list-b", 20), ("list-c", 30)] {
-        anchor_session(&store, &SessionId::new(name)).await;
         store
             .create_session(CreateSession {
                 metadata: Default::default(),
@@ -432,7 +431,6 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
         profile_revision: 3,
         limits,
     };
-    anchor_session(&store, &SessionId::new("child-1")).await;
     let child = store
         .create_session(CreateSession {
             metadata: Default::default(),
@@ -1902,10 +1900,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
         provider_id: "static".to_owned(),
         provider_kind: AuthProviderKind::StaticBearer,
         exposure: auth::AuthGrantExposure::Brokered,
-        principal: PrincipalRef {
-            kind: auth::PrincipalKind::ServiceAccount,
-            id: Some("test-service".into()),
-        },
+        created_by: api::Attribution::Local,
         display_name: Some("CRM MCP".to_owned()),
         subject_hint: None,
         scopes: Vec::new(),
@@ -2314,10 +2309,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
             provider_id: "static".to_owned(),
             provider_kind: AuthProviderKind::StaticBearer,
             exposure: auth::AuthGrantExposure::Brokered,
-            principal: PrincipalRef {
-                kind: auth::PrincipalKind::ServiceAccount,
-                id: Some("test-service".into()),
-            },
+            created_by: api::Attribution::Local,
             display_name: Some("CRM token".to_owned()),
             subject_hint: None,
             scopes: vec!["contacts.read".to_owned()],
@@ -2343,10 +2335,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
                     provider_id: "static".to_owned(),
                     provider_kind: AuthProviderKind::StaticBearer,
                     exposure: auth::AuthGrantExposure::Brokered,
-                    principal: PrincipalRef {
-                        kind: auth::PrincipalKind::ServiceAccount,
-                        id: Some("test-service".into())
-                    },
+                    created_by: api::Attribution::Local,
                     display_name: None,
                     subject_hint: None,
                     scopes: Vec::new(),
@@ -2465,10 +2454,7 @@ async fn pg_live_auth_flows_are_one_time_use() {
             provider_id: "crm".to_owned(),
             provider_kind: AuthProviderKind::McpOAuth,
             grant_exposure: auth::AuthGrantExposure::Brokered,
-            principal: PrincipalRef {
-                kind: auth::PrincipalKind::ServiceAccount,
-                id: Some("test-service".into()),
-            },
+            created_by: api::Attribution::Local,
             state_hash: state_hash(state),
             pkce_verifier_secret: SecretId::new("authsec_pkce_live"),
             redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
@@ -2542,10 +2528,7 @@ async fn pg_live_auth_flows_are_one_time_use() {
             provider_id: "crm".to_owned(),
             provider_kind: AuthProviderKind::McpOAuth,
             grant_exposure: auth::AuthGrantExposure::Brokered,
-            principal: PrincipalRef {
-                kind: auth::PrincipalKind::ServiceAccount,
-                id: Some("test-service".into()),
-            },
+            created_by: api::Attribution::Local,
             state_hash: state_hash("state-live-2"),
             pkce_verifier_secret: SecretId::new("authsec_pkce_live2"),
             redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
@@ -2575,10 +2558,7 @@ async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
             provider_id: "crm".to_owned(),
             provider_kind: AuthProviderKind::McpOAuth,
             exposure: auth::AuthGrantExposure::Brokered,
-            principal: PrincipalRef {
-                kind: auth::PrincipalKind::ServiceAccount,
-                id: Some("test-service".into()),
-            },
+            created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: None,
             scopes: Vec::new(),
@@ -2756,10 +2736,7 @@ async fn pg_live_grant_metadata_round_trips() {
             provider_id: "lightspeed-github".to_owned(),
             provider_kind: AuthProviderKind::GitHubApp,
             exposure: auth::AuthGrantExposure::Brokered,
-            principal: PrincipalRef {
-                kind: auth::PrincipalKind::ServiceAccount,
-                id: Some("test-service".into()),
-            },
+            created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: Some("acme".to_owned()),
             scopes: Vec::new(),
@@ -2872,10 +2849,7 @@ async fn pg_live_environment_credentials_round_trip() {
                 provider_id: provider.to_owned(),
                 provider_kind: kind,
                 exposure: auth::AuthGrantExposure::Brokered,
-                principal: PrincipalRef {
-                    kind: auth::PrincipalKind::ServiceAccount,
-                    id: Some("test-service".into()),
-                },
+                created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
                 scopes: Vec::new(),
@@ -2990,7 +2964,6 @@ async fn pg_live_session_metadata_filters_by_containment_and_put_replaces() {
         ),
         ("meta-none", BTreeMap::new(), 30),
     ] {
-        anchor_session(&store, &SessionId::new(name)).await;
         store
             .create_session(CreateSession {
                 session_id: SessionId::new(name),
@@ -3094,35 +3067,6 @@ async fn pg_live_session_metadata_filters_by_containment_and_put_replaces() {
             .await,
         Err(SessionStoreError::SessionNotFound { .. })
     ));
-}
-
-/// A person who owns the sessions these fixtures anchor.
-const FIXTURE_OWNER: Uuid = Uuid::from_u128(0x5e55_1017_0000_4000_8000_0000_0000_0001);
-
-/// Reserve the access anchor of a session before creating it, as the
-/// runtime does: listings show only sessions whose anchor and root policy
-/// exist.
-async fn anchor_session(store: &PgStore, session_id: &SessionId) {
-    sqlx::query("INSERT INTO access_principals (principal_id, kind, status, display_name, created_at_ms) VALUES ($1, 'user', 'active', 'Store fixture owner', 0) ON CONFLICT DO NOTHING")
-        .bind(FIXTURE_OWNER)
-        .execute(store.pool())
-        .await
-        .expect("create fixture owner");
-    store_pg::PgAccessStore::new(store.pool().clone())
-        .reserve_resource(
-            store.config().universe_id,
-            &access::ResourceRef::Session(session_id.as_str().to_owned()),
-            &access::ActionActor::Principal { id: FIXTURE_OWNER },
-            &access::ResourceController::Principal(FIXTURE_OWNER),
-            Some(access::Execution {
-                run_as: FIXTURE_OWNER,
-                kind: access::ExecutionKind::Personal,
-            }),
-            None,
-            1,
-        )
-        .await
-        .expect("reserve session anchor");
 }
 
 async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {

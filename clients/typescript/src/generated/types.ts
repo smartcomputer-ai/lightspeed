@@ -4,77 +4,17 @@
  */
 
 /**
+ * Who sees a root's tree. Sessions start unshared (`restricted`) and are
+ * shared with the universe once, one way; everything else is shared.
+ *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessChange".
+ * via the `definition` "Visibility".
  */
-export type AccessChange =
-  | {
-      displayName: string;
-      id: string;
-      kind: IdentityPrincipalKind;
-      managementScope: AccessScope;
-      operation: "create_principal";
-    }
-  | {
-      id: string;
-      operation: "set_principal_status";
-      status: PrincipalStatus;
-    }
-  | {
-      displayName: string;
-      id: string;
-      operation: "create_group";
-    }
-  | {
-      displayName: string;
-      id: string;
-      operation: "rename_group";
-    }
-  | {
-      membership: Membership;
-      operation: "put_membership";
-    }
-  | {
-      membership: Membership;
-      operation: "remove_membership";
-    }
-  | {
-      assignment: RoleAssignment;
-      operation: "assign_role";
-    }
-  | {
-      assignment: RoleAssignment;
-      operation: "revoke_role";
-    }
-  | {
-      assignment: RoleAssignment;
-      operation: "replace_role";
-      role: Role;
-    }
-  | {
-      assignment: CapabilityAssignment;
-      operation: "assign_capability";
-    }
-  | {
-      assignment: CapabilityAssignment;
-      operation: "revoke_capability";
-    }
-  | {
-      operation: "create_universe";
-      slug?: string | null;
-      universeId: string;
-    }
-  | {
-      operation: "recover_universe";
-      principalId: string;
-      universeId: string;
-    };
+export type Visibility = "universe" | "restricted";
 /**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "IdentityPrincipalKind".
- */
-export type IdentityPrincipalKind = "user" | "service";
-/**
+ * What a key reaches or a request addresses: one universe, or the
+ * deployment.
+ *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AccessScope".
  */
@@ -86,150 +26,6 @@ export type AccessScope =
       kind: "universe";
       universeId: string;
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "PrincipalStatus".
- */
-export type PrincipalStatus = "active" | "disabled";
-/**
- * A role in a universe, or `deployment_admin` in the deployment. `executor`
- * is the role of agent identities: it sees universe-visible resources and
- * uses resources, nothing else. The runtime assigns it to a universe's
- * execution principal; identity administration never assigns or revokes
- * it, and its holders never get a key.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "Role".
- */
-export type Role =
-  "viewer" | "contributor" | "operator" | "admin" | "deployment_admin" | "executor";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "Subject".
- */
-export type Subject =
-  | {
-      id: string;
-      kind: "principal";
-    }
-  | {
-      id: string;
-      kind: "group";
-    };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "Capability".
- */
-export type Capability =
-  | (
-      | "assert_user"
-      | "lease_credentials"
-      | "admit_channel_inbound"
-      | "discover_channel_accounts"
-      | "manage_identity"
-    )
-  | "read_private_content";
-/**
- * One permission a grant confers on a root. On sessions and bots `Read`
- * sees the tree and `Write` also controls it; on workspaces, environments
- * and MCP servers `Use` is the only permission.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ResourcePermission".
- */
-export type ResourcePermission = "read" | "write" | "use";
-/**
- * Who may see a root's tree without a grant.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "Visibility".
- */
-export type Visibility = "universe" | "restricted";
-/**
- * Durable control facts, distinct from an agent's execution credentials.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ResourceRef".
- */
-export type ResourceRef =
-  | {
-      id: string;
-      kind: "session";
-    }
-  | {
-      id: string;
-      kind: "bot";
-    }
-  | {
-      id: string;
-      kind: "profile";
-    }
-  | {
-      id: string;
-      kind: "workspace";
-    }
-  | {
-      id: string;
-      kind: "environment";
-    }
-  | {
-      id: string;
-      kind: "mcp_server";
-    };
-/**
- * Under whose authority a root's work runs: the universe's execution
- * service, or the person who created it.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ExecutionKind".
- */
-export type ExecutionKind = "service" | "personal";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ActionActor".
- */
-export type ActionActor =
-  | {
-      id: string;
-      kind: "principal";
-    }
-  | {
-      cause: string;
-      component: string;
-      kind: "internal";
-    };
-/**
- * The identity `access/read` decides resource actions for.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessReadAs".
- */
-export type AccessReadAs = "caller" | "execution_service";
-/**
- * Actions are independent of RPC spelling. Ownership and resource policy are
- * evaluated by the service that resolves the target, not from client claims.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "UniverseAction".
- */
-export type UniverseAction =
-  | (
-      | "read"
-      | "create_session"
-      | "control_session"
-      | "stop_session"
-      | "delete_session"
-      | "create_profile"
-      | "manage_profile"
-      | "create_bot"
-      | "manage_bot"
-      | "invoke_bot"
-      | "manage_access"
-    )
-  | "use_resource"
-  | "configure_resource"
-  | "share_resource"
-  | "create_workspace";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolKindView".
@@ -346,6 +142,30 @@ export type AgentNotification =
         message: string;
         sessionId?: string | null;
       };
+    };
+/**
+ * Who created a resource or authored bytes. An actor is whatever a key
+ * allowed to assert one said; core compares it and never resolves it.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "Attribution".
+ */
+export type Attribution =
+  | {
+      id: string;
+      kind: "actor";
+    }
+  | {
+      kind: "key";
+      prefix: string;
+    }
+  | {
+      kind: "local";
+    }
+  | {
+      cause: string;
+      component: string;
+      kind: "internal";
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -724,6 +544,10 @@ export type SessionEventKindView =
       type: "sessionClosed";
     }
   | {
+      /**
+       * Who asked, as the API boundary attributed the request.
+       */
+      requestedBy?: Attribution | null;
       runId: string;
       source: RunAcceptedSourceView;
       submissionId?: string | null;
@@ -735,11 +559,19 @@ export type SessionEventKindView =
     }
   | {
       input: ContextEntryInputView[];
+      /**
+       * Who asked, as the API boundary attributed the request.
+       */
+      requestedBy?: Attribution | null;
       runId: string;
       steeringId: string;
       type: "runSteeringAccepted";
     }
   | {
+      /**
+       * Who asked, as the API boundary attributed the request.
+       */
+      requestedBy?: Attribution | null;
       runId: string;
       type: "runCancellationRequested";
     }
@@ -755,7 +587,7 @@ export type SessionEventKindView =
     }
   | {
       approvalId: string;
-      decidedBy?: PrincipalRefView | null;
+      decidedBy?: Attribution | null;
       decision: ApprovalDecisionKind;
       note?: string | null;
       runId: string;
@@ -778,6 +610,11 @@ export type SessionEventKindView =
       type: "runFailed";
     }
   | {
+      /**
+       * Who cancelled a run that had not started; a started run records
+       * its requester on the cancellation request.
+       */
+      requestedBy?: Attribution | null;
       runId: string;
       type: "runCancelled";
     }
@@ -958,11 +795,6 @@ export type RunAcceptedSourceView = {
 };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "PrincipalKind".
- */
-export type PrincipalKind = "user" | "serviceAccount";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ApprovalDecisionKind".
  */
 export type ApprovalDecisionKind = "approve" | "reject";
@@ -973,15 +805,12 @@ export type ApprovalDecisionKind = "approve" | "reject";
  * via the `definition` "RunFailureKindView".
  */
 export type RunFailureKindView =
-  | (
-      | "model_failure"
-      | "tool_failure"
-      | "context_failure"
-      | "limit_exceeded"
-      | "cancelled"
-      | "internal"
-    )
-  | "authority_revoked";
+  | "model_failure"
+  | "tool_failure"
+  | "context_failure"
+  | "limit_exceeded"
+  | "cancelled"
+  | "internal";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunViewSource".
@@ -1144,7 +973,7 @@ export type BotTriggerView = {
   filter?: string | null;
   /**
    * Webhook triggers: the ingest path including its URL token, for
-   * managing principals only.
+   * bot-management callers only.
    */
   ingestPath?: string | null;
   /**
@@ -1154,8 +983,8 @@ export type BotTriggerView = {
   lastFilterError?: string | null;
   lastFilterErrorAtMs?: number | null;
   /**
-   * Chat triggers with `pairing: code`: the code, for managing
-   * principals only.
+   * Chat triggers with `pairing: code`: the code, for bot-management
+   * callers only.
    */
   pairingCode?: string | null;
   revision: number;
@@ -1461,6 +1290,33 @@ export type ContextAppendStatus = "applied" | "unchanged" | "failed";
  * via the `definition` "ContextRemoveStatus".
  */
 export type ContextRemoveStatus = "removed" | "absent" | "failed";
+/**
+ * The methods a key may call, by group. Every public method but
+ * `initialize` belongs to exactly one group, derived from its name, so a
+ * new method never changes what an existing key reaches beyond its group.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "MethodGroup".
+ */
+export type MethodGroup =
+  | (
+      | "vfs"
+      | "profiles"
+      | "models"
+      | "mcp"
+      | "bots"
+      | "deployment/universes"
+      | "deployment/api-keys"
+    )
+  | "session"
+  | "blobs/put"
+  | "environments"
+  | "channels"
+  | "channels/inbound"
+  | "auth"
+  | "auth/lease"
+  | "deployment/environment-providers"
+  | "deployment/channels";
 /**
  * Steady power state of a provisioned environment.
  *
@@ -1790,7 +1646,7 @@ export type BotTriggerInput = {
   /**
    * Chat triggers with `pairing: code`: set a specific pairing code
    * (8–64 chars) instead of the server-minted one. Never returned to
-   * non-managing principals.
+   * channel-facing views.
    */
   pairingCode?: string | null;
   route?: BotTriggerRoute | null;
@@ -1891,26 +1747,57 @@ export type ProfileSource =
  */
 export type MethodAccess =
   | {
+      action: UniverseAction;
       kind: "universe";
-      requirement: UniverseAction;
     }
   | {
       kind: "service";
-      requirement: Capability;
     }
   | {
-      kind: "deployment_admin";
-    }
-  | {
-      kind: "credential_management";
-    }
-  | {
-      kind: "identity";
-    }
-  | {
-      kind: "deployment_admin_or_capability";
-      requirement: Capability;
+      kind: "deployment";
     };
+/**
+ * What a public method does, independent of its RPC spelling. Requests are
+ * gated by their key's groups; this classifies what the runtime's own work
+ * may do and which role a gate built on the contract should require.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "UniverseAction".
+ */
+export type UniverseAction =
+  | (
+      | "read"
+      | "create_session"
+      | "control_session"
+      | "stop_session"
+      | "delete_session"
+      | "create_profile"
+      | "manage_profile"
+      | "create_bot"
+      | "manage_bot"
+      | "invoke_bot"
+      | "create_workspace"
+    )
+  | "share_session"
+  | "use_resource"
+  | "configure_resource";
+/**
+ * Where a method names the session it acts on, so a gate can decide per
+ * session without a hand-written table. A creation method may name one that
+ * does not exist yet.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "MethodTarget".
+ */
+export type MethodTarget = "sessionId";
+/**
+ * Universe roles as gates built on this contract name them. Core holds no
+ * roles; this is metadata only.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "RecommendedRole".
+ */
+export type RecommendedRole = "viewer" | "contributor" | "operator" | "admin";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunStartSource".
@@ -1932,314 +1819,16 @@ export interface LightspeedAgentAPI {
   [k: string]: unknown;
 }
 /**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "Membership".
- */
-export interface Membership {
-  groupId: string;
-  principalId: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RoleAssignment".
- */
-export interface RoleAssignment {
-  role: Role;
-  scope: AccessScope;
-  subject: Subject;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CapabilityAssignment".
- */
-export interface CapabilityAssignment {
-  capability: Capability;
-  principalId: string;
-  scope: AccessScope;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessChangeResult".
- */
-export interface AccessChangeResult {
-  changed: boolean;
-  policyRevision: number;
-}
-/**
- * Administrative directory view. Assignments are limited to the requested scope.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessDirectory".
- */
-export interface AccessDirectory {
-  capabilities: CapabilityAssignment[];
-  groups: IdentityGroup[];
-  memberships: Membership[];
-  policyRevision: number;
-  principals: IdentityPrincipal[];
-  roles: RoleAssignment[];
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "IdentityGroup".
- */
-export interface IdentityGroup {
-  createdAtMs: number;
-  displayName: string;
-  id: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "IdentityPrincipal".
- */
-export interface IdentityPrincipal {
-  createdAtMs: number;
-  displayName: string;
-  id: string;
-  kind: IdentityPrincipalKind;
-  /**
-   * Who may manage this service identity; it does not grant access itself.
-   * Human identities are deployment-managed.
-   */
-  managementScope: AccessScope;
-  status: PrincipalStatus;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessExecutionReadParams".
- */
-export interface AccessExecutionReadParams {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessExecutionReadResponse".
- */
-export interface AccessExecutionReadResponse {
-  policy: UniverseExecutionPolicy;
-}
-/**
- * A universe's execution policy: the service principal its work runs as by
- * default, and whether people may run work as themselves.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "UniverseExecutionPolicy".
- */
-export interface UniverseExecutionPolicy {
-  executionPrincipalId: string;
-  personalExecutionEnabled: boolean;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessExecutionUpdateParams".
- */
-export interface AccessExecutionUpdateParams {
-  personalExecutionEnabled: boolean;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessExecutionUpdateResponse".
- */
-export interface AccessExecutionUpdateResponse {
-  policy: UniverseExecutionPolicy;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessGrantInput".
- */
-export interface AccessGrantInput {
-  permission: ResourcePermission;
-  subject: Subject;
-}
-/**
- * Audience of a root, requested at creation. A session or bot created under
- * another root (a bot's session, a delegated child) has no audience of its
- * own and refuses this.
+ * The audience of a new session, requested at creation. Absent means
+ * unshared: visible to its creator until it is shared with the universe. A
+ * session created under another root (a bot's session, a delegated child)
+ * follows that root and refuses this.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AccessInput".
  */
 export interface AccessInput {
-  /**
-   * Grants on the root: `read` or `write` on a session or bot, `use` on
-   * a workspace, environment or MCP server. Each subject must currently
-   * hold a role in the universe.
-   */
-  grants?: AccessGrantInput[];
-  /**
-   * `universe` lets every member read; `restricted` limits reading to the
-   * owner and the grants below. Absent means `universe`.
-   */
   visibility?: Visibility | null;
-}
-/**
- * Replace a root's visibility and grant set. On a session or bot only the
- * owner may add or remove `write`; writers may share `read` and change
- * visibility; readers change nothing. On a workspace, environment or MCP
- * server only the owner or an Admin changes access, and `use` is the only
- * grant.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessPolicyPutParams".
- */
-export interface AccessPolicyPutParams {
-  /**
-   * The revision from `access/policy/read`; absent replaces unconditionally.
-   */
-  expectedRevision?: number | null;
-  grants?: AccessGrantInput[];
-  /**
-   * Hand the root to another member of the universe. Only the current
-   * owner may set it; the previous owner keeps no permission of its own.
-   */
-  owner?: string | null;
-  resource: ResourceRef;
-  visibility: Visibility;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessPolicyPutResponse".
- */
-export interface AccessPolicyPutResponse {
-  policy: AccessPolicyView;
-}
-/**
- * The policy governing a resource: its root's owner, visibility and grants.
- * A resource below a root (a bot's session, a delegated child) shows its
- * root's policy; sharing it means sharing the root.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessPolicyView".
- */
-export interface AccessPolicyView {
-  /**
-   * Who the root's work runs as; absent for kinds that run nothing:
-   * profiles, workspaces, environments and MCP servers.
-   */
-  execution?: Execution | null;
-  grants: ResourceGrant[];
-  owner: string;
-  resource: ResourceRef;
-  /**
-   * Advances with every replacement; pass it as `expectedRevision`.
-   */
-  revision: number;
-  /**
-   * The root whose policy this is; equal to `resource` for a root.
-   */
-  root: ResourceRef;
-  updatedAtMs: number;
-  updatedBy: ActionActor;
-  visibility: Visibility;
-}
-/**
- * The execution identity of a root, fixed at creation and copied to every
- * resource below it. Never a login identity of someone else: `personal`
- * means the owner itself, `service` a keyless service principal.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "Execution".
- */
-export interface Execution {
-  kind: ExecutionKind;
-  runAs: string;
-}
-/**
- * One grant on a root as stored.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ResourceGrant".
- */
-export interface ResourceGrant {
-  grantedAtMs: number;
-  grantedBy: string;
-  permission: ResourcePermission;
-  subject: Subject;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessPolicyReadParams".
- */
-export interface AccessPolicyReadParams {
-  resource: ResourceRef;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessPolicyReadResponse".
- */
-export interface AccessPolicyReadResponse {
-  policy: AccessPolicyView;
-}
-/**
- * Current caller's action permissions. This is an advisory snapshot: mutations
- * always authorize again, and runtime prerequisites still apply.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessReadParams".
- */
-export interface AccessReadParams {
-  /**
-   * Whose resource actions to report. Universe-level `actions` are always
-   * the caller's.
-   */
-  as?: AccessReadAs & string;
-  /**
-   * Up to 100 existing sessions, bots, profiles, workspaces, environments
-   * or MCP servers in the selected universe. Missing resources return no
-   * actions.
-   */
-  resources?: ResourceRef[];
-  /**
-   * Include every retention descendant when previewing session deletion.
-   */
-  sessionDeleteCascade?: boolean;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessReadResponse".
- */
-export interface AccessReadResponse {
-  /**
-   * Allowed actions that do not require a target. Resource actions are
-   * returned only under `resources`, even when the caller has a broad role.
-   */
-  actions: UniverseAction[];
-  resources: ResourceAccessView[];
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ResourceAccessView".
- */
-export interface ResourceAccessView {
-  actions: UniverseAction[];
-  resource: ResourceRef;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessSubjectView".
- */
-export interface AccessSubjectView {
-  displayName: string;
-  subject: Subject;
-}
-/**
- * Search eligible sharing subjects in the selected universe. This exposes
- * names and identifiers only, never the administrative identity directory.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessSubjectsParams".
- */
-export interface AccessSubjectsParams {
-  query?: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessSubjectsResponse".
- */
-export interface AccessSubjectsResponse {
-  principalId: string;
-  /**
-   * At most 100 matches; refine the query to find another subject.
-   */
-  subjects: AccessSubjectView[];
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2268,11 +1857,11 @@ export interface AgentApiError {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAccessChangeResult".
+ * via the `definition` "AgentApiOutcomeOfAuthClientCreateResponse".
  */
-export interface AgentApiOutcomeOfAccessChangeResult {
+export interface AgentApiOutcomeOfAuthClientCreateResponse {
   notifications?: AgentNotification[];
-  result: AccessChangeResult;
+  result: AuthClientCreateResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2280,8 +1869,8 @@ export interface AgentApiOutcomeOfAccessChangeResult {
  */
 export interface SessionView {
   /**
-   * The root governing this session, its owner and visibility, and who
-   * its work runs as.
+   * The audience of the session's root: whether it is shared with the
+   * universe, and who created it.
    */
   access: ResourceAccessSummary;
   activeContext: ContextView;
@@ -2333,16 +1922,18 @@ export interface SessionView {
   updatedAtMs: number;
 }
 /**
- * What a viewer needs to show "shared through X, running as Y" without a
- * second request: the root and its policy, plus the execution identity.
+ * The audience of a session's or bot's root as views show it: whether it is
+ * shared with the universe, and who created it. A bot's session and a
+ * delegated child show their root's.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ResourceAccessSummary".
  */
 export interface ResourceAccessSummary {
-  execution?: Execution | null;
-  owner: string;
-  root: ResourceRef;
+  /**
+   * Absent for work whose creator was not recorded.
+   */
+  createdBy?: Attribution | null;
   visibility: Visibility;
 }
 /**
@@ -3072,14 +2663,6 @@ export interface ContextEntryInputView {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "PrincipalRefView".
- */
-export interface PrincipalRefView {
-  id?: string | null;
-  kind: PrincipalKind;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolCallEventView".
  */
 export interface ToolCallEventView {
@@ -3207,70 +2790,6 @@ export interface ToolCallMediaView {
   kind: MediaKind;
   mime: string;
   name?: string | null;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAccessDirectory".
- */
-export interface AgentApiOutcomeOfAccessDirectory {
-  notifications?: AgentNotification[];
-  result: AccessDirectory;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAccessExecutionReadResponse".
- */
-export interface AgentApiOutcomeOfAccessExecutionReadResponse {
-  notifications?: AgentNotification[];
-  result: AccessExecutionReadResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAccessExecutionUpdateResponse".
- */
-export interface AgentApiOutcomeOfAccessExecutionUpdateResponse {
-  notifications?: AgentNotification[];
-  result: AccessExecutionUpdateResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAccessPolicyPutResponse".
- */
-export interface AgentApiOutcomeOfAccessPolicyPutResponse {
-  notifications?: AgentNotification[];
-  result: AccessPolicyPutResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAccessPolicyReadResponse".
- */
-export interface AgentApiOutcomeOfAccessPolicyReadResponse {
-  notifications?: AgentNotification[];
-  result: AccessPolicyReadResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAccessReadResponse".
- */
-export interface AgentApiOutcomeOfAccessReadResponse {
-  notifications?: AgentNotification[];
-  result: AccessReadResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAccessSubjectsResponse".
- */
-export interface AgentApiOutcomeOfAccessSubjectsResponse {
-  notifications?: AgentNotification[];
-  result: AccessSubjectsResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthClientCreateResponse".
- */
-export interface AgentApiOutcomeOfAuthClientCreateResponse {
-  notifications?: AgentNotification[];
-  result: AuthClientCreateResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3419,6 +2938,10 @@ export interface AuthGitHubInstallationGrantResponse {
 export interface AuthGrantView {
   audience?: string | null;
   createdAtMs: number;
+  /**
+   * Who created the grant. Attribution only; it confers no access.
+   */
+  createdBy: Attribution;
   displayName?: string | null;
   expiresAtMs?: number | null;
   exposure: AuthGrantExposure;
@@ -3434,7 +2957,6 @@ export interface AuthGrantView {
   metadata?: {
     [k: string]: unknown;
   };
-  principal: PrincipalRefView;
   providerId: string;
   providerKind: AuthProviderKind;
   scopes?: string[];
@@ -4262,7 +3784,7 @@ export interface AgentApiOutcomeOfBotReadResponse {
  */
 export interface BotReadResponse {
   /**
-   * The root governing this bot and its sessions, and who they run as.
+   * The bot's audience, always the universe, and who created it.
    */
   access: ResourceAccessSummary;
   bot: BotView;
@@ -4397,8 +3919,8 @@ export interface BotSessionSnapshot {
  */
 export interface SessionSummaryView {
   /**
-   * The root governing this session, its owner and visibility, and who
-   * its work runs as.
+   * The audience of the session's root: whether it is shared with the
+   * universe, and who created it.
    */
   access: ResourceAccessSummary;
   closedAtMs?: number | null;
@@ -4820,18 +4342,20 @@ export interface DeploymentApiKeyCreateResponse {
   secret: string;
 }
 /**
- * Non-secret scoped key metadata, including authenticated identity and issuer.
+ * Non-secret key metadata: what the key reaches and may call, and who
+ * minted it.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "DeploymentApiKeyView".
  */
 export interface DeploymentApiKeyView {
+  assertActor: boolean;
   createdAtMs: number;
-  createdBy: string;
+  createdBy: Attribution;
   displayName?: string | null;
+  groups: MethodGroup[];
   keyPrefix: string;
   lastUsedAtMs?: number | null;
-  principalId: string;
   revokedAtMs?: number | null;
   scope: AccessScope;
 }
@@ -4930,11 +4454,6 @@ export interface DeploymentEnvironmentAdoptResponse {
  * via the `definition` "EnvironmentView".
  */
 export interface EnvironmentView {
-  /**
-   * The environment's owner and visibility; an environment runs no work
-   * of its own, so `execution` is absent.
-   */
-  access: ResourceAccessSummary;
   createdAtMs: number;
   /**
    * Lightspeed-owned power intent; `status` is the observed state.
@@ -5711,39 +5230,6 @@ export interface EnvironmentTemplateReadResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfIdentitySelfResponse".
- */
-export interface AgentApiOutcomeOfIdentitySelfResponse {
-  notifications?: AgentNotification[];
-  result: IdentitySelfResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "IdentitySelfResponse".
- */
-export interface IdentitySelfResponse {
-  access: EffectiveAccess;
-  universes: EffectiveAccess[];
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EffectiveAccess".
- */
-export interface EffectiveAccess {
-  /**
-   * Explicit capabilities in this exact scope; no role implies one.
-   */
-  capabilities: Capability[];
-  policyRevision: number;
-  principal: IdentityPrincipal;
-  /**
-   * Only assignments in this exact scope, including group-derived roles.
-   */
-  roles: Role[];
-  scope: AccessScope;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfInitializeResponse".
  */
 export interface AgentApiOutcomeOfInitializeResponse {
@@ -5860,11 +5346,6 @@ export interface McpServerDeleteResponse {
  * via the `definition` "McpServerView".
  */
 export interface McpServerView {
-  /**
-   * The server's owner and visibility; a server runs no work of its own,
-   * so `execution` is absent.
-   */
-  access: ResourceAccessSummary;
   allowPrivateNetwork: boolean;
   allowedTools?: string[] | null;
   approval: RemoteMcpApprovalPolicy;
@@ -6526,6 +6007,21 @@ export interface SessionRetentionPutResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionShareResponse".
+ */
+export interface AgentApiOutcomeOfSessionShareResponse {
+  notifications?: AgentNotification[];
+  result: SessionShareResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionShareResponse".
+ */
+export interface SessionShareResponse {
+  access: ResourceAccessSummary;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionStartResponse".
  */
 export interface AgentApiOutcomeOfSessionStartResponse {
@@ -6647,11 +6143,6 @@ export interface VfsWorkspaceCreateResponse {
  * via the `definition` "VfsWorkspaceView".
  */
 export interface VfsWorkspaceView {
-  /**
-   * The workspace's owner and visibility; a workspace runs nothing, so
-   * `execution` is absent.
-   */
-  access: ResourceAccessSummary;
   baseSnapshotRef?: string | null;
   /**
    * Total byte size of the head snapshot.
@@ -6943,11 +6434,6 @@ export interface AuthProviderReadParams {
  */
 export interface BlobHasParams {
   blobRefs?: string[];
-  /**
-   * As for `blobs/read`; a blob the caller may not read through the
-   * resource reports as absent.
-   */
-  resource?: ResourceRef | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6974,15 +6460,6 @@ export interface BlobPutParams {
  */
 export interface BlobReadParams {
   blobRef: string;
-  /**
-   * The session or bot the blob is read through: the caller
-   * must be able to read it and the blob must be admitted content of it.
-   * Without a resource only a blob the caller uploaded is readable. A
-   * resource that does not authorize the read is a refusal, not a prompt
-   * to try another. Workspaces, environments and MCP servers are refused
-   * here; read a workspace's files with `vfs/workspaces/files/read`.
-   */
-  resource?: ResourceRef | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6996,17 +6473,7 @@ export interface BotCloseParams {
  * via the `definition` "BotCreateParams".
  */
 export interface BotCreateParams {
-  /**
-   * Audience of the bot, its events and every session it creates, set
-   * atomically with its creation. Absent means universe-visible.
-   */
-  access?: AccessInput | null;
   bot: BotInput;
-  /**
-   * Execution identity of the bot and every session it creates; absent
-   * means the universe's execution service.
-   */
-  execution?: ExecutionInput | null;
   /**
    * Triggers created with the bot in one go; a failure rolls the bot
    * back.
@@ -7063,18 +6530,6 @@ export interface BotInput {
    * (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
    */
   selfConfig?: boolean;
-}
-/**
- * Requested execution identity of a new root. `service` runs as the
- * universe's execution service; `personal` runs as the creating person and
- * needs the universe to allow it. Absent means `service`. A resource
- * created under another root inherits and refuses this.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ExecutionInput".
- */
-export interface ExecutionInput {
-  kind: ExecutionKind;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -7170,7 +6625,12 @@ export interface BotFilterTestParams {
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BotListParams".
  */
-export interface BotListParams {}
+export interface BotListParams {
+  /**
+   * Only bots this actor created.
+   */
+  createdBy?: string | null;
+}
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BotPutParams".
@@ -7444,13 +6904,25 @@ export interface ContextRemoveParams {
  */
 export interface DeploymentApiKeyCreateParams {
   /**
+   * Whether the key may name the actor a request acts for with the
+   * `x-lightspeed-actor` header. Give it only to a gate that authenticates
+   * people, such as the Platform.
+   */
+  assertActor?: boolean;
+  /**
    * Human-readable purpose shown in key-management interfaces.
    */
   displayName: string;
   /**
-   * Canonical identity authenticated by this credential.
+   * The method groups the key may call; absent grants every group its
+   * scope allows. Keys never change: to change what a key may do, revoke
+   * it and mint another.
    */
-  principalId: string;
+  groups?: MethodGroup[] | null;
+  /**
+   * A universe, or the deployment. A deployment key addresses a universe
+   * with the `x-lightspeed-universe` header and may hold deployment groups.
+   */
   scope: AccessScope;
 }
 /**
@@ -7458,7 +6930,10 @@ export interface DeploymentApiKeyCreateParams {
  * via the `definition` "DeploymentApiKeyListParams".
  */
 export interface DeploymentApiKeyListParams {
-  scope: AccessScope;
+  /**
+   * Only keys of this scope; absent lists every key.
+   */
+  scope?: AccessScope | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -7466,7 +6941,6 @@ export interface DeploymentApiKeyListParams {
  */
 export interface DeploymentApiKeyRevokeParams {
   keyPrefix: string;
-  scope: AccessScope;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -7596,13 +7070,6 @@ export interface EnvironmentCloseParams {
  * via the `definition` "EnvironmentCreateParams".
  */
 export interface EnvironmentCreateParams {
-  /**
-   * Who may see and use the new environment, set atomically with its
-   * creation; the caller owns it. Absent means universe-visible. Grants
-   * take the `use` permission only. A retried `requestId` returns the
-   * environment it created before and ignores this.
-   */
-  access?: AccessInput | null;
   bindingId: string;
   displayName?: string | null;
   /**
@@ -7650,11 +7117,6 @@ export interface EnvironmentCredentialUnbindParams {
  * via the `definition` "EnvironmentExternalCreateParams".
  */
 export interface EnvironmentExternalCreateParams {
-  /**
-   * Who may see and use the new environment, as for
-   * `environments/create`.
-   */
-  access?: AccessInput | null;
   /**
    * Connection to an envd instance reachable from Lightspeed.
    */
@@ -7857,13 +7319,6 @@ export interface EnvironmentTemplateReadParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "IdentityScopeParams".
- */
-export interface IdentityScopeParams {
-  scope: AccessScope;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "InitializeParams".
  */
 export interface InitializeParams {
@@ -7912,9 +7367,6 @@ export interface JsonRpcError {
  */
 export interface ManagedSessionStartParams {
   /**
-   * Immutable workflow tools admitted only when the session is first
-   * created. This document is not part of `SessionConfig` and cannot be
-   * changed through `session/config/put`.
    * Audience of the new session, as for `session/start`.
    */
   access?: AccessInput | null;
@@ -7927,10 +7379,6 @@ export interface ManagedSessionStartParams {
   deleteAfterCloseMs?: number | null;
   displayName?: string | null;
   /**
-   * Execution identity of the new session, as for `session/start`.
-   */
-  execution?: ExecutionInput | null;
-  /**
    * Descriptive key/value metadata with the same bounds as
    * `session/start`; applied only when the session is first created.
    */
@@ -7939,6 +7387,11 @@ export interface ManagedSessionStartParams {
   };
   profile?: ProfileSource | null;
   sessionId?: string | null;
+  /**
+   * Immutable workflow tools admitted only when the session is first
+   * created. This document is not part of `SessionConfig` and cannot be
+   * changed through `session/config/put`.
+   */
   workflowTools: ManagedSessionWorkflowToolsInput;
 }
 /**
@@ -8000,13 +7453,6 @@ export interface McpServerListParams {
  * via the `definition` "McpServerPutParams".
  */
 export interface McpServerPutParams {
-  /**
-   * Who may see and use a server this call creates; the caller owns it.
-   * Absent means universe-visible. Grants take the `use` permission only.
-   * Refused when the server already exists: change its access with
-   * `access/policy/put`.
-   */
-  access?: AccessInput | null;
   /**
    * Checked only when the server already exists; absent replaces (or
    * creates) unconditionally.
@@ -8287,6 +7733,10 @@ export interface SessionEventsReadParams {
  */
 export interface SessionListParams {
   /**
+   * Only sessions whose root this actor created.
+   */
+  createdBy?: string | null;
+  /**
    * Opaque cursor from the previous page's `nextCursor`.
    */
   cursor?: string | null;
@@ -8312,6 +7762,15 @@ export interface SessionListParams {
    * Only sub-agent sessions whose lineage root is this session.
    */
   rootSessionId?: string | null;
+  /**
+   * Only sessions whose root has this visibility.
+   */
+  visibility?: Visibility | null;
+  /**
+   * Only sessions whose root is shared with the universe or was created
+   * by this actor: what that actor sees as a non-administrator.
+   */
+  visibleTo?: string | null;
 }
 /**
  * Replace a session's metadata with a complete map (the same bounds as
@@ -8366,12 +7825,19 @@ export interface SessionRetentionPutParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionShareParams".
+ */
+export interface SessionShareParams {
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionStartParams".
  */
 export interface SessionStartParams {
   /**
    * Audience of the new session, set atomically with its creation. Absent
-   * means universe-visible.
+   * means unshared until `session/share`; a retry keeps the original.
    */
   access?: AccessInput | null;
   config?: SessionConfig | null;
@@ -8382,11 +7848,6 @@ export interface SessionStartParams {
    */
   deleteAfterCloseMs?: number | null;
   displayName?: string | null;
-  /**
-   * Execution identity of the new session; absent means the universe's
-   * execution service.
-   */
-  execution?: ExecutionInput | null;
   /**
    * Descriptive key/value metadata, applied only when the session is
    * first created: at most 32 entries, keys 1..=64 bytes, values 1..=256
@@ -8413,13 +7874,6 @@ export interface SkillListParams {
  */
 export interface VfsSnapshotCommitParams {
   manifest: unknown;
-  /**
-   * Admit unchanged files from this readable workspace's current head.
-   * Every other file must still be an upload of the caller. This does not
-   * change the workspace; updating its head has its own permission and
-   * revision check.
-   */
-  sourceWorkspaceId?: string | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -8427,25 +7881,12 @@ export interface VfsSnapshotCommitParams {
  */
 export interface VfsSnapshotReadParams {
   snapshotRef: string;
-  /**
-   * The workspace the snapshot is read through: the caller must be able
-   * to see it, and the snapshot must be its current head or base.
-   * Without a workspace only a snapshot the caller committed or uploaded
-   * is readable. A snapshot reference alone confers nothing.
-   */
-  workspaceId?: string | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceCreateParams".
  */
 export interface VfsWorkspaceCreateParams {
-  /**
-   * Who may see and use the new workspace, set atomically with its
-   * creation; the caller owns it. Absent means universe-visible. Grants
-   * take the `use` permission only.
-   */
-  access?: AccessInput | null;
   displayName?: string | null;
   /**
    * Snapshot to seed the workspace from. Absent starts the workspace from
@@ -8462,9 +7903,7 @@ export interface VfsWorkspaceDeleteParams {
   workspaceId: string;
 }
 /**
- * Read a file from a workspace's current head. The caller must be able to
- * see the workspace; this does not authorize arbitrary blobs or snapshot
- * references.
+ * Read a file from a workspace's current head, by path.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceFileReadParams".
@@ -8490,15 +7929,8 @@ export interface VfsWorkspaceReadParams {
  * via the `definition` "VfsWorkspaceUpdateParams".
  */
 export interface VfsWorkspaceUpdateParams {
-  /**
-   * Renames the workspace, which requires configuring it; absent keeps
-   * the current name.
-   */
   displayName?: string | null;
   expectedRevision?: number | null;
-  /**
-   * The new head; moving it requires use of the workspace.
-   */
   snapshotRef: string;
   workspaceId: string;
 }

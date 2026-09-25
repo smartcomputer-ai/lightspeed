@@ -2,12 +2,6 @@ use super::*;
 
 #[async_trait]
 pub trait AgentApiService: Send + Sync {
-    async fn access_subjects(
-        &self,
-        _params: AccessSubjectsParams,
-    ) -> Result<AgentApiOutcome<AccessSubjectsResponse>, AgentApiError> {
-        Err(AgentApiError::internal("sharing subjects are unavailable"))
-    }
     async fn read_vfs_workspace_file(
         &self,
         _params: VfsWorkspaceFileReadParams,
@@ -15,38 +9,6 @@ pub trait AgentApiService: Send + Sync {
         Err(AgentApiError::internal(
             "workspace file reads are unavailable",
         ))
-    }
-    async fn read_access(
-        &self,
-        _params: AccessReadParams,
-    ) -> Result<AgentApiOutcome<AccessReadResponse>, AgentApiError> {
-        Err(AgentApiError::internal(
-            "action permissions are unavailable",
-        ))
-    }
-    async fn read_access_policy(
-        &self,
-        _params: AccessPolicyReadParams,
-    ) -> Result<AgentApiOutcome<AccessPolicyReadResponse>, AgentApiError> {
-        Err(AgentApiError::internal("access policies are unavailable"))
-    }
-    async fn put_access_policy(
-        &self,
-        _params: AccessPolicyPutParams,
-    ) -> Result<AgentApiOutcome<AccessPolicyPutResponse>, AgentApiError> {
-        Err(AgentApiError::internal("access policies are unavailable"))
-    }
-    async fn read_access_execution(
-        &self,
-        _params: AccessExecutionReadParams,
-    ) -> Result<AgentApiOutcome<AccessExecutionReadResponse>, AgentApiError> {
-        Err(AgentApiError::internal("execution policy is unavailable"))
-    }
-    async fn update_access_execution(
-        &self,
-        _params: AccessExecutionUpdateParams,
-    ) -> Result<AgentApiOutcome<AccessExecutionUpdateResponse>, AgentApiError> {
-        Err(AgentApiError::internal("execution policy is unavailable"))
     }
     async fn initialize(
         &self,
@@ -139,6 +101,13 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionCloseParams,
     ) -> Result<AgentApiOutcome<SessionCloseResponse>, AgentApiError>;
+
+    async fn share_session(
+        &self,
+        _params: SessionShareParams,
+    ) -> Result<AgentApiOutcome<SessionShareResponse>, AgentApiError> {
+        Err(AgentApiError::internal("session sharing is unavailable"))
+    }
 
     async fn delete_session(
         &self,

@@ -80,8 +80,8 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
         Some(base_url.clone()),
         stores,
     )?);
-    temporal_server::gateway::principal::with_request_context(
-        support::live::local_request_context_for(access::AccessScope::Deployment).await?,
+    temporal_server::gateway::request_context::with_request_context(
+        support::live::local_request_context_for(api::AccessScope::Deployment).await?,
         GatewayDeploymentApi::new(runtime.clone()).create_universe(
             api::DeploymentUniverseCreateParams {
                 universe_id: universe_id.to_string(),
@@ -112,10 +112,10 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
     let sandbox = tempfile::tempdir()?;
     let root = sandbox.path().canonicalize()?;
     let context =
-        support::live::local_request_context_for(access::AccessScope::Universe { universe_id })
+        support::live::local_request_context_for(api::AccessScope::Universe { universe_id })
             .await?;
     // Keep the large transfer scenario off the current-thread test stack.
-    let result = temporal_server::gateway::principal::with_request_context(context, Box::pin(async {
+    let result = temporal_server::gateway::request_context::with_request_context(context, Box::pin(async {
         let state = runtime.state_for(universe_id, false).await?;
         let key = state.api.create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
             display_name: "VFS transfer live".into(),
@@ -344,7 +344,6 @@ async fn run_case(
     }}).await?.result.profile;
     api.start_session(api::SessionStartParams {
         access: None,
-        execution: None,
         session_id: Some(session.to_string()),
         profile: Some(api::ProfileSource::Named {
             profile_id: profile.profile_id,

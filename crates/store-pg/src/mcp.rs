@@ -111,11 +111,76 @@ impl McpRegistryStore for PgStore {
         &self,
         request: ListMcpServers,
     ) -> Result<Vec<McpServerRecord>, McpRegistryError> {
-        self.server_rows(None, request)
-            .await?
-            .iter()
-            .map(server_record_from_row)
-            .collect()
+        let rows = match request.status {
+            Some(status) => {
+                sqlx::query(
+                    r#"
+                    SELECT
+                        server_id,
+                        display_name,
+                        server_url,
+                        transport,
+                        default_server_label,
+                        description,
+                        allowed_tools,
+                        execution,
+                        exposure,
+                        approval_default,
+                        defer_loading_default,
+                        allow_private_network,
+                        auth_policy,
+                        auth_metadata_json,
+                        auth_grant_id,
+                        status,
+                        revision,
+                        created_at_ms,
+                        updated_at_ms
+                    FROM mcp_servers
+                    WHERE universe_id = $1 AND status = $2
+                    ORDER BY server_id
+                    "#,
+                )
+                .bind(self.config.universe_id)
+                .bind(status_to_str(status))
+                .fetch_all(&self.pool)
+                .await
+            }
+            None => {
+                sqlx::query(
+                    r#"
+                    SELECT
+                        server_id,
+                        display_name,
+                        server_url,
+                        transport,
+                        default_server_label,
+                        description,
+                        allowed_tools,
+                        execution,
+                        exposure,
+                        approval_default,
+                        defer_loading_default,
+                        allow_private_network,
+                        auth_policy,
+                        auth_metadata_json,
+                        auth_grant_id,
+                        status,
+                        revision,
+                        created_at_ms,
+                        updated_at_ms
+                    FROM mcp_servers
+                    WHERE universe_id = $1
+                    ORDER BY server_id
+                    "#,
+                )
+                .bind(self.config.universe_id)
+                .fetch_all(&self.pool)
+                .await
+            }
+        }
+        .map_err(|error| mcp_sql_error("list mcp servers", error))?;
+
+        rows.iter().map(server_record_from_row).collect()
     }
 
     async fn delete_server(
@@ -125,11 +190,6 @@ impl McpRegistryStore for PgStore {
         self.ensure_universe()
             .await
             .map_err(|error| mcp_store_error("ensure universe", error))?;
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|error| mcp_sql_error("begin mcp server delete", error))?;
         let row = sqlx::query(
             r#"
             DELETE FROM mcp_servers
@@ -158,7 +218,7 @@ impl McpRegistryStore for PgStore {
         )
         .bind(self.config.universe_id)
         .bind(server_id.as_str())
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&self.pool)
         .await
         .map_err(|error| mcp_sql_error("delete mcp server", error))?;
 
@@ -167,103 +227,11 @@ impl McpRegistryStore for PgStore {
                 server_id: server_id.clone(),
             });
         };
-        // The anchor goes with the server, so the id is free again.
-        sqlx::query("DELETE FROM access_resources WHERE universe_id = $1 AND resource_kind = 'mcp_server' AND resource_id = $2")
-            .bind(self.config.universe_id)
-            .bind(server_id.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(|error| mcp_sql_error("release mcp server anchor", error))?;
-        tx.commit()
-            .await
-            .map_err(|error| mcp_sql_error("commit mcp server delete", error))?;
         server_record_from_row(&row)
     }
 }
 
-const SERVER_COLUMNS: &str = r#"
-    server_id,
-    display_name,
-    server_url,
-    transport,
-    default_server_label,
-    description,
-    allowed_tools,
-    execution,
-    exposure,
-    approval_default,
-    defer_loading_default,
-    allow_private_network,
-    auth_policy,
-    auth_metadata_json,
-    auth_grant_id,
-    status,
-    revision,
-    created_at_ms,
-    updated_at_ms
-"#;
-
 impl PgStore {
-    /// `list_servers` for one reader: only servers the reader may see,
-    /// decided in SQL by their access policy, each with the access summary
-    /// its view carries. A server without an anchor is never listed.
-    pub async fn list_servers_for(
-        &self,
-        reader: &crate::Reader,
-        request: ListMcpServers,
-    ) -> Result<Vec<(McpServerRecord, ::access::ResourceAccessSummary)>, McpRegistryError> {
-        self.server_rows(Some(reader), request)
-            .await?
-            .iter()
-            .map(|row| {
-                Ok((
-                    server_record_from_row(row)?,
-                    crate::resources::summary_from_list_row(row).map_err(|error| {
-                        McpRegistryError::Store {
-                            message: format!("decode mcp server access: {error}"),
-                        }
-                    })?,
-                ))
-            })
-            .collect()
-    }
-
-    /// Every server matching the request, or with a reader only those it
-    /// may see, joined with their access summary.
-    async fn server_rows(
-        &self,
-        reader: Option<&crate::Reader>,
-        request: ListMcpServers,
-    ) -> Result<Vec<sqlx::postgres::PgRow>, McpRegistryError> {
-        let columns = crate::resources::qualify_columns(SERVER_COLUMNS, "s");
-        let (access_columns, access_join, filter) = match reader {
-            Some(reader) => (
-                format!(", {}", crate::resources::SUMMARY_COLUMNS),
-                crate::resources::summary_join("mcp_server", "s", "server_id"),
-                crate::resources::operational_filter(reader, "mcp_server", "s", "server_id", 3),
-            ),
-            None => (String::new(), String::new(), "TRUE".to_owned()),
-        };
-        let (principal, root_kind, root_id) = reader.map(crate::Reader::binds).unwrap_or_default();
-        sqlx::query(&format!(
-            r#"
-            SELECT {columns}{access_columns}
-            FROM mcp_servers s
-            {access_join}
-            WHERE s.universe_id = $1 AND ($2::text IS NULL OR s.status = $2) AND {filter}
-            ORDER BY s.server_id
-            "#
-        ))
-        .bind(self.config.universe_id)
-        .bind(request.status.map(status_to_str))
-        .bind(principal)
-        .bind(root_kind)
-        .bind(root_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| mcp_sql_error("list mcp servers", error))
-    }
-
     /// Insert a fresh record at revision 1; `AlreadyExists` when the id is
     /// taken.
     async fn insert_server(

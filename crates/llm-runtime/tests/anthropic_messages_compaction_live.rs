@@ -144,6 +144,7 @@ async fn anthropic_messages_live_manual_standalone_compaction_preserves_marker()
             session_id,
             observed_at_ms: 40,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                requested_by: None,
                 notify_on_terminal: Vec::new(),
                 submission_id: None,
                 source: engine::RunRequestSource::Input {

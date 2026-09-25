@@ -45,6 +45,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- declarations without a lifecycle controller do not make a session
     -- managed; controller/tool details remain in the log.
     managed boolean NOT NULL DEFAULT false,
+    -- Who started it: the attribution of the request or bot worker, stamped
+    -- once by the gateway right after the start. Null on delegated children,
+    -- which read their root's, and on a root until the stamp.
+    created_by jsonb,
+    -- Who sees a root's tree: `restricted` (unshared) until it is shared with
+    -- the universe, one way. Set on request-started roots only: a bot's
+    -- session follows its bot, which is shared, a delegated child its root,
+    -- and a root without one reads as unshared.
+    visibility text CHECK (visibility IN ('universe', 'restricted')),
+    -- The bot whose worker controls it, if any.
+    bot_id text,
     head_seq bigint,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
@@ -275,11 +286,6 @@ CREATE TABLE IF NOT EXISTS cas_session_roots (
     universe_id uuid NOT NULL,
     session_id text NOT NULL,
     digest text NOT NULL,
-    -- `content`: the runtime placed the reference in a content position of
-    -- an appended entry, so the blob is readable through the session.
-    -- `scan`: the reference merely appeared somewhere in an entry; it is
-    -- retained but confers nothing. Never derived by following edges.
-    origin text NOT NULL DEFAULT 'scan' CHECK (origin IN ('content', 'scan')),
     PRIMARY KEY (universe_id, session_id, digest),
     FOREIGN KEY (universe_id, session_id)
         REFERENCES sessions (universe_id, session_id) ON DELETE CASCADE,
@@ -326,20 +332,6 @@ CREATE INDEX IF NOT EXISTS session_checkpoints_state_digest_idx
 
 COMMENT ON TABLE session_checkpoints IS
     'Disposable advance-only pointers to CAS-backed reducer state; session_events remains authoritative.';
-
--- Who uploaded bytes through the API. Uploading authorizes exactly those
--- bytes for the uploader: to attach a reference the caller did not upload,
--- it must be content of the target already. Goes with the blob.
-CREATE TABLE IF NOT EXISTS blob_uploads (
-    universe_id uuid NOT NULL,
-    digest text NOT NULL,
-    principal_id uuid NOT NULL,
-    uploaded_at_ms bigint NOT NULL CHECK (uploaded_at_ms >= 0),
-    PRIMARY KEY (universe_id, digest, principal_id),
-    FOREIGN KEY (universe_id, digest)
-        REFERENCES cas_blobs (universe_id, digest) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS blob_uploads_principal_idx ON blob_uploads (universe_id, principal_id);
 
 CREATE TABLE IF NOT EXISTS cas_blob_edges (
     universe_id uuid NOT NULL,

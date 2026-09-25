@@ -4,8 +4,7 @@ use auth::{
     AuthBrokerError, AuthCallback, AuthFlowStatus, AuthGrantExposure, AuthGrantStatus,
     AuthGrantStore, AuthRegistryError, AuthTokenBroker, HttpOAuthMetadataClient,
     HttpOAuthTokenClient, McpOAuthDriver, McpOAuthTarget, OAuthFlowService, OAuthRefreshRuntime,
-    PrincipalRef, RegistryTokenBroker, SecretStore, StartAuthFlow, TokenAudience,
-    parse_mcp_oauth_challenge,
+    RegistryTokenBroker, SecretStore, StartAuthFlow, TokenAudience, parse_mcp_oauth_challenge,
 };
 use axum::{
     Form, Json, Router,
@@ -273,10 +272,7 @@ fn start_request(client_id: &auth::OAuthClientId, redirect_uri: &str) -> StartAu
         scopes: None,
         audience: None,
         grant_exposure: AuthGrantExposure::Brokered,
-        principal: PrincipalRef {
-            kind: auth::PrincipalKind::ServiceAccount,
-            id: Some("test-service".into()),
-        },
+        created_by: api::Attribution::Local,
     }
 }
 

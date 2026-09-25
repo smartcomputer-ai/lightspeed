@@ -42,13 +42,12 @@ pub struct ExportedSchemas {
 pub fn export_schemas() -> ExportedSchemas {
     let mut generator = SchemaSettings::draft07().into_generator();
 
-    // Core contracts are exported before their remote administration endpoints
-    // are enabled, so CLI/provisioning clients share the canonical vocabulary.
-    generator.subschema_for::<crate::AccessChange>();
-    generator.subschema_for::<crate::AccessChangeResult>();
-    generator.subschema_for::<crate::EffectiveAccess>();
-    generator.subschema_for::<crate::IdentityGroup>();
+    // The access vocabulary of the manifest, so gates generated from it
+    // share the canonical spelling.
     generator.subschema_for::<crate::MethodAccess>();
+    generator.subschema_for::<crate::MethodGroup>();
+    generator.subschema_for::<crate::RecommendedRole>();
+    generator.subschema_for::<crate::MethodTarget>();
 
     let mut methods = Vec::new();
     let mut openrpc_methods = Vec::new();
@@ -56,11 +55,8 @@ pub fn export_schemas() -> ExportedSchemas {
         "# Lightspeed JSON-RPC API Reference\n\n\
          Generated from the Rust API method manifest. Parameter and result field details live in \
          `api.schema.json` and `openrpc.json`; this reference focuses on operation semantics.\n\n\
-         Successful HTTP reads that rely on `read_private_content` carry \
-         `x-lightspeed-privileged-read: true`. Ordinary reads by the same caller omit it. \
-         On lists, the marker means the returned page includes privileged content, not that \
-         every item required it. The marker reports the authorization decision; the associated \
-         privileged audit event is written best-effort. It grants no additional authority.\n",
+         A key calls a method when it holds the method's group. Role and target are metadata \
+         for gates that decide for people, such as the Platform; core does not evaluate them.\n",
     );
     let mut reference_scope = None;
     for spec in full_method_manifest() {
@@ -73,13 +69,19 @@ pub fn export_schemas() -> ExportedSchemas {
             };
             write!(api_reference, "\n## {title}\n\n").expect("write string");
         }
+        let group = crate::MethodGroup::of(spec.method);
+        let role = spec.access.recommended_role();
+        let target = crate::method_target(spec.method);
         write!(
             api_reference,
-            "### `{}`\n\n**{}**\n\n{}\n\n- Access: `{}`\n- Params: `{}`\n- Result: `{}`\n\n",
+            "### `{}`\n\n**{}**\n\n{}\n\n- Access: `{}`\n- Group: `{}`\n- Role: `{}`\n- Target: `{}`\n- Params: `{}`\n- Result: `{}`\n\n",
             spec.method,
             spec.summary,
             spec.description,
             serde_json::to_string(&spec.access).expect("access serializes"),
+            group.map_or("none", |group| group.as_str()),
+            serde_json::to_value(role).expect("role serializes").as_str().unwrap_or("none"),
+            serde_json::to_value(target).expect("target serializes").as_str().unwrap_or("none"),
             spec.params_type,
             spec.result_type
         )
@@ -91,6 +93,9 @@ pub fn export_schemas() -> ExportedSchemas {
             "method": spec.method,
             "scope": spec.scope.as_str(),
             "access": spec.access,
+            "group": group,
+            "role": role,
+            "target": target,
             "summary": spec.summary,
             "description": spec.description,
             "params": { "type": spec.params_type, "schema": params_schema },
@@ -99,6 +104,9 @@ pub fn export_schemas() -> ExportedSchemas {
         openrpc_methods.push(json!({
             "name": spec.method,
             "x-lightspeed-access": spec.access,
+            "x-lightspeed-group": group,
+            "x-lightspeed-role": role,
+            "x-lightspeed-target": target,
             "paramStructure": "by-name",
             "summary": spec.summary,
             "description": spec.description,
@@ -196,13 +204,13 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 138);
+        assert_eq!(total, 130);
         assert_eq!(
             manifest
                 .iter()
                 .filter(|spec| spec.scope == crate::MethodScope::Deployment)
                 .count(),
-            19
+            16
         );
     }
 

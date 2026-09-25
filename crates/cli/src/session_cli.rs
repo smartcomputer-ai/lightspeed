@@ -192,14 +192,13 @@ async fn start(args: StartArgs) -> Result<()> {
         .map_err(|error| anyhow::anyhow!("invalid profile id: {error}"))?;
     let response = HttpAgentApi::new(args.common.api_url)
         .start_session(api::SessionStartParams {
-            access: None,
-            execution: None,
             session_id: args.session_id,
             display_name: args.display_name,
             metadata: args.metadata.map(),
             config: None,
             profile,
             delete_after_close_ms: args.delete_after_close_ms.map(Some),
+            access: None,
         })
         .await
         .map_err(api_error)?
@@ -372,6 +371,7 @@ async fn collect_sessions(
                 parent_session_id: selection.parent_session_id.clone(),
                 exclude_closed: false,
                 metadata: selection.metadata.clone(),
+                ..Default::default()
             })
             .await
             .map_err(api_error)?
@@ -520,12 +520,6 @@ mod tests {
     #[test]
     fn session_line_shows_metadata_or_dash() {
         let mut session = api::SessionSummaryView {
-            access: api::ResourceAccessSummary {
-                root: api::ResourceRef::Session("session_1".to_owned()),
-                owner: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
-                visibility: api::Visibility::Universe,
-                execution: None,
-            },
             id: "s1".to_owned(),
             display_name: None,
             metadata: BTreeMap::new(),
@@ -538,6 +532,10 @@ mod tests {
             },
             managed: false,
             origin: None,
+            access: api::ResourceAccessSummary {
+                visibility: api::Visibility::Universe,
+                created_by: None,
+            },
             created_at_ms: 0,
             updated_at_ms: 0,
         };

@@ -147,15 +147,6 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
 }
 
 impl GatewayAgentApi {
-    pub async fn open_or_start_session(
-        &self,
-        params: SessionStartParams,
-    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        // `start_session` is idempotent on client-supplied session ids; this
-        // wrapper remains for callers predating that behavior.
-        self.start_session(params).await
-    }
-
     fn allocate_session_id(&self) -> SessionId {
         SessionId::new(format!("session_{}", uuid::Uuid::new_v4().simple()))
     }
@@ -209,7 +200,6 @@ impl GatewayAgentApi {
                 // apply a profile's root-session default.
                 delete_after_close_ms: Some(None),
                 access: None,
-                execution: None,
             },
             false,
             true,
@@ -237,7 +227,6 @@ impl GatewayAgentApi {
                 profile,
                 delete_after_close_ms: None,
                 access: None,
-                execution: None,
             },
             close_on_terminal,
             false,
@@ -263,7 +252,6 @@ impl GatewayAgentApi {
             profile,
             delete_after_close_ms,
             access,
-            execution,
         } = params;
         validate_caller_metadata(&metadata)?;
         let workflow_tools = trusted_workflow_tools;
@@ -286,31 +274,24 @@ impl GatewayAgentApi {
             }
             None => self.allocate_session_id(),
         };
-        // Content the documents name (snapshot attachments, instruction
-        // blobs) must be the caller's own or already the session's.
-        self.authorize_supplied_document(Some(&session_id), &(&config, &profile))
-            .await?;
-        let resource = ResourceRef::Session(session_id.as_str().to_owned());
-        if self
-            .access_store()
-            .anchor(self.universe_id(), &resource)
-            .await
-            .map_err(|e| AgentApiError::internal(e.to_string()))?
-            .is_some()
+        // Bot sessions and delegated children are the runtime's to create.
+        if self.current_controller().is_none()
+            && ["bot:v1:", "agent_"]
+                .iter()
+                .any(|prefix| session_id.as_str().starts_with(prefix))
         {
-            if access.is_some() || execution.is_some() {
-                return Err(AgentApiError::invalid_request(
-                    "access and execution are set at creation; use access/policy/put for an existing session",
-                ));
-            }
-            self.authorize_method(METHOD_SESSION_CONFIG_PUT, Some(resource))
-                .await?;
-        } else {
-            let execution = self.resolve_execution(execution).await?;
-            self.reserve_resource(resource.clone(), Some(execution))
-                .await?;
-            self.apply_creation_access(&resource, access).await?;
+            return Err(AgentApiError::forbidden());
         }
+        // Creating a new session uses CreateSession above. Retrying a named
+        // session also needs authority over the existing row.
+        if self.current_controller().is_some() {
+            let target = ResourceRef::Session(session_id.as_str().to_owned());
+            if self.target_access(&target).await?.is_some() {
+                self.authorize_method(METHOD_SESSION_CONFIG_PUT, Some(target))
+                    .await?;
+            }
+        }
+        let visibility = access.and_then(|access| access.visibility);
         let admitted = workflow_tools
             .as_ref()
             .map(|declaration| {
@@ -332,6 +313,7 @@ impl GatewayAgentApi {
                 .recover_existing(&session_id, admitted.as_ref())
                 .await?
         {
+            self.record_session_creator(&session_id, visibility).await?;
             return Ok(self.session_start_response(&loaded));
         }
         let resolved_profile = match profile {
@@ -357,9 +339,7 @@ impl GatewayAgentApi {
                 .and_then(|profile| profile.config.clone()),
             config,
         );
-        let session_config = self
-            .session_config_for_start(&session_id, start_config)
-            .await?;
+        let session_config = self.session_config_for_start(start_config).await?;
         let setup_environment = profiles::default_environment_id(&session_config.features)?;
 
         if let Some(admitted) = admitted.as_ref() {
@@ -410,12 +390,16 @@ impl GatewayAgentApi {
                 let loaded = lifecycle
                     .recover_conflict(&session_id, admitted.as_ref())
                     .await?;
+                self.record_session_creator(&session_id, visibility).await?;
                 return Ok(self.session_start_response(&loaded));
             }
             Err(error) => return Err(error),
         }
         let loaded = lifecycle.wait_for_open_session(&session_id).await?;
         validate_managed_session_retry(&loaded.state, admitted.as_ref())?;
+        // The workflow created the row; the stamp is first-wins, so a retry
+        // keeps the audience the session was created with.
+        self.record_session_creator(&session_id, visibility).await?;
         Ok(self.session_start_response(&loaded))
     }
 

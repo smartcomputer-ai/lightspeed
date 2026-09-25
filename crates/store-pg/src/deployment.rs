@@ -118,21 +118,13 @@ pub async fn list_universe_object_keys(
 }
 
 /// Delete the universe row; every universe-scoped table cascades from it,
-/// including role assignments, capabilities and keys. The same statement
-/// advances the access policy revision so rights resolved before the removal
-/// are revalidated. `false` when the universe did not exist.
+/// including its keys. `false` when the universe did not exist.
 pub async fn delete_universe(pool: &PgPool, universe_id: Uuid) -> Result<bool, PgStoreError> {
-    Ok(sqlx::query_scalar(
-        "WITH retired AS (UPDATE access_principals SET status = 'disabled'
-                          WHERE principal_id = (SELECT execution_principal_id FROM universes WHERE universe_id = $1)),
-              removed AS (DELETE FROM universes WHERE universe_id = $1 RETURNING 1),
-              advanced AS (UPDATE access_policy SET revision = revision + 1
-                           WHERE singleton AND EXISTS (SELECT 1 FROM removed))
-         SELECT EXISTS (SELECT 1 FROM removed)",
-    )
-    .bind(universe_id)
-    .fetch_one(pool)
-    .await?)
+    let result = sqlx::query("DELETE FROM universes WHERE universe_id = $1")
+        .bind(universe_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 fn universe_stats_from_row(row: &sqlx::postgres::PgRow) -> Result<UniverseStats, PgStoreError> {

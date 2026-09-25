@@ -72,20 +72,15 @@ fn prefixed_event_columns(table: &str, prefix: &str) -> String {
 // ── Bots ────────────────────────────────────────────────────────────────────
 
 impl PgStore {
-    /// The roster for one reader: only bots the reader may read, each with
-    /// the access summary its view carries, and whether any of them is
-    /// listed only through the privileged-read capability.
+    /// The roster, optionally only bots this actor created, each with the
+    /// access summary its view carries: shared, and who created it.
     pub async fn list_bot_roster_for(
         &self,
-        reader: &crate::Reader,
-    ) -> Result<(Vec<(BotRosterRow, ::access::ResourceAccessSummary)>, bool), BotError> {
+        created_by: Option<&str>,
+    ) -> Result<Vec<(BotRosterRow, api::ResourceAccessSummary)>, BotError> {
         let last_event_columns = prefixed_event_columns("le", ROSTER_EVENT_PREFIX);
-        let crate::resources::ReadableClauses {
-            filter: readable,
-            privileged,
-        } = crate::resources::readable_clauses(reader, "bot", "b", "bot_id", 2);
-        let summary_columns = crate::resources::SUMMARY_COLUMNS;
         let event_columns = event_columns();
+        let created_by_match = crate::access::actor_match("b.created_by", 2);
         let query = format!(
             r#"
             SELECT
@@ -94,11 +89,8 @@ impl PgStore {
                 tc.trigger_count,
                 pc.pending_count,
                 {last_event_columns},
-                {summary_columns},
-                {privileged} AS access_privileged
+                b.created_by
             FROM bots b
-            JOIN access_resources ra ON ra.universe_id = b.universe_id AND ra.resource_kind = 'bot' AND ra.resource_id = b.bot_id
-            JOIN access_resource_policies rp ON rp.universe_id = ra.universe_id AND rp.resource_kind = ra.audience_root_kind AND rp.resource_id = ra.audience_root_id
             LEFT JOIN LATERAL (
                 SELECT count(*) AS trigger_count
                 FROM bot_triggers t
@@ -117,26 +109,18 @@ impl PgStore {
                 ORDER BY e.received_at_ms DESC, e.seq DESC
                 LIMIT 1
             ) le ON true
-            WHERE b.universe_id = $1 AND {readable}
+            WHERE b.universe_id = $1 AND ($2::text IS NULL OR {created_by_match})
             ORDER BY b.bot_id
             "#
         );
-        let (reader_principal, reader_root_kind, reader_root_id) = reader.binds();
         let rows = sqlx::query(&query)
             .bind(self.config.universe_id)
-            .bind(reader_principal)
-            .bind(reader_root_kind)
-            .bind(reader_root_id)
+            .bind(created_by)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| bot_sql_error("list bot roster", error))?;
-        let mut any_privileged = false;
-        let roster = rows
-            .iter()
+        rows.iter()
             .map(|row| {
-                any_privileged |= row
-                    .try_get::<bool, _>("access_privileged")
-                    .map_err(|error| bot_sql_error("decode access privileged", error))?;
                 let bot = bot_from_row(row)?;
                 let trigger_count: i64 = row
                     .try_get("trigger_count")
@@ -151,12 +135,13 @@ impl PgStore {
                     Some(_) => Some(event_from_row(row, ROSTER_EVENT_PREFIX)?),
                     None => None,
                 };
-                let access = crate::resources::summary_from_list_row(row).map_err(|error| {
-                    bot_sql_error(
-                        "decode access summary",
-                        sqlx::Error::Protocol(error.to_string()),
-                    )
-                })?;
+                let created_by =
+                    crate::access::created_by_from_row(row, "created_by").map_err(|error| {
+                        bot_sql_error(
+                            "decode created_by",
+                            sqlx::Error::Protocol(error.to_string()),
+                        )
+                    })?;
                 Ok((
                     BotRosterRow {
                         bot,
@@ -164,11 +149,13 @@ impl PgStore {
                         pending_count: u64::try_from(pending_count).unwrap_or(0),
                         last_event,
                     },
-                    access,
+                    api::ResourceAccessSummary {
+                        visibility: api::Visibility::Universe,
+                        created_by,
+                    },
                 ))
             })
-            .collect::<Result<Vec<_>, BotError>>()?;
-        Ok((roster, any_privileged))
+            .collect()
     }
 }
 
@@ -312,9 +299,8 @@ impl BotStore for PgStore {
 
     async fn list_bot_roster(&self) -> Result<Vec<BotRosterRow>, BotError> {
         Ok(self
-            .list_bot_roster_for(&crate::Reader::Everything)
+            .list_bot_roster_for(None)
             .await?
-            .0
             .into_iter()
             .map(|(row, _)| row)
             .collect())
@@ -419,13 +405,6 @@ impl BotStore for PgStore {
                 bot_id: bot_id.clone(),
             });
         };
-        // The anchor goes with the bot, so the id is free again.
-        sqlx::query("DELETE FROM access_resources WHERE universe_id = $1 AND resource_kind = 'bot' AND resource_id = $2")
-            .bind(self.config.universe_id)
-            .bind(bot_id.as_str())
-            .execute(&self.pool)
-            .await
-            .map_err(|error| bot_sql_error("release bot anchor", error))?;
         bot_from_row(&row)
     }
 

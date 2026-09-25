@@ -58,20 +58,11 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
     )?);
     let operator = GatewayDeploymentApi::new(runtime.clone());
     let reconciler = tokio::spawn(runtime.clone().run_environment_reconciler());
-    // Direct service calls carry an explicit caller. A store-level home universe
-    // gives the local identity deployment administration; it becomes Admin of
-    // the universes it then creates through the deployment API.
-    use temporal_server::gateway::{
-        authentication::local_context, principal::with_request_context as calling,
+    // Direct service calls carry an explicit local request context.
+    use temporal_server::gateway::request_context::{
+        RequestContext, with_request_context as calling,
     };
-    let home_universe = Uuid::new_v4();
-    store_pg::create_universe(&pool, home_universe).await?;
-    let access = store_pg::PgAccessStore::new(pool.clone());
-    let local = access
-        .initialize_local_development(home_universe, 1)
-        .await?
-        .id;
-    let deployment_caller = local_context(&access, local, access::AccessScope::Deployment).await?;
+    let deployment_caller = RequestContext::local(api::AccessScope::Deployment);
 
     let result = async {
         for universe_id in [universe_a, universe_b] {
@@ -115,22 +106,12 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
 
         let state_a = runtime.state_for(universe_a, false).await?;
         let state_b = runtime.state_for(universe_b, false).await?;
-        let caller_a = local_context(
-            &access,
-            local,
-            access::AccessScope::Universe {
-                universe_id: universe_a,
-            },
-        )
-        .await?;
-        let caller_b = local_context(
-            &access,
-            local,
-            access::AccessScope::Universe {
-                universe_id: universe_b,
-            },
-        )
-        .await?;
+        let caller_a = RequestContext::local(api::AccessScope::Universe {
+            universe_id: universe_a,
+        });
+        let caller_b = RequestContext::local(api::AccessScope::Universe {
+            universe_id: universe_b,
+        });
         let templates = calling(
             caller_a.clone(),
             state_a
@@ -146,7 +127,6 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
         let created = calling(
             caller_a.clone(),
             state_a.api.create_environment(EnvironmentCreateParams {
-                access: None,
                 request_id: format!("create-{suffix}"),
                 binding_id: "primary-a".to_owned(),
                 template_id: "rust-v1".to_owned(),
@@ -161,7 +141,6 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
         let create_retry = calling(
             caller_a.clone(),
             state_a.api.create_environment(EnvironmentCreateParams {
-                access: None,
                 request_id: format!("create-{suffix}"),
                 binding_id: "primary-a".to_owned(),
                 template_id: "rust-v1".to_owned(),
@@ -300,7 +279,7 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
     let _ = reconciler.await;
     runtime.evict(universe_a).await;
     runtime.evict(universe_b).await;
-    for universe_id in [universe_a, universe_b, home_universe] {
+    for universe_id in [universe_a, universe_b] {
         let _ = store_pg::delete_universe(&pool, universe_id).await;
     }
     let _ = calling(
@@ -423,7 +402,6 @@ async fn run_environment_power_live_client(
     };
     let created = api
         .create_environment(api::EnvironmentCreateParams {
-            access: None,
             request_id: format!("power-{suffix}"),
             binding_id: binding_id.clone(),
             template_id: "rust-v1".to_owned(),
@@ -551,7 +529,6 @@ async fn run_environment_power_live_client(
     // until an operation actually needs to use it.
     api.start_session(SessionStartParams {
         access: None,
-        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -681,7 +658,6 @@ async fn run_environment_power_live_client(
     // External environments have no power control.
     let external = api
         .create_external_environment(api::EnvironmentExternalCreateParams {
-            access: None,
             request_id: format!("power-external-{suffix}"),
             connection: api::EnvironmentConnectionView {
                 endpoint: format!("ws://127.0.0.1:1/{suffix}"),

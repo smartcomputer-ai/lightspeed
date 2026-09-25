@@ -25,13 +25,49 @@ const KEY_COLUMNS: &str = r#"
 
 #[async_trait]
 impl EnvironmentRegistrationKeyStore for PgStore {
-    /// A key created without a minting principal admits no environment;
-    /// the gateway mints through `create_registration_key_by`.
     async fn create_registration_key(
         &self,
         request: CreateEnvironmentRegistrationKey,
     ) -> Result<EnvironmentRegistrationKeyRecord, EnvironmentRegistryError> {
-        self.insert_registration_key(request, None).await
+        request.record.validate()?;
+        self.ensure_universe()
+            .await
+            .map_err(|error| store_message(format!("ensure universe: {error}")))?;
+        let record = request.record;
+        let query = format!(
+            r#"
+            INSERT INTO environment_registration_keys (
+                universe_id, registration_key_id, display_name, key_prefix, secret_hash,
+                identity_mode, max_active_environments, ephemeral_disconnect_grace_ms,
+                expires_at_ms, created_at_ms, revoked_at_ms
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            RETURNING {KEY_COLUMNS}
+            "#
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(record.registration_key_id.as_str())
+            .bind(&record.display_name)
+            .bind(&record.key_prefix)
+            .bind(&request.secret_hash)
+            .bind(record.identity_mode.as_str())
+            .bind(
+                record
+                    .max_active_environments
+                    .map(|value| i32::try_from(value).unwrap_or(i32::MAX)),
+            )
+            .bind(
+                record
+                    .ephemeral_disconnect_grace_ms
+                    .map(|value| i64::try_from(value).unwrap_or(i64::MAX)),
+            )
+            .bind(record.expires_at_ms)
+            .bind(record.created_at_ms)
+            .bind(record.revoked_at_ms)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|error| map_key_insert_error(error, &record.registration_key_id))?;
+        key_from_row(&row)
     }
 
     async fn read_registration_key(
@@ -141,82 +177,6 @@ impl EnvironmentRegistrationKeyStore for PgStore {
                 .try_get("last_registered_at_ms")
                 .map_err(|error| sql_error("decode last registered", error))?,
         })
-    }
-}
-
-impl PgStore {
-    /// Mint a key on behalf of `created_by`, who owns every environment the
-    /// key admits.
-    pub async fn create_registration_key_by(
-        &self,
-        request: CreateEnvironmentRegistrationKey,
-        created_by: Uuid,
-    ) -> Result<EnvironmentRegistrationKeyRecord, EnvironmentRegistryError> {
-        self.insert_registration_key(request, Some(created_by))
-            .await
-    }
-
-    /// The principal that minted a key; `None` for a key minted without one.
-    pub async fn registration_key_creator(
-        &self,
-        registration_key_id: &EnvironmentRegistrationKeyId,
-    ) -> Result<Option<Uuid>, EnvironmentRegistryError> {
-        sqlx::query_scalar::<_, Option<Uuid>>(
-            "SELECT created_by_principal_id FROM environment_registration_keys WHERE universe_id = $1 AND registration_key_id = $2",
-        )
-        .bind(self.config.universe_id)
-        .bind(registration_key_id.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| sql_error("read registration key creator", error))?
-        .ok_or_else(|| not_found("environment_registration_key", registration_key_id))
-    }
-
-    async fn insert_registration_key(
-        &self,
-        request: CreateEnvironmentRegistrationKey,
-        created_by: Option<Uuid>,
-    ) -> Result<EnvironmentRegistrationKeyRecord, EnvironmentRegistryError> {
-        request.record.validate()?;
-        self.ensure_universe()
-            .await
-            .map_err(|error| store_message(format!("ensure universe: {error}")))?;
-        let record = request.record;
-        let query = format!(
-            r#"
-            INSERT INTO environment_registration_keys (
-                universe_id, registration_key_id, display_name, key_prefix, secret_hash,
-                identity_mode, max_active_environments, ephemeral_disconnect_grace_ms,
-                expires_at_ms, created_at_ms, revoked_at_ms, created_by_principal_id
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-            RETURNING {KEY_COLUMNS}
-            "#
-        );
-        let row = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(record.registration_key_id.as_str())
-            .bind(&record.display_name)
-            .bind(&record.key_prefix)
-            .bind(&request.secret_hash)
-            .bind(record.identity_mode.as_str())
-            .bind(
-                record
-                    .max_active_environments
-                    .map(|value| i32::try_from(value).unwrap_or(i32::MAX)),
-            )
-            .bind(
-                record
-                    .ephemeral_disconnect_grace_ms
-                    .map(|value| i64::try_from(value).unwrap_or(i64::MAX)),
-            )
-            .bind(record.expires_at_ms)
-            .bind(record.created_at_ms)
-            .bind(record.revoked_at_ms)
-            .bind(created_by)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|error| map_key_insert_error(error, &record.registration_key_id))?;
-        key_from_row(&row)
     }
 }
 

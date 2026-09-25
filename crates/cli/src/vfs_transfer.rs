@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use api::{
     AgentApiError, BlobHasItem, BlobHasParams, BlobPutItem, BlobPutParams, BlobPutResult,
     BlobReadParams, BlobReadResponse, VfsSnapshotCommitParams, VfsSnapshotCommitResponse,
-    VfsSnapshotReadParams, VfsSnapshotReadResponse, VfsWorkspaceFileReadParams,
+    VfsSnapshotReadParams, VfsSnapshotReadResponse,
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -129,35 +129,19 @@ pub(crate) trait CasVfsApi {
         manifest: &VfsSnapshotManifest,
     ) -> Result<VfsSnapshotCommitResponse, AgentApiError>;
 
-    /// A snapshot manifest: one the caller uploaded or committed, or,
-    /// with `workspace_id`, that workspace's current head or base.
     async fn read_vfs_snapshot(
         &self,
         snapshot_ref: String,
-        workspace_id: Option<String>,
     ) -> Result<VfsSnapshotReadResponse, AgentApiError>;
-
-    /// A file of a workspace's current head, by path.
-    async fn read_workspace_file(
-        &self,
-        workspace_id: String,
-        path: String,
-    ) -> Result<BlobReadResponse, AgentApiError>;
 }
 
 #[async_trait]
 impl CasVfsApi for HttpAgentApi {
     async fn has_blobs(&self, blob_refs: Vec<String>) -> Result<Vec<BlobHasItem>, AgentApiError> {
-        Ok(HttpAgentApi::has_blobs(
-            self,
-            BlobHasParams {
-                blob_refs,
-                resource: None,
-            },
-        )
-        .await?
-        .result
-        .blobs)
+        Ok(HttpAgentApi::has_blobs(self, BlobHasParams { blob_refs })
+            .await?
+            .result
+            .blobs)
     }
 
     async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobPutResult>, AgentApiError> {
@@ -174,15 +158,9 @@ impl CasVfsApi for HttpAgentApi {
     }
 
     async fn get_blob(&self, blob_ref: String) -> Result<BlobReadResponse, AgentApiError> {
-        Ok(HttpAgentApi::read_blob(
-            self,
-            BlobReadParams {
-                blob_ref,
-                resource: None,
-            },
-        )
-        .await?
-        .result)
+        Ok(HttpAgentApi::read_blob(self, BlobReadParams { blob_ref })
+            .await?
+            .result)
     }
 
     async fn commit_vfs_snapshot(
@@ -192,44 +170,22 @@ impl CasVfsApi for HttpAgentApi {
         let manifest = serde_json::to_value(manifest).map_err(|error| {
             AgentApiError::invalid_request(format!("failed to encode manifest: {error}"))
         })?;
-        Ok(HttpAgentApi::commit_vfs_snapshot(
-            self,
-            VfsSnapshotCommitParams {
-                manifest,
-                source_workspace_id: None,
-            },
+        Ok(
+            HttpAgentApi::commit_vfs_snapshot(self, VfsSnapshotCommitParams { manifest })
+                .await?
+                .result,
         )
-        .await?
-        .result)
     }
 
     async fn read_vfs_snapshot(
         &self,
         snapshot_ref: String,
-        workspace_id: Option<String>,
     ) -> Result<VfsSnapshotReadResponse, AgentApiError> {
-        Ok(HttpAgentApi::read_vfs_snapshot(
-            self,
-            VfsSnapshotReadParams {
-                workspace_id,
-                snapshot_ref,
-            },
+        Ok(
+            HttpAgentApi::read_vfs_snapshot(self, VfsSnapshotReadParams { snapshot_ref })
+                .await?
+                .result,
         )
-        .await?
-        .result)
-    }
-
-    async fn read_workspace_file(
-        &self,
-        workspace_id: String,
-        path: String,
-    ) -> Result<BlobReadResponse, AgentApiError> {
-        Ok(HttpAgentApi::read_vfs_workspace_file(
-            self,
-            VfsWorkspaceFileReadParams { workspace_id, path },
-        )
-        .await?
-        .result)
     }
 }
 
@@ -337,20 +293,15 @@ pub(crate) async fn upload_snapshot_directory(
     upload_snapshot_plan(api, plan, options).await
 }
 
-/// Materialize a snapshot the caller uploaded or committed, or, through
-/// `workspace_id`, one that is that workspace's current head or base. A
-/// workspace's files are read from its head by path, so a base the head
-/// has since changed can only be materialized by its uploader.
 pub(crate) async fn materialize_snapshot(
     api: &(impl CasVfsApi + Sync),
     snapshot_ref: impl Into<String>,
-    workspace_id: Option<String>,
     destination: impl AsRef<Path>,
 ) -> Result<SnapshotMaterializeSummary> {
     let snapshot_ref = snapshot_ref.into();
     let destination = prepare_materialize_destination(destination.as_ref())?;
     let read = api
-        .read_vfs_snapshot(snapshot_ref.clone(), workspace_id.clone())
+        .read_vfs_snapshot(snapshot_ref.clone())
         .await
         .map_err(crate::api_client::api_error)
         .context("failed to read VFS snapshot manifest")?;
@@ -371,7 +322,6 @@ pub(crate) async fn materialize_snapshot(
 
     let mut materializer = LocalMaterializer {
         api,
-        workspace_id,
         destination: destination.clone(),
         blob_cache: BTreeMap::new(),
         summary: SnapshotMaterializeSummary {
@@ -638,8 +588,6 @@ fn prepare_materialize_destination(destination: &Path) -> Result<PathBuf> {
 
 struct LocalMaterializer<'a, A: CasVfsApi + Sync + ?Sized> {
     api: &'a A,
-    /// Files are read through this workspace's head instead of by digest.
-    workspace_id: Option<String>,
     destination: PathBuf,
     blob_cache: BTreeMap<String, Vec<u8>>,
     summary: SnapshotMaterializeSummary,
@@ -703,7 +651,7 @@ impl<A: CasVfsApi + Sync + ?Sized> LocalMaterializer<'_, A> {
             return Ok(());
         }
 
-        let bytes = self.download_blob(&entry.path, &entry.file).await?;
+        let bytes = self.download_blob(&entry.file).await?;
         fs::write(&target, &bytes)
             .with_context(|| format!("failed to write {}", target.display()))?;
         apply_executable(&target, entry.file.executable)
@@ -740,32 +688,19 @@ impl<A: CasVfsApi + Sync + ?Sized> LocalMaterializer<'_, A> {
         Ok(BlobRef::from_bytes(&bytes) == file.blob_ref)
     }
 
-    async fn download_blob(&mut self, path: &VfsPath, file: &VfsFile) -> Result<Vec<u8>> {
+    async fn download_blob(&mut self, file: &VfsFile) -> Result<Vec<u8>> {
         let blob_ref = file.blob_ref.as_str().to_owned();
         if let Some(bytes) = self.blob_cache.get(&blob_ref) {
             return Ok(bytes.clone());
         }
 
-        let response = match &self.workspace_id {
-            Some(workspace_id) => self
-                .api
-                .read_workspace_file(workspace_id.clone(), path.as_str().to_owned())
-                .await
-                .map_err(crate::api_client::api_error)
-                .with_context(|| format!("failed to read {path} from workspace {workspace_id}"))?,
-            None => self
-                .api
-                .get_blob(blob_ref.clone())
-                .await
-                .map_err(crate::api_client::api_error)
-                .with_context(|| format!("failed to download blob {blob_ref}"))?,
-        };
+        let response = self
+            .api
+            .get_blob(blob_ref.clone())
+            .await
+            .map_err(crate::api_client::api_error)
+            .with_context(|| format!("failed to download blob {blob_ref}"))?;
         if response.blob_ref != blob_ref {
-            if let Some(workspace_id) = &self.workspace_id {
-                bail!(
-                    "workspace {workspace_id} no longer holds {path} as in this snapshot; materialize its current head"
-                );
-            }
             bail!(
                 "gateway returned blob {} for requested {}",
                 response.blob_ref,
@@ -1106,7 +1041,7 @@ mod tests {
         let destination = tempdir().unwrap();
         fs::write(destination.path().join("README.md"), &readme).unwrap();
 
-        let summary = materialize_snapshot(&api, snapshot_ref.clone(), None, destination.path())
+        let summary = materialize_snapshot(&api, snapshot_ref.clone(), destination.path())
             .await
             .unwrap();
 
@@ -1131,67 +1066,6 @@ mod tests {
                 .mode();
             assert_ne!(mode & 0o100, 0);
         }
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn materialize_through_a_workspace_reads_its_head_files_by_path() {
-        let readme = b"shared\n".to_vec();
-        let readme_ref = BlobRef::from_bytes(&readme);
-        let mut manifest = VfsSnapshotManifest::empty();
-        write_manifest_file_ref(
-            &mut manifest,
-            &VfsPath::parse("/README.md").unwrap(),
-            readme_ref,
-            readme.len() as u64,
-            None,
-            false,
-        )
-        .unwrap();
-        let snapshot_ref = snapshot_ref_for_manifest(&manifest);
-        // Someone else's snapshot: the manifest is readable through the
-        // workspace, its blobs are not the caller's uploads.
-        let api = FakeCasVfsApi::new([])
-            .with_snapshot(snapshot_ref.clone(), manifest, [])
-            .with_workspace_file("shared", "/README.md", readme.clone());
-
-        let destination = tempdir().unwrap();
-        materialize_snapshot(&api, snapshot_ref.clone(), None, destination.path())
-            .await
-            .expect_err("another person's blobs are not readable by digest");
-
-        let destination = tempdir().unwrap();
-        let summary = materialize_snapshot(
-            &api,
-            snapshot_ref.clone(),
-            Some("shared".to_owned()),
-            destination.path(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(summary.written_files, 1);
-        assert_eq!(
-            fs::read(destination.path().join("README.md")).unwrap(),
-            readme
-        );
-
-        // A head that has moved on no longer holds the snapshot's file.
-        let api = FakeCasVfsApi::new([])
-            .with_snapshot(
-                snapshot_ref.clone(),
-                api.snapshots.lock().unwrap()[&snapshot_ref].clone(),
-                [],
-            )
-            .with_workspace_file("shared", "/README.md", b"changed\n".to_vec());
-        let destination = tempdir().unwrap();
-        let error = materialize_snapshot(
-            &api,
-            snapshot_ref,
-            Some("shared".to_owned()),
-            destination.path(),
-        )
-        .await
-        .expect_err("a moved head cannot supply the snapshot's file");
-        assert!(error.to_string().contains("no longer holds /README.md"));
     }
 
     #[cfg(unix)]
@@ -1223,7 +1097,7 @@ mod tests {
         let outside = tempdir().unwrap();
         symlink(outside.path(), destination.path().join("linked")).unwrap();
 
-        let error = materialize_snapshot(&api, snapshot_ref, None, destination.path())
+        let error = materialize_snapshot(&api, snapshot_ref, destination.path())
             .await
             .expect_err("symlink destination must be rejected");
 
@@ -1235,8 +1109,6 @@ mod tests {
         existing: Mutex<BTreeSet<String>>,
         blobs: Mutex<BTreeMap<String, Vec<u8>>>,
         snapshots: Mutex<BTreeMap<String, VfsSnapshotManifest>>,
-        /// Head files by (workspace, path), readable without owning the blob.
-        workspace_files: Mutex<BTreeMap<(String, String), Vec<u8>>>,
         put_batches: Mutex<Vec<Vec<Vec<u8>>>>,
         commits: Mutex<Vec<VfsSnapshotManifest>>,
     }
@@ -1247,20 +1119,9 @@ mod tests {
                 existing: Mutex::new(existing.into_iter().collect()),
                 blobs: Mutex::new(BTreeMap::new()),
                 snapshots: Mutex::new(BTreeMap::new()),
-                workspace_files: Mutex::new(BTreeMap::new()),
                 put_batches: Mutex::new(Vec::new()),
                 commits: Mutex::new(Vec::new()),
             }
-        }
-
-        /// A workspace head file the caller reads by path; its blob is not
-        /// the caller's upload, so `get_blob` does not serve it.
-        fn with_workspace_file(self, workspace_id: &str, path: &str, bytes: Vec<u8>) -> Self {
-            self.workspace_files
-                .lock()
-                .unwrap()
-                .insert((workspace_id.to_owned(), path.to_owned()), bytes);
-            self
         }
 
         fn with_snapshot(
@@ -1359,7 +1220,6 @@ mod tests {
         async fn read_vfs_snapshot(
             &self,
             snapshot_ref: String,
-            _workspace_id: Option<String>,
         ) -> Result<VfsSnapshotReadResponse, AgentApiError> {
             let snapshots = self.snapshots.lock().unwrap();
             let manifest = snapshots.get(&snapshot_ref).ok_or_else(|| {
@@ -1371,22 +1231,6 @@ mod tests {
                     .map_err(|error| AgentApiError::internal(error.to_string()))?,
                 files: manifest.totals.files,
                 bytes: manifest.totals.bytes,
-            })
-        }
-
-        async fn read_workspace_file(
-            &self,
-            workspace_id: String,
-            path: String,
-        ) -> Result<BlobReadResponse, AgentApiError> {
-            let files = self.workspace_files.lock().unwrap();
-            let bytes = files
-                .get(&(workspace_id, path))
-                .ok_or_else(|| AgentApiError::not_found("file not found"))?;
-            Ok(BlobReadResponse {
-                blob_ref: BlobRef::from_bytes(bytes).as_str().to_owned(),
-                bytes_base64: BASE64.encode(bytes),
-                bytes: bytes.len() as u64,
             })
         }
     }

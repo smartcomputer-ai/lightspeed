@@ -553,4 +553,4 @@ external credential delegation.
 Current seams: [authentication and access](../documentation/deployment/authentication-and-tenancy.md),
 [Platform gateway](../../platform/server/src/routes/gateway.ts),
 [runtime gateway](../../crates/temporal-server/src/gateway/http.rs),
-[request principal](../../crates/temporal-server/src/gateway/principal.rs).
+[request principal](../../crates/temporal-server/src/gateway/request_context.rs).

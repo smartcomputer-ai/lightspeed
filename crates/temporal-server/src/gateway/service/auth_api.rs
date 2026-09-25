@@ -34,7 +34,7 @@ pub(super) fn auth_grant_import_draft(
         provider_id: params.provider_id.unwrap_or_else(|| "static".to_owned()),
         provider_kind: auth::AuthProviderKind::StaticBearer,
         exposure: registry_auth_grant_exposure(params.exposure),
-        principal: crate::gateway::principal::request_principal()?,
+        created_by: crate::gateway::request_context::request_attribution()?,
         display_name: params.display_name,
         subject_hint: params.subject_hint,
         scopes: params.scopes,
@@ -64,10 +64,7 @@ pub(super) fn auth_grant_view(record: auth::AuthGrantRecord) -> api::AuthGrantVi
         provider_id: record.provider_id,
         provider_kind: api_auth_provider_kind(record.provider_kind),
         exposure: api_auth_grant_exposure(record.exposure),
-        principal: api::PrincipalRefView {
-            kind: api_principal_kind(record.principal.kind),
-            id: record.principal.id,
-        },
+        created_by: record.created_by,
         display_name: record.display_name,
         subject_hint: record.subject_hint,
         scopes: record.scopes,
@@ -248,13 +245,6 @@ pub(super) fn registry_auth_grant_exposure(
     match value {
         api::AuthGrantExposure::Brokered => auth::AuthGrantExposure::Brokered,
         api::AuthGrantExposure::Retrievable => auth::AuthGrantExposure::Retrievable,
-    }
-}
-
-fn api_principal_kind(value: auth::PrincipalKind) -> api::PrincipalKind {
-    match value {
-        auth::PrincipalKind::User => api::PrincipalKind::User,
-        auth::PrincipalKind::ServiceAccount => api::PrincipalKind::ServiceAccount,
     }
 }
 

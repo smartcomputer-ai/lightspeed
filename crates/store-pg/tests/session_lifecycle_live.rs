@@ -17,7 +17,6 @@ use uuid::Uuid;
 async fn pg_live_lifecycle_projection_rejects_managed_branches() {
     let store = live_store().await;
     let parent = SessionId::new("lifecycle-parent");
-    anchor_session(&store, &parent).await;
     let created = store
         .create_session(CreateSession {
             metadata: Default::default(),
@@ -424,35 +423,6 @@ fn lifecycle_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
         joins: StoredJoins::default(),
         event: StoredEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
     }
-}
-
-/// A person who owns the sessions these fixtures anchor.
-const FIXTURE_OWNER: Uuid = Uuid::from_u128(0x5e55_1017_0000_4000_8000_0000_0000_0001);
-
-/// Reserve the access anchor of a session before creating it, as the
-/// runtime does: listings show only sessions whose anchor and root policy
-/// exist.
-async fn anchor_session(store: &PgStore, session_id: &SessionId) {
-    sqlx::query("INSERT INTO access_principals (principal_id, kind, status, display_name, created_at_ms) VALUES ($1, 'user', 'active', 'Store fixture owner', 0) ON CONFLICT DO NOTHING")
-        .bind(FIXTURE_OWNER)
-        .execute(store.pool())
-        .await
-        .expect("create fixture owner");
-    store_pg::PgAccessStore::new(store.pool().clone())
-        .reserve_resource(
-            store.config().universe_id,
-            &access::ResourceRef::Session(session_id.as_str().to_owned()),
-            &access::ActionActor::Principal { id: FIXTURE_OWNER },
-            &access::ResourceController::Principal(FIXTURE_OWNER),
-            Some(access::Execution {
-                run_as: FIXTURE_OWNER,
-                kind: access::ExecutionKind::Personal,
-            }),
-            None,
-            1,
-        )
-        .await
-        .expect("reserve session anchor");
 }
 
 async fn live_store() -> PgStore {

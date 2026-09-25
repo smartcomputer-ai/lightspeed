@@ -11,17 +11,16 @@ use api::{
     BoundWorkflowToolDispatchInput, ContextEntryInputView, ContextEntryKindView,
     ContextEntrySourceView, ContextEntryView, ContextMessageRoleView, ContextView, EventCursor,
     EventJoinsView, InputItem, LlmUsageView, ManagedSessionWorkflowToolsInput, MediaKind,
-    ModelConfig, PendingApprovalView, PrincipalKind, PrincipalRefView, ProviderContextDisplayView,
-    ProviderNativeToolExecutionView, RunAcceptedSourceView, RunFailureKindView,
-    RunStatus as ApiRunStatus, RunSummarySourceView, RunSummaryView, RunView, RunViewSource,
-    SessionEventKindView, SessionEventView, SessionManagementView, SessionRetentionView,
-    SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView, TokenEstimateView,
-    ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView, ToolCallMediaView,
-    ToolCallView, ToolEffectView, ToolItemStatus, ToolKindView, ToolParallelismView, ToolView,
-    WorkflowEndpointInput, WorkflowStartRefInput, WorkflowToolCompletionInput,
-    WorkflowToolCompletionKeySourceInput, WorkflowToolDeclarationInput,
-    WorkflowToolDefinitionInput, WorkflowToolKindInput, WorkflowToolSpecInput,
-    WorkflowToolTargetInput,
+    ModelConfig, PendingApprovalView, ProviderContextDisplayView, ProviderNativeToolExecutionView,
+    RunAcceptedSourceView, RunFailureKindView, RunStatus as ApiRunStatus, RunSummarySourceView,
+    RunSummaryView, RunView, RunViewSource, SessionEventKindView, SessionEventView,
+    SessionManagementView, SessionRetentionView, SessionStatus as ApiSessionStatus, SessionView,
+    TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
+    ToolCallDisplayView, ToolCallEventView, ToolCallMediaView, ToolCallView, ToolEffectView,
+    ToolItemStatus, ToolKindView, ToolParallelismView, ToolView, WorkflowEndpointInput,
+    WorkflowStartRefInput, WorkflowToolCompletionInput, WorkflowToolCompletionKeySourceInput,
+    WorkflowToolDeclarationInput, WorkflowToolDefinitionInput, WorkflowToolKindInput,
+    WorkflowToolSpecInput, WorkflowToolTargetInput,
 };
 use engine::{
     ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
@@ -779,6 +778,7 @@ impl<'a> CoreAgentProjector<'a> {
                             entries: project_context_entry_inputs(input),
                         },
                     },
+                    requested_by: attribution(accepted.requested_by.as_ref()),
                 }),
                 RunEvent::Started { run_id } => Ok(SessionEventKindView::RunStarted {
                     run_id: api_run_id(*run_id),
@@ -787,16 +787,20 @@ impl<'a> CoreAgentProjector<'a> {
                     run_id,
                     steering_id,
                     input,
+                    requested_by,
                 } => Ok(SessionEventKindView::RunSteeringAccepted {
                     run_id: api_run_id(*run_id),
                     steering_id: api_steering_id(*steering_id),
                     input: project_context_entry_inputs(input),
+                    requested_by: attribution(requested_by.as_ref()),
                 }),
-                RunEvent::CancellationRequested { run_id } => {
-                    Ok(SessionEventKindView::RunCancellationRequested {
-                        run_id: api_run_id(*run_id),
-                    })
-                }
+                RunEvent::CancellationRequested {
+                    run_id,
+                    requested_by,
+                } => Ok(SessionEventKindView::RunCancellationRequested {
+                    run_id: api_run_id(*run_id),
+                    requested_by: attribution(requested_by.as_ref()),
+                }),
                 RunEvent::Completed { run_id, output } => Ok(SessionEventKindView::RunCompleted {
                     run_id: api_run_id(*run_id),
                     output: output.as_ref().map(content_ref_to_api),
@@ -806,10 +810,18 @@ impl<'a> CoreAgentProjector<'a> {
                     kind: run_failure_kind_to_api(failure.kind.clone()),
                     message: self.run_failure_message(failure).await,
                 }),
-                RunEvent::Cancelled { run_id }
-                | RunEvent::ForceCancelled { run_id }
-                | RunEvent::QueuedCancelled { run_id } => Ok(SessionEventKindView::RunCancelled {
+                RunEvent::Cancelled { run_id } | RunEvent::ForceCancelled { run_id } => {
+                    Ok(SessionEventKindView::RunCancelled {
+                        run_id: api_run_id(*run_id),
+                        requested_by: None,
+                    })
+                }
+                RunEvent::QueuedCancelled {
+                    run_id,
+                    requested_by,
+                } => Ok(SessionEventKindView::RunCancelled {
                     run_id: api_run_id(*run_id),
+                    requested_by: attribution(requested_by.as_ref()),
                 }),
             },
             CoreAgentEvent::Approval(event) => match event {
@@ -839,7 +851,7 @@ impl<'a> CoreAgentProjector<'a> {
                         engine::ApprovalDecision::Rejected => ApprovalDecisionKind::Reject,
                     },
                     note: note.clone(),
-                    decided_by: decided_by.as_ref().and_then(approval_principal_to_api),
+                    decided_by: attribution(decided_by.as_ref()),
                 }),
                 engine::ApprovalEvent::Cancelled {
                     approval_id,
@@ -1498,7 +1510,6 @@ fn openai_annotated_span(text: &str, annotation: &Value) -> Option<String> {
 fn run_failure_kind_to_api(kind: RunFailureKind) -> RunFailureKindView {
     match kind {
         RunFailureKind::ModelFailure => RunFailureKindView::ModelFailure,
-        RunFailureKind::AuthorityRevoked => RunFailureKindView::AuthorityRevoked,
         RunFailureKind::ToolFailure => RunFailureKindView::ToolFailure,
         RunFailureKind::ContextFailure => RunFailureKindView::ContextFailure,
         RunFailureKind::LimitExceeded => RunFailureKindView::LimitExceeded,
@@ -1867,14 +1878,14 @@ fn promise_source_name(source: &engine::PromiseSource) -> &'static str {
     }
 }
 
-fn approval_principal_to_api(principal: &engine::ApprovalPrincipal) -> Option<PrincipalRefView> {
-    Some(PrincipalRefView {
-        kind: match principal.kind.as_str() {
-            "user" => PrincipalKind::User,
-            "service_account" => PrincipalKind::ServiceAccount,
-            _ => return None,
-        },
-        id: principal.id.clone(),
+fn attribution(value: Option<&engine::Attribution>) -> Option<api::Attribution> {
+    Some(match value?.clone() {
+        engine::Attribution::Actor { id } => api::Attribution::Actor { id },
+        engine::Attribution::Key { prefix } => api::Attribution::Key { prefix },
+        engine::Attribution::Local => api::Attribution::Local,
+        engine::Attribution::Internal { component, cause } => {
+            api::Attribution::Internal { component, cause }
+        }
     })
 }
 
@@ -2544,7 +2555,6 @@ fn llm_generation_status_to_api(status: &LlmGenerationStatus) -> &'static str {
         LlmGenerationStatus::Succeeded => "succeeded",
         LlmGenerationStatus::Failed => "failed",
         LlmGenerationStatus::Cancelled => "cancelled",
-        LlmGenerationStatus::AuthorityRevoked => "authority_revoked",
     }
 }
 
@@ -3578,10 +3588,8 @@ mod tests {
         let session = projector
             .project_session(ProjectSession {
                 access: &api::ResourceAccessSummary {
-                    root: api::ResourceRef::Session("session_1".to_owned()),
-                    owner: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
                     visibility: api::Visibility::Universe,
-                    execution: None,
+                    created_by: Some(api::Attribution::Local),
                 },
                 session_id: &session_id,
                 state: &state,

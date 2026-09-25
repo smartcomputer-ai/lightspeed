@@ -90,6 +90,7 @@ async fn engine_completion_history_reconstructs_one_message_and_preserves_reques
     let action = drive
         .admit_command(
             engine::CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                requested_by: None,
                 submission_id: None,
                 notify_on_terminal: Vec::new(),
                 run_config: Default::default(),

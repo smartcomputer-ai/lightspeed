@@ -11,7 +11,7 @@ use engine::{
         SessionCheckpoint, SessionLifecycleStatus, SessionListCursor, SessionListPage,
         SessionOrigin, SessionOriginCounts, SessionPage, SessionRecord, SessionStore,
         SessionStoreError, apply_lifecycle_projection, check_origin_limits, collect_blob_refs,
-        collect_content_refs, largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
+        largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
     },
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -384,13 +384,12 @@ struct SessionSegment {
 }
 
 impl PgStore {
-    /// `list_sessions` for one reader: the page holds only sessions the
-    /// reader may read, decided in SQL by the resource policy, each with the
-    /// access summary its view carries.
+    /// `list_sessions` narrowed by the audience of each session's root, with
+    /// the access summary each view carries.
     pub async fn list_sessions_for(
         &self,
         request: ListSessions,
-        reader: &crate::Reader,
+        filter: &crate::AccessFilter,
     ) -> Result<crate::SessionListPageWithAccess, SessionStoreError> {
         if request.limit == 0 {
             return Err(SessionStoreError::InvalidLimit { limit: 0 });
@@ -423,48 +422,44 @@ impl PgStore {
             .then(|| metadata_json(&metadata_exact))
             .transpose()?;
         let metadata_predicate = match (metadata_filter.is_some(), metadata_keys.is_empty()) {
-            (true, false) => "AND sessions.metadata_json @> $10 AND sessions.metadata_json ?& $11",
-            (true, true) => "AND sessions.metadata_json @> $10",
-            (false, false) => "AND sessions.metadata_json ?& $10",
+            (true, false) => "AND s.metadata_json @> $12 AND s.metadata_json ?& $13",
+            (true, true) => "AND s.metadata_json @> $12",
+            (false, false) => "AND s.metadata_json ?& $12",
             (false, true) => "",
         };
         let lifecycle_predicate = if request.exclude_closed {
-            "AND sessions.lifecycle_status <> 'closed'"
+            "AND s.lifecycle_status <> 'closed'"
         } else {
             ""
         };
-        let crate::resources::ReadableClauses {
-            filter: readable,
-            privileged,
-        } = crate::resources::readable_clauses(reader, "session", "sessions", "session_id", 7);
-        let (reader_principal, reader_root_kind, reader_root_id) = reader.binds();
-        let summary_columns = crate::resources::SUMMARY_COLUMNS;
-        // The anchor join brings columns of the same names; qualify ours.
+        let (access_predicate, access_binds) = filter.session_clause(7);
+        let summary_columns = crate::access::session_summary_columns();
+        let root_join = crate::access::SESSION_ROOT_JOIN;
+        // The root join brings columns of the same names; qualify ours.
         let session_columns = SESSION_COLUMNS
             .split(',')
             .map(str::trim)
             .filter(|column| !column.is_empty())
-            .map(|column| format!("sessions.{column}"))
+            .map(|column| format!("s.{column}"))
             .collect::<Vec<_>>()
             .join(", ");
         let query = format!(
             r#"
-            SELECT {session_columns}, {summary_columns}, {privileged} AS access_privileged
-            FROM sessions
-            JOIN access_resources ra ON ra.universe_id = sessions.universe_id AND ra.resource_kind = 'session' AND ra.resource_id = sessions.session_id
-            JOIN access_resource_policies rp ON rp.universe_id = ra.universe_id AND rp.resource_kind = ra.audience_root_kind AND rp.resource_id = ra.audience_root_id
-            WHERE sessions.universe_id = $1
-              AND ($2::bigint IS NULL OR (sessions.updated_at_ms, sessions.session_id) < ($2, $3))
-              AND ($4::text IS NULL OR sessions.origin_root_session_id = $4)
-              AND ($5::text IS NULL OR sessions.origin_parent_session_id = $5)
+            SELECT {session_columns}, {summary_columns}
+            FROM sessions s
+            {root_join}
+            WHERE s.universe_id = $1
+              AND ($2::bigint IS NULL OR (s.updated_at_ms, s.session_id) < ($2, $3))
+              AND ($4::text IS NULL OR s.origin_root_session_id = $4)
+              AND ($5::text IS NULL OR s.origin_parent_session_id = $5)
               {lifecycle_predicate}
-              AND {readable}
+              {access_predicate}
               {metadata_predicate}
-            ORDER BY sessions.updated_at_ms DESC, sessions.session_id DESC
+            ORDER BY s.updated_at_ms DESC, s.session_id DESC
             LIMIT $6
             "#,
         );
-        let mut sql = sqlx::query(&query)
+        let sql = sqlx::query(&query)
             .bind(self.config.universe_id)
             .bind(cursor_updated_at_ms)
             .bind(cursor_session_id)
@@ -480,10 +475,8 @@ impl PgStore {
                     .as_ref()
                     .map(|id| id.as_str().to_owned()),
             )
-            .bind(fetch_limit)
-            .bind(reader_principal)
-            .bind(reader_root_kind)
-            .bind(reader_root_id);
+            .bind(fetch_limit);
+        let mut sql = access_binds.bind(sql);
         if let Some(filter) = metadata_filter {
             sql = sql.bind(filter);
         }
@@ -495,36 +488,30 @@ impl PgStore {
             .await
             .map_err(|error| session_sql_error("list sessions", error))?;
 
-        let store_error = |error: ::access::AccessError| SessionStoreError::Store {
-            message: error.to_string(),
-        };
         let mut sessions = rows
             .iter()
             .map(|row| {
                 Ok((
                     session_record_from_row(row)?,
-                    crate::resources::summary_from_list_row(row).map_err(store_error)?,
-                    crate::resources::privileged_from_list_row(row).map_err(store_error)?,
+                    crate::access::summary_from_row(row).map_err(|error| {
+                        SessionStoreError::Store {
+                            message: error.to_string(),
+                        }
+                    })?,
                 ))
             })
             .collect::<Result<Vec<_>, SessionStoreError>>()?;
         let next_cursor = (sessions.len() > request.limit).then(|| {
             sessions.truncate(request.limit);
-            let (last, _, _) = sessions.last().expect("non-empty page");
+            let (last, _) = sessions.last().expect("non-empty page");
             SessionListCursor {
                 updated_at_ms: last.updated_at_ms,
                 session_id: last.session_id.clone(),
             }
         });
-        // Only the returned page counts as read.
-        let privileged = sessions.iter().any(|(_, _, privileged)| *privileged);
         Ok(crate::SessionListPageWithAccess {
-            sessions: sessions
-                .into_iter()
-                .map(|(record, access, _)| (record, access))
-                .collect(),
+            sessions,
             next_cursor,
-            privileged,
         })
     }
 }
@@ -682,7 +669,7 @@ impl SessionStore for PgStore {
         request: ListSessions,
     ) -> Result<SessionListPage, SessionStoreError> {
         let page = self
-            .list_sessions_for(request, &crate::Reader::Everything)
+            .list_sessions_for(request, &crate::AccessFilter::default())
             .await?;
         Ok(SessionListPage {
             sessions: page
@@ -957,15 +944,6 @@ impl SessionStore for PgStore {
         .execute(&mut *tx)
         .await
         .map_err(|error| session_sql_error("delete session subtree", error))?;
-        // The anchor goes with the content, so the id is free again.
-        sqlx::query(
-            "DELETE FROM access_resources WHERE universe_id = $1 AND resource_kind = 'session' AND resource_id = ANY($2)",
-        )
-        .bind(self.config.universe_id)
-        .bind(&selected_ids)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| session_sql_error("release session anchors", error))?;
         tx.commit()
             .await
             .map_err(|error| session_sql_error("commit delete session", error))?;
@@ -1760,19 +1738,15 @@ async fn append_events_in_tx(
 }
 
 /// Distinct refs in an append. The store derives FK-backed roots inside the
-/// append transaction; callers never register roots separately. Refs the
-/// runtime placed in content positions become `content` roots, readable
-/// through the session; every other ref is retained as `scan`.
+/// append transaction; callers never register roots separately.
 #[derive(Default)]
 struct EmbeddedBlobRefs {
     refs: BTreeSet<BlobRef>,
-    content: BTreeSet<BlobRef>,
 }
 
 impl EmbeddedBlobRefs {
     fn observe(&mut self, entry_json: &serde_json::Value) {
         self.refs.extend(collect_blob_refs(entry_json));
-        self.content.extend(collect_content_refs(entry_json));
     }
 
     async fn record_roots(
@@ -1786,11 +1760,6 @@ impl EmbeddedBlobRefs {
         }
         let candidates = self
             .refs
-            .iter()
-            .map(|blob_ref| blob_ref.as_str()[7..].to_owned())
-            .collect::<Vec<_>>();
-        let content = self
-            .content
             .iter()
             .map(|blob_ref| blob_ref.as_str()[7..].to_owned())
             .collect::<Vec<_>>();
@@ -1810,10 +1779,9 @@ impl EmbeddedBlobRefs {
                 ORDER BY b.digest
                 FOR KEY SHARE OF b
             ), inserted AS (
-                INSERT INTO cas_session_roots (universe_id, session_id, digest, origin)
-                SELECT $1, $2, digest, CASE WHEN digest = ANY($4::text[]) THEN 'content' ELSE 'scan' END FROM held
-                ON CONFLICT (universe_id, session_id, digest) DO UPDATE SET origin = 'content'
-                WHERE EXCLUDED.origin = 'content' AND cas_session_roots.origin <> 'content'
+                INSERT INTO cas_session_roots (universe_id, session_id, digest)
+                SELECT $1, $2, digest FROM held
+                ON CONFLICT DO NOTHING
             )
             SELECT 'sha256:' || digest FROM requested
             WHERE digest NOT IN (SELECT digest FROM held)
@@ -1823,7 +1791,6 @@ impl EmbeddedBlobRefs {
         .bind(universe_id)
         .bind(session_id.as_str())
         .bind(&candidates)
-        .bind(&content)
         .fetch_all(&mut **tx)
         .await
         .map_err(|error| session_sql_error("record event blob roots", error))?;

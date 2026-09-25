@@ -1,7 +1,8 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use super::authentication;
-use access::{AccessScope, RequestContext};
+use super::request_context::RequestContext;
+use api::AccessScope;
 use api::{
     AgentApiError, JsonRpcRequest, JsonRpcResponse, dispatch_deployment_json_rpc,
     dispatch_json_rpc, is_deployment_method,
@@ -22,7 +23,7 @@ use environment_protocol::{
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
-use store_pg::{PgAccessStore, PgApiKeyStore};
+use store_pg::PgApiKeyStore;
 use tokio_tungstenite::{connect_async, tungstenite::Message as ProviderMessage};
 use uuid::Uuid;
 
@@ -33,14 +34,15 @@ use crate::{
 };
 
 use super::{
-    GatewayAgentApi, GatewayDeploymentApi, OAuthCallbackOutcome, connect_temporal, principal,
+    GatewayAgentApi, GatewayDeploymentApi, OAuthCallbackOutcome, connect_temporal,
     registration::{self, RegisteredConnections},
+    request_context,
 };
 
 pub const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:18080";
 pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 
-pub use super::authentication::{PRINCIPAL_HEADER, UNIVERSE_HEADER};
+pub use super::authentication::{ACTOR_HEADER, UNIVERSE_HEADER};
 
 #[derive(Clone, Debug)]
 pub struct GatewayServerConfig {
@@ -76,7 +78,6 @@ enum UniverseResolution {
 
 pub struct GatewayState {
     resolution: UniverseResolution,
-    local_initialized: tokio::sync::OnceCell<()>,
     /// Live registered-daemon connections on this replica.
     registrations: Arc<RegisteredConnections>,
     /// Public base URL daemons are told to dial for data connections.
@@ -103,18 +104,11 @@ impl GatewayRoutes {
 }
 
 impl GatewayState {
-    fn pool(&self) -> &sqlx::PgPool {
-        match &self.resolution {
-            UniverseResolution::FixedApi { api } => api.store().pool(),
-            UniverseResolution::Multi { runtime, .. } => runtime.stores().pool(),
-        }
-    }
     /// Route every request to one existing service instance.
     pub fn for_api(api: Arc<GatewayAgentApi>) -> Self {
         let public_base_url = api.public_base_url().to_owned();
         Self {
             resolution: UniverseResolution::FixedApi { api },
-            local_initialized: tokio::sync::OnceCell::new(),
             registrations: Arc::new(RegisteredConnections::new()),
             public_base_url,
         }
@@ -206,71 +200,43 @@ impl GatewayState {
                 api_keys,
                 deployment,
             },
-            local_initialized: tokio::sync::OnceCell::new(),
             registrations: Arc::new(RegisteredConnections::new()),
             public_base_url,
         }
     }
 
-    /// Resolve the caller once: credential, assertion and the acting
-    /// principal's rights in the scope the method addresses.
+    /// Resolve the caller once: what it addresses, its key and its actor.
     async fn request_context(
         &self,
         headers: &HeaderMap,
         method: &str,
-    ) -> Result<RequestContext, authentication::Refusal> {
+    ) -> Result<RequestContext, AgentApiError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| AgentApiError::internal(e.to_string()))?
             .as_millis() as u64;
-        let (pool, universe_id) = match &self.resolution {
+        let universe_id = match &self.resolution {
             UniverseResolution::Multi {
                 mode: GatewayAuthMode::Authenticated,
-                runtime,
                 api_keys,
                 ..
             } => {
-                return authentication::authenticate(
-                    api_keys,
-                    &PgAccessStore::new(runtime.stores().pool().clone()),
-                    headers,
-                    method,
-                    now,
-                )
-                .await;
+                return authentication::authenticate(api_keys, headers, method, now).await;
             }
-            UniverseResolution::FixedApi { api } => (api.store().pool().clone(), api.universe_id()),
+            UniverseResolution::FixedApi { api } => api.universe_id(),
             UniverseResolution::Multi {
                 mode: GatewayAuthMode::Single { universe_id },
-                runtime,
                 ..
-            } => (runtime.stores().pool().clone(), *universe_id),
+            } => *universe_id,
         };
-        // Development mode: one explicit local identity, never a header claim.
-        let requirement = api::method_access(method).ok_or_else(authentication::unknown_method)?;
+        // Development mode: no key and no actor, never a header claim.
+        api::method_access(method).ok_or_else(authentication::unknown_method)?;
         authentication::reject_identity_headers(headers)?;
-        let access = PgAccessStore::new(pool);
-        self.local_initialized
-            .get_or_try_init(|| async {
-                access
-                    .initialize_local_development(universe_id, now)
-                    .await
-                    .map(|_| ())
-            })
-            .await
-            .map_err(|e| AgentApiError::internal(e.to_string()))?;
-        let target = if is_deployment_method(method) {
+        Ok(RequestContext::local(if is_deployment_method(method) {
             AccessScope::Deployment
         } else {
             AccessScope::Universe { universe_id }
-        };
-        let context =
-            authentication::local_context(&access, store_pg::LOCAL_DEVELOPMENT_PRINCIPAL, target)
-                .await?;
-        if !authentication::method_permitted(&context.rights, requirement) {
-            return Err(AgentApiError::forbidden().into());
-        }
-        Ok(context)
+        }))
     }
 
     async fn dispatch(&self, context: &RequestContext, request: JsonRpcRequest) -> JsonRpcResponse {
@@ -298,7 +264,7 @@ impl GatewayState {
         &self,
         context: &RequestContext,
     ) -> Result<Arc<GatewayAgentApi>, AgentApiError> {
-        let AccessScope::Universe { universe_id } = context.target_scope() else {
+        let AccessScope::Universe { universe_id } = context.scope else {
             return Err(AgentApiError::invalid_request("universe context required"));
         };
         match &self.resolution {
@@ -395,12 +361,6 @@ pub async fn prewarm_single_universe(
 ) -> anyhow::Result<()> {
     if let GatewayAuthMode::Single { universe_id } = mode {
         runtime.state_for(*universe_id, true).await?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_millis() as u64;
-        PgAccessStore::new(runtime.stores().pool().clone())
-            .initialize_local_development(*universe_id, now)
-            .await?;
     }
     Ok(())
 }
@@ -935,52 +895,28 @@ async fn rpc(
     Json(request): Json<JsonRpcRequest>,
 ) -> Response {
     let method = request.method.clone();
-    let target = super::audit::target(request.params.as_ref());
     let context = match state.request_context(&headers, &method).await {
         Ok(context) => context,
-        Err(refusal) => {
-            match refusal.event {
-                Some(event) => super::audit::refused(state.pool(), *event, target).await,
-                None => tracing::warn!(
+        Err(error) => {
+            if error.kind != api::AgentApiErrorKind::Forbidden {
+                tracing::warn!(
                     target: "temporal_server",
                     %method,
-                    kind = ?refusal.error.kind,
+                    kind = ?error.kind,
                     "request refused before authentication"
-                ),
+                );
             }
-            return no_store_json_rpc(JsonRpcResponse::failure(request.id, refusal.error.into()));
+            return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into()));
         }
     };
-    let (response, privileged) =
-        principal::with_audited_request_context(context.clone(), state.dispatch(&context, request))
+    let response =
+        request_context::with_request_context(context.clone(), state.dispatch(&context, request))
             .await;
-    super::audit::completed(
-        state.pool(),
-        &method,
-        target,
-        &context,
-        &response,
-        privileged,
-    )
-    .await;
-    let response = if response_budget_exempt(&method) {
+    no_store_json_rpc(if response_budget_exempt(&method) {
         response
     } else {
         enforce_response_budget(response)
-    };
-    privileged_read_response(response, privileged)
-}
-
-fn privileged_read_response(response: JsonRpcResponse, privileged: bool) -> Response {
-    let successful_read = privileged && response.error.is_none();
-    let mut response = no_store_json_rpc(response);
-    if successful_read {
-        response.headers_mut().insert(
-            "x-lightspeed-privileged-read",
-            HeaderValue::from_static("true"),
-        );
-    }
-    response
+    })
 }
 
 /// Full message projections and blob reads cannot be shortened with a smaller
@@ -1155,35 +1091,6 @@ mod tests {
     use api::AgentApiErrorKind;
 
     #[test]
-    fn only_successful_privileged_reads_carry_the_response_marker() {
-        for privileged in [false, true] {
-            let response = privileged_read_response(
-                JsonRpcResponse::success(
-                    api::RequestId::Number(1),
-                    serde_json::json!({"result": {}}),
-                ),
-                privileged,
-            );
-            assert_eq!(
-                response
-                    .headers()
-                    .contains_key("x-lightspeed-privileged-read"),
-                privileged
-            );
-            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-        }
-        let response = privileged_read_response(
-            JsonRpcResponse::failure(api::RequestId::Number(1), AgentApiError::forbidden().into()),
-            true,
-        );
-        assert!(
-            !response
-                .headers()
-                .contains_key("x-lightspeed-privileged-read")
-        );
-    }
-
-    #[test]
     fn json_rpc_responses_disable_caching() {
         let response = no_store_json_rpc(JsonRpcResponse::success(
             api::RequestId::Number(1),
@@ -1258,7 +1165,12 @@ mod tests {
 
     #[test]
     fn local_mode_rejects_every_remote_identity_claim() {
-        for name in [UNIVERSE_HEADER, PRINCIPAL_HEADER, "authorization"] {
+        for name in [
+            UNIVERSE_HEADER,
+            ACTOR_HEADER,
+            "x-lightspeed-principal",
+            "authorization",
+        ] {
             let mut headers = HeaderMap::new();
             headers.insert(name, "untrusted".parse().unwrap());
             assert!(authentication::reject_identity_headers(&headers).is_err());

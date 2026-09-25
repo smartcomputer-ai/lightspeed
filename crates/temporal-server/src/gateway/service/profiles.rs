@@ -1,8 +1,6 @@
 use super::api_config::engine_session_config_from_api;
 use super::*;
-use ::profiles::{
-    AgentProfileExt, AgentProfileInputExt, ProfileError, ProfileSourceExt, ProfileStore,
-};
+use ::profiles::{ProfileError, ProfileSourceExt, ProfileStore};
 
 pub(super) fn merge_profile_start_metadata(
     profile_metadata: Option<&BTreeMap<String, String>>,
@@ -25,20 +23,6 @@ impl GatewayAgentApi {
         &self,
         params: ProfileCreateParams,
     ) -> Result<ProfileCreateResponse, AgentApiError> {
-        params
-            .profile
-            .clone()
-            .into_record(now_ms()?)
-            .validate()
-            .map_err(map_profile_error)?;
-        // Applying a profile makes what it names session content.
-        self.authorize_supplied_document(None, &params.profile)
-            .await?;
-        self.reserve_resource(
-            ResourceRef::Profile(params.profile.profile_id.as_str().to_owned()),
-            None,
-        )
-        .await?;
         let created_at_ms = now_ms()?;
         let profile = self
             .store
@@ -76,41 +60,6 @@ impl GatewayAgentApi {
         &self,
         params: ProfilePutParams,
     ) -> Result<ProfilePutResponse, AgentApiError> {
-        params
-            .profile
-            .clone()
-            .into_record(now_ms()?)
-            .validate()
-            .map_err(map_profile_error)?;
-        let resource = ResourceRef::Profile(params.profile.profile_id.as_str().to_owned());
-        let anchored = self
-            .access_store()
-            .anchor(self.universe_id(), &resource)
-            .await
-            .map_err(|e| AgentApiError::internal(e.to_string()))?
-            .is_some();
-        if anchored {
-            self.authorize_method(METHOD_PROFILES_PUT, Some(resource.clone()))
-                .await?;
-        } else {
-            self.authorize_method(METHOD_PROFILES_CREATE, Some(resource.clone()))
-                .await?;
-        }
-        // Applying a profile makes what it names session content.
-        let replaced = match self
-            .store
-            .read_agent_profile(&params.profile.profile_id)
-            .await
-        {
-            Ok(profile) => Some(profile.document),
-            Err(ProfileError::NotFound { .. }) => None,
-            Err(error) => return Err(map_profile_error(error)),
-        };
-        self.authorize_replacement_document(&params.profile, replaced.as_ref())
-            .await?;
-        if !anchored {
-            self.reserve_resource(resource, None).await?;
-        }
         let profile = self
             .store
             .put_agent_profile(params.profile, params.expected_revision, now_ms()?)
@@ -141,16 +90,8 @@ impl GatewayAgentApi {
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
-        self.authorize_supplied_document(Some(&session_id), &params.profile)
-            .await?;
         let resolved = self.resolve_profile_source(params.profile).await?;
         let profile = self.profile_intent(&resolved, true)?;
-        // The workflow admits the resulting configuration again for the
-        // session's identity; this answers the caller in its own terms.
-        if let Some(config) = &profile.config {
-            self.admit_attachments(&session_id, &config.features)
-                .await?;
-        }
         let applied = self
             .prepare_session_operation(
                 &session_id,

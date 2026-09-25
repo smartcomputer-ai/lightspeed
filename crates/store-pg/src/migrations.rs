@@ -17,17 +17,6 @@ const MIGRATION_ADVISORY_LOCK_ID: i64 = 0x4c53_5047_4d49_4752;
 /// migration ledger is evidence of a pre-ledger Lightspeed database, not an
 /// empty schema that can safely receive the initial migration.
 const LIGHTSPEED_TABLES: &[&str] = &[
-    "access_audit_changes",
-    "access_audit_events",
-    "access_capabilities",
-    "access_groups",
-    "access_memberships",
-    "access_policy",
-    "access_principals",
-    "access_resource_grants",
-    "access_resource_policies",
-    "access_resources",
-    "access_role_assignments",
     "agent_profiles",
     "api_keys",
     "auth_clients",
@@ -35,7 +24,6 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "auth_grants",
     "auth_providers",
     "auth_secrets",
-    "blob_uploads",
     "bot_events",
     "bot_triggers",
     "bots",
@@ -100,8 +88,8 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 7,
-        name: "identity_access",
-        sql: include_str!("../migrations/007_identity_access.sql"),
+        name: "api_keys",
+        sql: include_str!("../migrations/007_api_keys.sql"),
     },
     EmbeddedMigration {
         version: 8,
@@ -113,19 +101,9 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "channels",
         sql: include_str!("../migrations/009_channels.sql"),
     },
-    EmbeddedMigration {
-        version: 10,
-        name: "access_resources",
-        sql: include_str!("../migrations/010_access_resources.sql"),
-    },
-    EmbeddedMigration {
-        version: 11,
-        name: "access_audit",
-        sql: include_str!("../migrations/011_access_audit.sql"),
-    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 11;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 9;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

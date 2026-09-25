@@ -1,10 +1,14 @@
-//! Shared-service admission. No public method may rely on HTTP checks alone:
-//! every handler decides from the request context resolved at the trusted
-//! boundary, or from an explicit controller context for internal work. Both
-//! go through `access::authorize`; storage supplies the resource facts.
+//! Shared-service admission. Every handler authorizes by its method name:
+//! a request must address this universe with a key holding the method's
+//! group, which the boundary already checked and in-process callers must
+//! satisfy too; internal work for a bot or a delegated session is held to
+//! the controller rules, from the target's own row. Deciding what
+//! a person may do belongs to whoever asserts actors.
+pub(crate) use super::controller::ControllerContext;
+use super::controller::authorize_controller;
 use super::*;
-pub(crate) use access::ControllerContext;
-use access::{ActionActor, Caller, Decision, ResourceController, ResourceRef};
+use crate::gateway::request_context::RequestContext;
+use store_pg::ResourceAccess;
 
 tokio::task_local! {
     static CONTROLLER: ControllerContext;
@@ -20,11 +24,8 @@ pub(crate) async fn with_controller_authority<F: Future>(
 fn denied() -> AgentApiError {
     AgentApiError::forbidden()
 }
-fn access_error(error: access::AccessError) -> AgentApiError {
-    match error {
-        access::AccessError::Store(message) => AgentApiError::internal(message),
-        _ => denied(),
-    }
+fn access_error(error: store_pg::AccessStoreError) -> AgentApiError {
+    AgentApiError::internal(error.to_string())
 }
 
 impl GatewayAgentApi {
@@ -45,13 +46,10 @@ impl GatewayAgentApi {
                 if receiver.workflow_id == workflow_id && receiver.workflow_kind == temporal_workflow::channels::CHANNEL_CONVERSATION_WORKFLOW_KIND));
         let bot = self
             .access_store()
-            .anchor(
-                self.universe_id(),
-                &ResourceRef::Session(params.session_id.clone()),
-            )
+            .session_access(self.universe_id(), &params.session_id)
             .await
             .map_err(access_error)?
-            .and_then(|anchor| anchor.bot);
+            .and_then(|access| access.bot);
         let (true, Some(bot)) = (bound, bot) else {
             return Err(denied());
         };
@@ -129,24 +127,18 @@ impl GatewayAgentApi {
         self.lease_grant_token(params).await
     }
 
-    /// A controller context for an admitted actor; an actor without an
-    /// anchor holds no authority.
+    /// A controller context for an actor that exists: a bot is its own
+    /// root; a delegated session follows its root.
     async fn controller_context(
         &self,
         actor: ResourceRef,
         cause: String,
     ) -> Result<ControllerContext, AgentApiError> {
-        let anchor = self
-            .access_store()
-            .anchor(self.universe_id(), &actor)
-            .await
-            .map_err(access_error)?
-            .ok_or_else(denied)?;
+        let access = self.target_access(&actor).await?.ok_or_else(denied)?;
         Ok(ControllerContext {
             universe_id: self.universe_id(),
             actor,
-            root: anchor.audience_root,
-            execution_principal: anchor.execution.map(|execution| execution.run_as),
+            root: access.root,
             cause,
         })
     }
@@ -179,161 +171,71 @@ impl GatewayAgentApi {
         .await
     }
 
-    /// Authority of a delegated child over itself. The delegation service has
-    /// already bound the child to its admitted parent invocation; this only
-    /// confirms the session is a reserved delegation, never a personal one.
+    /// Authority of a delegated child over itself. The delegation service
+    /// has already bound the child to its admitted parent invocation; this
+    /// only confirms the session was created as a delegation, which only the
+    /// runtime does.
     pub(crate) async fn delegated_session_authority(
         &self,
         session: &SessionId,
     ) -> Result<ControllerContext, AgentApiError> {
-        let resource = ResourceRef::Session(session.as_str().to_owned());
-        let anchor = self
+        let access = self
             .access_store()
-            .anchor(self.universe_id(), &resource)
+            .session_access(self.universe_id(), session.as_str())
             .await
             .map_err(access_error)?
+            .filter(|access| access.parent.is_some())
             .ok_or_else(denied)?;
-        let (ResourceController::Session(_), ActionActor::Internal { cause, .. }) =
-            (anchor.controller, anchor.created_by)
-        else {
-            return Err(denied());
-        };
         Ok(ControllerContext {
             universe_id: self.universe_id(),
-            actor: resource,
-            root: anchor.audience_root,
-            execution_principal: anchor.execution.map(|execution| execution.run_as),
-            cause,
+            cause: format!("delegated session {session}"),
+            actor: access.resource,
+            root: access.root,
         })
-    }
-
-    /// Called only after the delegation service validates its admitted tool
-    /// invocation. Reserve before the child row so origin alone grants none;
-    /// the child inherits its parent's owner and bot.
-    pub(crate) async fn reserve_delegated_session(
-        &self,
-        parent: &SessionId,
-        child: &SessionId,
-        cause: &str,
-    ) -> Result<(), AgentApiError> {
-        self.access_store()
-            .reserve_resource(
-                self.universe_id(),
-                &ResourceRef::Session(child.as_str().to_owned()),
-                &ActionActor::Internal {
-                    component: "subagent".into(),
-                    cause: cause.to_owned(),
-                },
-                &ResourceController::Session(parent.as_str().to_owned()),
-                None,
-                None,
-                now_ms()? as u64,
-            )
-            .await
-            .map(|_| ())
-            .map_err(access_error)
     }
 
     pub(crate) fn access_store(&self) -> store_pg::PgAccessStore {
         store_pg::PgAccessStore::new(self.store.pool().clone())
     }
 
-    fn scope(&self) -> access::AccessScope {
-        access::AccessScope::Universe {
-            universe_id: self.universe_id(),
-        }
-    }
-
     /// The caller's context, which must address this universe-bound service.
-    pub(super) fn caller(&self) -> Result<access::RequestContext, AgentApiError> {
-        let context = crate::gateway::principal::request_context()?;
-        if context.target_scope() != self.scope() || !context.credential_scope.permits(self.scope())
+    pub(super) fn caller(&self) -> Result<RequestContext, AgentApiError> {
+        let context = crate::gateway::request_context::request_context()?;
+        if context.scope
+            != (AccessScope::Universe {
+                universe_id: self.universe_id(),
+            })
         {
             return Err(denied());
         }
         Ok(context)
     }
 
-    /// Revalidation for a parked caller; internal controllers hold no
-    /// revocable credential.
-    pub(super) fn revalidation(
+    /// The access facts of a target: a session's or bot's from its row
+    /// (`None` when it does not exist); any other resource belongs to the
+    /// universe.
+    pub(super) async fn target_access(
         &self,
-    ) -> Result<Option<crate::gateway::authentication::Revalidation>, AgentApiError> {
-        if CONTROLLER.try_with(|_| ()).is_ok() {
-            return Ok(None);
+        target: &ResourceRef,
+    ) -> Result<Option<ResourceAccess>, AgentApiError> {
+        let store = self.access_store();
+        match target {
+            ResourceRef::Session(id) => store.session_access(self.universe_id(), id).await,
+            ResourceRef::Bot(id) => store.bot_access(self.universe_id(), id).await,
+            other => Ok(Some(ResourceAccess::shared(other.clone(), None))),
         }
-        self.caller()
-            .map(crate::gateway::authentication::Revalidation::new)
-            .map(Some)
+        .map_err(access_error)
     }
 
-    /// The execution identity a new root runs as. `service` is the
-    /// universe's execution service; `personal` is the requesting person,
-    /// allowed only where the universe enables it. Internal work never
-    /// chooses: its resources copy their controller's.
-    pub(super) async fn resolve_execution(
-        &self,
-        requested: Option<ExecutionInput>,
-    ) -> Result<access::Execution, AgentApiError> {
-        let kind = requested
-            .map(|input| input.kind)
-            .unwrap_or(access::ExecutionKind::Service);
-        let policy = self
-            .access_store()
-            .universe_execution_policy(self.universe_id(), now_ms()? as u64)
-            .await
-            .map_err(access_error)?;
-        match kind {
-            access::ExecutionKind::Service => Ok(access::Execution {
-                run_as: policy.execution_principal_id,
-                kind,
-            }),
-            access::ExecutionKind::Personal => {
-                let principal = self.caller()?.acting_principal().clone();
-                if !policy.personal_execution_enabled
-                    || principal.kind != access::PrincipalKind::User
-                {
-                    return Err(denied());
-                }
-                Ok(access::Execution {
-                    run_as: principal.id,
-                    kind,
-                })
-            }
-        }
-    }
-
-    /// Admit a run: the session's execution principal must be active with
-    /// resource use in the universe, and may use every workspace,
-    /// environment and MCP server the session has `attached` that still
-    /// exists. The requester's own control check is separate and already
-    /// done. The admission itself is the record: an API start writes an
-    /// audit row, and the session's execution identity is immutable, so
-    /// nothing further is stored on the run.
-    pub(super) async fn admit_run(
-        &self,
-        session: &SessionId,
-        attached: &[ResourceRef],
-    ) -> Result<(), AgentApiError> {
-        self.require_execution_use(
-            &ResourceRef::Session(session.as_str().to_owned()),
-            attached,
-            store_pg::UseCheck::Continuation,
-        )
-        .await
-    }
-
-    /// The access summary a view carries; a resource without one was never
-    /// admitted, which is an internal inconsistency, not a caller error.
+    /// The audience a session or bot view carries.
     pub(super) async fn access_summary(
         &self,
         resource: &ResourceRef,
-    ) -> Result<access::ResourceAccessSummary, AgentApiError> {
-        self.access_store()
-            .access_summary(self.universe_id(), resource)
-            .await
-            .map_err(access_error)?
-            .ok_or_else(|| AgentApiError::internal(format!("{resource:?} has no access policy")))
+    ) -> Result<ResourceAccessSummary, AgentApiError> {
+        self.target_access(resource)
+            .await?
+            .map(|access| access.audience)
+            .ok_or_else(|| not_found(resource))
     }
 
     /// The internal controller this request runs as, if any.
@@ -341,86 +243,32 @@ impl GatewayAgentApi {
         CONTROLLER.try_with(Clone::clone).ok()
     }
 
-    /// Who a list of workspaces, environments or MCP servers is for. Their
-    /// restriction never hides them from Admin, privileged reading does not
-    /// reach them, and internal work lists them as its execution principal.
-    pub(super) fn operational_reader(&self) -> Result<store_pg::Reader, AgentApiError> {
+    /// What a list of sessions is narrowed to for the current work: the
+    /// request's own filter, and for internal work shared work and its own
+    /// root only.
+    pub(super) fn access_filter(
+        &self,
+        mut requested: store_pg::AccessFilter,
+    ) -> store_pg::AccessFilter {
         if let Some(controller) = self.current_controller() {
-            return controller
-                .execution_principal
-                .map(store_pg::Reader::Principal)
-                .ok_or_else(denied);
+            requested.within_root = Some(controller.root);
         }
-        let rights = self.caller()?.rights;
-        Ok(if rights.has_role(access::Role::Admin) {
-            store_pg::Reader::Everything
-        } else {
-            store_pg::Reader::Principal(rights.principal.id)
-        })
+        requested
     }
 
-    /// Admission of what a configuration attaches, for the session it is
-    /// about to be installed on. Removing a resource is never checked, only
-    /// what remains.
+    /// Admission of what a configuration attaches: every workspace,
+    /// environment and MCP server it names must exist in the universe.
+    /// Removing a resource is never checked, only what remains.
     pub(super) async fn admit_attachments(
         &self,
-        session: &SessionId,
         features: &engine::FeaturesConfig,
     ) -> Result<(), AgentApiError> {
-        self.require_execution_use(
-            &ResourceRef::Session(session.as_str().to_owned()),
+        require_resources(
+            &self.access_store(),
+            self.universe_id(),
             &temporal_workflow::attached_resources(features),
-            store_pg::UseCheck::Admission,
         )
         .await
-    }
-
-    /// Whether the execution identity of `root`, a session or a bot, may
-    /// use every one of `resources` now, refused as the API reports it. The
-    /// decision is the identity's; whether the refusal may name the
-    /// resource is the reader's: a request caller learns of it only if the
-    /// caller may see it, while internal work sees as its execution
-    /// identity, which the decision already says.
-    pub(crate) async fn require_execution_use(
-        &self,
-        root: &ResourceRef,
-        resources: &[ResourceRef],
-        check: store_pg::UseCheck,
-    ) -> Result<(), AgentApiError> {
-        let Some(refusal) = self
-            .access_store()
-            .execution_use(self.universe_id(), root, resources, check)
-            .await
-            .map_err(access_error)?
-        else {
-            return Ok(());
-        };
-        let visible = match (&refusal, self.current_controller()) {
-            (store_pg::UseRefusal::Resource { resource, .. }, None) => {
-                self.permitted(MethodAccess::Universe(UniverseAction::Read), Some(resource))
-                    .await?
-            }
-            _ => refusal.visible_to_identity(),
-        };
-        Err(use_refusal(root, refusal, visible))
-    }
-
-    /// Who a list is for: the request's principal, or internal work's root.
-    pub(super) fn reader(&self) -> Result<store_pg::Reader, AgentApiError> {
-        if let Ok(controller) = CONTROLLER.try_with(Clone::clone) {
-            return Ok(store_pg::Reader::Root(controller.root));
-        }
-        Ok(store_pg::Reader::from_caller(Caller::Request(
-            &self.caller()?.rights,
-        )))
-    }
-
-    /// A list that included something only `read_private_content` allowed
-    /// is a privileged read of it.
-    pub(super) fn note_privileged_list(&self, privileged: bool) {
-        if privileged {
-            crate::gateway::principal::mark_privileged();
-        }
     }
 
     pub(crate) async fn authorize_method(
@@ -428,69 +276,26 @@ impl GatewayAgentApi {
         method: &str,
         resource: Option<ResourceRef>,
     ) -> Result<(), AgentApiError> {
-        self.authorize(method, resource).await.map(|_| ())
-    }
-
-    /// `authorize_method` for a read of one resource's view: the access
-    /// summary the view carries comes from the facts the decision read, so
-    /// the read costs one access lookup.
-    pub(super) async fn authorize_view(
-        &self,
-        method: &str,
-        resource: ResourceRef,
-    ) -> Result<access::ResourceAccessSummary, AgentApiError> {
-        self.authorize(method, Some(resource.clone()))
-            .await?
-            .and_then(|access| access.summary())
-            .ok_or_else(|| AgentApiError::internal(format!("{resource:?} has no access policy")))
-    }
-
-    /// The decision behind `authorize_method` and `authorize_view`, with the
-    /// access facts it was read from when the resource has an anchor.
-    async fn authorize(
-        &self,
-        method: &str,
-        resource: Option<ResourceRef>,
-    ) -> Result<Option<access::ResourceAccess>, AgentApiError> {
         let requirement = api::method_access(method).ok_or_else(denied)?;
-        let (decision, access) = self.decide(requirement, resource.as_ref()).await?;
-        if decision == Decision::Privileged {
-            crate::gateway::principal::mark_privileged();
-        }
-        if decision.allows() {
-            return Ok(access);
-        }
-        // A resource the caller may not see is missing, not forbidden, provided
-        // the caller may read universe content at all. Existing content without
-        // an anchor stays refused.
-        if decision == Decision::Hidden
-            && let Some(resource) = &resource
-            && CONTROLLER.try_with(|_| ()).is_err()
-            && self.caller()?.rights.universe_action(UniverseAction::Read) == RoleDecision::Allowed
-        {
-            let store = self.access_store();
-            let anchored = store
-                .anchor(self.universe_id(), resource)
-                .await
-                .map_err(access_error)?
-                .is_some();
-            let exists = store
-                .resource_exists(self.universe_id(), resource)
-                .await
-                .map_err(access_error)?;
-            if anchored || !exists {
-                return Err(not_found(resource));
+        let Some(controller) = self.current_controller() else {
+            if !self.caller()?.permits(method) {
+                return Err(denied());
             }
+            return Ok(());
+        };
+        if self
+            .permits_controller(&controller, requirement, resource.as_ref())
+            .await?
+        {
+            return Ok(());
         }
-        if let Ok(controller) = CONTROLLER.try_with(Clone::clone) {
-            // Callers are audited at the API boundary; internal work is not a caller.
-            tracing::warn!(
-                target: "temporal_server",
-                %method,
-                cause = %controller.cause,
-                "internal controller was refused"
-            );
-        }
+        // A refusal of internal work is a runtime fault worth a log line.
+        tracing::warn!(
+            target: "temporal_server",
+            %method,
+            cause = %controller.cause,
+            "internal controller was refused"
+        );
         Err(denied())
     }
 
@@ -501,251 +306,129 @@ impl GatewayAgentApi {
         requirement: MethodAccess,
         target: Option<&ResourceRef>,
     ) -> Result<bool, AgentApiError> {
-        let (decision, _) = self.decide(requirement, target).await?;
-        if decision == Decision::Privileged {
-            crate::gateway::principal::mark_privileged();
+        match self.current_controller() {
+            Some(controller) => Ok(self
+                .permits_controller(&controller, requirement, target)
+                .await?),
+            None => self.caller().map(|_| true),
         }
-        Ok(decision.allows())
     }
 
-    /// One decision for the current caller, with the access facts of the
-    /// target it was read from. A target that has no anchor yet is decided
-    /// by role alone, which is how creation of a fresh id and a request for
-    /// a missing resource both resolve; an existing target is decided from
-    /// its anchor, its root's policy and the caller's grant.
-    async fn decide(
+    /// Internal work's permission on a requirement. A session that does not
+    /// exist yet is decided as no target, which is how a bot starting its
+    /// session resolves.
+    async fn permits_controller(
         &self,
+        controller: &ControllerContext,
         requirement: MethodAccess,
         target: Option<&ResourceRef>,
-    ) -> Result<(Decision, Option<access::ResourceAccess>), AgentApiError> {
-        let controller = CONTROLLER.try_with(Clone::clone).ok();
-        let context = match &controller {
-            Some(controller) => {
-                if controller.universe_id != self.universe_id() {
-                    return Ok((Decision::Forbidden, None));
-                }
-                None
-            }
-            None => Some(self.caller()?),
+    ) -> Result<bool, AgentApiError> {
+        let MethodAccess::Universe(action) = requirement else {
+            return Ok(false);
         };
-        let caller = match (&controller, &context) {
-            (Some(controller), _) => Caller::Controller(controller),
-            (None, Some(context)) => Caller::Request(&context.rights),
-            (None, None) => unreachable!("a request without a context was refused above"),
+        if controller.universe_id != self.universe_id() {
+            return Ok(false);
+        }
+        let access = match target {
+            Some(target) => self.target_access(target).await?,
+            None => None,
         };
-        let action = match requirement {
-            MethodAccess::Universe(action) => action,
-            MethodAccess::Service(capability) => {
-                let decision = match &context {
-                    Some(context) if context.rights.has_capability(capability) => Decision::Allowed,
-                    _ => Decision::Forbidden,
-                };
-                return Ok((decision, None));
-            }
-            _ => return Ok((Decision::Forbidden, None)),
-        };
-        let Some(target) = target else {
-            return Ok((access::authorize(caller, action, None), None));
-        };
-        let (decision, access) = self
-            .access_store()
-            .decide_with_access(caller, action, target)
-            .await
-            .map_err(access_error)?;
-        let decision = decision.unwrap_or_else(|| match access::authorize(caller, action, None) {
-            Decision::Allowed => Decision::Allowed,
-            _ => Decision::Hidden,
-        });
-        Ok((decision, access))
+        Ok(authorize_controller(controller, action, access.as_ref()))
     }
 
-    /// Record who controls a new resource before it exists. Callers own what
-    /// they create; a bot's sessions belong to the bot.
-    pub(crate) async fn reserve_resource(
-        &self,
-        resource: ResourceRef,
-        execution: Option<access::Execution>,
-    ) -> Result<(), AgentApiError> {
-        let (created_by, controller) = if let Ok(authority) = CONTROLLER.try_with(Clone::clone) {
-            let (ResourceRef::Bot(bot), ResourceRef::Session(_), true) = (
-                authority.actor,
-                &resource,
-                authority.universe_id == self.universe_id(),
-            ) else {
-                return Err(denied());
-            };
-            (
-                ActionActor::Internal {
-                    component: "controller".into(),
-                    cause: authority.cause,
-                },
-                ResourceController::Bot(bot),
-            )
-        } else {
-            let principal = self.caller()?.acting_principal().id;
-            if matches!(&resource, ResourceRef::Session(id) if id.starts_with("bot:v1:") || id.starts_with("agent_"))
-            {
-                return Err(denied());
+    /// Who a change is attributed to: internal work names its controller; a
+    /// request, its actor, else its key, else the local caller.
+    pub(super) fn attribution(&self) -> Result<Attribution, AgentApiError> {
+        Ok(match self.current_controller() {
+            Some(controller) => Attribution::Internal {
+                component: controller.actor.kind().into(),
+                cause: controller.cause,
+            },
+            None => self.caller()?.attribution(),
+        })
+    }
+
+    /// The attribution as engine commands record it.
+    pub(super) fn requested_by(&self) -> Result<Option<engine::Attribution>, AgentApiError> {
+        Ok(Some(match self.attribution()? {
+            Attribution::Actor { id } => engine::Attribution::Actor { id },
+            Attribution::Key { prefix } => engine::Attribution::Key { prefix },
+            Attribution::Local => engine::Attribution::Local,
+            Attribution::Internal { component, cause } => {
+                engine::Attribution::Internal { component, cause }
             }
-            (
-                ActionActor::Principal { id: principal },
-                ResourceController::Principal(principal),
-            )
+        }))
+    }
+
+    /// Record who started a session, once its row exists. A request's root
+    /// is unshared unless it asked otherwise; a bot's session belongs to the
+    /// bot; a delegated child follows its root and is not stamped.
+    pub(super) async fn record_session_creator(
+        &self,
+        session: &SessionId,
+        visibility: Option<Visibility>,
+    ) -> Result<(), AgentApiError> {
+        let (created_by, visibility, bot) = match self.current_controller() {
+            Some(controller) => match controller.actor {
+                ResourceRef::Bot(bot) => (
+                    Attribution::Internal {
+                        component: "controller".into(),
+                        cause: controller.cause,
+                    },
+                    None,
+                    Some(bot),
+                ),
+                _ => return Ok(()),
+            },
+            None => (
+                self.caller()?.attribution(),
+                Some(visibility.unwrap_or(Visibility::Restricted)),
+                None,
+            ),
         };
         self.access_store()
-            .reserve_resource(
+            .stamp_session(
                 self.universe_id(),
-                &resource,
+                session.as_str(),
                 &created_by,
-                &controller,
-                execution,
-                None,
-                now_ms()? as u64,
+                visibility,
+                bot.as_deref(),
             )
             .await
-            .map(|_| ())
             .map_err(access_error)
     }
 
-    /// Create a workspace, environment or MCP server on behalf of the
-    /// requesting principal, who owns it. The requested visibility is part
-    /// of the reservation; grants are written before the record exists, so
-    /// a refused grant leaves nothing behind.
-    pub(crate) async fn create_owned_resource<T>(
-        &self,
-        resource: ResourceRef,
-        access: Option<AccessInput>,
-        create: impl Future<Output = Result<T, AgentApiError>>,
-        created: impl FnOnce(&T) -> bool,
-    ) -> Result<T, AgentApiError> {
-        let visibility = access.as_ref().and_then(|access| access.visibility);
-        let owner = self.caller()?.acting_principal().id;
-        let grants = access.filter(|access| !access.grants.is_empty());
-        OperationalAnchor {
-            resource: resource.clone(),
-            created_by: ActionActor::Principal { id: owner },
-            owner,
-            visibility,
-        }
-        .create(
-            &self.access_store(),
-            self.universe_id(),
-            async {
-                if grants.is_some() {
-                    self.apply_creation_access(&resource, grants).await?;
-                }
-                create.await
-            },
-            created,
-        )
-        .await
+    /// Record who created a bot, once its row exists.
+    pub(super) async fn record_bot_creator(&self, bot: &api::BotId) -> Result<(), AgentApiError> {
+        let created_by = self.caller()?.attribution();
+        self.access_store()
+            .stamp_bot(self.universe_id(), bot.as_str(), &created_by)
+            .await
+            .map_err(access_error)
     }
 }
 
-/// How refusals and pickers name a universe's execution service.
-pub(crate) const DEFAULT_AGENT_IDENTITY: &str = "Default agent identity";
+/// Every one of `resources` exists in `universe`, or the first missing one
+/// is not found.
+pub(crate) async fn require_resources(
+    store: &store_pg::PgAccessStore,
+    universe: uuid::Uuid,
+    resources: &[ResourceRef],
+) -> Result<(), AgentApiError> {
+    for resource in resources {
+        if !store
+            .resource_exists(universe, resource)
+            .await
+            .map_err(access_error)?
+        {
+            return Err(not_found(resource));
+        }
+    }
+    Ok(())
+}
 
-/// A resource that does not exist, or that whoever asked may not see: one
-/// text for both, naming only the kind and the id that was supplied.
+/// A resource that does not exist: one text for every kind, naming only the
+/// kind and the id that was supplied.
 pub(crate) fn not_found(resource: &ResourceRef) -> AgentApiError {
     AgentApiError::not_found(format!("{} not found: {}", resource.label(), resource.id()))
-}
-
-/// The refusal of a use check for the execution identity of `root`. When
-/// whoever reads it may not see the resource (`visible` is false), it is
-/// missing and only the supplied id is named; otherwise the refusal names
-/// the resource and the identity.
-pub(crate) fn use_refusal(
-    root: &ResourceRef,
-    refusal: store_pg::UseRefusal,
-    visible: bool,
-) -> AgentApiError {
-    let (execution, resource) = match refusal {
-        store_pg::UseRefusal::Identity => {
-            return AgentApiError::new(
-                api::AgentApiErrorKind::Forbidden,
-                format!(
-                    "the {}'s execution identity is disabled or may not use resources",
-                    root.label()
-                ),
-            );
-        }
-        store_pg::UseRefusal::Resource { resource, .. } if !visible => {
-            return not_found(&resource);
-        }
-        store_pg::UseRefusal::Resource {
-            execution,
-            resource,
-            ..
-        } => (execution, resource),
-    };
-    let identity = match execution.kind {
-        access::ExecutionKind::Service => DEFAULT_AGENT_IDENTITY.to_owned(),
-        access::ExecutionKind::Personal => format!("the {} owner", root.label()),
-    };
-    AgentApiError::new(
-        api::AgentApiErrorKind::Forbidden,
-        format!(
-            "{} {} is not available to {identity}",
-            resource.label(),
-            resource.id()
-        ),
-    )
-}
-
-/// The anchor of a new workspace, environment or MCP server, reserved before
-/// its record exists so that no record is ever without access facts: one
-/// without them is hidden from everyone.
-pub(crate) struct OperationalAnchor {
-    pub resource: ResourceRef,
-    pub created_by: ActionActor,
-    pub owner: uuid::Uuid,
-    pub visibility: Option<access::Visibility>,
-}
-
-impl OperationalAnchor {
-    /// Reserve, then create. The anchor is released again when creation
-    /// fails, or when `created` says the result is not the reserved resource
-    /// but an existing one a retried request resolved to.
-    pub(crate) async fn create<T>(
-        self,
-        store: &store_pg::PgAccessStore,
-        universe: uuid::Uuid,
-        create: impl Future<Output = Result<T, AgentApiError>>,
-        created: impl FnOnce(&T) -> bool,
-    ) -> Result<T, AgentApiError> {
-        store
-            .reserve_resource(
-                universe,
-                &self.resource,
-                &self.created_by,
-                &ResourceController::Principal(self.owner),
-                None,
-                self.visibility,
-                now_ms()? as u64,
-            )
-            .await
-            .map_err(|error| match error {
-                access::AccessError::Conflict => AgentApiError::conflict(format!(
-                    "{} already exists: {}",
-                    self.resource.label(),
-                    self.resource.id()
-                )),
-                other => access_error(other),
-            })?;
-        let result = create.await;
-        if !result.as_ref().is_ok_and(created) {
-            // An anchor without its record grants nothing; a failed release
-            // only keeps the id reserved for this owner.
-            if let Err(error) = store.release_resource(universe, &self.resource).await {
-                tracing::warn!(
-                    target: "temporal_server",
-                    %error,
-                    resource = ?self.resource,
-                    "releasing an unused resource anchor failed"
-                );
-            }
-        }
-        result
-    }
 }

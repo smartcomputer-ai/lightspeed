@@ -6,11 +6,7 @@ impl GatewayAgentApi {
         session_id: &SessionId,
     ) -> Result<LoadedSession, AgentApiError> {
         let loaded = self.load_session_state(session_id).await?;
-        if loaded.state.lifecycle.status == CoreAgentStatus::Open
-            && self
-                .may_refresh_from_attachments(session_id, &loaded)
-                .await?
-        {
+        if loaded.state.lifecycle.status == CoreAgentStatus::Open {
             self.prepare_session_operation(
                 session_id,
                 temporal_workflow::SessionOperation::RefreshContext,
@@ -19,39 +15,6 @@ impl GatewayAgentApi {
             return self.load_session_state(session_id).await;
         }
         Ok(loaded)
-    }
-
-    /// A refresh reads the session's attached workspaces and environments,
-    /// which is use: a session whose execution identity lost one of them
-    /// keeps the catalog it last read rather than reading it again. One
-    /// that was deleted is simply not read.
-    async fn may_refresh_from_attachments(
-        &self,
-        session_id: &SessionId,
-        loaded: &LoadedSession,
-    ) -> Result<bool, AgentApiError> {
-        let Some(config) = loaded.state.lifecycle.config.as_ref() else {
-            return Ok(true);
-        };
-        match self
-            .require_execution_use(
-                &ResourceRef::Session(session_id.as_str().to_owned()),
-                &temporal_workflow::attached_resources(&config.features),
-                store_pg::UseCheck::Continuation,
-            )
-            .await
-        {
-            Ok(()) => Ok(true),
-            Err(error)
-                if matches!(
-                    error.kind,
-                    AgentApiErrorKind::Forbidden | AgentApiErrorKind::NotFound
-                ) =>
-            {
-                Ok(false)
-            }
-            Err(error) => Err(error),
-        }
     }
 
     pub(super) async fn project_skill_list(

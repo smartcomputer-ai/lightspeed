@@ -18,20 +18,8 @@ pub(super) async fn generate(
     attempt: u32,
     request: LlmGenerateActivityRequest,
 ) -> Result<LlmGenerationResult, ActivityError> {
-    let LlmGenerateActivityRequest {
-        request,
-        attached_resources,
-    } = request;
+    let request = request.request;
     let session_id = request.session_id.clone();
-    // The turn boundary: the run's execution authority must still hold
-    // before the model is called. The turn that was authorized completes;
-    // this one does not begin.
-    if let Some((access, universe_id)) = &deps.access
-        && let Some(revoked) =
-            revoked_authority(access, *universe_id, &session_id, &attached_resources).await?
-    {
-        return revoked_generation_result(deps.blobs.as_ref(), request, &revoked).await;
-    }
     let started = std::time::Instant::now();
     match deps.llm.generate(request.clone()).await {
         Ok(mut result) => {
@@ -128,72 +116,4 @@ fn observe_prompt_cache(session_id: &SessionId, usage: &LlmUsage) {
              compaction, or a catalog rewritten in place)"
         );
     }
-}
-
-/// Why a model call for the session may not begin, or `None` while its
-/// execution principal is active with resource use in the universe and may
-/// use every resource the session has attached that still exists. A
-/// personal root runs as its owner, so the identity's rights cover both the
-/// identity and its membership. The turn check and compaction both ask it.
-pub(super) async fn revoked_authority(
-    store: &store_pg::PgAccessStore,
-    universe_id: uuid::Uuid,
-    session_id: &engine::SessionId,
-    attached: &[access::ResourceRef],
-) -> Result<Option<String>, ActivityError> {
-    let refusal = store
-        .execution_use(
-            universe_id,
-            &access::ResourceRef::Session(session_id.as_str().to_owned()),
-            attached,
-            store_pg::UseCheck::Continuation,
-        )
-        .await
-        .map_err(|error| {
-            activity_error(anyhow::Error::new(error).context("resolve run authority"))
-        })?;
-    Ok(refusal.map(|refusal| match refusal {
-        store_pg::UseRefusal::Identity => {
-            "the session's execution identity is disabled or may no longer use resources".to_owned()
-        }
-        store_pg::UseRefusal::Resource { resource, .. } => format!(
-            "the session's execution identity may no longer use {} {}",
-            resource.label(),
-            resource.id()
-        ),
-    }))
-}
-
-async fn revoked_generation_result(
-    blobs: &dyn engine::storage::BlobStore,
-    request: engine::LlmGenerationRequest,
-    reason: &str,
-) -> Result<LlmGenerationResult, ActivityError> {
-    let failure_ref = super::common::write_error_blob(
-        blobs,
-        format!(
-            "run authority revoked before the model call: {reason}\nrun_id={}\nturn_id={}\n",
-            request.run_id, request.turn_id
-        ),
-    )
-    .await
-    .map_err(|error| {
-        activity_error(anyhow::Error::new(error).context("record revoked authority"))
-    })?;
-    Ok(LlmGenerationResult {
-        run_id: request.run_id,
-        turn_id: request.turn_id,
-        status: engine::LlmGenerationStatus::AuthorityRevoked,
-        failure_ref: Some(failure_ref),
-        context_entries: Vec::new(),
-        facts: engine::LlmGenerationFacts {
-            duration_ms: None,
-            provider_response_id: None,
-            finish: engine::LlmFinish::Failed,
-            usage: None,
-            context_token_estimate: None,
-            tool_calls: Vec::new(),
-            approval_requests: Vec::new(),
-        },
-    })
 }

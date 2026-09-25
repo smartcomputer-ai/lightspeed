@@ -30,9 +30,9 @@ impl SessionToolsetSource {
 }
 
 /// The workspaces, environments and MCP servers a session configuration
-/// attaches, in document order and without repeats: what its execution
-/// identity must be allowed to use. A snapshot attachment names immutable
-/// content, not a resource, and is admitted as content instead.
+/// attaches, in document order and without repeats: what must exist in the
+/// universe when the configuration is admitted. A snapshot attachment names
+/// immutable content, not a resource, and is admitted as content instead.
 pub fn attached_resources(features: &engine::FeaturesConfig) -> Vec<api::ResourceRef> {
     let workspaces = features
         .vfs

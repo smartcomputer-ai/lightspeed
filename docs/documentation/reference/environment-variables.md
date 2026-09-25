@@ -242,7 +242,7 @@ the Rust runtime database and gateway authentication.
 | `LIGHTSPEED_PLATFORM_BASE_URL` | `http://localhost:3000` | Public Platform origin used by authentication and trusted-origin checks. |
 | `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS` | Empty list | Comma-separated additional browser origins accepted by Better Auth. The development supervisor supplies both `http://127.0.0.1:5173` and `http://localhost:5173`. |
 | `PORT` | `3000` | Platform HTTP listen port. |
-| `LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID` | Unset | Existing active core user with DeploymentAdmin to bind to the first Platform login. Required with bootstrap email/password; the full development launcher provisions it. |
+| `LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID` | Unset | Existing active core user with DeploymentAdmin to bind to the first Platform login. Required with bootstrap email/password until the Platform binds its first admin through organizations; the development launcher no longer provisions it. |
 | `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` | Unset | Bootstrap administrator email. Applied only with the password and only while the users table is empty. |
 | `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` | Unset | Bootstrap administrator password. Applied only with the email and only while the users table is empty. |
 | `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` | Unset | GitHub login client ID. GitHub login is enabled only when both GitHub variables are present. |

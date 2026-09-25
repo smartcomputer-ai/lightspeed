@@ -6,6 +6,7 @@
 //! state crosses the [`OAuthClientStore`]/[`AuthFlowStore`] traits. Token and
 //! verifier values only ever move inside [`SecretValue`] wrappers.
 
+use api::Attribution;
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -14,9 +15,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AuthFlowId, AuthGrantExposure, AuthGrantId, AuthProviderKind, AuthRegistryError,
-    McpOAuthTokenContext, OAuthClientId, PrincipalRef, SecretId, SecretValue,
-    validate_audience_url, validate_nonempty_optional, validate_nonnegative_i64,
-    validate_oauth_endpoint_url, validate_scopes, validate_token_component,
+    McpOAuthTokenContext, OAuthClientId, SecretId, SecretValue, validate_audience_url,
+    validate_nonempty_optional, validate_nonnegative_i64, validate_oauth_endpoint_url,
+    validate_scopes, validate_token_component,
 };
 
 pub const SECRET_KIND_OAUTH_ACCESS_TOKEN: &str = "auth.oauth.access_token";
@@ -229,7 +230,7 @@ pub struct AuthFlowRecord {
     pub provider_kind: AuthProviderKind,
     #[serde(default)]
     pub grant_exposure: AuthGrantExposure,
-    pub principal: PrincipalRef,
+    pub created_by: Attribution,
     /// Lowercase hex SHA-256 of the `state` query parameter.
     pub state_hash: String,
     pub pkce_verifier_secret: SecretId,
@@ -278,7 +279,6 @@ impl AuthFlowRecord {
                 ),
             });
         }
-        self.principal.validate()?;
         validate_token_component("state hash", &self.state_hash)?;
         validate_audience_url(&self.redirect_uri).map_err(|error| match error {
             AuthRegistryError::InvalidInput { message } => AuthRegistryError::InvalidInput {
@@ -329,7 +329,7 @@ pub struct CreateAuthFlowRecord {
     pub provider_id: String,
     pub provider_kind: AuthProviderKind,
     pub grant_exposure: AuthGrantExposure,
-    pub principal: PrincipalRef,
+    pub created_by: Attribution,
     pub state_hash: String,
     pub pkce_verifier_secret: SecretId,
     pub redirect_uri: String,
@@ -349,7 +349,7 @@ impl CreateAuthFlowRecord {
             provider_id: self.provider_id,
             provider_kind: self.provider_kind,
             grant_exposure: self.grant_exposure,
-            principal: self.principal,
+            created_by: self.created_by,
             state_hash: self.state_hash,
             pkce_verifier_secret: self.pkce_verifier_secret,
             redirect_uri: self.redirect_uri,
@@ -958,10 +958,7 @@ mod tests {
             provider_id: "github".to_owned(),
             provider_kind: AuthProviderKind::CustomOAuth,
             grant_exposure: AuthGrantExposure::Brokered,
-            principal: PrincipalRef {
-                kind: crate::PrincipalKind::ServiceAccount,
-                id: Some("test-service".into()),
-            },
+            created_by: Attribution::Local,
             state_hash: state_hash("state-123"),
             pkce_verifier_secret: SecretId::new("authsec_pkce"),
             redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),

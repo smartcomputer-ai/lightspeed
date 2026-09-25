@@ -19,13 +19,13 @@ use std::{
 };
 
 use api::{
-    AccessPolicyReadParams, AgentApiService, AgentProfileInput, BotBreaker, BotCloseParams,
-    BotCoalescePolicy, BotControllerStatus, BotCreateParams, BotDeleteParams, BotDocument,
-    BotEventAdmitParams, BotEventInput, BotEventListParams, BotEventOutcome, BotEventView, BotId,
-    BotInput, BotPutParams, BotReadParams, BotStateReadParams, BotTriggerDeleteParams,
-    BotTriggerDocument, BotTriggerId, BotTriggerInput, BotTriggerPutParams, BotTriggerSpec,
-    ProfileCreateParams, ProfileDocument, ProfileId, ProfileInstructions, SessionReadParams,
-    SessionStatus, WebhookVerification,
+    AgentApiService, AgentProfileInput, BotBreaker, BotCloseParams, BotCoalescePolicy,
+    BotControllerStatus, BotCreateParams, BotDeleteParams, BotDocument, BotEventAdmitParams,
+    BotEventInput, BotEventListParams, BotEventOutcome, BotEventView, BotId, BotInput,
+    BotPutParams, BotReadParams, BotStateReadParams, BotTriggerDeleteParams, BotTriggerDocument,
+    BotTriggerId, BotTriggerInput, BotTriggerPutParams, BotTriggerSpec, ProfileCreateParams,
+    ProfileDocument, ProfileId, ProfileInstructions, SessionReadParams, SessionStatus,
+    WebhookVerification,
 };
 use bots::ids::{bot_controller_workflow_id, bot_main_session_id, bot_schedule_id};
 use engine::{CoreAgentLlm, CoreAgentTools, storage::BlobStore};
@@ -111,7 +111,7 @@ where
     let shutdown_bots = bots.shutdown_handle();
     let workers = async { tokio::try_join!(sessions_worker.run(), bots.run()).map(|_| ()) };
     tokio::pin!(workers);
-    let body = temporal_server::gateway::principal::with_request_context(
+    let body = temporal_server::gateway::request_context::with_request_context(
         support::live::local_request_context().await?,
         body(api.clone(), client.clone()),
     );
@@ -180,8 +180,6 @@ async fn create_bot(
     let mut document = bot_document(profile_id);
     edit(&mut document);
     api.create_bot(BotCreateParams {
-        access: None,
-        execution: None,
         bot: BotInput {
             bot_id: bot_id.clone(),
             document,
@@ -234,8 +232,15 @@ async fn wait_for_outcomes(
             return Ok(events);
         }
         if started.elapsed() > WAIT {
+            let state = api
+                .read_bot_state(BotStateReadParams {
+                    bot_id: bot_id.clone(),
+                })
+                .await?
+                .result
+                .state;
             anyhow::bail!(
-                "timed out waiting for {expected} outcomes on bot {bot_id}; events: {events:#?}"
+                "timed out waiting for {expected} outcomes on bot {bot_id}; state: {state:#?}; events: {events:#?}"
             );
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -816,19 +821,8 @@ async fn bots_live_close_and_delete_tear_down() -> anyhow::Result<()> {
             .await;
         assert!(refused.is_err(), "closed bots refuse events");
 
-        // A bot is its own root; its sessions follow it.
-        let policy = api
-            .read_access_policy(AccessPolicyReadParams {
-                resource: access::ResourceRef::Session(main_session.as_str().to_owned()),
-            })
-            .await?
-            .result
-            .policy;
-        assert_eq!(
-            policy.root,
-            access::ResourceRef::Bot(bot_id.as_str().to_owned()),
-            "{policy:?}"
-        );
+        // Bot sessions are shared with their universe.
+        assert_eq!(session.access.visibility, api::Visibility::Universe);
         let deleted = api
             .delete_bot(BotDeleteParams {
                 bot_id: bot_id.clone(),

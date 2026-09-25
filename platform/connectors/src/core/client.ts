@@ -1,7 +1,6 @@
 import { LightspeedClient } from "@lightspeed-ai/agent-client";
 
 export const UNIVERSE_HEADER = "x-lightspeed-universe";
-export const PRINCIPAL_HEADER = "x-lightspeed-principal";
 
 export interface CoreClientOptions {
   /** Core JSON-RPC endpoint (`LIGHTSPEED_API_URL`). */
@@ -11,7 +10,7 @@ export interface CoreClientOptions {
 }
 
 /**
- * The host's view of the core: one endpoint, one service principal, and
+ * The host's view of the core: one endpoint, one service key, and
  * per-call universe scoping. Discovery is deployment-scoped (`deployment/*`
  * never carries a universe header); everything an account does is stamped
  * with that account's universe.

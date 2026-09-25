@@ -1,3 +1,4 @@
+use api::Attribution;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -46,30 +47,6 @@ pub enum AuthGrantExposure {
     Retrievable,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PrincipalKind {
-    User,
-    ServiceAccount,
-}
-
-/// Explicit grant attribution. This reference does not confer runtime access.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PrincipalRef {
-    pub kind: PrincipalKind,
-    pub id: Option<String>,
-}
-impl PrincipalRef {
-    pub fn validate(&self) -> Result<(), AuthRegistryError> {
-        match self.id.as_deref() {
-            Some(id) => validate_token_component("principal id", id),
-            None => Err(AuthRegistryError::InvalidInput {
-                message: "principal id is required".into(),
-            }),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthGrantRecord {
     pub grant_id: AuthGrantId,
@@ -77,7 +54,9 @@ pub struct AuthGrantRecord {
     pub provider_kind: AuthProviderKind,
     #[serde(default)]
     pub exposure: AuthGrantExposure,
-    pub principal: PrincipalRef,
+    /// Who created the grant, as the request was attributed. Attribution
+    /// only; it confers no access.
+    pub created_by: Attribution,
     pub display_name: Option<String>,
     pub subject_hint: Option<String>,
     pub scopes: Vec<String>,
@@ -115,7 +94,6 @@ pub(crate) fn empty_metadata() -> serde_json::Value {
 impl AuthGrantRecord {
     pub fn validate(&self) -> Result<(), AuthRegistryError> {
         validate_token_component("provider id", &self.provider_id)?;
-        self.principal.validate()?;
         validate_nonempty_optional("display_name", self.display_name.as_deref())?;
         validate_nonempty_optional("subject_hint", self.subject_hint.as_deref())?;
         validate_scopes(&self.scopes)?;
@@ -154,7 +132,9 @@ pub struct CreateAuthGrantRecord {
     pub provider_kind: AuthProviderKind,
     #[serde(default)]
     pub exposure: AuthGrantExposure,
-    pub principal: PrincipalRef,
+    /// Who created the grant, as the request was attributed. Attribution
+    /// only; it confers no access.
+    pub created_by: Attribution,
     pub display_name: Option<String>,
     pub subject_hint: Option<String>,
     pub scopes: Vec<String>,
@@ -176,7 +156,7 @@ impl CreateAuthGrantRecord {
             provider_id: self.provider_id,
             provider_kind: self.provider_kind,
             exposure: self.exposure,
-            principal: self.principal,
+            created_by: self.created_by,
             display_name: self.display_name,
             subject_hint: self.subject_hint,
             scopes: self.scopes,
@@ -275,10 +255,7 @@ mod tests {
             provider_id: "static".to_owned(),
             provider_kind: AuthProviderKind::StaticBearer,
             exposure: AuthGrantExposure::Brokered,
-            principal: PrincipalRef {
-                kind: crate::PrincipalKind::ServiceAccount,
-                id: Some("test-service".into()),
-            },
+            created_by: Attribution::Local,
             display_name: Some("CRM token".to_owned()),
             subject_hint: None,
             scopes: vec!["contacts.read".to_owned()],
@@ -336,33 +313,5 @@ mod tests {
         let error = record.validate().expect_err("duplicate scopes rejected");
 
         assert!(matches!(error, AuthRegistryError::InvalidInput { .. }));
-    }
-
-    #[test]
-    fn principal_refs_validate_kind_id_pairing() {
-        PrincipalRef {
-            kind: crate::PrincipalKind::ServiceAccount,
-            id: Some("test-service".into()),
-        }
-        .validate()
-        .expect("explicit principal");
-
-        let user_without_id = PrincipalRef {
-            kind: PrincipalKind::User,
-            id: None,
-        };
-        assert!(matches!(
-            user_without_id.validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
-        ));
-
-        let default_with_id = PrincipalRef {
-            kind: PrincipalKind::ServiceAccount,
-            id: Some("".to_owned()),
-        };
-        assert!(matches!(
-            default_with_id.validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
-        ));
     }
 }

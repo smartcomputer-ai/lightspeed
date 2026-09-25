@@ -19,8 +19,8 @@ match that gateway:
 
 | Mode | MCP client or trusted upstream supplies | Runtime connection |
 | --- | --- | --- |
-| `authenticated` | A bearer key, optionally a universe selector and authorized canonical-user assertion | Runtime validates the key, scope and acting principal. |
-| `single` | No identity headers | Private development gateway uses its explicit local principal. |
+| `authenticated` | A bearer key, optionally a universe selector and actor assertion | Runtime validates the key, scope and actor assertion flag. |
+| `single` | No identity headers | Private development gateway uses its configured universe. |
 
 A Platform browser login is not a Configurator credential. Configurator forwards
 credentials to the runtime; it does not exchange cookies for keys. Bare headers

@@ -2501,9 +2501,6 @@ impl AgentApiService for TestService {
                 revision: 0,
                 created_at_ms: 10,
                 updated_at_ms: 10,
-                access: test_operational_access(ResourceRef::Workspace(
-                    "workspace_test".to_owned(),
-                )),
             },
         }))
     }
@@ -3080,9 +3077,8 @@ fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
         provider_id: "static".to_owned(),
         provider_kind: AuthProviderKind::StaticBearer,
         exposure: AuthGrantExposure::Brokered,
-        principal: PrincipalRefView {
-            kind: PrincipalKind::ServiceAccount,
-            id: Some("test-service".into()),
+        created_by: Attribution::Key {
+            prefix: "lsk_abcdefgh".into(),
         },
         display_name: None,
         subject_hint: None,
@@ -3145,7 +3141,6 @@ fn test_workspace(workspace_id: String, revision: u64) -> VfsWorkspaceView {
         revision,
         created_at_ms: 10,
         updated_at_ms: 20,
-        access: test_operational_access(ResourceRef::Workspace("workspace_test".to_owned())),
     }
 }
 
@@ -3236,7 +3231,6 @@ fn test_environment_instance() -> EnvironmentView {
         last_seen_at_ms: None,
         created_at_ms: 10,
         updated_at_ms: 10,
-        access: test_operational_access(ResourceRef::Environment("evi_test".to_owned())),
     }
 }
 
@@ -3300,7 +3294,6 @@ fn test_external_environment() -> EnvironmentView {
         last_seen_at_ms: None,
         created_at_ms: 10,
         updated_at_ms: 10,
-        access: test_operational_access(ResourceRef::Environment("evi_test".to_owned())),
     }
 }
 
@@ -3339,7 +3332,6 @@ fn test_mcp_server(server_id: String) -> McpServerView {
         revision: 1,
         created_at_ms: 1,
         updated_at_ms: 1,
-        access: test_operational_access(ResourceRef::McpServer("mcp_test".to_owned())),
     }
 }
 
@@ -3363,8 +3355,9 @@ fn test_deployment_api_key(key_prefix: &str) -> DeploymentApiKeyView {
         scope: AccessScope::Universe {
             universe_id: uuid::Uuid::nil(),
         },
-        principal_id: uuid::Uuid::nil(),
-        created_by: uuid::Uuid::nil(),
+        groups: vec![MethodGroup::Session],
+        assert_actor: false,
+        created_by: Attribution::Local,
         key_prefix: key_prefix.to_owned(),
         display_name: Some("coding agent".to_owned()),
         created_at_ms: 10,
@@ -3645,8 +3638,8 @@ async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
             method: METHOD_DEPLOYMENT_API_KEYS_CREATE.to_owned(),
             params: Some(json!({
                 "scope": { "kind": "universe", "universeId": universe_id },
-                "displayName": "coding agent",
-                "principalId": "00000000-0000-4000-8000-000000000001"
+                "groups": ["session", "vfs"],
+                "displayName": "coding agent"
             })),
         },
     )
@@ -3673,10 +3666,7 @@ async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
         JsonRpcRequest {
             id: RequestId::Number(3),
             method: METHOD_DEPLOYMENT_API_KEYS_REVOKE.to_owned(),
-            params: Some(json!({
-                "scope": { "kind": "universe", "universeId": universe_id },
-                "keyPrefix": "lsk_ab12cd34"
-            })),
+            params: Some(json!({ "keyPrefix": "lsk_ab12cd34" })),
         },
     )
     .await;
@@ -3722,20 +3712,9 @@ async fn deployment_dispatch_rejects_universe_scoped_methods_and_vice_versa() {
     assert_eq!(response.error.expect("error").code, -32601);
 }
 
-fn test_operational_access(root: ResourceRef) -> ResourceAccessSummary {
-    ResourceAccessSummary {
-        root,
-        owner: uuid::Uuid::nil(),
-        visibility: Visibility::Universe,
-        execution: None,
-    }
-}
-
 fn test_access_summary() -> ResourceAccessSummary {
     ResourceAccessSummary {
-        root: ResourceRef::Session("session_1".to_owned()),
-        owner: uuid::Uuid::nil(),
         visibility: Visibility::Universe,
-        execution: None,
+        created_by: Some(Attribution::Local),
     }
 }

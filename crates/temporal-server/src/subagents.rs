@@ -41,13 +41,6 @@ const MAX_SUBAGENT_OUTPUT_BYTES: usize = 512 * 1024;
 pub trait SubagentChildRuntime: Send + Sync {
     async fn read_profile(&self, profile_id: ProfileId) -> Result<AgentProfile, AgentApiError>;
 
-    async fn reserve_child(
-        &self,
-        parent: &SessionId,
-        child: &SessionId,
-        cause: &str,
-    ) -> Result<(), AgentApiError>;
-
     async fn start_session(
         &self,
         session_id: &SessionId,
@@ -93,17 +86,6 @@ impl SubagentChildRuntime for AgentApiSubagentRuntime {
             .read_agent_profile(&profile_id)
             .await
             .map_err(|e| AgentApiError::internal(e.to_string()))
-    }
-
-    async fn reserve_child(
-        &self,
-        parent: &SessionId,
-        child: &SessionId,
-        cause: &str,
-    ) -> Result<(), AgentApiError> {
-        self.api
-            .reserve_delegated_session(parent, child, cause)
-            .await
     }
 
     async fn start_session(
@@ -340,9 +322,6 @@ impl SubagentService {
             profile_revision: profile.revision,
             limits,
         };
-        self.runtime
-            .reserve_child(&parent_session_id, &child_session_id, &start.execution_id)
-            .await?;
         match self
             .sessions
             .create_session(CreateSession {
@@ -812,14 +791,6 @@ mod tests {
 
     #[async_trait]
     impl SubagentChildRuntime for FakeChildRuntime {
-        async fn reserve_child(
-            &self,
-            _parent: &SessionId,
-            _child: &SessionId,
-            _cause: &str,
-        ) -> Result<(), AgentApiError> {
-            Ok(())
-        }
         async fn read_profile(&self, profile_id: ProfileId) -> Result<AgentProfile, AgentApiError> {
             self.profiles
                 .lock()

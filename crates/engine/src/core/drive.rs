@@ -661,11 +661,6 @@ fn turn_outcome_for_generation_result(result: &LlmGenerationResult) -> TurnOutco
         LlmGenerationStatus::Cancelled => TurnOutcome::Cancelled,
         LlmGenerationStatus::Failed => TurnOutcome::Failed {
             failure_ref: result.failure_ref.clone(),
-            kind: crate::RunFailureKind::ModelFailure,
-        },
-        LlmGenerationStatus::AuthorityRevoked => TurnOutcome::Failed {
-            failure_ref: result.failure_ref.clone(),
-            kind: crate::RunFailureKind::AuthorityRevoked,
         },
         LlmGenerationStatus::Succeeded => match result.facts.finish {
             LlmFinish::ToolCalls => TurnOutcome::ToolCallsQueued,
@@ -680,7 +675,6 @@ fn turn_outcome_for_generation_result(result: &LlmGenerationResult) -> TurnOutco
             LlmFinish::Failed | LlmFinish::ContentFilter | LlmFinish::Length => {
                 TurnOutcome::Failed {
                     failure_ref: result.failure_ref.clone(),
-                    kind: crate::RunFailureKind::ModelFailure,
                 }
             }
             LlmFinish::Stop | LlmFinish::Unknown if !result.facts.approval_requests.is_empty() => {
@@ -2201,6 +2195,7 @@ mod tests {
         let action = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    requested_by: None,
                     run_id: crate::RunId::new(1),
                     input,
                 },
@@ -2334,6 +2329,7 @@ mod tests {
         run_config: RunConfig,
     ) -> CoreAgentCommand {
         CoreAgentCommand::RequestRun(RunRequestCommand {
+            requested_by: None,
             notify_on_terminal: Vec::new(),
             submission_id,
             source: RunRequestSource::Input { input },
@@ -4701,6 +4697,7 @@ mod tests {
         let error = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    requested_by: None,
                     run_id: first,
                     input: user_input(BlobRef::from_bytes(b"stale")),
                 },
@@ -4715,6 +4712,7 @@ mod tests {
         let valid = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    requested_by: None,
                     run_id: second,
                     input: user_input(BlobRef::from_bytes(b"current")),
                 },
@@ -4751,6 +4749,7 @@ mod tests {
         let steering_one = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    requested_by: None,
                     run_id: crate::RunId::new(1),
                     input: user_input(BlobRef::from_bytes(b"steering one")),
                 },
@@ -4761,6 +4760,7 @@ mod tests {
         let steering_two = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    requested_by: None,
                     run_id: crate::RunId::new(1),
                     input: user_input(BlobRef::from_bytes(b"steering two")),
                 },
@@ -4841,6 +4841,7 @@ mod tests {
         let steering = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    requested_by: None,
                     run_id: crate::RunId::new(1),
                     input: user_input(BlobRef::from_bytes(b"steer while parked")),
                 },
@@ -4891,6 +4892,7 @@ mod tests {
         let cancel = drive
             .admit_command(
                 CoreAgentCommand::CancelRun {
+                    requested_by: None,
                     run_id: request.run_id,
                 },
                 30,
@@ -4900,6 +4902,7 @@ mod tests {
         let error = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    requested_by: None,
                     run_id: crate::RunId::new(1),
                     input: user_input(BlobRef::from_bytes(b"too late")),
                 },
@@ -4927,6 +4930,7 @@ mod tests {
         let cancel = drive
             .admit_command(
                 CoreAgentCommand::CancelRun {
+                    requested_by: None,
                     run_id: request.run_id,
                 },
                 30,
@@ -4988,6 +4992,7 @@ mod tests {
         let cancel = drive
             .admit_command(
                 CoreAgentCommand::CancelRun {
+                    requested_by: None,
                     run_id: request.run_id,
                 },
                 90,
@@ -5081,6 +5086,7 @@ mod tests {
         let cancel = drive
             .admit_command(
                 CoreAgentCommand::CancelRun {
+                    requested_by: None,
                     run_id: request.run_id,
                 },
                 81,
@@ -5113,6 +5119,7 @@ mod tests {
         let steering = drive
             .admit_command(
                 CoreAgentCommand::RequestRunSteering {
+                    requested_by: None,
                     run_id: crate::RunId::new(1),
                     input: user_input(BlobRef::from_bytes(b"late steering")),
                 },
@@ -6284,6 +6291,7 @@ mod tests {
         let cancel = drive
             .admit_command(
                 CoreAgentCommand::CancelRun {
+                    requested_by: None,
                     run_id: request.run_id,
                 },
                 91,
@@ -6331,6 +6339,7 @@ mod tests {
         let cancel = drive
             .admit_command(
                 CoreAgentCommand::CancelRun {
+                    requested_by: None,
                     run_id: request.run_id,
                 },
                 91,

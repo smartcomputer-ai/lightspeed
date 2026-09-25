@@ -1,410 +1,10 @@
 {
   "components": {
     "schemas": {
-      "AccessChange": {
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "displayName": {
-                "type": "string"
-              },
-              "id": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "kind": {
-                "$ref": "#/components/schemas/IdentityPrincipalKind"
-              },
-              "managementScope": {
-                "$ref": "#/components/schemas/AccessScope"
-              },
-              "operation": {
-                "const": "create_principal",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "id",
-              "kind",
-              "displayName",
-              "managementScope"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "operation": {
-                "const": "set_principal_status",
-                "type": "string"
-              },
-              "status": {
-                "$ref": "#/components/schemas/PrincipalStatus"
-              }
-            },
-            "required": [
-              "operation",
-              "id",
-              "status"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "displayName": {
-                "type": "string"
-              },
-              "id": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "operation": {
-                "const": "create_group",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "id",
-              "displayName"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "displayName": {
-                "type": "string"
-              },
-              "id": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "operation": {
-                "const": "rename_group",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "id",
-              "displayName"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "membership": {
-                "$ref": "#/components/schemas/Membership"
-              },
-              "operation": {
-                "const": "put_membership",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "membership"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "membership": {
-                "$ref": "#/components/schemas/Membership"
-              },
-              "operation": {
-                "const": "remove_membership",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "membership"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "assignment": {
-                "$ref": "#/components/schemas/RoleAssignment"
-              },
-              "operation": {
-                "const": "assign_role",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "assignment"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "assignment": {
-                "$ref": "#/components/schemas/RoleAssignment"
-              },
-              "operation": {
-                "const": "revoke_role",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "assignment"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "Atomically replaces one existing grant, preserving other direct/group grants.\nA missing source grant is a conflict; last-administrator protection applies.",
-            "properties": {
-              "assignment": {
-                "$ref": "#/components/schemas/RoleAssignment"
-              },
-              "operation": {
-                "const": "replace_role",
-                "type": "string"
-              },
-              "role": {
-                "$ref": "#/components/schemas/Role"
-              }
-            },
-            "required": [
-              "operation",
-              "assignment",
-              "role"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "assignment": {
-                "$ref": "#/components/schemas/CapabilityAssignment"
-              },
-              "operation": {
-                "const": "assign_capability",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "assignment"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "assignment": {
-                "$ref": "#/components/schemas/CapabilityAssignment"
-              },
-              "operation": {
-                "const": "revoke_capability",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "assignment"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "Creates the universe and the actor's Admin assignment atomically.",
-            "properties": {
-              "operation": {
-                "const": "create_universe",
-                "type": "string"
-              },
-              "slug": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "universeId": {
-                "format": "uuid",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "universeId"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "Explicit deployment administration; does not grant content access to\nthe recovering administrator. Only valid for an orphaned universe.",
-            "properties": {
-              "operation": {
-                "const": "recover_universe",
-                "type": "string"
-              },
-              "principalId": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "universeId": {
-                "format": "uuid",
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "universeId",
-              "principalId"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "AccessChangeResult": {
-        "properties": {
-          "changed": {
-            "type": "boolean"
-          },
-          "policyRevision": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "changed",
-          "policyRevision"
-        ],
-        "type": "object"
-      },
-      "AccessDirectory": {
-        "description": "Administrative directory view. Assignments are limited to the requested scope.",
-        "properties": {
-          "capabilities": {
-            "items": {
-              "$ref": "#/components/schemas/CapabilityAssignment"
-            },
-            "type": "array"
-          },
-          "groups": {
-            "items": {
-              "$ref": "#/components/schemas/IdentityGroup"
-            },
-            "type": "array"
-          },
-          "memberships": {
-            "items": {
-              "$ref": "#/components/schemas/Membership"
-            },
-            "type": "array"
-          },
-          "policyRevision": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "principals": {
-            "items": {
-              "$ref": "#/components/schemas/IdentityPrincipal"
-            },
-            "type": "array"
-          },
-          "roles": {
-            "items": {
-              "$ref": "#/components/schemas/RoleAssignment"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "principals",
-          "groups",
-          "memberships",
-          "roles",
-          "capabilities",
-          "policyRevision"
-        ],
-        "type": "object"
-      },
-      "AccessExecutionReadParams": {
-        "additionalProperties": false,
-        "type": "object"
-      },
-      "AccessExecutionReadResponse": {
-        "properties": {
-          "policy": {
-            "$ref": "#/components/schemas/UniverseExecutionPolicy"
-          }
-        },
-        "required": [
-          "policy"
-        ],
-        "type": "object"
-      },
-      "AccessExecutionUpdateParams": {
-        "additionalProperties": false,
-        "properties": {
-          "personalExecutionEnabled": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "personalExecutionEnabled"
-        ],
-        "type": "object"
-      },
-      "AccessExecutionUpdateResponse": {
-        "properties": {
-          "policy": {
-            "$ref": "#/components/schemas/UniverseExecutionPolicy"
-          }
-        },
-        "required": [
-          "policy"
-        ],
-        "type": "object"
-      },
-      "AccessGrantInput": {
-        "additionalProperties": false,
-        "properties": {
-          "permission": {
-            "$ref": "#/components/schemas/ResourcePermission"
-          },
-          "subject": {
-            "$ref": "#/components/schemas/Subject"
-          }
-        },
-        "required": [
-          "subject",
-          "permission"
-        ],
-        "type": "object"
-      },
       "AccessInput": {
         "additionalProperties": false,
-        "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
+        "description": "The audience of a new session, requested at creation. Absent means\nunshared: visible to its creator until it is shared with the universe. A\nsession created under another root (a bot's session, a delegated child)\nfollows that root and refuses this.",
         "properties": {
-          "grants": {
-            "description": "Grants on the root: `read` or `write` on a session or bot, `use` on\na workspace, environment or MCP server. Each subject must currently\nhold a role in the universe.",
-            "items": {
-              "$ref": "#/components/schemas/AccessGrantInput"
-            },
-            "type": "array"
-          },
           "visibility": {
             "anyOf": [
               {
@@ -413,218 +13,13 @@
               {
                 "type": "null"
               }
-            ],
-            "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
-          }
-        },
-        "type": "object"
-      },
-      "AccessPolicyPutParams": {
-        "additionalProperties": false,
-        "description": "Replace a root's visibility and grant set. On a session or bot only the\nowner may add or remove `write`; writers may share `read` and change\nvisibility; readers change nothing. On a workspace, environment or MCP\nserver only the owner or an Admin changes access, and `use` is the only\ngrant.",
-        "properties": {
-          "expectedRevision": {
-            "description": "The revision from `access/policy/read`; absent replaces unconditionally.",
-            "format": "uint64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
             ]
-          },
-          "grants": {
-            "items": {
-              "$ref": "#/components/schemas/AccessGrantInput"
-            },
-            "type": "array"
-          },
-          "owner": {
-            "description": "Hand the root to another member of the universe. Only the current\nowner may set it; the previous owner keeps no permission of its own.",
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "resource": {
-            "$ref": "#/components/schemas/ResourceRef"
-          },
-          "visibility": {
-            "$ref": "#/components/schemas/Visibility"
           }
         },
-        "required": [
-          "resource",
-          "visibility"
-        ],
-        "type": "object"
-      },
-      "AccessPolicyPutResponse": {
-        "properties": {
-          "policy": {
-            "$ref": "#/components/schemas/AccessPolicyView"
-          }
-        },
-        "required": [
-          "policy"
-        ],
-        "type": "object"
-      },
-      "AccessPolicyReadParams": {
-        "additionalProperties": false,
-        "properties": {
-          "resource": {
-            "$ref": "#/components/schemas/ResourceRef"
-          }
-        },
-        "required": [
-          "resource"
-        ],
-        "type": "object"
-      },
-      "AccessPolicyReadResponse": {
-        "properties": {
-          "policy": {
-            "$ref": "#/components/schemas/AccessPolicyView"
-          }
-        },
-        "required": [
-          "policy"
-        ],
-        "type": "object"
-      },
-      "AccessPolicyView": {
-        "description": "The policy governing a resource: its root's owner, visibility and grants.\nA resource below a root (a bot's session, a delegated child) shows its\nroot's policy; sharing it means sharing the root.",
-        "properties": {
-          "execution": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Execution"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Who the root's work runs as; absent for kinds that run nothing:\nprofiles, workspaces, environments and MCP servers."
-          },
-          "grants": {
-            "items": {
-              "$ref": "#/components/schemas/ResourceGrant"
-            },
-            "type": "array"
-          },
-          "owner": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "resource": {
-            "$ref": "#/components/schemas/ResourceRef"
-          },
-          "revision": {
-            "description": "Advances with every replacement; pass it as `expectedRevision`.",
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "root": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ResourceRef"
-              }
-            ],
-            "description": "The root whose policy this is; equal to `resource` for a root."
-          },
-          "updatedAtMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "updatedBy": {
-            "$ref": "#/components/schemas/ActionActor"
-          },
-          "visibility": {
-            "$ref": "#/components/schemas/Visibility"
-          }
-        },
-        "required": [
-          "resource",
-          "root",
-          "owner",
-          "visibility",
-          "grants",
-          "revision",
-          "updatedBy",
-          "updatedAtMs"
-        ],
-        "type": "object"
-      },
-      "AccessReadAs": {
-        "description": "The identity `access/read` decides resource actions for.",
-        "oneOf": [
-          {
-            "const": "caller",
-            "description": "The caller itself.",
-            "type": "string"
-          },
-          {
-            "const": "execution_service",
-            "description": "The universe's execution service, the default agent identity that\nsessions and bots run as unless they run as their owner. Only\nresources the caller may see are decided; the others return no\nactions. Session setup uses it to show what the default agent\nidentity may use.",
-            "type": "string"
-          }
-        ]
-      },
-      "AccessReadParams": {
-        "additionalProperties": false,
-        "description": "Current caller's action permissions. This is an advisory snapshot: mutations\nalways authorize again, and runtime prerequisites still apply.",
-        "properties": {
-          "as": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/AccessReadAs"
-              }
-            ],
-            "default": "caller",
-            "description": "Whose resource actions to report. Universe-level `actions` are always\nthe caller's."
-          },
-          "resources": {
-            "default": [],
-            "description": "Up to 100 existing sessions, bots, profiles, workspaces, environments\nor MCP servers in the selected universe. Missing resources return no\nactions.",
-            "items": {
-              "$ref": "#/components/schemas/ResourceRef"
-            },
-            "type": "array"
-          },
-          "sessionDeleteCascade": {
-            "default": false,
-            "description": "Include every retention descendant when previewing session deletion.",
-            "type": "boolean"
-          }
-        },
-        "type": "object"
-      },
-      "AccessReadResponse": {
-        "properties": {
-          "actions": {
-            "description": "Allowed actions that do not require a target. Resource actions are\nreturned only under `resources`, even when the caller has a broad role.",
-            "items": {
-              "$ref": "#/components/schemas/UniverseAction"
-            },
-            "type": "array"
-          },
-          "resources": {
-            "items": {
-              "$ref": "#/components/schemas/ResourceAccessView"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "actions",
-          "resources"
-        ],
         "type": "object"
       },
       "AccessScope": {
+        "description": "What a key reaches or a request addresses: one universe, or the\ndeployment.",
         "oneOf": [
           {
             "additionalProperties": false,
@@ -654,93 +49,6 @@
             "required": [
               "kind",
               "universeId"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "AccessSubjectView": {
-        "properties": {
-          "displayName": {
-            "type": "string"
-          },
-          "subject": {
-            "$ref": "#/components/schemas/Subject"
-          }
-        },
-        "required": [
-          "subject",
-          "displayName"
-        ],
-        "type": "object"
-      },
-      "AccessSubjectsParams": {
-        "additionalProperties": false,
-        "description": "Search eligible sharing subjects in the selected universe. This exposes\nnames and identifiers only, never the administrative identity directory.",
-        "properties": {
-          "query": {
-            "default": "",
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "AccessSubjectsResponse": {
-        "properties": {
-          "principalId": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "subjects": {
-            "description": "At most 100 matches; refine the query to find another subject.",
-            "items": {
-              "$ref": "#/components/schemas/AccessSubjectView"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "principalId",
-          "subjects"
-        ],
-        "type": "object"
-      },
-      "ActionActor": {
-        "oneOf": [
-          {
-            "properties": {
-              "id": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "kind": {
-                "const": "principal",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "cause": {
-                "type": "string"
-              },
-              "component": {
-                "type": "string"
-              },
-              "kind": {
-                "const": "internal",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "component",
-              "cause"
             ],
             "type": "object"
           }
@@ -829,142 +137,6 @@
             "type": "string"
           }
         ]
-      },
-      "AgentApiOutcomeOfAccessChangeResult": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AccessChangeResult"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfAccessDirectory": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AccessDirectory"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfAccessExecutionReadResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AccessExecutionReadResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfAccessExecutionUpdateResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AccessExecutionUpdateResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfAccessPolicyPutResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AccessPolicyPutResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfAccessPolicyReadResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AccessPolicyReadResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfAccessReadResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AccessReadResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfAccessSubjectsResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AccessSubjectsResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
       },
       "AgentApiOutcomeOfAuthClientCreateResponse": {
         "properties": {
@@ -2428,23 +1600,6 @@
         ],
         "type": "object"
       },
-      "AgentApiOutcomeOfIdentitySelfResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/IdentitySelfResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
       "AgentApiOutcomeOfInitializeResponse": {
         "properties": {
           "notifications": {
@@ -2965,6 +2120,23 @@
           },
           "result": {
             "$ref": "#/components/schemas/SessionRetentionPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfSessionShareResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionShareResponse"
           }
         },
         "required": [
@@ -3587,6 +2759,79 @@
           }
         ]
       },
+      "Attribution": {
+        "description": "Who created a resource or authored bytes. An actor is whatever a key\nallowed to assert one said; core compares it and never resolves it.",
+        "oneOf": [
+          {
+            "description": "The actor a key asserted for its request.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "actor",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A key acting for itself, named by its display prefix.",
+            "properties": {
+              "kind": {
+                "const": "key",
+                "type": "string"
+              },
+              "prefix": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "prefix"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An unauthenticated local development request, or an in-process call.",
+            "properties": {
+              "kind": {
+                "const": "local",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The runtime's own work: a bot, a delegated session, a registration,\nor host administration through the server CLI.",
+            "properties": {
+              "cause": {
+                "type": "string"
+              },
+              "component": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "internal",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "component",
+              "cause"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "AuthClientCreateParams": {
         "description": "Register an OAuth client configuration. `client_secret` is the second\ndeliberate inbound-plaintext path after `auth/grants/import`: it is\nencrypted on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
         "properties": {
@@ -4169,6 +3414,14 @@
             "format": "int64",
             "type": "integer"
           },
+          "createdBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Attribution"
+              }
+            ],
+            "description": "Who created the grant. Attribution only; it confers no access."
+          },
           "displayName": {
             "type": [
               "string",
@@ -4209,9 +3462,6 @@
           "metadata": {
             "description": "Non-secret provider-specific metadata (for GitHub App installation\ngrants: installation id, account, permissions, repository selection)."
           },
-          "principal": {
-            "$ref": "#/components/schemas/PrincipalRefView"
-          },
           "providerId": {
             "type": "string"
           },
@@ -4243,7 +3493,7 @@
           "providerId",
           "providerKind",
           "exposure",
-          "principal",
+          "createdBy",
           "hasAccessToken",
           "hasRefreshToken",
           "status",
@@ -4636,17 +3886,6 @@
               "type": "string"
             },
             "type": "array"
-          },
-          "resource": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ResourceRef"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "As for `blobs/read`; a blob the caller may not read through the\nresource reports as absent."
           }
         },
         "type": "object"
@@ -4720,17 +3959,6 @@
         "properties": {
           "blobRef": {
             "type": "string"
-          },
-          "resource": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ResourceRef"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The session or bot the blob is read through: the caller\nmust be able to read it and the blob must be admitted content of it.\nWithout a resource only a blob the caller uploaded is readable. A\nresource that does not authorize the read is a refusal, not a prompt\nto try another. Workspaces, environments and MCP servers are refused\nhere; read a workspace's files with `vfs/workspaces/files/read`."
           }
         },
         "required": [
@@ -5018,30 +4246,8 @@
       },
       "BotCreateParams": {
         "properties": {
-          "access": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AccessInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Audience of the bot, its events and every session it creates, set\natomically with its creation. Absent means universe-visible."
-          },
           "bot": {
             "$ref": "#/components/schemas/BotInput"
-          },
-          "execution": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ExecutionInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Execution identity of the bot and every session it creates; absent\nmeans the universe's execution service."
           },
           "triggers": {
             "description": "Triggers created with the bot in one go; a failure rolls the bot\nback.",
@@ -5917,6 +5123,15 @@
         "type": "object"
       },
       "BotListParams": {
+        "properties": {
+          "createdBy": {
+            "description": "Only bots this actor created.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "BotListResponse": {
@@ -5981,7 +5196,7 @@
                 "$ref": "#/components/schemas/ResourceAccessSummary"
               }
             ],
-            "description": "The root governing this bot and its sessions, and who they run as."
+            "description": "The bot's audience, always the universe, and who created it."
           },
           "bot": {
             "$ref": "#/components/schemas/BotView"
@@ -6469,7 +5684,7 @@
             ]
           },
           "pairingCode": {
-            "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nnon-managing principals.",
+            "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nchannel-facing views.",
             "type": [
               "string",
               "null"
@@ -6892,7 +6107,7 @@
             ]
           },
           "ingestPath": {
-            "description": "Webhook triggers: the ingest path including its URL token, for\nmanaging principals only.",
+            "description": "Webhook triggers: the ingest path including its URL token, for\nbot-management callers only.",
             "type": [
               "string",
               "null"
@@ -6913,7 +6128,7 @@
             ]
           },
           "pairingCode": {
-            "description": "Chat triggers with `pairing: code`: the code, for managing\nprincipals only.",
+            "description": "Chat triggers with `pairing: code`: the code, for bot-management\ncallers only.",
             "type": [
               "string",
               "null"
@@ -7111,46 +6326,6 @@
             "type": "string"
           }
         ]
-      },
-      "Capability": {
-        "oneOf": [
-          {
-            "enum": [
-              "assert_user",
-              "lease_credentials",
-              "admit_channel_inbound",
-              "discover_channel_accounts",
-              "manage_identity"
-            ],
-            "type": "string"
-          },
-          {
-            "const": "read_private_content",
-            "description": "Read restricted content of a universe without a grant. Held by a\nperson, never implied by a role, and every read that relies on it is\naudited. It reads; it never controls, shares or takes ownership.",
-            "type": "string"
-          }
-        ]
-      },
-      "CapabilityAssignment": {
-        "additionalProperties": false,
-        "properties": {
-          "capability": {
-            "$ref": "#/components/schemas/Capability"
-          },
-          "principalId": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/AccessScope"
-          }
-        },
-        "required": [
-          "scope",
-          "principalId",
-          "capability"
-        ],
-        "type": "object"
       },
       "ChannelAccountCreateParams": {
         "properties": {
@@ -8746,24 +7921,39 @@
         "type": "object"
       },
       "DeploymentApiKeyCreateParams": {
+        "additionalProperties": false,
         "properties": {
+          "assertActor": {
+            "default": false,
+            "description": "Whether the key may name the actor a request acts for with the\n`x-lightspeed-actor` header. Give it only to a gate that authenticates\npeople, such as the Platform.",
+            "type": "boolean"
+          },
           "displayName": {
             "description": "Human-readable purpose shown in key-management interfaces.",
             "type": "string"
           },
-          "principalId": {
-            "description": "Canonical identity authenticated by this credential.",
-            "format": "uuid",
-            "type": "string"
+          "groups": {
+            "description": "The method groups the key may call; absent grants every group its\nscope allows. Keys never change: to change what a key may do, revoke\nit and mint another.",
+            "items": {
+              "$ref": "#/components/schemas/MethodGroup"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "scope": {
-            "$ref": "#/components/schemas/AccessScope"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AccessScope"
+              }
+            ],
+            "description": "A universe, or the deployment. A deployment key addresses a universe\nwith the `x-lightspeed-universe` header and may hold deployment groups."
           }
         },
         "required": [
           "scope",
-          "displayName",
-          "principalId"
+          "displayName"
         ],
         "type": "object"
       },
@@ -8784,14 +7974,20 @@
         "type": "object"
       },
       "DeploymentApiKeyListParams": {
+        "additionalProperties": false,
         "properties": {
           "scope": {
-            "$ref": "#/components/schemas/AccessScope"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessScope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only keys of this scope; absent lists every key."
           }
         },
-        "required": [
-          "scope"
-        ],
         "type": "object"
       },
       "DeploymentApiKeyListResponse": {
@@ -8807,16 +8003,13 @@
         "type": "object"
       },
       "DeploymentApiKeyRevokeParams": {
+        "additionalProperties": false,
         "properties": {
           "keyPrefix": {
             "type": "string"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/AccessScope"
           }
         },
         "required": [
-          "scope",
           "keyPrefix"
         ],
         "type": "object"
@@ -8833,22 +8026,30 @@
         "type": "object"
       },
       "DeploymentApiKeyView": {
-        "description": "Non-secret scoped key metadata, including authenticated identity and issuer.",
+        "description": "Non-secret key metadata: what the key reaches and may call, and who\nminted it.",
         "properties": {
+          "assertActor": {
+            "type": "boolean"
+          },
           "createdAtMs": {
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
           "createdBy": {
-            "format": "uuid",
-            "type": "string"
+            "$ref": "#/components/schemas/Attribution"
           },
           "displayName": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/MethodGroup"
+            },
+            "type": "array"
           },
           "keyPrefix": {
             "type": "string"
@@ -8860,10 +8061,6 @@
               "integer",
               "null"
             ]
-          },
-          "principalId": {
-            "format": "uuid",
-            "type": "string"
           },
           "revokedAtMs": {
             "format": "uint64",
@@ -8880,7 +8077,8 @@
         "required": [
           "keyPrefix",
           "scope",
-          "principalId",
+          "groups",
+          "assertActor",
           "createdBy",
           "createdAtMs"
         ],
@@ -9486,45 +8684,6 @@
         ],
         "type": "object"
       },
-      "EffectiveAccess": {
-        "properties": {
-          "capabilities": {
-            "description": "Explicit capabilities in this exact scope; no role implies one.",
-            "items": {
-              "$ref": "#/components/schemas/Capability"
-            },
-            "type": "array",
-            "uniqueItems": true
-          },
-          "policyRevision": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "principal": {
-            "$ref": "#/components/schemas/IdentityPrincipal"
-          },
-          "roles": {
-            "description": "Only assignments in this exact scope, including group-derived roles.",
-            "items": {
-              "$ref": "#/components/schemas/Role"
-            },
-            "type": "array",
-            "uniqueItems": true
-          },
-          "scope": {
-            "$ref": "#/components/schemas/AccessScope"
-          }
-        },
-        "required": [
-          "principal",
-          "scope",
-          "roles",
-          "capabilities",
-          "policyRevision"
-        ],
-        "type": "object"
-      },
       "EnvironmentAccess": {
         "description": "Per-attachment environment access, an ordered ladder: `edit` adds file\nediting to `read`, `exec` adds processes, `jobs` adds durable jobs.\nProcesses can write files regardless of the file-tool level, so\nread-only files with commands is deliberately not expressible.",
         "enum": [
@@ -9640,17 +8799,6 @@
       },
       "EnvironmentCreateParams": {
         "properties": {
-          "access": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AccessInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Who may see and use the new environment, set atomically with its\ncreation; the caller owns it. Absent means universe-visible. Grants\ntake the `use` permission only. A retried `requestId` returns the\nenvironment it created before and ignores this."
-          },
           "bindingId": {
             "type": "string"
           },
@@ -9897,17 +9045,6 @@
       },
       "EnvironmentExternalCreateParams": {
         "properties": {
-          "access": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AccessInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Who may see and use the new environment, as for\n`environments/create`."
-          },
           "connection": {
             "allOf": [
               {
@@ -10910,14 +10047,6 @@
       },
       "EnvironmentView": {
         "properties": {
-          "access": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ResourceAccessSummary"
-              }
-            ],
-            "description": "The environment's owner and visibility; an environment runs no work\nof its own, so `execution` is absent."
-          },
           "createdAtMs": {
             "format": "int64",
             "type": "integer"
@@ -10998,8 +10127,7 @@
           "incarnation",
           "publicIngressEnabled",
           "createdAtMs",
-          "updatedAtMs",
-          "access"
+          "updatedAtMs"
         ],
         "type": "object"
       },
@@ -11138,44 +10266,6 @@
           }
         },
         "type": "object"
-      },
-      "Execution": {
-        "description": "The execution identity of a root, fixed at creation and copied to every\nresource below it. Never a login identity of someone else: `personal`\nmeans the owner itself, `service` a keyless service principal.",
-        "properties": {
-          "kind": {
-            "$ref": "#/components/schemas/ExecutionKind"
-          },
-          "runAs": {
-            "format": "uuid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "runAs",
-          "kind"
-        ],
-        "type": "object"
-      },
-      "ExecutionInput": {
-        "additionalProperties": false,
-        "description": "Requested execution identity of a new root. `service` runs as the\nuniverse's execution service; `personal` runs as the creating person and\nneeds the universe to allow it. Absent means `service`. A resource\ncreated under another root inherits and refuses this.",
-        "properties": {
-          "kind": {
-            "$ref": "#/components/schemas/ExecutionKind"
-          }
-        },
-        "required": [
-          "kind"
-        ],
-        "type": "object"
-      },
-      "ExecutionKind": {
-        "description": "Under whose authority a root's work runs: the universe's execution\nservice, or the person who created it.",
-        "enum": [
-          "service",
-          "personal"
-        ],
-        "type": "string"
       },
       "FeaturesConfig": {
         "additionalProperties": false,
@@ -11318,106 +10408,6 @@
         },
         "required": [
           "installationId"
-        ],
-        "type": "object"
-      },
-      "IdentityGroup": {
-        "additionalProperties": false,
-        "properties": {
-          "createdAtMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "displayName",
-          "createdAtMs"
-        ],
-        "type": "object"
-      },
-      "IdentityPrincipal": {
-        "additionalProperties": false,
-        "properties": {
-          "createdAtMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/IdentityPrincipalKind"
-          },
-          "managementScope": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/AccessScope"
-              }
-            ],
-            "description": "Who may manage this service identity; it does not grant access itself.\nHuman identities are deployment-managed."
-          },
-          "status": {
-            "$ref": "#/components/schemas/PrincipalStatus"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "status",
-          "displayName",
-          "managementScope",
-          "createdAtMs"
-        ],
-        "type": "object"
-      },
-      "IdentityPrincipalKind": {
-        "enum": [
-          "user",
-          "service"
-        ],
-        "type": "string"
-      },
-      "IdentityScopeParams": {
-        "additionalProperties": false,
-        "properties": {
-          "scope": {
-            "$ref": "#/components/schemas/AccessScope"
-          }
-        },
-        "required": [
-          "scope"
-        ],
-        "type": "object"
-      },
-      "IdentitySelfResponse": {
-        "properties": {
-          "access": {
-            "$ref": "#/components/schemas/EffectiveAccess"
-          },
-          "universes": {
-            "items": {
-              "$ref": "#/components/schemas/EffectiveAccess"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "access",
-          "universes"
         ],
         "type": "object"
       },
@@ -11777,7 +10767,7 @@
                 "type": "null"
               }
             ],
-            "description": "Immutable workflow tools admitted only when the session is first\ncreated. This document is not part of `SessionConfig` and cannot be\nchanged through `session/config/put`.\nAudience of the new session, as for `session/start`."
+            "description": "Audience of the new session, as for `session/start`."
           },
           "config": {
             "anyOf": [
@@ -11805,17 +10795,6 @@
               "null"
             ]
           },
-          "execution": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ExecutionInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Execution identity of the new session, as for `session/start`."
-          },
           "metadata": {
             "additionalProperties": {
               "type": "string"
@@ -11840,7 +10819,12 @@
             ]
           },
           "workflowTools": {
-            "$ref": "#/components/schemas/ManagedSessionWorkflowToolsInput"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ManagedSessionWorkflowToolsInput"
+              }
+            ],
+            "description": "Immutable workflow tools admitted only when the session is first\ncreated. This document is not part of `SessionConfig` and cannot be\nchanged through `session/config/put`."
           }
         },
         "required": [
@@ -12296,17 +11280,6 @@
       },
       "McpServerPutParams": {
         "properties": {
-          "access": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AccessInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Who may see and use a server this call creates; the caller owns it.\nAbsent means universe-visible. Grants take the `use` permission only.\nRefused when the server already exists: change its access with\n`access/policy/put`."
-          },
           "expectedRevision": {
             "description": "Checked only when the server already exists; absent replaces (or\ncreates) unconditionally.",
             "format": "uint64",
@@ -12432,14 +11405,6 @@
       },
       "McpServerView": {
         "properties": {
-          "access": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ResourceAccessSummary"
-              }
-            ],
-            "description": "The server's owner and visibility; a server runs no work of its own,\nso `execution` is absent."
-          },
           "allowPrivateNetwork": {
             "type": "boolean"
           },
@@ -12530,8 +11495,7 @@
           "status",
           "revision",
           "createdAtMs",
-          "updatedAtMs",
-          "access"
+          "updatedAtMs"
         ],
         "type": "object"
       },
@@ -12591,65 +11555,31 @@
         ],
         "type": "string"
       },
-      "Membership": {
-        "additionalProperties": false,
-        "properties": {
-          "groupId": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "principalId": {
-            "format": "uuid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "groupId",
-          "principalId"
-        ],
-        "type": "object"
-      },
       "MethodAccess": {
         "oneOf": [
           {
-            "description": "A current universe role permitting the action, with authoritative ownership where required.",
+            "description": "A universe method, and the action internal work is held to when it\ncalls it.",
             "properties": {
+              "action": {
+                "$ref": "#/components/schemas/UniverseAction"
+              },
               "kind": {
                 "const": "universe",
                 "type": "string"
-              },
-              "requirement": {
-                "$ref": "#/components/schemas/UniverseAction"
               }
             },
             "required": [
               "kind",
-              "requirement"
+              "action"
             ],
             "type": "object"
           },
           {
-            "description": "An explicitly scoped service capability; service kind is insufficient.",
+            "description": "A universe method for machines only, such as connectors delivering\nmessages or triggers leasing a credential. No person calls it.",
             "properties": {
               "kind": {
                 "const": "service",
                 "type": "string"
-              },
-              "requirement": {
-                "$ref": "#/components/schemas/Capability"
-              }
-            },
-            "required": [
-              "kind",
-              "requirement"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "const": "deployment_admin",
-                "type": "string"
               }
             },
             "required": [
@@ -12658,10 +11588,10 @@
             "type": "object"
           },
           {
-            "description": "Authenticated identity; key ownership and issuance rules apply in the handler.",
+            "description": "A deployment method: it addresses the deployment and needs a\ndeployment key.",
             "properties": {
               "kind": {
-                "const": "credential_management",
+                "const": "deployment",
                 "type": "string"
               }
             },
@@ -12669,36 +11599,78 @@
               "kind"
             ],
             "type": "object"
+          }
+        ]
+      },
+      "MethodGroup": {
+        "description": "The methods a key may call, by group. Every public method but\n`initialize` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
+        "oneOf": [
+          {
+            "enum": [
+              "vfs",
+              "profiles",
+              "models",
+              "mcp",
+              "bots",
+              "deployment/universes",
+              "deployment/api-keys"
+            ],
+            "type": "string"
           },
           {
-            "description": "Authenticated caller; handler enforces requested identity scope and operation.",
-            "properties": {
-              "kind": {
-                "const": "identity",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind"
-            ],
-            "type": "object"
+            "const": "session",
+            "description": "`session/*`, `blobs/read` and `blobs/has`.",
+            "type": "string"
           },
           {
-            "description": "Deployment discovery serves both administration and scoped connectors.",
-            "properties": {
-              "kind": {
-                "const": "deployment_admin_or_capability",
-                "type": "string"
-              },
-              "requirement": {
-                "$ref": "#/components/schemas/Capability"
-              }
-            },
-            "required": [
-              "kind",
-              "requirement"
-            ],
-            "type": "object"
+            "const": "blobs/put",
+            "description": "`blobs/put` alone, so connectors can upload attachments without\nreading sessions.",
+            "type": "string"
+          },
+          {
+            "const": "environments",
+            "description": "`environments/*`, including jobs and registration keys.",
+            "type": "string"
+          },
+          {
+            "const": "channels",
+            "description": "Channel accounts, pairings and conversations.",
+            "type": "string"
+          },
+          {
+            "const": "channels/inbound",
+            "description": "`channels/inbound/admit`: what a connector delivers.",
+            "type": "string"
+          },
+          {
+            "const": "auth",
+            "description": "`auth/*` except leasing.",
+            "type": "string"
+          },
+          {
+            "const": "auth/lease",
+            "description": "`auth/grants/lease`: resolving a brokered credential for delivery.",
+            "type": "string"
+          },
+          {
+            "const": "deployment/environment-providers",
+            "description": "Environment providers, their bindings and adoption.",
+            "type": "string"
+          },
+          {
+            "const": "deployment/channels",
+            "description": "`deployment/channels/accounts/list`: a connector host's discovery.",
+            "type": "string"
+          }
+        ]
+      },
+      "MethodTarget": {
+        "description": "Where a method names the session it acts on, so a gate can decide per\nsession without a hand-written table. A creation method may name one that\ndoes not exist yet.",
+        "oneOf": [
+          {
+            "const": "sessionId",
+            "description": "`params.sessionId`.",
+            "type": "string"
           }
         ]
       },
@@ -13281,37 +12253,6 @@
           }
         ]
       },
-      "PrincipalKind": {
-        "enum": [
-          "user",
-          "serviceAccount"
-        ],
-        "type": "string"
-      },
-      "PrincipalRefView": {
-        "properties": {
-          "id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "kind": {
-            "$ref": "#/components/schemas/PrincipalKind"
-          }
-        },
-        "required": [
-          "kind"
-        ],
-        "type": "object"
-      },
-      "PrincipalStatus": {
-        "enum": [
-          "active",
-          "disabled"
-        ],
-        "type": "string"
-      },
       "ProfileApplyParams": {
         "properties": {
           "expectedConfigRevision": {
@@ -13638,6 +12579,16 @@
         ],
         "type": "string"
       },
+      "RecommendedRole": {
+        "description": "Universe roles as gates built on this contract name them. Core holds no\nroles; this is metadata only.",
+        "enum": [
+          "viewer",
+          "contributor",
+          "operator",
+          "admin"
+        ],
+        "type": "string"
+      },
       "RemoteMcpApprovalPolicy": {
         "enum": [
           "never",
@@ -13660,220 +12611,25 @@
         "type": "string"
       },
       "ResourceAccessSummary": {
-        "description": "What a viewer needs to show \"shared through X, running as Y\" without a\nsecond request: the root and its policy, plus the execution identity.",
+        "description": "The audience of a session's or bot's root as views show it: whether it is\nshared with the universe, and who created it. A bot's session and a\ndelegated child show their root's.",
         "properties": {
-          "execution": {
+          "createdBy": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Execution"
+                "$ref": "#/components/schemas/Attribution"
               },
               {
                 "type": "null"
               }
-            ]
-          },
-          "owner": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "root": {
-            "$ref": "#/components/schemas/ResourceRef"
+            ],
+            "description": "Absent for work whose creator was not recorded."
           },
           "visibility": {
             "$ref": "#/components/schemas/Visibility"
           }
         },
         "required": [
-          "root",
-          "owner",
           "visibility"
-        ],
-        "type": "object"
-      },
-      "ResourceAccessView": {
-        "properties": {
-          "actions": {
-            "items": {
-              "$ref": "#/components/schemas/UniverseAction"
-            },
-            "type": "array"
-          },
-          "resource": {
-            "$ref": "#/components/schemas/ResourceRef"
-          }
-        },
-        "required": [
-          "resource",
-          "actions"
-        ],
-        "type": "object"
-      },
-      "ResourceGrant": {
-        "description": "One grant on a root as stored.",
-        "properties": {
-          "grantedAtMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "grantedBy": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "permission": {
-            "$ref": "#/components/schemas/ResourcePermission"
-          },
-          "subject": {
-            "$ref": "#/components/schemas/Subject"
-          }
-        },
-        "required": [
-          "subject",
-          "permission",
-          "grantedBy",
-          "grantedAtMs"
-        ],
-        "type": "object"
-      },
-      "ResourcePermission": {
-        "description": "One permission a grant confers on a root. On sessions and bots `Read`\nsees the tree and `Write` also controls it; on workspaces, environments\nand MCP servers `Use` is the only permission.",
-        "enum": [
-          "read",
-          "write",
-          "use"
-        ],
-        "type": "string"
-      },
-      "ResourceRef": {
-        "description": "Durable control facts, distinct from an agent's execution credentials.",
-        "oneOf": [
-          {
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "kind": {
-                "const": "session",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "kind": {
-                "const": "bot",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "kind": {
-                "const": "profile",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "kind": {
-                "const": "workspace",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "kind": {
-                "const": "environment",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "kind": {
-                "const": "mcp_server",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "Role": {
-        "description": "A role in a universe, or `deployment_admin` in the deployment. `executor`\nis the role of agent identities: it sees universe-visible resources and\nuses resources, nothing else. The runtime assigns it to a universe's\nexecution principal; identity administration never assigns or revokes\nit, and its holders never get a key.",
-        "enum": [
-          "viewer",
-          "contributor",
-          "operator",
-          "admin",
-          "deployment_admin",
-          "executor"
-        ],
-        "type": "string"
-      },
-      "RoleAssignment": {
-        "additionalProperties": false,
-        "properties": {
-          "role": {
-            "$ref": "#/components/schemas/Role"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/AccessScope"
-          },
-          "subject": {
-            "$ref": "#/components/schemas/Subject"
-          }
-        },
-        "required": [
-          "scope",
-          "subject",
-          "role"
         ],
         "type": "object"
       },
@@ -13968,24 +12724,15 @@
       },
       "RunFailureKindView": {
         "description": "Why a run failed, as the engine classified it.",
-        "oneOf": [
-          {
-            "enum": [
-              "model_failure",
-              "tool_failure",
-              "context_failure",
-              "limit_exceeded",
-              "cancelled",
-              "internal"
-            ],
-            "type": "string"
-          },
-          {
-            "const": "authority_revoked",
-            "description": "The run's execution authority was revoked; the turn in progress\ncompleted and the next model call refused.",
-            "type": "string"
-          }
-        ]
+        "enum": [
+          "model_failure",
+          "tool_failure",
+          "context_failure",
+          "limit_exceeded",
+          "cancelled",
+          "internal"
+        ],
+        "type": "string"
       },
       "RunLimitsConfig": {
         "properties": {
@@ -15007,6 +13754,17 @@
           },
           {
             "properties": {
+              "requestedBy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Attribution"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who asked, as the API boundary attributed the request."
+              },
               "runId": {
                 "type": "string"
               },
@@ -15055,6 +13813,17 @@
                 },
                 "type": "array"
               },
+              "requestedBy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Attribution"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who asked, as the API boundary attributed the request."
+              },
               "runId": {
                 "type": "string"
               },
@@ -15076,6 +13845,17 @@
           },
           {
             "properties": {
+              "requestedBy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Attribution"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who asked, as the API boundary attributed the request."
+              },
               "runId": {
                 "type": "string"
               },
@@ -15138,7 +13918,7 @@
               "decidedBy": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/PrincipalRefView"
+                    "$ref": "#/components/schemas/Attribution"
                   },
                   {
                     "type": "null"
@@ -15243,6 +14023,17 @@
           },
           {
             "properties": {
+              "requestedBy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Attribution"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who cancelled a run that had not started; a started run records\nits requester on the cancellation request."
+              },
               "runId": {
                 "type": "string"
               },
@@ -16553,6 +15344,13 @@
       },
       "SessionListParams": {
         "properties": {
+          "createdBy": {
+            "description": "Only sessions whose root this actor created.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "cursor": {
             "description": "Opaque cursor from the previous page's `nextCursor`.",
             "type": [
@@ -16588,6 +15386,24 @@
           },
           "rootSessionId": {
             "description": "Only sub-agent sessions whose lineage root is this session.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visibility": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Visibility"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only sessions whose root has this visibility."
+          },
+          "visibleTo": {
+            "description": "Only sessions whose root is shared with the universe or was created\nby this actor: what that actor sees as a non-administrator.",
             "type": [
               "string",
               "null"
@@ -16866,6 +15682,29 @@
         ],
         "type": "object"
       },
+      "SessionShareParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "SessionShareResponse": {
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ResourceAccessSummary"
+          }
+        },
+        "required": [
+          "access"
+        ],
+        "type": "object"
+      },
       "SessionStartParams": {
         "additionalProperties": false,
         "properties": {
@@ -16878,7 +15717,7 @@
                 "type": "null"
               }
             ],
-            "description": "Audience of the new session, set atomically with its creation. Absent\nmeans universe-visible."
+            "description": "Audience of the new session, set atomically with its creation. Absent\nmeans unshared until `session/share`; a retry keeps the original."
           },
           "config": {
             "anyOf": [
@@ -16905,17 +15744,6 @@
               "string",
               "null"
             ]
-          },
-          "execution": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ExecutionInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Execution identity of the new session; absent means the universe's\nexecution service."
           },
           "metadata": {
             "additionalProperties": {
@@ -16972,7 +15800,7 @@
                 "$ref": "#/components/schemas/ResourceAccessSummary"
               }
             ],
-            "description": "The root governing this session, its owner and visibility, and who\nits work runs as."
+            "description": "The audience of the session's root: whether it is shared with the\nuniverse, and who created it."
           },
           "closedAtMs": {
             "format": "uint64",
@@ -17049,7 +15877,7 @@
                 "$ref": "#/components/schemas/ResourceAccessSummary"
               }
             ],
-            "description": "The root governing this session, its owner and visibility, and who\nits work runs as."
+            "description": "The audience of the session's root: whether it is shared with the\nuniverse, and who created it."
           },
           "activeContext": {
             "$ref": "#/components/schemas/ContextView"
@@ -17452,46 +16280,6 @@
           "agents"
         ],
         "type": "object"
-      },
-      "Subject": {
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "kind": {
-                "const": "principal",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "kind": {
-                "const": "group",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          }
-        ]
       },
       "TimersFeature": {
         "additionalProperties": false,
@@ -18062,7 +16850,7 @@
         "type": "object"
       },
       "UniverseAction": {
-        "description": "Actions are independent of RPC spelling. Ownership and resource policy are\nevaluated by the service that resolves the target, not from client claims.",
+        "description": "What a public method does, independent of its RPC spelling. Requests are\ngated by their key's groups; this classifies what the runtime's own work\nmay do and which role a gate built on the contract should require.",
         "oneOf": [
           {
             "enum": [
@@ -18076,48 +16864,26 @@
               "create_bot",
               "manage_bot",
               "invoke_bot",
-              "manage_access"
+              "create_workspace"
             ],
             "type": "string"
           },
           {
+            "const": "share_session",
+            "description": "Share an unshared session with the universe.",
+            "type": "string"
+          },
+          {
             "const": "use_resource",
-            "description": "Use a workspace, environment or MCP server; without a target, the\neligibility to use resources at all.",
+            "description": "Use a workspace, environment or MCP server, or store bytes.",
             "type": "string"
           },
           {
             "const": "configure_resource",
-            "description": "Configure a workspace, environment or MCP server; without a target,\nthe universe's shared configuration.",
-            "type": "string"
-          },
-          {
-            "const": "share_resource",
-            "description": "Change who may see, control or use a root: its visibility and grants.",
-            "type": "string"
-          },
-          {
-            "const": "create_workspace",
-            "description": "Create a workspace, which its creator owns.",
+            "description": "Configure a workspace, environment, MCP server or shared\nconfiguration such as credentials and channels.",
             "type": "string"
           }
         ]
-      },
-      "UniverseExecutionPolicy": {
-        "description": "A universe's execution policy: the service principal its work runs as by\ndefault, and whether people may run work as themselves.",
-        "properties": {
-          "executionPrincipalId": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "personalExecutionEnabled": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "executionPrincipalId",
-          "personalExecutionEnabled"
-        ],
-        "type": "object"
       },
       "VfsFeature": {
         "additionalProperties": false,
@@ -18203,14 +16969,7 @@
       },
       "VfsSnapshotCommitParams": {
         "properties": {
-          "manifest": true,
-          "sourceWorkspaceId": {
-            "description": "Admit unchanged files from this readable workspace's current head.\nEvery other file must still be an upload of the caller. This does not\nchange the workspace; updating its head has its own permission and\nrevision check.",
-            "type": [
-              "string",
-              "null"
-            ]
-          }
+          "manifest": true
         },
         "required": [
           "manifest"
@@ -18244,13 +17003,6 @@
         "properties": {
           "snapshotRef": {
             "type": "string"
-          },
-          "workspaceId": {
-            "description": "The workspace the snapshot is read through: the caller must be able\nto see it, and the snapshot must be its current head or base.\nWithout a workspace only a snapshot the caller committed or uploaded\nis readable. A snapshot reference alone confers nothing.",
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [
@@ -18285,17 +17037,6 @@
       },
       "VfsWorkspaceCreateParams": {
         "properties": {
-          "access": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AccessInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Who may see and use the new workspace, set atomically with its\ncreation; the caller owns it. Absent means universe-visible. Grants\ntake the `use` permission only."
-          },
           "displayName": {
             "type": [
               "string",
@@ -18353,7 +17094,7 @@
       },
       "VfsWorkspaceFileReadParams": {
         "additionalProperties": false,
-        "description": "Read a file from a workspace's current head. The caller must be able to\nsee the workspace; this does not authorize arbitrary blobs or snapshot\nreferences.",
+        "description": "Read a file from a workspace's current head, by path.",
         "properties": {
           "path": {
             "type": "string"
@@ -18408,7 +17149,6 @@
       "VfsWorkspaceUpdateParams": {
         "properties": {
           "displayName": {
-            "description": "Renames the workspace, which requires configuring it; absent keeps\nthe current name.",
             "type": [
               "string",
               "null"
@@ -18423,7 +17163,6 @@
             ]
           },
           "snapshotRef": {
-            "description": "The new head; moving it requires use of the workspace.",
             "type": "string"
           },
           "workspaceId": {
@@ -18449,14 +17188,6 @@
       },
       "VfsWorkspaceView": {
         "properties": {
-          "access": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ResourceAccessSummary"
-              }
-            ],
-            "description": "The workspace's owner and visibility; a workspace runs nothing, so\n`execution` is absent."
-          },
           "baseSnapshotRef": {
             "type": [
               "string",
@@ -18508,13 +17239,12 @@
           "bytes",
           "revision",
           "createdAtMs",
-          "updatedAtMs",
-          "access"
+          "updatedAtMs"
         ],
         "type": "object"
       },
       "Visibility": {
-        "description": "Who may see a root's tree without a grant.",
+        "description": "Who sees a root's tree. Sessions start unshared (`restricted`) and are\nshared with the universe once, one way; everything else is shared.",
         "enum": [
           "universe",
           "restricted"
@@ -19046,32 +17776,7 @@
   },
   "methods": [
     {
-      "description": "Returns up to 100 matching active principals and groups with a role in the selected universe. Only names and identifiers are exposed. Refine query to find more subjects.",
-      "name": "access/subjects",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/AccessSubjectsParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAccessSubjectsResponse"
-        }
-      },
-      "summary": "Find sharing subjects",
-      "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
-    },
-    {
-      "description": "Reads bytes at a path in the current workspace head. The caller must be able to see the workspace; a hidden one is not found. An arbitrary blob or snapshot reference cannot be supplied.",
+      "description": "Reads bytes at a path in the current workspace head.",
       "name": "vfs/workspaces/files/read",
       "paramStructure": "by-name",
       "params": [
@@ -19091,134 +17796,12 @@
       },
       "summary": "Read a workspace file",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
-    },
-    {
-      "description": "Returns the caller's universe actions and permissions on up to 100 existing resources; missing ones return none. as=execution_service decides resource actions for the default agent identity, on what the caller may see. Session deletion can check all retention descendants. Advisory only: each mutation authorizes again.",
-      "name": "access/read",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/AccessReadParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAccessReadResponse"
-        }
+        "action": "read",
+        "kind": "universe"
       },
-      "summary": "Read current action permissions",
-      "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
-    },
-    {
-      "description": "Returns the owner, visibility, grants and revision of the root governing a session, bot, profile, workspace, environment or MCP server. A resource the caller may not see is not found.",
-      "name": "access/policy/read",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/AccessPolicyReadParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAccessPolicyReadResponse"
-        }
-      },
-      "summary": "Read a resource's access policy",
-      "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
-    },
-    {
-      "description": "Replaces the visibility and grant set of the resource's root; owner hands it over, which only the owner may do. Session and bot writers share read; only the owner grants write. Workspaces, environments and MCP servers take use grants from their owner or an Admin. Subjects must hold a universe role. expectedRevision guards lost updates.",
-      "name": "access/policy/put",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/AccessPolicyPutParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAccessPolicyPutResponse"
-        }
-      },
-      "summary": "Replace a resource's access policy",
-      "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "share_resource"
-      }
-    },
-    {
-      "description": "Returns the service principal the universe's work runs as by default and whether people may run work as themselves. Any universe reader may inspect these creation options.",
-      "name": "access/execution/read",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/AccessExecutionReadParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAccessExecutionReadResponse"
-        }
-      },
-      "summary": "Read the universe execution policy",
-      "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
-    },
-    {
-      "description": "Enables or disables personal execution. Existing roots keep the execution identity they were created with.",
-      "name": "access/execution/update",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/AccessExecutionUpdateParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAccessExecutionUpdateResponse"
-        }
-      },
-      "summary": "Update the universe execution policy",
-      "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_access"
-      }
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns protocol version, server identity, and supported capabilities without changing universe state.",
@@ -19241,12 +17824,15 @@
       },
       "summary": "Inspect the Lightspeed protocol",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": null,
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.",
+      "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.",
       "name": "session/start",
       "paramStructure": "by-name",
       "params": [
@@ -19266,9 +17852,12 @@
       },
       "summary": "Create or reopen a session",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "create_session"
-      }
+        "action": "create_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.",
@@ -19291,9 +17880,12 @@
       },
       "summary": "Create or reopen a managed session",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "create_session"
-      }
+        "action": "create_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
@@ -19316,12 +17908,15 @@
       },
       "summary": "Read a session",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.",
+      "description": "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.",
       "name": "session/list",
       "paramStructure": "by-name",
       "params": [
@@ -19341,9 +17936,12 @@
       },
       "summary": "List sessions",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
@@ -19366,9 +17964,12 @@
       },
       "summary": "Replace session configuration",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Sets the display name, or clears it when displayName is omitted.",
@@ -19391,9 +17992,12 @@
       },
       "summary": "Rename a session",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.",
@@ -19416,9 +18020,12 @@
       },
       "summary": "Replace session metadata",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.",
@@ -19441,9 +18048,12 @@
       },
       "summary": "Replace session retention",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
@@ -19466,9 +18076,12 @@
       },
       "summary": "Close a session",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "stop_session"
-      }
+        "action": "stop_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.",
@@ -19491,9 +18104,40 @@
       },
       "summary": "Delete closed sessions",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "delete_session"
-      }
+        "action": "delete_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
+    },
+    {
+      "description": "Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.",
+      "name": "session/share",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionShareParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionShareResponse"
+        }
+      },
+      "summary": "Share a session with the universe",
+      "x-lightspeed-access": {
+        "action": "share_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls.",
@@ -19516,9 +18160,12 @@
       },
       "summary": "Read the session event stream",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.",
@@ -19541,9 +18188,12 @@
       },
       "summary": "Append keyed session context",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
@@ -19566,9 +18216,12 @@
       },
       "summary": "Remove keyed session context",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
@@ -19591,9 +18244,12 @@
       },
       "summary": "Compact session context",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
@@ -19616,9 +18272,12 @@
       },
       "summary": "Start an agent run",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Returns a newest-first keyset page of bounded run summaries projected from current reducer state.",
@@ -19641,9 +18300,12 @@
       },
       "summary": "List session runs",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Reads and projects one run from its bounded event interval, paged by event sequence.",
@@ -19666,9 +18328,12 @@
       },
       "summary": "Read one session run",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
@@ -19691,9 +18356,12 @@
       },
       "summary": "Cancel a run",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "stop_session"
-      }
+        "action": "stop_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.",
@@ -19716,9 +18384,12 @@
       },
       "summary": "Decide pending run approvals",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.",
@@ -19741,9 +18412,12 @@
       },
       "summary": "Steer the active run",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted.",
@@ -19766,9 +18440,12 @@
       },
       "summary": "List available session skills",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
@@ -19791,12 +18468,15 @@
       },
       "summary": "Apply a profile to a session",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle. The session's execution identity must be allowed to use the environment.",
+      "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
       "name": "session/environments/activate",
       "paramStructure": "by-name",
       "params": [
@@ -19816,9 +18496,12 @@
       },
       "summary": "Activate a session environment",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Clears active environment selection without changing or closing the universe environment.",
@@ -19841,9 +18524,12 @@
       },
       "summary": "Deactivate the session environment",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "control_session"
-      }
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
@@ -19866,9 +18552,12 @@
       },
       "summary": "Bind a credential into an environment",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.",
@@ -19891,9 +18580,12 @@
       },
       "summary": "List environment credential bindings",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
@@ -19916,12 +18608,15 @@
       },
       "summary": "Unbind an environment credential",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Records an idempotent provisioning intent against an enabled universe binding, owned by the caller and visible as access says. The provider validates its provider-wide template and provisions through its backend asynchronously.",
+      "description": "Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.",
       "name": "environments/create",
       "paramStructure": "by-name",
       "params": [
@@ -19941,9 +18636,12 @@
       },
       "summary": "Create an environment",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.",
@@ -19966,12 +18664,15 @@
       },
       "summary": "Read an environment",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Lists the universe environments the caller may see, optionally filtered by provider, binding, or logical lifecycle state.",
+      "description": "Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.",
       "name": "environments/list",
       "paramStructure": "by-name",
       "params": [
@@ -19991,9 +18692,12 @@
       },
       "summary": "List environments",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.",
@@ -20016,12 +18720,15 @@
       },
       "summary": "Close an environment",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, owned by the caller and visible as access says. Reachability is checked on demand.",
+      "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.",
       "name": "environments/external/create",
       "paramStructure": "by-name",
       "params": [
@@ -20041,9 +18748,12 @@
       },
       "summary": "Register an external environment",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
@@ -20066,9 +18776,12 @@
       },
       "summary": "Configure environment public ingress",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Records the desired power state (running, paused, suspended, or stopped) of a provisioned environment; the lifecycle reconciler converges the provider target asynchronously. Powered-down environments wake transparently on their next use. Rejected when the provider does not support the state.",
@@ -20091,9 +18804,12 @@
       },
       "summary": "Set environment power intent",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Replaces or clears the staged idle policy of a provisioned environment. The power reaper measures the daemon's idle duration against the pause/suspend/stop/close thresholds and escalates through the stages the provider supports.",
@@ -20116,9 +18832,12 @@
       },
       "summary": "Set environment idle policy",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",
@@ -20141,9 +18860,12 @@
       },
       "summary": "List environment provider bindings",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.",
@@ -20166,9 +18888,12 @@
       },
       "summary": "Read an environment provider binding",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Reads immutable templates directly from the selected bound provider controller.",
@@ -20191,9 +18916,12 @@
       },
       "summary": "List environment templates",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns one immutable template version from the selected bound provider controller.",
@@ -20216,9 +18944,12 @@
       },
       "summary": "Read an environment template",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Starts a dependency-aware job group on one environment instance, injecting the environment's configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance rather than a session. A powered-down environment is woken on use: the call fails with environment_not_ready while the wake is in progress; retry with backoff.",
@@ -20241,9 +18972,12 @@
       },
       "summary": "Create environment jobs",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "use_resource"
-      }
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
       "description": "Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.",
@@ -20266,9 +19000,12 @@
       },
       "summary": "Read environment jobs",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.",
@@ -20291,9 +19028,12 @@
       },
       "summary": "Cancel environment jobs",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "use_resource"
-      }
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode, active limit, disconnect grace, and expiry are the key's policy. Treat the secret like a cluster-join credential.",
@@ -20316,9 +19056,12 @@
       },
       "summary": "Mint an environment registration key",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.",
@@ -20341,9 +19084,12 @@
       },
       "summary": "Read an environment registration key",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.",
@@ -20366,9 +19112,12 @@
       },
       "summary": "List environment registration keys",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.",
@@ -20391,9 +19140,12 @@
       },
       "summary": "Revoke an environment registration key",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others.",
@@ -20416,9 +19168,12 @@
       },
       "summary": "Discover available models",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "models",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
@@ -20441,9 +19196,12 @@
       },
       "summary": "Create an agent profile",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "create_profile"
-      }
+        "action": "create_profile",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "profiles",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the complete profile document and current revision.",
@@ -20466,9 +19224,12 @@
       },
       "summary": "Read an agent profile",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "profiles",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns lightweight summaries of universe-scoped reusable profiles.",
@@ -20491,9 +19252,12 @@
       },
       "summary": "List agent profiles",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "profiles",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
@@ -20516,9 +19280,12 @@
       },
       "summary": "Create or replace an agent profile",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_profile"
-      }
+        "action": "manage_profile",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "profiles",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
@@ -20541,9 +19308,12 @@
       },
       "summary": "Delete an agent profile",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_profile"
-      }
+        "action": "manage_profile",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "profiles",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
@@ -20566,12 +19336,15 @@
       },
       "summary": "Store content-addressed blobs",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "use_resource"
-      }
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "blobs/put",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.",
+      "description": "Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.",
       "name": "blobs/read",
       "paramStructure": "by-name",
       "params": [
@@ -20591,9 +19364,12 @@
       },
       "summary": "Read a content-addressed blob",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Checks a batch of content references without returning blob bodies, preserving request order.",
@@ -20616,9 +19392,12 @@
       },
       "summary": "Check blob availability",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
@@ -20641,12 +19420,15 @@
       },
       "summary": "Commit a VFS snapshot",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "use_resource"
-      }
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs. Read through a visible workspace whose head or base it is, or read a snapshot the caller committed or uploaded.",
+      "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
       "name": "vfs/snapshots/read",
       "paramStructure": "by-name",
       "params": [
@@ -20666,12 +19448,15 @@
       },
       "summary": "Read a VFS snapshot",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Creates a universe workspace owned by the caller at an optional seed snapshot; absence starts from a server-created empty snapshot. access sets who may see and use it.",
+      "description": "Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.",
       "name": "vfs/workspaces/create",
       "paramStructure": "by-name",
       "params": [
@@ -20691,9 +19476,12 @@
       },
       "summary": "Create a mutable VFS workspace",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "create_workspace"
-      }
+        "action": "create_workspace",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns workspace metadata, current head snapshot, and revision for safe updates.",
@@ -20716,12 +19504,15 @@
       },
       "summary": "Read a VFS workspace",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Lists the mutable universe workspaces the caller may see, with head snapshots, sizes, and revisions.",
+      "description": "Lists the mutable universe workspaces with head snapshots, sizes, and revisions.",
       "name": "vfs/workspaces/list",
       "paramStructure": "by-name",
       "params": [
@@ -20741,9 +19532,12 @@
       },
       "summary": "List VFS workspaces",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
@@ -20766,9 +19560,12 @@
       },
       "summary": "Update a VFS workspace",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "use_resource"
-      }
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
@@ -20791,12 +19588,15 @@
       },
       "summary": "Delete a VFS workspace",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is owned by the caller, visible as access says. Replacing one requires configuring it; changing its credential or auth policy also needs universe configuration rights. Use expectedRevision when replacing; token material is never accepted or returned.",
+      "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.",
       "name": "mcp/servers/put",
       "paramStructure": "by-name",
       "params": [
@@ -20816,9 +19616,12 @@
       },
       "summary": "Create or replace an MCP server record",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.",
@@ -20841,9 +19644,12 @@
       },
       "summary": "Discover MCP server authentication",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.",
@@ -20866,9 +19672,12 @@
       },
       "summary": "Discover MCP server tools",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.",
@@ -20891,12 +19700,15 @@
       },
       "summary": "Read an MCP server record",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Lists the universe catalog entries the caller may see, optionally filtered by lifecycle/configuration status.",
+      "description": "Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.",
       "name": "mcp/servers/list",
       "paramStructure": "by-name",
       "params": [
@@ -20916,9 +19728,12 @@
       },
       "summary": "List MCP server records",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
@@ -20941,9 +19756,12 @@
       },
       "summary": "Delete an MCP server record",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
@@ -20966,9 +19784,12 @@
       },
       "summary": "Import a static bearer grant",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.",
@@ -20991,12 +19812,14 @@
       },
       "summary": "Lease a retrievable authentication grant",
       "x-lightspeed-access": {
-        "kind": "service",
-        "requirement": "lease_credentials"
-      }
+        "kind": "service"
+      },
+      "x-lightspeed-group": "auth/lease",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
+      "description": "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
       "name": "auth/grants/read",
       "paramStructure": "by-name",
       "params": [
@@ -21016,9 +19839,12 @@
       },
       "summary": "Read authentication grant metadata",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists non-secret grant metadata for the universe, optionally filtered by status.",
@@ -21041,9 +19867,12 @@
       },
       "summary": "List authentication grants",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
@@ -21066,9 +19895,12 @@
       },
       "summary": "Revoke an authentication grant",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
@@ -21091,9 +19923,12 @@
       },
       "summary": "Register an OAuth client",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
@@ -21116,9 +19951,12 @@
       },
       "summary": "Read OAuth client metadata",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists non-secret OAuth client registrations in the universe.",
@@ -21141,9 +19979,12 @@
       },
       "summary": "List OAuth clients",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
@@ -21166,9 +20007,12 @@
       },
       "summary": "Delete an OAuth client",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
@@ -21191,9 +20035,12 @@
       },
       "summary": "Start an OAuth authorization flow",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
@@ -21216,9 +20063,12 @@
       },
       "summary": "Read OAuth flow status",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
@@ -21241,9 +20091,12 @@
       },
       "summary": "Register an authentication provider",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
@@ -21266,9 +20119,12 @@
       },
       "summary": "Read authentication provider metadata",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists non-secret model/GitHub provider registrations for the universe.",
@@ -21291,9 +20147,12 @@
       },
       "summary": "List authentication providers",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
@@ -21316,9 +20175,12 @@
       },
       "summary": "Delete an authentication provider",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
@@ -21341,9 +20203,12 @@
       },
       "summary": "List GitHub App installations",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
@@ -21366,9 +20231,12 @@
       },
       "summary": "Grant access to a GitHub App installation",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
@@ -21391,9 +20259,12 @@
       },
       "summary": "Create a bot",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "create_bot"
-      }
+        "action": "create_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.",
@@ -21416,9 +20287,12 @@
       },
       "summary": "Create or replace a bot document",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_bot"
-      }
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the bot record, its current revision, and lifecycle columns.",
@@ -21441,12 +20315,15 @@
       },
       "summary": "Read a bot",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event.",
+      "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.",
       "name": "bots/list",
       "paramStructure": "by-name",
       "params": [
@@ -21466,9 +20343,12 @@
       },
       "summary": "List bots",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.",
@@ -21491,9 +20371,12 @@
       },
       "summary": "Close a bot",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_bot"
-      }
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.",
@@ -21516,9 +20399,12 @@
       },
       "summary": "Delete a bot",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_bot"
-      }
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.",
@@ -21541,9 +20427,12 @@
       },
       "summary": "Read bot controller state",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.",
@@ -21566,9 +20455,12 @@
       },
       "summary": "Rotate a bot session",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_bot"
-      }
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
@@ -21591,12 +20483,15 @@
       },
       "summary": "Create or replace a trigger",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_bot"
-      }
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are shown only to managing principals.",
+      "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.",
       "name": "bots/triggers/read",
       "paramStructure": "by-name",
       "params": [
@@ -21616,12 +20511,15 @@
       },
       "summary": "Read a trigger",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns every trigger of the bot ordered by id, secrets redacted for non-managing principals.",
+      "description": "Returns every trigger of the bot ordered by id, secrets included for bot-management callers.",
       "name": "bots/triggers/list",
       "paramStructure": "by-name",
       "params": [
@@ -21641,9 +20539,12 @@
       },
       "summary": "List a bot's triggers",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.",
@@ -21666,9 +20567,12 @@
       },
       "summary": "Delete a trigger",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_bot"
-      }
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.",
@@ -21691,9 +20595,12 @@
       },
       "summary": "Admit an event manually",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "invoke_bot"
-      }
+        "action": "invoke_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
       "description": "Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.",
@@ -21716,9 +20623,12 @@
       },
       "summary": "Replay a stored event",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_bot"
-      }
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.",
@@ -21741,9 +20651,12 @@
       },
       "summary": "List a bot's events",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the event row and its full stored envelope document.",
@@ -21766,9 +20679,12 @@
       },
       "summary": "Read an event by number",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.",
@@ -21791,9 +20707,12 @@
       },
       "summary": "Test a CEL filter",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "manage_bot"
-      }
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.",
@@ -21816,9 +20735,12 @@
       },
       "summary": "Create a channel account",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.",
@@ -21841,9 +20763,12 @@
       },
       "summary": "Create or replace a channel account",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the account document and revision.",
@@ -21866,9 +20791,12 @@
       },
       "summary": "Read a channel account",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists this universe's provider accounts, optionally by provider.",
@@ -21891,9 +20819,12 @@
       },
       "summary": "List channel accounts",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Removes the account and its pairings; chat triggers that reference it stop serving conversations.",
@@ -21916,9 +20847,12 @@
       },
       "summary": "Delete a channel account",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.",
@@ -21941,9 +20875,11 @@
       },
       "summary": "Admit a provider message",
       "x-lightspeed-access": {
-        "kind": "service",
-        "requirement": "admit_channel_inbound"
-      }
+        "kind": "service"
+      },
+      "x-lightspeed-group": "channels/inbound",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists conversations paired to chat triggers, optionally by account or bot.",
@@ -21966,9 +20902,12 @@
       },
       "summary": "List chat pairings",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Removes one pairing; the conversation must present the pairing code again to reconnect.",
@@ -21991,9 +20930,12 @@
       },
       "summary": "Unpair a conversation",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "configure_resource"
-      }
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
@@ -22016,12 +20958,15 @@
       },
       "summary": "Read a conversation snapshot",
       "x-lightspeed-access": {
-        "kind": "universe",
-        "requirement": "read"
-      }
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Deployment configuration inventory; requires DeploymentAdmin without granting universe content access.",
+      "description": "Deployment configuration inventory of one universe's provider bindings.",
       "name": "deployment/environment-provider-bindings/list",
       "paramStructure": "by-name",
       "params": [
@@ -22041,56 +20986,11 @@
       },
       "summary": "List a universe's deployment provider bindings",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
-    },
-    {
-      "description": "Returns current caller rights and accessible universes within the credential ceiling. No other principal can be selected.",
-      "name": "deployment/identity/self",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/IdentityScopeParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfIdentitySelfResponse"
-        }
+        "kind": "deployment"
       },
-      "summary": "Read own access",
-      "x-lightspeed-access": {
-        "kind": "identity"
-      }
-    },
-    {
-      "description": "Requires administration of the requested scope. In universe scope the directory holds only that universe's subjects: principals and groups holding a role there, their members, and service principals it manages. The deployment-wide directory requires deployment administration or the manage_identity capability.",
-      "name": "deployment/identity/directory",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/IdentityScopeParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAccessDirectory"
-        }
-      },
-      "summary": "Read the access directory",
-      "x-lightspeed-access": {
-        "kind": "identity"
-      }
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
@@ -22113,8 +21013,11 @@
       },
       "summary": "Create a universe",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/universes",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.",
@@ -22137,8 +21040,11 @@
       },
       "summary": "List universes",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/universes",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
@@ -22161,8 +21067,11 @@
       },
       "summary": "Read a universe",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/universes",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
@@ -22185,35 +21094,14 @@
       },
       "summary": "Purge a universe",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
-    },
-    {
-      "description": "Applies a canonical identity change with current actor permissions and durable access auditing.",
-      "name": "deployment/identity/apply",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/AccessChange"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAccessChangeResult"
-        }
+        "kind": "deployment"
       },
-      "summary": "Apply identity and access changes",
-      "x-lightspeed-access": {
-        "kind": "identity"
-      }
+      "x-lightspeed-group": "deployment/universes",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
-      "description": "Mints a credential for an explicit canonical principal within a universe or deployment scope. Issuance requires authority over that principal and scope. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
+      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do.",
       "name": "deployment/api-keys/create",
       "paramStructure": "by-name",
       "params": [
@@ -22233,11 +21121,14 @@
       },
       "summary": "Create a scoped API key",
       "x-lightspeed-access": {
-        "kind": "credential_management"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/api-keys",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns visible non-secret key metadata for the requested scope, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
+      "description": "Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
       "name": "deployment/api-keys/list",
       "paramStructure": "by-name",
       "params": [
@@ -22257,11 +21148,14 @@
       },
       "summary": "List scoped API keys",
       "x-lightspeed-access": {
-        "kind": "credential_management"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/api-keys",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
-      "description": "Revokes a matching scoped key when the actor owns it or administers its scope. Unknown and inaccessible prefixes return not found.",
+      "description": "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.",
       "name": "deployment/api-keys/revoke",
       "paramStructure": "by-name",
       "params": [
@@ -22281,8 +21175,11 @@
       },
       "summary": "Revoke a scoped API key",
       "x-lightspeed-access": {
-        "kind": "credential_management"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/api-keys",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
@@ -22305,8 +21202,11 @@
       },
       "summary": "Put an environment provider",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns every deployment-registered deployment provider and its controller connection.",
@@ -22329,8 +21229,11 @@
       },
       "summary": "List environment providers",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns one deployment-registered deployment provider and its controller connection.",
@@ -22353,8 +21256,11 @@
       },
       "summary": "Read an environment provider",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes a deployment provider only when no universe binding references it.",
@@ -22377,8 +21283,11 @@
       },
       "summary": "Delete an environment provider",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.",
@@ -22401,8 +21310,11 @@
       },
       "summary": "Put an environment provider binding",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes a universe provider binding only after every referencing environment has reached Closed.",
@@ -22425,8 +21337,11 @@
       },
       "summary": "Delete an environment provider binding",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.",
@@ -22449,8 +21364,11 @@
       },
       "summary": "Adopt a provider environment",
       "x-lightspeed-access": {
-        "kind": "deployment_admin"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.",
@@ -22473,9 +21391,11 @@
       },
       "summary": "List channel accounts across universes",
       "x-lightspeed-access": {
-        "kind": "deployment_admin_or_capability",
-        "requirement": "discover_channel_accounts"
-      }
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/channels",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     }
   ],
   "openrpc": "1.3.2"

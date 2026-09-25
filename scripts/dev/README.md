@@ -318,10 +318,11 @@ network. From the host machine, use `localhost:15432` instead:
 postgres://lightspeed:lightspeed@localhost:15432/lightspeed
 ```
 
-The full authenticated development profile provisions a canonical local user
-separately from the runtime service principal and passes its UUID through
-`LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID`. Platform bootstrap binds the first login
-to that user; its service key asserts users on interactive requests. A manually
-configured Platform endpoint/key also needs a pre-provisioned bootstrap user.
+The full authenticated development profile runs `server api-key bootstrap` for
+the development universe: it creates the universe if needed, revokes the
+previous launcher key, and mints a deployment key with every method group that
+may assert actors. The launcher passes its secret to the Platform as
+`LIGHTSPEED_PLATFORM_API_KEY`; the Platform asserts the signed-in user as the
+actor on interactive requests.
 The greenfield identity migration refuses a populated old Platform schema;
 reset disposable Platform state explicitly instead of importing old permissions.

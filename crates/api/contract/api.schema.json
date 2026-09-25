@@ -1,410 +1,10 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
-    "AccessChange": {
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "displayName": {
-              "type": "string"
-            },
-            "id": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "kind": {
-              "$ref": "#/definitions/IdentityPrincipalKind"
-            },
-            "managementScope": {
-              "$ref": "#/definitions/AccessScope"
-            },
-            "operation": {
-              "const": "create_principal",
-              "type": "string"
-            }
-          },
-          "required": [
-            "operation",
-            "id",
-            "kind",
-            "displayName",
-            "managementScope"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "operation": {
-              "const": "set_principal_status",
-              "type": "string"
-            },
-            "status": {
-              "$ref": "#/definitions/PrincipalStatus"
-            }
-          },
-          "required": [
-            "operation",
-            "id",
-            "status"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "displayName": {
-              "type": "string"
-            },
-            "id": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "operation": {
-              "const": "create_group",
-              "type": "string"
-            }
-          },
-          "required": [
-            "operation",
-            "id",
-            "displayName"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "displayName": {
-              "type": "string"
-            },
-            "id": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "operation": {
-              "const": "rename_group",
-              "type": "string"
-            }
-          },
-          "required": [
-            "operation",
-            "id",
-            "displayName"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "membership": {
-              "$ref": "#/definitions/Membership"
-            },
-            "operation": {
-              "const": "put_membership",
-              "type": "string"
-            }
-          },
-          "required": [
-            "operation",
-            "membership"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "membership": {
-              "$ref": "#/definitions/Membership"
-            },
-            "operation": {
-              "const": "remove_membership",
-              "type": "string"
-            }
-          },
-          "required": [
-            "operation",
-            "membership"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "assignment": {
-              "$ref": "#/definitions/RoleAssignment"
-            },
-            "operation": {
-              "const": "assign_role",
-              "type": "string"
-            }
-          },
-          "required": [
-            "operation",
-            "assignment"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "assignment": {
-              "$ref": "#/definitions/RoleAssignment"
-            },
-            "operation": {
-              "const": "revoke_role",
-              "type": "string"
-            }
-          },
-          "required": [
-            "operation",
-            "assignment"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Atomically replaces one existing grant, preserving other direct/group grants.\nA missing source grant is a conflict; last-administrator protection applies.",
-          "properties": {
-            "assignment": {
-              "$ref": "#/definitions/RoleAssignment"
-            },
-            "operation": {
-              "const": "replace_role",
-              "type": "string"
-            },
-            "role": {
-              "$ref": "#/definitions/Role"
-            }
-          },
-          "required": [
-            "operation",
-            "assignment",
-            "role"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "assignment": {
-              "$ref": "#/definitions/CapabilityAssignment"
-            },
-            "operation": {
-              "const": "assign_capability",
-              "type": "string"
-            }
-          },
-          "required": [
-            "operation",
-            "assignment"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "assignment": {
-              "$ref": "#/definitions/CapabilityAssignment"
-            },
-            "operation": {
-              "const": "revoke_capability",
-              "type": "string"
-            }
-          },
-          "required": [
-            "operation",
-            "assignment"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Creates the universe and the actor's Admin assignment atomically.",
-          "properties": {
-            "operation": {
-              "const": "create_universe",
-              "type": "string"
-            },
-            "slug": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "universeId": {
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          "required": [
-            "operation",
-            "universeId"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Explicit deployment administration; does not grant content access to\nthe recovering administrator. Only valid for an orphaned universe.",
-          "properties": {
-            "operation": {
-              "const": "recover_universe",
-              "type": "string"
-            },
-            "principalId": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "universeId": {
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          "required": [
-            "operation",
-            "universeId",
-            "principalId"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "AccessChangeResult": {
-      "properties": {
-        "changed": {
-          "type": "boolean"
-        },
-        "policyRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "changed",
-        "policyRevision"
-      ],
-      "type": "object"
-    },
-    "AccessDirectory": {
-      "description": "Administrative directory view. Assignments are limited to the requested scope.",
-      "properties": {
-        "capabilities": {
-          "items": {
-            "$ref": "#/definitions/CapabilityAssignment"
-          },
-          "type": "array"
-        },
-        "groups": {
-          "items": {
-            "$ref": "#/definitions/IdentityGroup"
-          },
-          "type": "array"
-        },
-        "memberships": {
-          "items": {
-            "$ref": "#/definitions/Membership"
-          },
-          "type": "array"
-        },
-        "policyRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "principals": {
-          "items": {
-            "$ref": "#/definitions/IdentityPrincipal"
-          },
-          "type": "array"
-        },
-        "roles": {
-          "items": {
-            "$ref": "#/definitions/RoleAssignment"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "principals",
-        "groups",
-        "memberships",
-        "roles",
-        "capabilities",
-        "policyRevision"
-      ],
-      "type": "object"
-    },
-    "AccessExecutionReadParams": {
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "AccessExecutionReadResponse": {
-      "properties": {
-        "policy": {
-          "$ref": "#/definitions/UniverseExecutionPolicy"
-        }
-      },
-      "required": [
-        "policy"
-      ],
-      "type": "object"
-    },
-    "AccessExecutionUpdateParams": {
-      "additionalProperties": false,
-      "properties": {
-        "personalExecutionEnabled": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "personalExecutionEnabled"
-      ],
-      "type": "object"
-    },
-    "AccessExecutionUpdateResponse": {
-      "properties": {
-        "policy": {
-          "$ref": "#/definitions/UniverseExecutionPolicy"
-        }
-      },
-      "required": [
-        "policy"
-      ],
-      "type": "object"
-    },
-    "AccessGrantInput": {
-      "additionalProperties": false,
-      "properties": {
-        "permission": {
-          "$ref": "#/definitions/ResourcePermission"
-        },
-        "subject": {
-          "$ref": "#/definitions/Subject"
-        }
-      },
-      "required": [
-        "subject",
-        "permission"
-      ],
-      "type": "object"
-    },
     "AccessInput": {
       "additionalProperties": false,
-      "description": "Audience of a root, requested at creation. A session or bot created under\nanother root (a bot's session, a delegated child) has no audience of its\nown and refuses this.",
+      "description": "The audience of a new session, requested at creation. Absent means\nunshared: visible to its creator until it is shared with the universe. A\nsession created under another root (a bot's session, a delegated child)\nfollows that root and refuses this.",
       "properties": {
-        "grants": {
-          "description": "Grants on the root: `read` or `write` on a session or bot, `use` on\na workspace, environment or MCP server. Each subject must currently\nhold a role in the universe.",
-          "items": {
-            "$ref": "#/definitions/AccessGrantInput"
-          },
-          "type": "array"
-        },
         "visibility": {
           "anyOf": [
             {
@@ -413,218 +13,13 @@
             {
               "type": "null"
             }
-          ],
-          "description": "`universe` lets every member read; `restricted` limits reading to the\nowner and the grants below. Absent means `universe`."
-        }
-      },
-      "type": "object"
-    },
-    "AccessPolicyPutParams": {
-      "additionalProperties": false,
-      "description": "Replace a root's visibility and grant set. On a session or bot only the\nowner may add or remove `write`; writers may share `read` and change\nvisibility; readers change nothing. On a workspace, environment or MCP\nserver only the owner or an Admin changes access, and `use` is the only\ngrant.",
-      "properties": {
-        "expectedRevision": {
-          "description": "The revision from `access/policy/read`; absent replaces unconditionally.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
           ]
-        },
-        "grants": {
-          "items": {
-            "$ref": "#/definitions/AccessGrantInput"
-          },
-          "type": "array"
-        },
-        "owner": {
-          "description": "Hand the root to another member of the universe. Only the current\nowner may set it; the previous owner keeps no permission of its own.",
-          "format": "uuid",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "resource": {
-          "$ref": "#/definitions/ResourceRef"
-        },
-        "visibility": {
-          "$ref": "#/definitions/Visibility"
         }
       },
-      "required": [
-        "resource",
-        "visibility"
-      ],
-      "type": "object"
-    },
-    "AccessPolicyPutResponse": {
-      "properties": {
-        "policy": {
-          "$ref": "#/definitions/AccessPolicyView"
-        }
-      },
-      "required": [
-        "policy"
-      ],
-      "type": "object"
-    },
-    "AccessPolicyReadParams": {
-      "additionalProperties": false,
-      "properties": {
-        "resource": {
-          "$ref": "#/definitions/ResourceRef"
-        }
-      },
-      "required": [
-        "resource"
-      ],
-      "type": "object"
-    },
-    "AccessPolicyReadResponse": {
-      "properties": {
-        "policy": {
-          "$ref": "#/definitions/AccessPolicyView"
-        }
-      },
-      "required": [
-        "policy"
-      ],
-      "type": "object"
-    },
-    "AccessPolicyView": {
-      "description": "The policy governing a resource: its root's owner, visibility and grants.\nA resource below a root (a bot's session, a delegated child) shows its\nroot's policy; sharing it means sharing the root.",
-      "properties": {
-        "execution": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Execution"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Who the root's work runs as; absent for kinds that run nothing:\nprofiles, workspaces, environments and MCP servers."
-        },
-        "grants": {
-          "items": {
-            "$ref": "#/definitions/ResourceGrant"
-          },
-          "type": "array"
-        },
-        "owner": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "resource": {
-          "$ref": "#/definitions/ResourceRef"
-        },
-        "revision": {
-          "description": "Advances with every replacement; pass it as `expectedRevision`.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "root": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ResourceRef"
-            }
-          ],
-          "description": "The root whose policy this is; equal to `resource` for a root."
-        },
-        "updatedAtMs": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "updatedBy": {
-          "$ref": "#/definitions/ActionActor"
-        },
-        "visibility": {
-          "$ref": "#/definitions/Visibility"
-        }
-      },
-      "required": [
-        "resource",
-        "root",
-        "owner",
-        "visibility",
-        "grants",
-        "revision",
-        "updatedBy",
-        "updatedAtMs"
-      ],
-      "type": "object"
-    },
-    "AccessReadAs": {
-      "description": "The identity `access/read` decides resource actions for.",
-      "oneOf": [
-        {
-          "const": "caller",
-          "description": "The caller itself.",
-          "type": "string"
-        },
-        {
-          "const": "execution_service",
-          "description": "The universe's execution service, the default agent identity that\nsessions and bots run as unless they run as their owner. Only\nresources the caller may see are decided; the others return no\nactions. Session setup uses it to show what the default agent\nidentity may use.",
-          "type": "string"
-        }
-      ]
-    },
-    "AccessReadParams": {
-      "additionalProperties": false,
-      "description": "Current caller's action permissions. This is an advisory snapshot: mutations\nalways authorize again, and runtime prerequisites still apply.",
-      "properties": {
-        "as": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AccessReadAs"
-            }
-          ],
-          "default": "caller",
-          "description": "Whose resource actions to report. Universe-level `actions` are always\nthe caller's."
-        },
-        "resources": {
-          "default": [],
-          "description": "Up to 100 existing sessions, bots, profiles, workspaces, environments\nor MCP servers in the selected universe. Missing resources return no\nactions.",
-          "items": {
-            "$ref": "#/definitions/ResourceRef"
-          },
-          "type": "array"
-        },
-        "sessionDeleteCascade": {
-          "default": false,
-          "description": "Include every retention descendant when previewing session deletion.",
-          "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
-    "AccessReadResponse": {
-      "properties": {
-        "actions": {
-          "description": "Allowed actions that do not require a target. Resource actions are\nreturned only under `resources`, even when the caller has a broad role.",
-          "items": {
-            "$ref": "#/definitions/UniverseAction"
-          },
-          "type": "array"
-        },
-        "resources": {
-          "items": {
-            "$ref": "#/definitions/ResourceAccessView"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "actions",
-        "resources"
-      ],
       "type": "object"
     },
     "AccessScope": {
+      "description": "What a key reaches or a request addresses: one universe, or the\ndeployment.",
       "oneOf": [
         {
           "additionalProperties": false,
@@ -654,93 +49,6 @@
           "required": [
             "kind",
             "universeId"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "AccessSubjectView": {
-      "properties": {
-        "displayName": {
-          "type": "string"
-        },
-        "subject": {
-          "$ref": "#/definitions/Subject"
-        }
-      },
-      "required": [
-        "subject",
-        "displayName"
-      ],
-      "type": "object"
-    },
-    "AccessSubjectsParams": {
-      "additionalProperties": false,
-      "description": "Search eligible sharing subjects in the selected universe. This exposes\nnames and identifiers only, never the administrative identity directory.",
-      "properties": {
-        "query": {
-          "default": "",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "AccessSubjectsResponse": {
-      "properties": {
-        "principalId": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "subjects": {
-          "description": "At most 100 matches; refine the query to find another subject.",
-          "items": {
-            "$ref": "#/definitions/AccessSubjectView"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "principalId",
-        "subjects"
-      ],
-      "type": "object"
-    },
-    "ActionActor": {
-      "oneOf": [
-        {
-          "properties": {
-            "id": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "kind": {
-              "const": "principal",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "id"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "cause": {
-              "type": "string"
-            },
-            "component": {
-              "type": "string"
-            },
-            "kind": {
-              "const": "internal",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "component",
-            "cause"
           ],
           "type": "object"
         }
@@ -829,142 +137,6 @@
           "type": "string"
         }
       ]
-    },
-    "AgentApiOutcomeOfAccessChangeResult": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AccessChangeResult"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAccessDirectory": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AccessDirectory"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAccessExecutionReadResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AccessExecutionReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAccessExecutionUpdateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AccessExecutionUpdateResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAccessPolicyPutResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AccessPolicyPutResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAccessPolicyReadResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AccessPolicyReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAccessReadResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AccessReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAccessSubjectsResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AccessSubjectsResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
     },
     "AgentApiOutcomeOfAuthClientCreateResponse": {
       "properties": {
@@ -2428,23 +1600,6 @@
       ],
       "type": "object"
     },
-    "AgentApiOutcomeOfIdentitySelfResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/IdentitySelfResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
     "AgentApiOutcomeOfInitializeResponse": {
       "properties": {
         "notifications": {
@@ -2965,6 +2120,23 @@
         },
         "result": {
           "$ref": "#/definitions/SessionRetentionPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfSessionShareResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionShareResponse"
         }
       },
       "required": [
@@ -3587,6 +2759,79 @@
         }
       ]
     },
+    "Attribution": {
+      "description": "Who created a resource or authored bytes. An actor is whatever a key\nallowed to assert one said; core compares it and never resolves it.",
+      "oneOf": [
+        {
+          "description": "The actor a key asserted for its request.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "actor",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A key acting for itself, named by its display prefix.",
+          "properties": {
+            "kind": {
+              "const": "key",
+              "type": "string"
+            },
+            "prefix": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "prefix"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An unauthenticated local development request, or an in-process call.",
+          "properties": {
+            "kind": {
+              "const": "local",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The runtime's own work: a bot, a delegated session, a registration,\nor host administration through the server CLI.",
+          "properties": {
+            "cause": {
+              "type": "string"
+            },
+            "component": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "component",
+            "cause"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "AuthClientCreateParams": {
       "description": "Register an OAuth client configuration. `client_secret` is the second\ndeliberate inbound-plaintext path after `auth/grants/import`: it is\nencrypted on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
       "properties": {
@@ -4169,6 +3414,14 @@
           "format": "int64",
           "type": "integer"
         },
+        "createdBy": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Attribution"
+            }
+          ],
+          "description": "Who created the grant. Attribution only; it confers no access."
+        },
         "displayName": {
           "type": [
             "string",
@@ -4209,9 +3462,6 @@
         "metadata": {
           "description": "Non-secret provider-specific metadata (for GitHub App installation\ngrants: installation id, account, permissions, repository selection)."
         },
-        "principal": {
-          "$ref": "#/definitions/PrincipalRefView"
-        },
         "providerId": {
           "type": "string"
         },
@@ -4243,7 +3493,7 @@
         "providerId",
         "providerKind",
         "exposure",
-        "principal",
+        "createdBy",
         "hasAccessToken",
         "hasRefreshToken",
         "status",
@@ -4636,17 +3886,6 @@
             "type": "string"
           },
           "type": "array"
-        },
-        "resource": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ResourceRef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "As for `blobs/read`; a blob the caller may not read through the\nresource reports as absent."
         }
       },
       "type": "object"
@@ -4720,17 +3959,6 @@
       "properties": {
         "blobRef": {
           "type": "string"
-        },
-        "resource": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ResourceRef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The session or bot the blob is read through: the caller\nmust be able to read it and the blob must be admitted content of it.\nWithout a resource only a blob the caller uploaded is readable. A\nresource that does not authorize the read is a refusal, not a prompt\nto try another. Workspaces, environments and MCP servers are refused\nhere; read a workspace's files with `vfs/workspaces/files/read`."
         }
       },
       "required": [
@@ -5018,30 +4246,8 @@
     },
     "BotCreateParams": {
       "properties": {
-        "access": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AccessInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Audience of the bot, its events and every session it creates, set\natomically with its creation. Absent means universe-visible."
-        },
         "bot": {
           "$ref": "#/definitions/BotInput"
-        },
-        "execution": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ExecutionInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Execution identity of the bot and every session it creates; absent\nmeans the universe's execution service."
         },
         "triggers": {
           "description": "Triggers created with the bot in one go; a failure rolls the bot\nback.",
@@ -5917,6 +5123,15 @@
       "type": "object"
     },
     "BotListParams": {
+      "properties": {
+        "createdBy": {
+          "description": "Only bots this actor created.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "BotListResponse": {
@@ -5981,7 +5196,7 @@
               "$ref": "#/definitions/ResourceAccessSummary"
             }
           ],
-          "description": "The root governing this bot and its sessions, and who they run as."
+          "description": "The bot's audience, always the universe, and who created it."
         },
         "bot": {
           "$ref": "#/definitions/BotView"
@@ -6469,7 +5684,7 @@
           ]
         },
         "pairingCode": {
-          "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nnon-managing principals.",
+          "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nchannel-facing views.",
           "type": [
             "string",
             "null"
@@ -6892,7 +6107,7 @@
           ]
         },
         "ingestPath": {
-          "description": "Webhook triggers: the ingest path including its URL token, for\nmanaging principals only.",
+          "description": "Webhook triggers: the ingest path including its URL token, for\nbot-management callers only.",
           "type": [
             "string",
             "null"
@@ -6913,7 +6128,7 @@
           ]
         },
         "pairingCode": {
-          "description": "Chat triggers with `pairing: code`: the code, for managing\nprincipals only.",
+          "description": "Chat triggers with `pairing: code`: the code, for bot-management\ncallers only.",
           "type": [
             "string",
             "null"
@@ -7111,46 +6326,6 @@
           "type": "string"
         }
       ]
-    },
-    "Capability": {
-      "oneOf": [
-        {
-          "enum": [
-            "assert_user",
-            "lease_credentials",
-            "admit_channel_inbound",
-            "discover_channel_accounts",
-            "manage_identity"
-          ],
-          "type": "string"
-        },
-        {
-          "const": "read_private_content",
-          "description": "Read restricted content of a universe without a grant. Held by a\nperson, never implied by a role, and every read that relies on it is\naudited. It reads; it never controls, shares or takes ownership.",
-          "type": "string"
-        }
-      ]
-    },
-    "CapabilityAssignment": {
-      "additionalProperties": false,
-      "properties": {
-        "capability": {
-          "$ref": "#/definitions/Capability"
-        },
-        "principalId": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "scope": {
-          "$ref": "#/definitions/AccessScope"
-        }
-      },
-      "required": [
-        "scope",
-        "principalId",
-        "capability"
-      ],
-      "type": "object"
     },
     "ChannelAccountCreateParams": {
       "properties": {
@@ -8746,24 +7921,39 @@
       "type": "object"
     },
     "DeploymentApiKeyCreateParams": {
+      "additionalProperties": false,
       "properties": {
+        "assertActor": {
+          "default": false,
+          "description": "Whether the key may name the actor a request acts for with the\n`x-lightspeed-actor` header. Give it only to a gate that authenticates\npeople, such as the Platform.",
+          "type": "boolean"
+        },
         "displayName": {
           "description": "Human-readable purpose shown in key-management interfaces.",
           "type": "string"
         },
-        "principalId": {
-          "description": "Canonical identity authenticated by this credential.",
-          "format": "uuid",
-          "type": "string"
+        "groups": {
+          "description": "The method groups the key may call; absent grants every group its\nscope allows. Keys never change: to change what a key may do, revoke\nit and mint another.",
+          "items": {
+            "$ref": "#/definitions/MethodGroup"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "scope": {
-          "$ref": "#/definitions/AccessScope"
+          "allOf": [
+            {
+              "$ref": "#/definitions/AccessScope"
+            }
+          ],
+          "description": "A universe, or the deployment. A deployment key addresses a universe\nwith the `x-lightspeed-universe` header and may hold deployment groups."
         }
       },
       "required": [
         "scope",
-        "displayName",
-        "principalId"
+        "displayName"
       ],
       "type": "object"
     },
@@ -8784,14 +7974,20 @@
       "type": "object"
     },
     "DeploymentApiKeyListParams": {
+      "additionalProperties": false,
       "properties": {
         "scope": {
-          "$ref": "#/definitions/AccessScope"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AccessScope"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Only keys of this scope; absent lists every key."
         }
       },
-      "required": [
-        "scope"
-      ],
       "type": "object"
     },
     "DeploymentApiKeyListResponse": {
@@ -8807,16 +8003,13 @@
       "type": "object"
     },
     "DeploymentApiKeyRevokeParams": {
+      "additionalProperties": false,
       "properties": {
         "keyPrefix": {
           "type": "string"
-        },
-        "scope": {
-          "$ref": "#/definitions/AccessScope"
         }
       },
       "required": [
-        "scope",
         "keyPrefix"
       ],
       "type": "object"
@@ -8833,22 +8026,30 @@
       "type": "object"
     },
     "DeploymentApiKeyView": {
-      "description": "Non-secret scoped key metadata, including authenticated identity and issuer.",
+      "description": "Non-secret key metadata: what the key reaches and may call, and who\nminted it.",
       "properties": {
+        "assertActor": {
+          "type": "boolean"
+        },
         "createdAtMs": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "createdBy": {
-          "format": "uuid",
-          "type": "string"
+          "$ref": "#/definitions/Attribution"
         },
         "displayName": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/definitions/MethodGroup"
+          },
+          "type": "array"
         },
         "keyPrefix": {
           "type": "string"
@@ -8860,10 +8061,6 @@
             "integer",
             "null"
           ]
-        },
-        "principalId": {
-          "format": "uuid",
-          "type": "string"
         },
         "revokedAtMs": {
           "format": "uint64",
@@ -8880,7 +8077,8 @@
       "required": [
         "keyPrefix",
         "scope",
-        "principalId",
+        "groups",
+        "assertActor",
         "createdBy",
         "createdAtMs"
       ],
@@ -9486,45 +8684,6 @@
       ],
       "type": "object"
     },
-    "EffectiveAccess": {
-      "properties": {
-        "capabilities": {
-          "description": "Explicit capabilities in this exact scope; no role implies one.",
-          "items": {
-            "$ref": "#/definitions/Capability"
-          },
-          "type": "array",
-          "uniqueItems": true
-        },
-        "policyRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "principal": {
-          "$ref": "#/definitions/IdentityPrincipal"
-        },
-        "roles": {
-          "description": "Only assignments in this exact scope, including group-derived roles.",
-          "items": {
-            "$ref": "#/definitions/Role"
-          },
-          "type": "array",
-          "uniqueItems": true
-        },
-        "scope": {
-          "$ref": "#/definitions/AccessScope"
-        }
-      },
-      "required": [
-        "principal",
-        "scope",
-        "roles",
-        "capabilities",
-        "policyRevision"
-      ],
-      "type": "object"
-    },
     "EnvironmentAccess": {
       "description": "Per-attachment environment access, an ordered ladder: `edit` adds file\nediting to `read`, `exec` adds processes, `jobs` adds durable jobs.\nProcesses can write files regardless of the file-tool level, so\nread-only files with commands is deliberately not expressible.",
       "enum": [
@@ -9640,17 +8799,6 @@
     },
     "EnvironmentCreateParams": {
       "properties": {
-        "access": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AccessInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Who may see and use the new environment, set atomically with its\ncreation; the caller owns it. Absent means universe-visible. Grants\ntake the `use` permission only. A retried `requestId` returns the\nenvironment it created before and ignores this."
-        },
         "bindingId": {
           "type": "string"
         },
@@ -9897,17 +9045,6 @@
     },
     "EnvironmentExternalCreateParams": {
       "properties": {
-        "access": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AccessInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Who may see and use the new environment, as for\n`environments/create`."
-        },
         "connection": {
           "allOf": [
             {
@@ -10910,14 +10047,6 @@
     },
     "EnvironmentView": {
       "properties": {
-        "access": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ResourceAccessSummary"
-            }
-          ],
-          "description": "The environment's owner and visibility; an environment runs no work\nof its own, so `execution` is absent."
-        },
         "createdAtMs": {
           "format": "int64",
           "type": "integer"
@@ -10998,8 +10127,7 @@
         "incarnation",
         "publicIngressEnabled",
         "createdAtMs",
-        "updatedAtMs",
-        "access"
+        "updatedAtMs"
       ],
       "type": "object"
     },
@@ -11138,44 +10266,6 @@
         }
       },
       "type": "object"
-    },
-    "Execution": {
-      "description": "The execution identity of a root, fixed at creation and copied to every\nresource below it. Never a login identity of someone else: `personal`\nmeans the owner itself, `service` a keyless service principal.",
-      "properties": {
-        "kind": {
-          "$ref": "#/definitions/ExecutionKind"
-        },
-        "runAs": {
-          "format": "uuid",
-          "type": "string"
-        }
-      },
-      "required": [
-        "runAs",
-        "kind"
-      ],
-      "type": "object"
-    },
-    "ExecutionInput": {
-      "additionalProperties": false,
-      "description": "Requested execution identity of a new root. `service` runs as the\nuniverse's execution service; `personal` runs as the creating person and\nneeds the universe to allow it. Absent means `service`. A resource\ncreated under another root inherits and refuses this.",
-      "properties": {
-        "kind": {
-          "$ref": "#/definitions/ExecutionKind"
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "type": "object"
-    },
-    "ExecutionKind": {
-      "description": "Under whose authority a root's work runs: the universe's execution\nservice, or the person who created it.",
-      "enum": [
-        "service",
-        "personal"
-      ],
-      "type": "string"
     },
     "FeaturesConfig": {
       "additionalProperties": false,
@@ -11318,106 +10408,6 @@
       },
       "required": [
         "installationId"
-      ],
-      "type": "object"
-    },
-    "IdentityGroup": {
-      "additionalProperties": false,
-      "properties": {
-        "createdAtMs": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "displayName": {
-          "type": "string"
-        },
-        "id": {
-          "format": "uuid",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "displayName",
-        "createdAtMs"
-      ],
-      "type": "object"
-    },
-    "IdentityPrincipal": {
-      "additionalProperties": false,
-      "properties": {
-        "createdAtMs": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "displayName": {
-          "type": "string"
-        },
-        "id": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "kind": {
-          "$ref": "#/definitions/IdentityPrincipalKind"
-        },
-        "managementScope": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AccessScope"
-            }
-          ],
-          "description": "Who may manage this service identity; it does not grant access itself.\nHuman identities are deployment-managed."
-        },
-        "status": {
-          "$ref": "#/definitions/PrincipalStatus"
-        }
-      },
-      "required": [
-        "id",
-        "kind",
-        "status",
-        "displayName",
-        "managementScope",
-        "createdAtMs"
-      ],
-      "type": "object"
-    },
-    "IdentityPrincipalKind": {
-      "enum": [
-        "user",
-        "service"
-      ],
-      "type": "string"
-    },
-    "IdentityScopeParams": {
-      "additionalProperties": false,
-      "properties": {
-        "scope": {
-          "$ref": "#/definitions/AccessScope"
-        }
-      },
-      "required": [
-        "scope"
-      ],
-      "type": "object"
-    },
-    "IdentitySelfResponse": {
-      "properties": {
-        "access": {
-          "$ref": "#/definitions/EffectiveAccess"
-        },
-        "universes": {
-          "items": {
-            "$ref": "#/definitions/EffectiveAccess"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "access",
-        "universes"
       ],
       "type": "object"
     },
@@ -11777,7 +10767,7 @@
               "type": "null"
             }
           ],
-          "description": "Immutable workflow tools admitted only when the session is first\ncreated. This document is not part of `SessionConfig` and cannot be\nchanged through `session/config/put`.\nAudience of the new session, as for `session/start`."
+          "description": "Audience of the new session, as for `session/start`."
         },
         "config": {
           "anyOf": [
@@ -11805,17 +10795,6 @@
             "null"
           ]
         },
-        "execution": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ExecutionInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Execution identity of the new session, as for `session/start`."
-        },
         "metadata": {
           "additionalProperties": {
             "type": "string"
@@ -11840,7 +10819,12 @@
           ]
         },
         "workflowTools": {
-          "$ref": "#/definitions/ManagedSessionWorkflowToolsInput"
+          "allOf": [
+            {
+              "$ref": "#/definitions/ManagedSessionWorkflowToolsInput"
+            }
+          ],
+          "description": "Immutable workflow tools admitted only when the session is first\ncreated. This document is not part of `SessionConfig` and cannot be\nchanged through `session/config/put`."
         }
       },
       "required": [
@@ -12296,17 +11280,6 @@
     },
     "McpServerPutParams": {
       "properties": {
-        "access": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AccessInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Who may see and use a server this call creates; the caller owns it.\nAbsent means universe-visible. Grants take the `use` permission only.\nRefused when the server already exists: change its access with\n`access/policy/put`."
-        },
         "expectedRevision": {
           "description": "Checked only when the server already exists; absent replaces (or\ncreates) unconditionally.",
           "format": "uint64",
@@ -12432,14 +11405,6 @@
     },
     "McpServerView": {
       "properties": {
-        "access": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ResourceAccessSummary"
-            }
-          ],
-          "description": "The server's owner and visibility; a server runs no work of its own,\nso `execution` is absent."
-        },
         "allowPrivateNetwork": {
           "type": "boolean"
         },
@@ -12530,8 +11495,7 @@
         "status",
         "revision",
         "createdAtMs",
-        "updatedAtMs",
-        "access"
+        "updatedAtMs"
       ],
       "type": "object"
     },
@@ -12591,65 +11555,31 @@
       ],
       "type": "string"
     },
-    "Membership": {
-      "additionalProperties": false,
-      "properties": {
-        "groupId": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "principalId": {
-          "format": "uuid",
-          "type": "string"
-        }
-      },
-      "required": [
-        "groupId",
-        "principalId"
-      ],
-      "type": "object"
-    },
     "MethodAccess": {
       "oneOf": [
         {
-          "description": "A current universe role permitting the action, with authoritative ownership where required.",
+          "description": "A universe method, and the action internal work is held to when it\ncalls it.",
           "properties": {
+            "action": {
+              "$ref": "#/definitions/UniverseAction"
+            },
             "kind": {
               "const": "universe",
               "type": "string"
-            },
-            "requirement": {
-              "$ref": "#/definitions/UniverseAction"
             }
           },
           "required": [
             "kind",
-            "requirement"
+            "action"
           ],
           "type": "object"
         },
         {
-          "description": "An explicitly scoped service capability; service kind is insufficient.",
+          "description": "A universe method for machines only, such as connectors delivering\nmessages or triggers leasing a credential. No person calls it.",
           "properties": {
             "kind": {
               "const": "service",
               "type": "string"
-            },
-            "requirement": {
-              "$ref": "#/definitions/Capability"
-            }
-          },
-          "required": [
-            "kind",
-            "requirement"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "kind": {
-              "const": "deployment_admin",
-              "type": "string"
             }
           },
           "required": [
@@ -12658,10 +11588,10 @@
           "type": "object"
         },
         {
-          "description": "Authenticated identity; key ownership and issuance rules apply in the handler.",
+          "description": "A deployment method: it addresses the deployment and needs a\ndeployment key.",
           "properties": {
             "kind": {
-              "const": "credential_management",
+              "const": "deployment",
               "type": "string"
             }
           },
@@ -12669,36 +11599,78 @@
             "kind"
           ],
           "type": "object"
+        }
+      ]
+    },
+    "MethodGroup": {
+      "description": "The methods a key may call, by group. Every public method but\n`initialize` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
+      "oneOf": [
+        {
+          "enum": [
+            "vfs",
+            "profiles",
+            "models",
+            "mcp",
+            "bots",
+            "deployment/universes",
+            "deployment/api-keys"
+          ],
+          "type": "string"
         },
         {
-          "description": "Authenticated caller; handler enforces requested identity scope and operation.",
-          "properties": {
-            "kind": {
-              "const": "identity",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
+          "const": "session",
+          "description": "`session/*`, `blobs/read` and `blobs/has`.",
+          "type": "string"
         },
         {
-          "description": "Deployment discovery serves both administration and scoped connectors.",
-          "properties": {
-            "kind": {
-              "const": "deployment_admin_or_capability",
-              "type": "string"
-            },
-            "requirement": {
-              "$ref": "#/definitions/Capability"
-            }
-          },
-          "required": [
-            "kind",
-            "requirement"
-          ],
-          "type": "object"
+          "const": "blobs/put",
+          "description": "`blobs/put` alone, so connectors can upload attachments without\nreading sessions.",
+          "type": "string"
+        },
+        {
+          "const": "environments",
+          "description": "`environments/*`, including jobs and registration keys.",
+          "type": "string"
+        },
+        {
+          "const": "channels",
+          "description": "Channel accounts, pairings and conversations.",
+          "type": "string"
+        },
+        {
+          "const": "channels/inbound",
+          "description": "`channels/inbound/admit`: what a connector delivers.",
+          "type": "string"
+        },
+        {
+          "const": "auth",
+          "description": "`auth/*` except leasing.",
+          "type": "string"
+        },
+        {
+          "const": "auth/lease",
+          "description": "`auth/grants/lease`: resolving a brokered credential for delivery.",
+          "type": "string"
+        },
+        {
+          "const": "deployment/environment-providers",
+          "description": "Environment providers, their bindings and adoption.",
+          "type": "string"
+        },
+        {
+          "const": "deployment/channels",
+          "description": "`deployment/channels/accounts/list`: a connector host's discovery.",
+          "type": "string"
+        }
+      ]
+    },
+    "MethodTarget": {
+      "description": "Where a method names the session it acts on, so a gate can decide per\nsession without a hand-written table. A creation method may name one that\ndoes not exist yet.",
+      "oneOf": [
+        {
+          "const": "sessionId",
+          "description": "`params.sessionId`.",
+          "type": "string"
         }
       ]
     },
@@ -13281,37 +12253,6 @@
         }
       ]
     },
-    "PrincipalKind": {
-      "enum": [
-        "user",
-        "serviceAccount"
-      ],
-      "type": "string"
-    },
-    "PrincipalRefView": {
-      "properties": {
-        "id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "kind": {
-          "$ref": "#/definitions/PrincipalKind"
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "type": "object"
-    },
-    "PrincipalStatus": {
-      "enum": [
-        "active",
-        "disabled"
-      ],
-      "type": "string"
-    },
     "ProfileApplyParams": {
       "properties": {
         "expectedConfigRevision": {
@@ -13638,6 +12579,16 @@
       ],
       "type": "string"
     },
+    "RecommendedRole": {
+      "description": "Universe roles as gates built on this contract name them. Core holds no\nroles; this is metadata only.",
+      "enum": [
+        "viewer",
+        "contributor",
+        "operator",
+        "admin"
+      ],
+      "type": "string"
+    },
     "RemoteMcpApprovalPolicy": {
       "enum": [
         "never",
@@ -13660,220 +12611,25 @@
       "type": "string"
     },
     "ResourceAccessSummary": {
-      "description": "What a viewer needs to show \"shared through X, running as Y\" without a\nsecond request: the root and its policy, plus the execution identity.",
+      "description": "The audience of a session's or bot's root as views show it: whether it is\nshared with the universe, and who created it. A bot's session and a\ndelegated child show their root's.",
       "properties": {
-        "execution": {
+        "createdBy": {
           "anyOf": [
             {
-              "$ref": "#/definitions/Execution"
+              "$ref": "#/definitions/Attribution"
             },
             {
               "type": "null"
             }
-          ]
-        },
-        "owner": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "root": {
-          "$ref": "#/definitions/ResourceRef"
+          ],
+          "description": "Absent for work whose creator was not recorded."
         },
         "visibility": {
           "$ref": "#/definitions/Visibility"
         }
       },
       "required": [
-        "root",
-        "owner",
         "visibility"
-      ],
-      "type": "object"
-    },
-    "ResourceAccessView": {
-      "properties": {
-        "actions": {
-          "items": {
-            "$ref": "#/definitions/UniverseAction"
-          },
-          "type": "array"
-        },
-        "resource": {
-          "$ref": "#/definitions/ResourceRef"
-        }
-      },
-      "required": [
-        "resource",
-        "actions"
-      ],
-      "type": "object"
-    },
-    "ResourceGrant": {
-      "description": "One grant on a root as stored.",
-      "properties": {
-        "grantedAtMs": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "grantedBy": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "permission": {
-          "$ref": "#/definitions/ResourcePermission"
-        },
-        "subject": {
-          "$ref": "#/definitions/Subject"
-        }
-      },
-      "required": [
-        "subject",
-        "permission",
-        "grantedBy",
-        "grantedAtMs"
-      ],
-      "type": "object"
-    },
-    "ResourcePermission": {
-      "description": "One permission a grant confers on a root. On sessions and bots `Read`\nsees the tree and `Write` also controls it; on workspaces, environments\nand MCP servers `Use` is the only permission.",
-      "enum": [
-        "read",
-        "write",
-        "use"
-      ],
-      "type": "string"
-    },
-    "ResourceRef": {
-      "description": "Durable control facts, distinct from an agent's execution credentials.",
-      "oneOf": [
-        {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "kind": {
-              "const": "session",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "id"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "kind": {
-              "const": "bot",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "id"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "kind": {
-              "const": "profile",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "id"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "kind": {
-              "const": "workspace",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "id"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "kind": {
-              "const": "environment",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "id"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "kind": {
-              "const": "mcp_server",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "id"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "Role": {
-      "description": "A role in a universe, or `deployment_admin` in the deployment. `executor`\nis the role of agent identities: it sees universe-visible resources and\nuses resources, nothing else. The runtime assigns it to a universe's\nexecution principal; identity administration never assigns or revokes\nit, and its holders never get a key.",
-      "enum": [
-        "viewer",
-        "contributor",
-        "operator",
-        "admin",
-        "deployment_admin",
-        "executor"
-      ],
-      "type": "string"
-    },
-    "RoleAssignment": {
-      "additionalProperties": false,
-      "properties": {
-        "role": {
-          "$ref": "#/definitions/Role"
-        },
-        "scope": {
-          "$ref": "#/definitions/AccessScope"
-        },
-        "subject": {
-          "$ref": "#/definitions/Subject"
-        }
-      },
-      "required": [
-        "scope",
-        "subject",
-        "role"
       ],
       "type": "object"
     },
@@ -13968,24 +12724,15 @@
     },
     "RunFailureKindView": {
       "description": "Why a run failed, as the engine classified it.",
-      "oneOf": [
-        {
-          "enum": [
-            "model_failure",
-            "tool_failure",
-            "context_failure",
-            "limit_exceeded",
-            "cancelled",
-            "internal"
-          ],
-          "type": "string"
-        },
-        {
-          "const": "authority_revoked",
-          "description": "The run's execution authority was revoked; the turn in progress\ncompleted and the next model call refused.",
-          "type": "string"
-        }
-      ]
+      "enum": [
+        "model_failure",
+        "tool_failure",
+        "context_failure",
+        "limit_exceeded",
+        "cancelled",
+        "internal"
+      ],
+      "type": "string"
     },
     "RunLimitsConfig": {
       "properties": {
@@ -15007,6 +13754,17 @@
         },
         {
           "properties": {
+            "requestedBy": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Attribution"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Who asked, as the API boundary attributed the request."
+            },
             "runId": {
               "type": "string"
             },
@@ -15055,6 +13813,17 @@
               },
               "type": "array"
             },
+            "requestedBy": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Attribution"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Who asked, as the API boundary attributed the request."
+            },
             "runId": {
               "type": "string"
             },
@@ -15076,6 +13845,17 @@
         },
         {
           "properties": {
+            "requestedBy": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Attribution"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Who asked, as the API boundary attributed the request."
+            },
             "runId": {
               "type": "string"
             },
@@ -15138,7 +13918,7 @@
             "decidedBy": {
               "anyOf": [
                 {
-                  "$ref": "#/definitions/PrincipalRefView"
+                  "$ref": "#/definitions/Attribution"
                 },
                 {
                   "type": "null"
@@ -15243,6 +14023,17 @@
         },
         {
           "properties": {
+            "requestedBy": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Attribution"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Who cancelled a run that had not started; a started run records\nits requester on the cancellation request."
+            },
             "runId": {
               "type": "string"
             },
@@ -16553,6 +15344,13 @@
     },
     "SessionListParams": {
       "properties": {
+        "createdBy": {
+          "description": "Only sessions whose root this actor created.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "cursor": {
           "description": "Opaque cursor from the previous page's `nextCursor`.",
           "type": [
@@ -16588,6 +15386,24 @@
         },
         "rootSessionId": {
           "description": "Only sub-agent sessions whose lineage root is this session.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "visibility": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Visibility"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Only sessions whose root has this visibility."
+        },
+        "visibleTo": {
+          "description": "Only sessions whose root is shared with the universe or was created\nby this actor: what that actor sees as a non-administrator.",
           "type": [
             "string",
             "null"
@@ -16866,6 +15682,29 @@
       ],
       "type": "object"
     },
+    "SessionShareParams": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "SessionShareResponse": {
+      "properties": {
+        "access": {
+          "$ref": "#/definitions/ResourceAccessSummary"
+        }
+      },
+      "required": [
+        "access"
+      ],
+      "type": "object"
+    },
     "SessionStartParams": {
       "additionalProperties": false,
       "properties": {
@@ -16878,7 +15717,7 @@
               "type": "null"
             }
           ],
-          "description": "Audience of the new session, set atomically with its creation. Absent\nmeans universe-visible."
+          "description": "Audience of the new session, set atomically with its creation. Absent\nmeans unshared until `session/share`; a retry keeps the original."
         },
         "config": {
           "anyOf": [
@@ -16905,17 +15744,6 @@
             "string",
             "null"
           ]
-        },
-        "execution": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ExecutionInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Execution identity of the new session; absent means the universe's\nexecution service."
         },
         "metadata": {
           "additionalProperties": {
@@ -16972,7 +15800,7 @@
               "$ref": "#/definitions/ResourceAccessSummary"
             }
           ],
-          "description": "The root governing this session, its owner and visibility, and who\nits work runs as."
+          "description": "The audience of the session's root: whether it is shared with the\nuniverse, and who created it."
         },
         "closedAtMs": {
           "format": "uint64",
@@ -17049,7 +15877,7 @@
               "$ref": "#/definitions/ResourceAccessSummary"
             }
           ],
-          "description": "The root governing this session, its owner and visibility, and who\nits work runs as."
+          "description": "The audience of the session's root: whether it is shared with the\nuniverse, and who created it."
         },
         "activeContext": {
           "$ref": "#/definitions/ContextView"
@@ -17452,46 +16280,6 @@
         "agents"
       ],
       "type": "object"
-    },
-    "Subject": {
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "kind": {
-              "const": "principal",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "id"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "kind": {
-              "const": "group",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "id"
-          ],
-          "type": "object"
-        }
-      ]
     },
     "TimersFeature": {
       "additionalProperties": false,
@@ -18062,7 +16850,7 @@
       "type": "object"
     },
     "UniverseAction": {
-      "description": "Actions are independent of RPC spelling. Ownership and resource policy are\nevaluated by the service that resolves the target, not from client claims.",
+      "description": "What a public method does, independent of its RPC spelling. Requests are\ngated by their key's groups; this classifies what the runtime's own work\nmay do and which role a gate built on the contract should require.",
       "oneOf": [
         {
           "enum": [
@@ -18076,48 +16864,26 @@
             "create_bot",
             "manage_bot",
             "invoke_bot",
-            "manage_access"
+            "create_workspace"
           ],
           "type": "string"
         },
         {
+          "const": "share_session",
+          "description": "Share an unshared session with the universe.",
+          "type": "string"
+        },
+        {
           "const": "use_resource",
-          "description": "Use a workspace, environment or MCP server; without a target, the\neligibility to use resources at all.",
+          "description": "Use a workspace, environment or MCP server, or store bytes.",
           "type": "string"
         },
         {
           "const": "configure_resource",
-          "description": "Configure a workspace, environment or MCP server; without a target,\nthe universe's shared configuration.",
-          "type": "string"
-        },
-        {
-          "const": "share_resource",
-          "description": "Change who may see, control or use a root: its visibility and grants.",
-          "type": "string"
-        },
-        {
-          "const": "create_workspace",
-          "description": "Create a workspace, which its creator owns.",
+          "description": "Configure a workspace, environment, MCP server or shared\nconfiguration such as credentials and channels.",
           "type": "string"
         }
       ]
-    },
-    "UniverseExecutionPolicy": {
-      "description": "A universe's execution policy: the service principal its work runs as by\ndefault, and whether people may run work as themselves.",
-      "properties": {
-        "executionPrincipalId": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "personalExecutionEnabled": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "executionPrincipalId",
-        "personalExecutionEnabled"
-      ],
-      "type": "object"
     },
     "VfsFeature": {
       "additionalProperties": false,
@@ -18203,14 +16969,7 @@
     },
     "VfsSnapshotCommitParams": {
       "properties": {
-        "manifest": true,
-        "sourceWorkspaceId": {
-          "description": "Admit unchanged files from this readable workspace's current head.\nEvery other file must still be an upload of the caller. This does not\nchange the workspace; updating its head has its own permission and\nrevision check.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
+        "manifest": true
       },
       "required": [
         "manifest"
@@ -18244,13 +17003,6 @@
       "properties": {
         "snapshotRef": {
           "type": "string"
-        },
-        "workspaceId": {
-          "description": "The workspace the snapshot is read through: the caller must be able\nto see it, and the snapshot must be its current head or base.\nWithout a workspace only a snapshot the caller committed or uploaded\nis readable. A snapshot reference alone confers nothing.",
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "required": [
@@ -18285,17 +17037,6 @@
     },
     "VfsWorkspaceCreateParams": {
       "properties": {
-        "access": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AccessInput"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Who may see and use the new workspace, set atomically with its\ncreation; the caller owns it. Absent means universe-visible. Grants\ntake the `use` permission only."
-        },
         "displayName": {
           "type": [
             "string",
@@ -18353,7 +17094,7 @@
     },
     "VfsWorkspaceFileReadParams": {
       "additionalProperties": false,
-      "description": "Read a file from a workspace's current head. The caller must be able to\nsee the workspace; this does not authorize arbitrary blobs or snapshot\nreferences.",
+      "description": "Read a file from a workspace's current head, by path.",
       "properties": {
         "path": {
           "type": "string"
@@ -18408,7 +17149,6 @@
     "VfsWorkspaceUpdateParams": {
       "properties": {
         "displayName": {
-          "description": "Renames the workspace, which requires configuring it; absent keeps\nthe current name.",
           "type": [
             "string",
             "null"
@@ -18423,7 +17163,6 @@
           ]
         },
         "snapshotRef": {
-          "description": "The new head; moving it requires use of the workspace.",
           "type": "string"
         },
         "workspaceId": {
@@ -18449,14 +17188,6 @@
     },
     "VfsWorkspaceView": {
       "properties": {
-        "access": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ResourceAccessSummary"
-            }
-          ],
-          "description": "The workspace's owner and visibility; a workspace runs nothing, so\n`execution` is absent."
-        },
         "baseSnapshotRef": {
           "type": [
             "string",
@@ -18508,13 +17239,12 @@
         "bytes",
         "revision",
         "createdAtMs",
-        "updatedAtMs",
-        "access"
+        "updatedAtMs"
       ],
       "type": "object"
     },
     "Visibility": {
-      "description": "Who may see a root's tree without a grant.",
+      "description": "Who sees a root's tree. Sessions start unshared (`restricted`) and are\nshared with the universe once, one way; everything else is shared.",
       "enum": [
         "universe",
         "restricted"

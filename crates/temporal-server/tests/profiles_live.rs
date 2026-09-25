@@ -99,7 +99,6 @@ async fn run_profile_environment_selection_live_client(
 
     let environment = api
         .create_environment(api::EnvironmentCreateParams {
-            access: None,
             request_id: format!("independent-{suffix}"),
             binding_id: binding_id.clone(),
             template_id: "rust-v1".into(),
@@ -145,7 +144,6 @@ async fn run_profile_environment_selection_live_client(
     let start = || {
         api.start_session(SessionStartParams {
             access: None,
-            execution: None,
             session_id: Some(session_id.to_string()),
             display_name: None,
             metadata: Default::default(),
@@ -253,7 +251,6 @@ async fn run_profiles_live_client(
     let server_id = format!("profile_crm_{}", uuid::Uuid::new_v4().simple());
 
     api.put_mcp_server(McpServerPutParams {
-        access: None,
         server: McpServerInput {
             server_id: server_id.clone(),
             display_name: Some("Profile CRM".to_owned()),
@@ -346,7 +343,6 @@ async fn run_profiles_live_client(
 
     api.start_session(SessionStartParams {
         access: None,
-        execution: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,

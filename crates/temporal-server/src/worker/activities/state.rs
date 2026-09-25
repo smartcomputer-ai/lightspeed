@@ -48,10 +48,6 @@ pub struct StorageActivityDeps {
 pub struct LlmActivityDeps {
     pub(super) llm: Arc<dyn CoreAgentLlm>,
     pub(super) blobs: Arc<dyn BlobStore>,
-    /// The access store and universe for the authority check that precedes
-    /// every model call; absent only in tests without a database, which
-    /// then check nothing.
-    pub(super) access: Option<(store_pg::PgAccessStore, uuid::Uuid)>,
 }
 
 #[derive(Clone)]
@@ -145,7 +141,6 @@ impl ActivityState {
             llm: LlmActivityDeps {
                 llm,
                 blobs: blobs.clone(),
-                access: None,
             },
             tools: ToolActivityDeps {
                 tools,
@@ -232,10 +227,6 @@ impl ActivityState {
         let workspace_store: Arc<dyn VfsWorkspaceStore> = store.clone();
         let profile_store: Arc<dyn ::profiles::ProfileStore> = store.clone();
         let mut state = Self::new(sessions, blobs, llm, tools);
-        state.llm.access = Some((
-            store_pg::PgAccessStore::new(store.pool().clone()),
-            universe_id,
-        ));
         state.preparation_store = Some(store.clone());
         state.storage.blob_graph = Some(blob_graph.clone());
         state.tools.blob_graph = Some(blob_graph.clone());

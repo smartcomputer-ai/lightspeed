@@ -32,12 +32,8 @@ pub(super) fn put_mcp_server_record(
     })
 }
 
-pub(super) fn mcp_server_view(
-    record: mcp::McpServerRecord,
-    access: access::ResourceAccessSummary,
-) -> api::McpServerView {
+pub(super) fn mcp_server_view(record: mcp::McpServerRecord) -> api::McpServerView {
     api::McpServerView {
-        access,
         server_id: record.server_id.as_str().to_owned(),
         display_name: record.display_name,
         server_url: record.server_url,

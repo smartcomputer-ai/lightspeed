@@ -183,7 +183,7 @@ where
     // is known; every test uses one fresh account.
     let account_id = ChannelAccountId::new(unique("tg"));
     let context = support::live::local_request_context().await?;
-    temporal_server::gateway::principal::with_request_context(
+    temporal_server::gateway::request_context::with_request_context(
         context.clone(),
         api.create_channel_account(ChannelAccountCreateParams {
             account: ChannelAccountInput {
@@ -237,7 +237,7 @@ where
         .map(|_| ())
     };
     tokio::pin!(workers);
-    let body = temporal_server::gateway::principal::with_request_context(
+    let body = temporal_server::gateway::request_context::with_request_context(
         context,
         body(Live {
             api: api.clone(),
@@ -292,8 +292,6 @@ async fn create_bot_with_chat(
     let trigger_id = BotTriggerId::new("telegram");
     let created = api
         .create_bot(BotCreateParams {
-            access: None,
-            execution: None,
             bot: BotInput {
                 bot_id: bot_id.clone(),
                 document: BotDocument {

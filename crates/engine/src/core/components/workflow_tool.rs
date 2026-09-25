@@ -2867,6 +2867,7 @@ mod tests {
         let request_run = drive
             .admit_command(
                 CoreAgentCommand::RequestRun(RunRequestCommand {
+                    requested_by: None,
                     notify_on_terminal: Vec::new(),
                     submission_id: None,
                     source: RunRequestSource::Input {

@@ -25,9 +25,6 @@ pub struct McpServerView {
     pub revision: u64,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
-    /// The server's owner and visibility; a server runs no work of its own,
-    /// so `execution` is absent.
-    pub access: ResourceAccessSummary,
 }
 
 /// Read-only authentication discovery for a prospective MCP endpoint. A
@@ -242,12 +239,6 @@ pub struct McpServerPutParams {
     /// creates) unconditionally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
-    /// Who may see and use a server this call creates; the caller owns it.
-    /// Absent means universe-visible. Grants take the `use` permission only.
-    /// Refused when the server already exists: change its access with
-    /// `access/policy/put`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub access: Option<AccessInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

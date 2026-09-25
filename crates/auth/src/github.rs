@@ -641,8 +641,7 @@ mod tests {
     use crate::{
         AuthProviderKind, AuthTokenBroker, CreateAuthGrantRecord, CreateAuthProviderRecord,
         GitHubAppConfig, InMemoryAuthGrantStore, InMemoryAuthProviderStore, InMemoryGrantLocks,
-        InMemorySecretStore, PrincipalRef, PutSecretRecord, RegistryTokenBroker, SecretId,
-        TokenAudience,
+        InMemorySecretStore, PutSecretRecord, RegistryTokenBroker, SecretId, TokenAudience,
     };
 
     struct CountingGitHubApi {
@@ -715,10 +714,7 @@ mod tests {
                 provider_id: "lightspeed-github".to_owned(),
                 provider_kind: AuthProviderKind::GitHubApp,
                 exposure: crate::AuthGrantExposure::Brokered,
-                principal: PrincipalRef {
-                    kind: crate::PrincipalKind::ServiceAccount,
-                    id: Some("test-service".into()),
-                },
+                created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: Some("acme".to_owned()),
                 scopes: Vec::new(),

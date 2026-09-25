@@ -12,12 +12,6 @@ pub const PROTOCOL_VERSION: &str = "lightspeed.agent.api.v1";
 // ── Protocol handshake ──────────────────────────────────────────────────────
 
 pub const METHOD_INITIALIZE: &str = "initialize";
-pub const METHOD_ACCESS_READ: &str = "access/read";
-pub const METHOD_ACCESS_SUBJECTS: &str = "access/subjects";
-pub const METHOD_ACCESS_POLICY_READ: &str = "access/policy/read";
-pub const METHOD_ACCESS_POLICY_PUT: &str = "access/policy/put";
-pub const METHOD_ACCESS_EXECUTION_READ: &str = "access/execution/read";
-pub const METHOD_ACCESS_EXECUTION_UPDATE: &str = "access/execution/update";
 
 // ── Sessions: lifecycle ─────────────────────────────────────────────────────
 
@@ -31,6 +25,7 @@ pub const METHOD_SESSION_METADATA_PUT: &str = "session/metadata/put";
 pub const METHOD_SESSION_RETENTION_PUT: &str = "session/retention/put";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
 pub const METHOD_SESSION_DELETE: &str = "session/delete";
+pub const METHOD_SESSION_SHARE: &str = "session/share";
 
 // ── Sessions: facets (event log, tools, context, runs) ─────────────────────
 

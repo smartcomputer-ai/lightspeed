@@ -159,7 +159,7 @@ pub(super) async fn drive_until_idle(
                 };
             }
             CoreAgentAction::CompactContext { request } => {
-                let result = call_context_compact(ctx, drive, request).await?;
+                let result = call_context_compact(ctx, request).await?;
                 action = drive.resume_context_compaction(result, workflow_time_ms(ctx))?;
             }
             CoreAgentAction::InvokeTools { request } => {
@@ -434,6 +434,7 @@ async fn queue_detached_promise_followups(
         ctx.state_mut(|state| {
             state.queue_admission(AgentAdmission {
                 command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                    requested_by: None,
                     notify_on_terminal: Vec::new(),
                     submission_id: Some(submission_id),
                     source: engine::RunRequestSource::Input { input },

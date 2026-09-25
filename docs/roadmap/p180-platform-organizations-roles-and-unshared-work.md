@@ -78,15 +78,19 @@ For every forwarded request, in order:
 3. **Target.** When the manifest names a `target` for the method and the
    caller is not `admin`, the proxy reads the session view from core and
    requires `visibility = universe` or `createdBy = user id`. Otherwise
-   `not_found`. This is one extra core read per session-scoped request from
-   non-admins; lists use filters instead.
+   `not_found`. A creation method may name a session that does not exist
+   yet, which passes. This is one extra core read per session-scoped request
+   from non-admins; lists use filters instead.
 4. **Forward** with the deployment key, `x-lightspeed-universe` and
    `x-lightspeed-actor: <user id>`.
 
-Lists: `session/list` is called with `visibility: universe` and, in a second
-page source, `createdBy: user id`, merged in the Platform for members;
-admins call it unfiltered and the response marks unshared rows. `bots/list`
-is unfiltered; bots are shared.
+Lists: `session/list` is called with `visibleTo: user id` for members, which
+returns shared work and their own in one pageable query; admins call it
+unfiltered and the Platform marks unshared rows. `bots/list` is unfiltered;
+bots are shared.
+
+Blobs are read by digest within the universe (P179 decision 6), so the gate
+has nothing to check on `blobs/read` beyond the method's role.
 
 `session/share` is allowed to the creator and to admins.
 
@@ -115,7 +119,8 @@ manifest's `role` metadata must reproduce.
   show everything with unshared rows marked.
 - No "Running as", no reader lists, no execution settings anywhere.
 - Files written into a shared workspace or environment follow that
-  resource; the sharing help says so once.
+  resource, and content digests are readable across the universe; the
+  sharing help says so once.
 
 ### 6. Members and audit
 
@@ -124,6 +129,14 @@ email, change role, remove. An `identity_audit` table records member added,
 role changed, member removed, organization created and deleted, key minted
 and revoked, with the acting user, the subject, timestamps and the
 organization. Rows have no foreign keys and outlive the user.
+
+Core keeps no audit table, so this is the only audit trail. It also records
+the significant operations people perform through the gateway: session
+deletion and sharing, run cancellation, approval decisions, credential,
+MCP server and environment changes, and refusals. Each row has the user,
+the method, the target identifiers and the outcome, and outlives both the
+user and the session. Core's session log carries `requestedBy` and
+`decidedBy` for the in-session detail.
 
 ### 7. Keys
 
@@ -147,8 +160,8 @@ refusals are 403 and 404 as decided above.
 
 Uses only: `deployment/universes/*`, `deployment/api-keys/*`, the actor
 header, `access: { visibility }` on session starts, `session/share`, the
-`createdBy` and `visibility` list filters, `createdBy` and `visibility` on
-views, and the manifest's `group`, `target` and `role` fields. Nothing
+`createdBy`, `visibility` and `visibleTo` list filters, `access` on session
+and bot views, and the manifest's `group`, `target` and `role` fields. Nothing
 Platform-only exists in core; the CLI can do everything the Platform can do
 with a key.
 
@@ -198,9 +211,12 @@ greenfield rule:
   and records); R-04's acceptance check becomes "unshared and shared work;
   Operators stop without reading; Admins read everything"; §2.4 sharing
   paragraphs and Figure 8; §2.4.3 the "administrators can stop work without
-  receiving permission to read" and exceptional-access sentences; §3
+  receiving permission to read" and exceptional-access sentences, and "a
+  content hash alone does not authorize a download" becomes "within a
+  universe, a content digest is a capability"; §3
   Figures 10 and 11 and the boundary table; §6.1 and §6.2 audit streams
-  (core rows carry the actor; identity changes are Platform records); OP-03
+  (one Platform audit trail; core's session log attributes runs, steering,
+  cancellations and approvals); OP-03
   "private/shared audiences and resource permissions".
 - Customer blueprint: PP-03 stands; the Application Architecture paragraph
   "the operator selects the service principal" becomes "the operator

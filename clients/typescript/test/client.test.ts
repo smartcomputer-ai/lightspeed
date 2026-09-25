@@ -23,14 +23,14 @@ describe("LightspeedClient", () => {
   it("ships canonical method documentation from the Rust manifest", () => {
     expect(METHOD_INFO["session/config/put"]).toEqual({
       scope: "universe",
-      access: { kind: "universe", requirement: "control_session" },
+      access: { kind: "universe", action: "control_session" },
       summary: "Replace session configuration",
       description:
         "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
     });
     expect(METHOD_INFO["deployment/api-keys/create"]).toMatchObject({
       scope: "deployment",
-      access: { kind: "credential_management" },
+      access: { kind: "deployment" },
       summary: "Create a scoped API key",
       description: expect.stringContaining("returned exactly once"),
     });

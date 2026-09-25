@@ -60,12 +60,9 @@ use super::{
 };
 
 impl EnvironmentService {
-    /// Mint a key on behalf of `created_by`, who owns every environment the
-    /// key admits.
     pub(crate) async fn create_environment_registration_key_record(
         &self,
         params: EnvironmentRegistrationKeyCreateParams,
-        created_by: uuid::Uuid,
     ) -> Result<EnvironmentRegistrationKeyCreateResponse, AgentApiError> {
         let now = now_ms()?;
         let minted = mint_registration_key(
@@ -80,17 +77,15 @@ impl EnvironmentService {
             now,
         )
         .map_err(map_environments_error)?;
-        let record = self
-            .store
-            .create_registration_key_by(
-                CreateEnvironmentRegistrationKey {
-                    secret_hash: minted.secret_hash,
-                    record: minted.record,
-                },
-                created_by,
-            )
-            .await
-            .map_err(map_environments_error)?;
+        let record = EnvironmentRegistrationKeyStore::create_registration_key(
+            self.store.as_ref(),
+            CreateEnvironmentRegistrationKey {
+                secret_hash: minted.secret_hash,
+                record: minted.record,
+            },
+        )
+        .await
+        .map_err(map_environments_error)?;
         tracing::info!(
             target: "temporal_server",
             registration_key_id = %record.registration_key_id,
@@ -152,7 +147,23 @@ impl EnvironmentService {
         .map_err(map_environments_error)?;
         let mut closed_environment_ids = Vec::new();
         if params.close_environments {
-            for environment in self.open_environments_of_key(&registration_key_id).await? {
+            let environments = EnvironmentStore::list_environments(
+                self.store.as_ref(),
+                ListEnvironments {
+                    metadata: Default::default(),
+                    registration_key_id: Some(registration_key_id.clone()),
+                    ..ListEnvironments::default()
+                },
+            )
+            .await
+            .map_err(map_environments_error)?;
+            for environment in environments {
+                if matches!(
+                    environment.status,
+                    EnvironmentStatus::Closing | EnvironmentStatus::Closed
+                ) {
+                    continue;
+                }
                 EnvironmentStore::begin_close_environment(
                     self.store.as_ref(),
                     BeginCloseEnvironment {
@@ -175,33 +186,6 @@ impl EnvironmentService {
             registration_key: self.registration_key_view(&record, now).await?,
             closed_environment_ids,
         })
-    }
-
-    /// The environments a registration key admitted that are not closing
-    /// or closed: what revoking it with `closeEnvironments` closes.
-    pub(crate) async fn open_environments_of_key(
-        &self,
-        registration_key_id: &::environments::EnvironmentRegistrationKeyId,
-    ) -> Result<Vec<EnvironmentRecord>, AgentApiError> {
-        let environments = EnvironmentStore::list_environments(
-            self.store.as_ref(),
-            ListEnvironments {
-                metadata: Default::default(),
-                registration_key_id: Some(registration_key_id.clone()),
-                ..ListEnvironments::default()
-            },
-        )
-        .await
-        .map_err(map_environments_error)?;
-        Ok(environments
-            .into_iter()
-            .filter(|environment| {
-                !matches!(
-                    environment.status,
-                    EnvironmentStatus::Closing | EnvironmentStatus::Closed
-                )
-            })
-            .collect())
     }
 
     /// One pass over open registered environments: repair stale `Ready`

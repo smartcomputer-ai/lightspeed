@@ -1,817 +1,348 @@
-//! Canonical identity store. Access writes serialize on one deployment policy
-//! row; readers use a committed snapshot and never an authorization cache.
+//! Access records core keeps: who started a session or created a bot, and
+//! which sessions are shared with the universe. Core holds no identities: actors are opaque strings a key asserted.
+//!
+//! A session's root is its `origin_root_session_id`, or the session itself;
+//! a bot's session follows its bot, which is shared. Lineage is written only
+//! by the runtime, so decisions may read it.
 
-use ::access::*;
-use async_trait::async_trait;
-use serde::{Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
-use sqlx::{PgConnection, PgPool, Row, postgres::PgRow};
+use api::{Attribution, ResourceAccessSummary, ResourceRef, Visibility};
+use serde_json::json;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
+
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("access store failed: {0}")]
+pub struct AccessStoreError(String);
+
+/// What internal work's decision about a target reads: who controls it and
+/// the audience of its root, from the target's own row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResourceAccess {
+    pub resource: ResourceRef,
+    /// The bot whose worker controls it, if any.
+    pub bot: Option<String>,
+    /// The session that admitted it as a delegated child, if any.
+    pub parent: Option<String>,
+    /// The root whose audience it follows: itself, its root session, or its
+    /// bot.
+    pub root: ResourceRef,
+    pub audience: ResourceAccessSummary,
+}
+
+impl ResourceAccess {
+    /// A universe resource, or a bot: its own root, shared.
+    pub fn shared(resource: ResourceRef, created_by: Option<Attribution>) -> Self {
+        Self {
+            bot: None,
+            parent: None,
+            root: resource.clone(),
+            resource,
+            audience: ResourceAccessSummary {
+                visibility: Visibility::Universe,
+                created_by,
+            },
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct PgAccessStore {
     pub(crate) pool: PgPool,
 }
 
+fn error(error: impl std::fmt::Display) -> AccessStoreError {
+    AccessStoreError(error.to_string())
+}
+
+/// Joins the root of session `s` as `r`. A left join: a root that is gone
+/// leaves its tree unshared and created by no one.
+pub(crate) const SESSION_ROOT_JOIN: &str = "LEFT JOIN sessions r ON r.universe_id = s.universe_id AND r.session_id = COALESCE(s.origin_root_session_id, s.session_id)";
+
+/// The bot whose worker controls session `s`'s tree, if any.
+const SESSION_BOT: &str = "COALESCE(r.bot_id, s.bot_id)";
+
+/// The visibility of session `s`'s root: a bot's tree is shared; a root
+/// without a recorded visibility reads as unshared.
+pub(crate) const SESSION_VISIBILITY: &str = "(CASE WHEN COALESCE(r.bot_id, s.bot_id) IS NOT NULL THEN 'universe' ELSE COALESCE(r.visibility, 'restricted') END)";
+
+/// The summary columns a session list selects, aliased so they never collide
+/// with the session's own.
+pub(crate) fn session_summary_columns() -> String {
+    format!("{SESSION_VISIBILITY} AS access_visibility, r.created_by AS access_created_by")
+}
+
+pub(crate) fn summary_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<ResourceAccessSummary, AccessStoreError> {
+    let visibility: String = row.try_get("access_visibility").map_err(error)?;
+    Ok(ResourceAccessSummary {
+        visibility: Visibility::parse(&visibility)
+            .ok_or_else(|| error(format!("unknown visibility {visibility}")))?,
+        created_by: created_by_from_row(row, "access_created_by")?,
+    })
+}
+
+pub(crate) fn created_by_from_row(
+    row: &sqlx::postgres::PgRow,
+    column: &str,
+) -> Result<Option<Attribution>, AccessStoreError> {
+    row.try_get::<Option<serde_json::Value>, _>(column)
+        .map_err(error)?
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(error)
+}
+
+/// `column` holds the attribution of the actor bound at `$bind`.
+pub(crate) fn actor_match(column: &str, bind: usize) -> String {
+    format!("{column} = jsonb_build_object('kind', 'actor', 'id', ${bind}::text)")
+}
+
+/// What a list of sessions is narrowed to, by the audience of each
+/// session's root. Every present filter applies. Core applies what it is
+/// asked; deciding who may see what belongs to whoever asserts actors.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AccessFilter {
+    /// Only work whose root this actor created.
+    pub created_by: Option<String>,
+    /// Only work whose root has this visibility.
+    pub visibility: Option<Visibility>,
+    /// Only work shared with the universe or whose root this actor created.
+    pub visible_to: Option<String>,
+    /// Internal work: only work shared with the universe or under this root.
+    pub within_root: Option<ResourceRef>,
+}
+
+impl AccessFilter {
+    /// The predicates over session `s` and its root `r`, binding `$p` through
+    /// `$p+4`, and a binder for the values in order.
+    pub(crate) fn session_clause(&self, p: usize) -> (String, AccessFilterBinds) {
+        let clause = format!(
+            "AND (${p}::text IS NULL OR {created_by})
+             AND (${visibility}::text IS NULL OR {SESSION_VISIBILITY} = ${visibility})
+             AND (${visible}::text IS NULL OR {SESSION_VISIBILITY} = 'universe' OR {visible_to})
+             AND (${root_kind}::text IS NULL OR {SESSION_VISIBILITY} = 'universe'
+                  OR (${root_kind} = 'session' AND {SESSION_BOT} IS NULL
+                      AND COALESCE(s.origin_root_session_id, s.session_id) = ${root_id})
+                  OR (${root_kind} = 'bot' AND {SESSION_BOT} = ${root_id}))",
+            created_by = actor_match("r.created_by", p),
+            visibility = p + 1,
+            visible = p + 2,
+            visible_to = actor_match("r.created_by", p + 2),
+            root_kind = p + 3,
+            root_id = p + 4,
+        );
+        (
+            clause,
+            AccessFilterBinds {
+                created_by: self.created_by.clone(),
+                visibility: self.visibility.map(Visibility::as_str),
+                visible_to: self.visible_to.clone(),
+                root_kind: self.within_root.as_ref().map(ResourceRef::kind),
+                root_id: self.within_root.as_ref().map(|root| root.id().to_owned()),
+            },
+        )
+    }
+}
+
+/// The five values `AccessFilter::session_clause` binds, in order.
+pub(crate) struct AccessFilterBinds {
+    created_by: Option<String>,
+    visibility: Option<&'static str>,
+    visible_to: Option<String>,
+    root_kind: Option<&'static str>,
+    root_id: Option<String>,
+}
+
+impl AccessFilterBinds {
+    pub(crate) fn bind<'q>(
+        self,
+        query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
+    ) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
+        query
+            .bind(self.created_by)
+            .bind(self.visibility)
+            .bind(self.visible_to)
+            .bind(self.root_kind)
+            .bind(self.root_id)
+    }
+}
+
+/// The content row a resource names.
+fn content_table(resource: &ResourceRef) -> (&'static str, &'static str) {
+    match resource {
+        ResourceRef::Session(_) => ("sessions", "session_id"),
+        ResourceRef::Bot(_) => ("bots", "bot_id"),
+        ResourceRef::Profile(_) => ("agent_profiles", "profile_id"),
+        ResourceRef::Workspace(_) => ("vfs_workspaces", "workspace_id"),
+        ResourceRef::Environment(_) => ("environments", "environment_id"),
+        ResourceRef::McpServer(_) => ("mcp_servers", "server_id"),
+    }
+}
+
 impl PgAccessStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
-}
 
-fn scope_id(scope: AccessScope) -> Option<Uuid> {
-    match scope {
-        AccessScope::Deployment => None,
-        AccessScope::Universe { universe_id } => Some(universe_id),
-    }
-}
-fn scope_from_id(id: Option<Uuid>) -> AccessScope {
-    id.map_or(AccessScope::Deployment, |universe_id| {
-        AccessScope::Universe { universe_id }
-    })
-}
-fn enum_name<T: Serialize>(value: T) -> Result<String, AccessError> {
-    serde_json::to_value(value)
-        .map_err(store_error)?
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| AccessError::Store("invalid stored enum".into()))
-}
-pub(crate) fn parse_enum<T: DeserializeOwned>(value: String) -> Result<T, AccessError> {
-    serde_json::from_value(Value::String(value)).map_err(store_error)
-}
-fn store_error(error: impl std::fmt::Display) -> AccessError {
-    AccessError::Store(error.to_string())
-}
-fn db_error(error: sqlx::Error) -> AccessError {
-    if let sqlx::Error::Database(ref db) = error {
-        if db.is_unique_violation() {
-            return AccessError::Conflict;
-        }
-        if db.is_foreign_key_violation() {
-            return AccessError::NotFound;
-        }
-    }
-    store_error(error)
-}
-fn timestamp(value: u64) -> Result<i64, AccessError> {
-    i64::try_from(value).map_err(|_| AccessError::Invalid("timestamp exceeds storage range".into()))
-}
-fn nonnegative(value: i64) -> Result<u64, AccessError> {
-    u64::try_from(value).map_err(store_error)
-}
-
-fn principal_row(row: PgRow) -> Result<Principal, AccessError> {
-    Ok(Principal {
-        id: row.try_get("principal_id").map_err(db_error)?,
-        kind: parse_enum(row.try_get("kind").map_err(db_error)?)?,
-        status: parse_enum(row.try_get("status").map_err(db_error)?)?,
-        display_name: row.try_get("display_name").map_err(db_error)?,
-        management_scope: scope_from_id(row.try_get("management_universe_id").map_err(db_error)?),
-        created_at_ms: nonnegative(row.try_get("created_at_ms").map_err(db_error)?)?,
-    })
-}
-async fn read_principal(connection: &mut PgConnection, id: Uuid) -> Result<Principal, AccessError> {
-    sqlx::query("SELECT * FROM access_principals WHERE principal_id = $1")
-        .bind(id)
-        .fetch_optional(connection)
-        .await
-        .map_err(db_error)?
-        .ok_or(AccessError::NotFound)
-        .and_then(principal_row)
-}
-async fn revision(connection: &mut PgConnection) -> Result<u64, AccessError> {
-    nonnegative(
-        sqlx::query_scalar("SELECT revision FROM access_policy WHERE singleton")
-            .fetch_one(connection)
-            .await
-            .map_err(db_error)?,
-    )
-}
-/// One statement, hence one committed snapshot: the principal, its direct and
-/// group-derived roles, its capabilities in `scope`, and the policy revision.
-/// Disabled principals resolve with no rights.
-pub(crate) async fn effective(
-    connection: &mut PgConnection,
-    id: Uuid,
-    scope: AccessScope,
-) -> Result<EffectiveAccess, AccessError> {
-    let row = sqlx::query(
-        "SELECT p.*,
-           (SELECT revision FROM access_policy WHERE singleton) AS policy_revision,
-           ARRAY(SELECT DISTINCT r.role FROM access_role_assignments r
-             WHERE p.status = 'active' AND r.universe_id IS NOT DISTINCT FROM $2 AND
-               (r.principal_id = p.principal_id OR EXISTS
-                 (SELECT 1 FROM access_memberships m
-                   WHERE m.group_id = r.group_id AND m.principal_id = p.principal_id))) AS roles,
-           ARRAY(SELECT c.capability FROM access_capabilities c
-             WHERE p.status = 'active' AND
-               c.universe_id IS NOT DISTINCT FROM $2 AND c.principal_id = p.principal_id) AS capabilities
-         FROM access_principals p WHERE p.principal_id = $1",
-    )
-    .bind(id)
-    .bind(scope_id(scope))
-    .fetch_optional(connection)
-    .await
-    .map_err(db_error)?
-    .ok_or(AccessError::NotFound)?;
-    let roles: Vec<String> = row.try_get("roles").map_err(db_error)?;
-    let capabilities: Vec<String> = row.try_get("capabilities").map_err(db_error)?;
-    Ok(EffectiveAccess {
-        scope,
-        roles: roles
-            .into_iter()
-            .map(parse_enum)
-            .collect::<Result<_, _>>()?,
-        capabilities: capabilities
-            .into_iter()
-            .map(parse_enum)
-            .collect::<Result<_, _>>()?,
-        policy_revision: nonnegative(row.try_get("policy_revision").map_err(db_error)?)?,
-        principal: principal_row(row)?,
-    })
-}
-
-/// Every scope which currently has at least one active administrator. Comparing
-/// before/after handles direct and group roles, duplicate assignments, and group
-/// removals spanning several universes without blocking unrelated orphan scopes.
-async fn administered_scopes(
-    connection: &mut PgConnection,
-) -> Result<Vec<AccessScope>, AccessError> {
-    let rows: Vec<Option<Uuid>> = sqlx::query_scalar(
-        "SELECT DISTINCT r.universe_id FROM access_role_assignments r
-         WHERE r.role IN ('admin', 'deployment_admin') AND EXISTS
-           (SELECT 1 FROM access_principals p WHERE p.status = 'active' AND
-             (r.principal_id = p.principal_id OR EXISTS
-               (SELECT 1 FROM access_memberships m WHERE m.group_id = r.group_id AND m.principal_id = p.principal_id)))")
-        .fetch_all(connection).await.map_err(db_error)?;
-    Ok(rows.into_iter().map(scope_from_id).collect())
-}
-fn guard_administrators(before: &[AccessScope], after: &[AccessScope]) -> Result<(), AccessError> {
-    for scope in before {
-        if !after.contains(scope) {
-            return Err(AccessError::LastAdministrator { scope: *scope });
-        }
-    }
-    Ok(())
-}
-pub(crate) async fn audit(
-    connection: &mut PgConnection,
-    actor: Option<Uuid>,
-    event: Value,
-    now_ms: i64,
-) -> Result<u64, AccessError> {
-    let next: i64 = sqlx::query_scalar(
-        "UPDATE access_policy SET revision = revision + 1 WHERE singleton RETURNING revision",
-    )
-    .fetch_one(&mut *connection)
-    .await
-    .map_err(db_error)?;
-    sqlx::query("INSERT INTO access_audit_changes (revision, actor_id, occurred_at_ms, event) VALUES ($1, $2, $3, $4)")
-        .bind(next).bind(actor).bind(now_ms).bind(event).execute(connection).await.map_err(db_error)?;
-    nonnegative(next)
-}
-
-async fn authorize_change(
-    connection: &mut PgConnection,
-    actor: Uuid,
-    change: &AccessChange,
-) -> Result<(), AccessError> {
-    let deployment = effective(connection, actor, AccessScope::Deployment).await?;
-    if !deployment.active() {
-        return Err(AccessError::Denied);
-    }
-    if deployment.has_role(Role::DeploymentAdmin) {
-        return Ok(());
-    }
-    // Provisioning delegates directory changes, including privileged group
-    // membership. Direct role/capability assignment and recovery are separate.
-    let provisioning = deployment.has_capability(Capability::ManageIdentity);
-    match change {
-        AccessChange::AssignRole { assignment }
-        | AccessChange::RevokeRole { assignment }
-        | AccessChange::ReplaceRole { assignment, .. }
-            if matches!(assignment.scope, AccessScope::Universe { .. }) =>
-        {
-            if effective(connection, actor, assignment.scope)
-                .await?
-                .has_role(Role::Admin)
-            {
-                return Ok(());
-            }
-        }
-        AccessChange::CreatePrincipal {
-            kind: PrincipalKind::Service,
-            management_scope: scope @ AccessScope::Universe { .. },
-            ..
-        } => {
-            if effective(connection, actor, *scope)
-                .await?
-                .has_role(Role::Admin)
-            {
-                return Ok(());
-            }
-        }
-        // Privileged reading of a universe's restricted content is granted
-        // by that universe's Admin, audited like any access change. Service
-        // capabilities stay with the deployment.
-        AccessChange::AssignCapability { assignment }
-        | AccessChange::RevokeCapability { assignment }
-            if assignment.capability == Capability::ReadPrivateContent
-                && matches!(assignment.scope, AccessScope::Universe { .. }) =>
-        {
-            if effective(connection, actor, assignment.scope)
-                .await?
-                .has_role(Role::Admin)
-            {
-                return Ok(());
-            }
-        }
-        AccessChange::CreatePrincipal {
-            kind: PrincipalKind::User,
-            ..
-        }
-        | AccessChange::CreateGroup { .. }
-        | AccessChange::RenameGroup { .. }
-        | AccessChange::PutMembership { .. }
-        | AccessChange::RemoveMembership { .. }
-        | AccessChange::SetPrincipalStatus { .. }
-            if provisioning =>
-        {
-            // Group edits/status changes can affect privileged identities. A
-            // provisioning service therefore has explicitly delegated directory
-            // authority, including offboarding; never grant this by service kind.
-            return Ok(());
-        }
-        _ => {}
-    }
-    Err(AccessError::Denied)
-}
-
-/// A universe's execution principal is an agent identity holding Executor
-/// and nothing else: identity administration never gives it a role, a group
-/// or a capability. It is identified structurally, by the universe row.
-/// Disabling it stays possible; that is how an Admin stops its work.
-async fn refuse_agent_identity_changes(
-    connection: &mut PgConnection,
-    change: &AccessChange,
-) -> Result<(), AccessError> {
-    let principal = match change {
-        AccessChange::AssignRole { assignment } | AccessChange::ReplaceRole { assignment, .. } => {
-            match assignment.subject {
-                Subject::Principal(id) => id,
-                Subject::Group(_) => return Ok(()),
-            }
-        }
-        AccessChange::PutMembership { membership } => membership.principal_id,
-        AccessChange::AssignCapability { assignment } => assignment.principal_id,
-        _ => return Ok(()),
-    };
-    let agent: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM universes WHERE execution_principal_id = $1)",
-    )
-    .bind(principal)
-    .fetch_one(connection)
-    .await
-    .map_err(db_error)?;
-    if agent {
-        return Err(AccessError::Invalid(
-            "the Default agent identity holds executor and nothing else".into(),
-        ));
-    }
-    Ok(())
-}
-
-async fn put_role(
-    connection: &mut PgConnection,
-    assignment: RoleAssignment,
-) -> Result<bool, AccessError> {
-    let (principal, group) = match assignment.subject {
-        Subject::Principal(id) => (Some(id), None),
-        Subject::Group(id) => (None, Some(id)),
-    };
-    Ok(sqlx::query("INSERT INTO access_role_assignments (universe_id, principal_id, group_id, role) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING")
-        .bind(scope_id(assignment.scope)).bind(principal).bind(group).bind(enum_name(assignment.role)?)
-        .execute(connection).await.map_err(db_error)?.rows_affected() > 0)
-}
-
-async fn apply_change(
-    connection: &mut PgConnection,
-    actor: Uuid,
-    change: &AccessChange,
-    now_ms: i64,
-) -> Result<bool, AccessError> {
-    use AccessChange::*;
-    let changed = match change {
-        CreatePrincipal { id, kind, display_name, management_scope } => {
-            if let AccessScope::Universe { universe_id } = management_scope {
-                let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM universes WHERE universe_id = $1)")
-                    .bind(universe_id).fetch_one(&mut *connection).await.map_err(db_error)?;
-                if !exists { return Err(AccessError::NotFound); }
-            }
-            let inserted = sqlx::query("INSERT INTO access_principals (principal_id, kind, status, display_name, management_universe_id, created_at_ms) VALUES ($1, $2, 'active', $3, $4, $5) ON CONFLICT DO NOTHING")
-                .bind(id).bind(enum_name(kind)?).bind(display_name).bind(scope_id(*management_scope)).bind(now_ms)
-                .execute(&mut *connection).await.map_err(db_error)?.rows_affected();
-            if inserted == 0 {
-                let existing = read_principal(connection, *id).await?;
-                if existing.kind != *kind || existing.management_scope != *management_scope || existing.display_name != *display_name {
-                    return Err(AccessError::Conflict);
-                }
-                // A retry never reactivates a disabled principal.
-            }
-            inserted
-        }
-        SetPrincipalStatus { id, status } => {
-            let prior = read_principal(connection, *id).await?;
-            if prior.status == *status { return Ok(false); }
-            sqlx::query("UPDATE access_principals SET status = $2 WHERE principal_id = $1")
-                .bind(id).bind(enum_name(status)?).execute(connection).await.map_err(db_error)?.rows_affected()
-        }
-        CreateGroup { id, display_name } => {
-            sqlx::query("INSERT INTO access_groups (group_id, display_name, created_at_ms) VALUES ($1, $2, $3)")
-                .bind(id).bind(display_name).bind(now_ms).execute(connection).await.map_err(db_error)?.rows_affected()
-        }
-        RenameGroup { id, display_name } => {
-            let prior: Option<String> = sqlx::query_scalar("SELECT display_name FROM access_groups WHERE group_id = $1")
-                .bind(id).fetch_optional(&mut *connection).await.map_err(db_error)?;
-            match prior { None => return Err(AccessError::NotFound), Some(ref name) if name == display_name => return Ok(false), _ => {} }
-            sqlx::query("UPDATE access_groups SET display_name = $2 WHERE group_id = $1")
-                .bind(id).bind(display_name).execute(connection).await.map_err(db_error)?.rows_affected()
-        }
-        PutMembership { membership } => {
-            sqlx::query("INSERT INTO access_memberships (group_id, principal_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-                .bind(membership.group_id).bind(membership.principal_id).execute(connection).await.map_err(db_error)?.rows_affected()
-        }
-        RemoveMembership { membership } => {
-            sqlx::query("DELETE FROM access_memberships WHERE group_id = $1 AND principal_id = $2")
-                .bind(membership.group_id).bind(membership.principal_id).execute(connection).await.map_err(db_error)?.rows_affected()
-        }
-        AssignRole { assignment } => return put_role(connection, *assignment).await,
-        RevokeRole { assignment } => {
-            let (principal, group) = match assignment.subject { Subject::Principal(id) => (Some(id), None), Subject::Group(id) => (None, Some(id)) };
-            sqlx::query("DELETE FROM access_role_assignments WHERE universe_id IS NOT DISTINCT FROM $1 AND principal_id IS NOT DISTINCT FROM $2 AND group_id IS NOT DISTINCT FROM $3 AND role = $4")
-                .bind(scope_id(assignment.scope)).bind(principal).bind(group).bind(enum_name(assignment.role)?)
-                .execute(connection).await.map_err(db_error)?.rows_affected()
-        }
-        ReplaceRole { assignment, role } => {
-            let (principal, group) = match assignment.subject { Subject::Principal(id) => (Some(id), None), Subject::Group(id) => (None, Some(id)) };
-            let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM access_role_assignments WHERE universe_id IS NOT DISTINCT FROM $1 AND principal_id IS NOT DISTINCT FROM $2 AND group_id IS NOT DISTINCT FROM $3 AND role = $4)")
-                .bind(scope_id(assignment.scope)).bind(principal).bind(group).bind(enum_name(assignment.role)?)
-                .fetch_one(&mut *connection).await.map_err(db_error)?;
-            if !exists { return Err(AccessError::Conflict); }
-            if *role == assignment.role { return Ok(false); }
-            sqlx::query("DELETE FROM access_role_assignments WHERE universe_id IS NOT DISTINCT FROM $1 AND principal_id IS NOT DISTINCT FROM $2 AND group_id IS NOT DISTINCT FROM $3 AND role = $4")
-                .bind(scope_id(assignment.scope)).bind(principal).bind(group).bind(enum_name(assignment.role)?)
-                .execute(&mut *connection).await.map_err(db_error)?;
-            put_role(connection, RoleAssignment { role: *role, ..*assignment }).await?;
-            1
-        }
-        AssignCapability { assignment } | RevokeCapability { assignment } => {
-            let principal = read_principal(connection, assignment.principal_id).await?;
-            if principal.kind != assignment.capability.holder() { return Err(AccessError::Invalid("capability does not belong to this kind of principal".into())); }
-            // Universe-managed services must never acquire deployment-wide powers
-            // or capabilities in a different universe.
-            if !principal.management_scope.permits(assignment.scope) {
-                return Err(AccessError::Invalid("capability exceeds service management scope".into()));
-            }
-            let query = if matches!(change, AssignCapability { .. }) {
-                "INSERT INTO access_capabilities (universe_id, principal_id, capability) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"
-            } else { "DELETE FROM access_capabilities WHERE universe_id IS NOT DISTINCT FROM $1 AND principal_id = $2 AND capability = $3" };
-            sqlx::query(query).bind(scope_id(assignment.scope)).bind(assignment.principal_id).bind(enum_name(assignment.capability)?)
-                .execute(connection).await.map_err(db_error)?.rows_affected()
-        }
-        CreateUniverse { universe_id, slug } => {
-            let inserted = sqlx::query("INSERT INTO universes (universe_id, slug) VALUES ($1, $2) ON CONFLICT (universe_id) DO NOTHING")
-                .bind(universe_id).bind(slug).execute(&mut *connection).await.map_err(db_error)?.rows_affected();
-            // An idempotent create cannot take over an existing universe.
-            if inserted == 0 { return Ok(false); }
-            put_role(connection, RoleAssignment { scope: AccessScope::Universe { universe_id: *universe_id }, subject: Subject::Principal(actor), role: Role::Admin }).await?;
-            inserted
-        }
-        RecoverUniverse { universe_id, principal_id } => {
-            let scope = AccessScope::Universe { universe_id: *universe_id };
-            if administered_scopes(connection).await?.contains(&scope) { return Err(AccessError::Conflict); }
-            if read_principal(connection, *principal_id).await?.status != PrincipalStatus::Active { return Err(AccessError::Invalid("recovery requires an active principal".into())); }
-            return put_role(connection, RoleAssignment { scope, subject: Subject::Principal(*principal_id), role: Role::Admin }).await;
-        }
-    };
-    Ok(changed > 0)
-}
-
-#[async_trait]
-impl AccessStore for PgAccessStore {
-    async fn principal(&self, id: Uuid) -> Result<Option<Principal>, AccessError> {
-        sqlx::query("SELECT * FROM access_principals WHERE principal_id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db_error)?
-            .map(principal_row)
-            .transpose()
-    }
-
-    async fn effective_access(
+    /// Whether the resource exists in the universe.
+    pub async fn resource_exists(
         &self,
-        principal_id: Uuid,
-        scope: AccessScope,
-    ) -> Result<EffectiveAccess, AccessError> {
-        let mut connection = self.pool.acquire().await.map_err(db_error)?;
-        effective(&mut connection, principal_id, scope).await
-    }
-
-    async fn accessible_universes(&self, principal_id: Uuid) -> Result<Vec<Uuid>, AccessError> {
-        // A single statement sees one committed snapshot; no deployment-admin
-        // bypass and no response containing other principals' memberships.
-        sqlx::query_scalar(
-            "SELECT DISTINCT r.universe_id FROM access_role_assignments r
-             JOIN access_principals p ON p.principal_id = $1 AND p.status = 'active'
-             WHERE r.universe_id IS NOT NULL AND
-               (r.principal_id = p.principal_id OR EXISTS
-                 (SELECT 1 FROM access_memberships m WHERE m.group_id = r.group_id AND m.principal_id = p.principal_id))
-             ORDER BY r.universe_id")
-            .bind(principal_id).fetch_all(&self.pool).await.map_err(db_error)
-    }
-
-    async fn apply(
-        &self,
-        actor: Uuid,
-        change: AccessChange,
-        now_ms: u64,
-    ) -> Result<AccessChangeResult, AccessError> {
-        change.validate()?;
-        let now_ms = timestamp(now_ms)?;
-        let mut transaction = self.pool.begin().await.map_err(db_error)?;
-        sqlx::query("SELECT revision FROM access_policy WHERE singleton FOR UPDATE")
-            .execute(&mut *transaction)
-            .await
-            .map_err(db_error)?;
-        authorize_change(&mut transaction, actor, &change).await?;
-        refuse_agent_identity_changes(&mut transaction, &change).await?;
-        let before = administered_scopes(&mut transaction).await?;
-        let changed = apply_change(&mut transaction, actor, &change, now_ms).await?;
-        // Disabling an identity is always possible, even when it or its groups
-        // supply the last administrator. Recovery is a separate audited action.
-        if changed
-            && !matches!(
-                change,
-                AccessChange::SetPrincipalStatus {
-                    status: PrincipalStatus::Disabled,
-                    ..
-                }
-            )
-        {
-            guard_administrators(&before, &administered_scopes(&mut transaction).await?)?;
-        }
-        let policy_revision = if changed {
-            audit(
-                &mut transaction,
-                Some(actor),
-                serde_json::to_value(&change).map_err(store_error)?,
-                now_ms,
-            )
-            .await?
-        } else {
-            revision(&mut transaction).await?
-        };
-        transaction.commit().await.map_err(db_error)?;
-        Ok(AccessChangeResult {
-            changed,
-            policy_revision,
-        })
-    }
-
-    async fn bootstrap(
-        &self,
-        principal_id: Uuid,
-        display_name: String,
-        now_ms: u64,
-    ) -> Result<AccessChangeResult, AccessError> {
-        let change = AccessChange::CreatePrincipal {
-            id: principal_id,
-            kind: PrincipalKind::User,
-            display_name,
-            management_scope: AccessScope::Deployment,
-        };
-        change.validate()?;
-        let now_ms = timestamp(now_ms)?;
-        let mut transaction = self.pool.begin().await.map_err(db_error)?;
-        let bootstrapped: Option<Uuid> = sqlx::query_scalar(
-            "SELECT bootstrap_principal_id FROM access_policy WHERE singleton FOR UPDATE",
-        )
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(db_error)?;
-        if let Some(existing) = bootstrapped {
-            if existing != principal_id
-                || !effective(&mut transaction, principal_id, AccessScope::Deployment)
-                    .await?
-                    .has_role(Role::DeploymentAdmin)
-            {
-                return Err(AccessError::AlreadyBootstrapped);
-            }
-            let policy_revision = revision(&mut transaction).await?;
-            transaction.commit().await.map_err(db_error)?;
-            return Ok(AccessChangeResult {
-                changed: false,
-                policy_revision,
-            });
-        }
-        apply_change(&mut transaction, principal_id, &change, now_ms).await?;
-        if read_principal(&mut transaction, principal_id).await?.status != PrincipalStatus::Active {
-            return Err(AccessError::Denied);
-        }
-        put_role(
-            &mut transaction,
-            RoleAssignment {
-                scope: AccessScope::Deployment,
-                subject: Subject::Principal(principal_id),
-                role: Role::DeploymentAdmin,
-            },
-        )
-        .await?;
-        sqlx::query("UPDATE access_policy SET bootstrap_principal_id = $1 WHERE singleton")
-            .bind(principal_id)
-            .execute(&mut *transaction)
-            .await
-            .map_err(db_error)?;
-        let policy_revision = audit(
-            &mut transaction,
-            None,
-            json!({ "operation": "bootstrap", "principalId": principal_id }),
-            now_ms,
-        )
-        .await?;
-        transaction.commit().await.map_err(db_error)?;
-        Ok(AccessChangeResult {
-            changed: true,
-            policy_revision,
-        })
-    }
-}
-
-impl PgAccessStore {
-    /// The committed policy revision. Every identity, role, capability, key
-    /// and universe-removal change advances it, so an unchanged revision means
-    /// previously resolved rights still hold.
-    pub async fn policy_revision(&self) -> Result<u64, AccessError> {
-        let mut connection = self.pool.acquire().await.map_err(db_error)?;
-        revision(&mut connection).await
-    }
-
-    /// Whether an authenticated service may act for a user in `target`: an
-    /// `assert_user` capability in that scope, or deployment-wide when the
-    /// presented credential itself is deployment-scoped.
-    pub async fn may_assert_user(
-        &self,
-        service: Uuid,
-        target: AccessScope,
-        credential_scope: AccessScope,
-    ) -> Result<bool, AccessError> {
-        sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM access_capabilities c \
-             JOIN access_principals p ON p.principal_id = c.principal_id \
-             WHERE c.principal_id = $1 AND c.capability = 'assert_user' \
-               AND p.status = 'active' AND p.kind = 'service' \
-               AND (c.universe_id IS NOT DISTINCT FROM $2 OR ($3 AND c.universe_id IS NULL)))",
-        )
-        .bind(service)
-        .bind(scope_id(target))
-        .bind(credential_scope == AccessScope::Deployment)
+        universe: Uuid,
+        resource: &ResourceRef,
+    ) -> Result<bool, AccessStoreError> {
+        let (table, id_column) = content_table(resource);
+        sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM {table} WHERE universe_id=$1 AND {id_column}=$2)"
+        ))
+        .bind(universe)
+        .bind(resource.id())
         .fetch_one(&self.pool)
         .await
-        .map_err(db_error)
+        .map_err(error)
     }
-}
 
-/// Stable, explicit identity used only by the opt-in local development gateway.
-pub const LOCAL_DEVELOPMENT_PRINCIPAL: Uuid =
-    Uuid::from_u128(0x6c696768_7473_4065_8064_000000000001);
-
-impl PgAccessStore {
-    /// Host-side initialization for `single` mode. Calling this is an explicit
-    /// development bootstrap, never an authenticated request fallback.
-    pub async fn initialize_local_development(
+    /// Record who started a session, once: a retry, or a stamp racing it,
+    /// keeps the first. `visibility` is set on a request's root; `bot` on a
+    /// bot's session. A delegated child is never stamped.
+    pub async fn stamp_session(
         &self,
-        universe_id: Uuid,
-        now_ms: u64,
-    ) -> Result<Principal, AccessError> {
-        let mut tx = self.pool.begin().await.map_err(db_error)?;
-        sqlx::query("SELECT revision FROM access_policy WHERE singleton FOR UPDATE")
-            .execute(&mut *tx)
-            .await
-            .map_err(db_error)?;
-        let id = LOCAL_DEVELOPMENT_PRINCIPAL;
-        let mut changed = apply_change(
-            &mut tx,
-            id,
-            &AccessChange::CreatePrincipal {
-                id,
-                kind: PrincipalKind::Service,
-                display_name: "Local development".into(),
-                management_scope: AccessScope::Deployment,
+        universe: Uuid,
+        session: &str,
+        created_by: &Attribution,
+        visibility: Option<Visibility>,
+        bot: Option<&str>,
+    ) -> Result<(), AccessStoreError> {
+        sqlx::query(
+            "UPDATE sessions SET created_by = $3, visibility = $4, bot_id = $5
+             WHERE universe_id = $1 AND session_id = $2 AND created_by IS NULL",
+        )
+        .bind(universe)
+        .bind(session)
+        .bind(json!(created_by))
+        .bind(visibility.map(Visibility::as_str))
+        .bind(bot)
+        .execute(&self.pool)
+        .await
+        .map_err(error)?;
+        Ok(())
+    }
+
+    /// Record who created a bot, once.
+    pub async fn stamp_bot(
+        &self,
+        universe: Uuid,
+        bot: &str,
+        created_by: &Attribution,
+    ) -> Result<(), AccessStoreError> {
+        sqlx::query(
+            "UPDATE bots SET created_by = $3 WHERE universe_id = $1 AND bot_id = $2 AND created_by IS NULL",
+        )
+        .bind(universe)
+        .bind(bot)
+        .bind(json!(created_by))
+        .execute(&self.pool)
+        .await
+        .map_err(error)?;
+        Ok(())
+    }
+
+    /// Who controls a session and the audience of its root, from its row;
+    /// `None` when it does not exist.
+    pub async fn session_access(
+        &self,
+        universe: Uuid,
+        session: &str,
+    ) -> Result<Option<ResourceAccess>, AccessStoreError> {
+        let summary = session_summary_columns();
+        let row = sqlx::query(&format!(
+            "SELECT s.origin_parent_session_id, COALESCE(s.origin_root_session_id, s.session_id) AS root_session_id,
+                    {SESSION_BOT} AS root_bot_id, {summary}
+             FROM sessions s {SESSION_ROOT_JOIN}
+             WHERE s.universe_id = $1 AND s.session_id = $2"
+        ))
+        .bind(universe)
+        .bind(session)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(error)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let bot: Option<String> = row.try_get("root_bot_id").map_err(error)?;
+        Ok(Some(ResourceAccess {
+            resource: ResourceRef::Session(session.to_owned()),
+            root: match &bot {
+                Some(bot) => ResourceRef::Bot(bot.clone()),
+                None => ResourceRef::Session(row.try_get("root_session_id").map_err(error)?),
             },
-            timestamp(now_ms)?,
-        )
-        .await?;
-        let principal = read_principal(&mut tx, id).await?;
-        if principal.status != PrincipalStatus::Active {
-            return Err(AccessError::Denied);
-        }
-        for (scope, role) in [
-            (AccessScope::Deployment, Role::DeploymentAdmin),
-            (AccessScope::Universe { universe_id }, Role::Admin),
-        ] {
-            changed |= put_role(
-                &mut tx,
-                RoleAssignment {
-                    scope,
-                    subject: Subject::Principal(id),
-                    role,
-                },
-            )
-            .await?;
-        }
-        for (scope, capability) in [
-            (AccessScope::Deployment, Capability::DiscoverChannelAccounts),
-            (
-                AccessScope::Universe { universe_id },
-                Capability::LeaseCredentials,
-            ),
-            (
-                AccessScope::Universe { universe_id },
-                Capability::AdmitChannelInbound,
-            ),
-        ] {
-            changed |= apply_change(
-                &mut tx,
-                id,
-                &AccessChange::AssignCapability {
-                    assignment: CapabilityAssignment {
-                        scope,
-                        principal_id: id,
-                        capability,
-                    },
-                },
-                timestamp(now_ms)?,
-            )
-            .await?;
-        }
-        if changed {
-            audit(&mut tx, None, json!({"operation":"local_development_initialized", "principalId":id, "universeId":universe_id}), timestamp(now_ms)?).await?;
-        }
-        tx.commit().await.map_err(db_error)?;
-        Ok(principal)
-    }
-}
-
-impl PgAccessStore {
-    /// Eligible share targets, deliberately separate from the administrative
-    /// directory. The gateway authorizes universe Read before calling this.
-    pub async fn sharing_subjects(
-        &self,
-        universe_id: Uuid,
-        query: &str,
-    ) -> Result<Vec<(Subject, String)>, AccessError> {
-        let rows = sqlx::query(
-            "SELECT kind, id, display_name FROM (
-                SELECT 'principal' AS kind, p.principal_id AS id, p.display_name
-                FROM access_principals p WHERE p.status='active' AND (
-                    EXISTS (SELECT 1 FROM access_role_assignments r WHERE r.universe_id=$1 AND r.principal_id=p.principal_id)
-                    OR EXISTS (SELECT 1 FROM access_memberships m JOIN access_role_assignments r ON r.group_id=m.group_id
-                               WHERE r.universe_id=$1 AND m.principal_id=p.principal_id))
-                UNION ALL
-                SELECT 'group', g.group_id, g.display_name FROM access_groups g
-                WHERE EXISTS (SELECT 1 FROM access_role_assignments r WHERE r.universe_id=$1 AND r.group_id=g.group_id)
-             ) subjects WHERE strpos(lower(display_name), lower($2)) > 0 OR id::text=$2
-             ORDER BY lower(display_name), kind, id LIMIT 100",
-        ).bind(universe_id).bind(query).fetch_all(&self.pool).await.map_err(db_error)?;
-        rows.into_iter()
-            .map(|row| {
-                let id = row.try_get("id").map_err(db_error)?;
-                let subject = if row.try_get::<String, _>("kind").map_err(db_error)? == "group" {
-                    Subject::Group(id)
-                } else {
-                    Subject::Principal(id)
-                };
-                Ok((subject, row.try_get("display_name").map_err(db_error)?))
-            })
-            .collect()
+            bot,
+            parent: row.try_get("origin_parent_session_id").map_err(error)?,
+            audience: summary_from_row(&row)?,
+        }))
     }
 
-    /// Administrative view from one committed snapshot. In deployment scope
-    /// the directory is complete; in universe scope it holds the subjects of
-    /// that universe: principals and groups holding a role there, members of
-    /// those groups, and service principals it manages. A universe
-    /// administrator learns nothing about the rest of the deployment.
-    pub async fn directory(
+    /// A bot's access facts; `None` when it does not exist.
+    pub async fn bot_access(
         &self,
-        actor: Uuid,
-        scope: AccessScope,
-    ) -> Result<AccessDirectory, AccessError> {
-        let mut tx = self.pool.begin().await.map_err(db_error)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-            .execute(&mut *tx)
+        universe: Uuid,
+        bot: &str,
+    ) -> Result<Option<ResourceAccess>, AccessStoreError> {
+        let row = sqlx::query("SELECT created_by FROM bots WHERE universe_id = $1 AND bot_id = $2")
+            .bind(universe)
+            .bind(bot)
+            .fetch_optional(&self.pool)
             .await
-            .map_err(db_error)?;
-        let deployment = effective(&mut tx, actor, AccessScope::Deployment).await?;
-        let global = deployment.has_role(Role::DeploymentAdmin)
-            || deployment.has_capability(Capability::ManageIdentity);
-        if !global
-            && !effective(&mut tx, actor, scope)
-                .await?
-                .has_role(Role::Admin)
-        {
-            return Err(AccessError::Denied);
-        }
-        let all = scope == AccessScope::Deployment;
-        let principals = sqlx::query(
-            "SELECT p.* FROM access_principals p WHERE $1
-             OR p.management_universe_id=$2
-             OR EXISTS (SELECT 1 FROM access_role_assignments r WHERE r.universe_id=$2 AND r.principal_id=p.principal_id)
-             OR EXISTS (SELECT 1 FROM access_memberships m JOIN access_role_assignments r ON r.group_id=m.group_id
-                        WHERE r.universe_id=$2 AND m.principal_id=p.principal_id)
-             ORDER BY p.principal_id",
-        )
-        .bind(all)
-        .bind(scope_id(scope))
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(db_error)?
-        .into_iter()
-        .map(principal_row)
-        .collect::<Result<Vec<_>, _>>()?;
-        let groups = sqlx::query(
-            "SELECT g.* FROM access_groups g WHERE $1
-             OR EXISTS (SELECT 1 FROM access_role_assignments r WHERE r.universe_id=$2 AND r.group_id=g.group_id)
-             ORDER BY g.group_id",
-        )
-        .bind(all)
-        .bind(scope_id(scope))
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(db_error)?
-        .into_iter()
-            .map(|r| {
-                Ok(Group {
-                    id: r.try_get("group_id").map_err(db_error)?,
-                    display_name: r.try_get("display_name").map_err(db_error)?,
-                    created_at_ms: nonnegative(r.try_get("created_at_ms").map_err(db_error)?)?,
-                })
-            })
-            .collect::<Result<Vec<_>, AccessError>>()?;
-        let memberships = sqlx::query("SELECT m.* FROM access_memberships m WHERE $1 OR EXISTS (SELECT 1 FROM access_role_assignments r WHERE r.group_id=m.group_id AND r.universe_id=$2) ORDER BY group_id, principal_id")
-            .bind(all).bind(scope_id(scope)).fetch_all(&mut *tx).await.map_err(db_error)?.into_iter().map(|r| Ok(Membership {
-                group_id: r.try_get("group_id").map_err(db_error)?, principal_id: r.try_get("principal_id").map_err(db_error)?,
-            })).collect::<Result<Vec<_>, AccessError>>()?;
-        let roles = sqlx::query("SELECT * FROM access_role_assignments WHERE $1 OR universe_id=$2 ORDER BY universe_id, principal_id, group_id, role")
-            .bind(all).bind(scope_id(scope)).fetch_all(&mut *tx).await.map_err(db_error)?.into_iter().map(|r| {
-                let principal: Option<Uuid> = r.try_get("principal_id").map_err(db_error)?;
-                Ok(RoleAssignment { scope: scope_from_id(r.try_get("universe_id").map_err(db_error)?),
-                    subject: match principal { Some(id) => Subject::Principal(id), None => Subject::Group(r.try_get("group_id").map_err(db_error)?) },
-                    role: parse_enum(r.try_get("role").map_err(db_error)?)?,
-                })
-            }).collect::<Result<Vec<_>, AccessError>>()?;
-        let capabilities = sqlx::query("SELECT * FROM access_capabilities WHERE $1 OR universe_id=$2 ORDER BY universe_id, principal_id, capability")
-            .bind(all).bind(scope_id(scope)).fetch_all(&mut *tx).await.map_err(db_error)?.into_iter().map(|r| Ok(CapabilityAssignment {
-                scope: scope_from_id(r.try_get("universe_id").map_err(db_error)?),
-                principal_id: r.try_get("principal_id").map_err(db_error)?, capability: parse_enum(r.try_get("capability").map_err(db_error)?)?,
-            })).collect::<Result<Vec<_>, AccessError>>()?;
-        let policy_revision = revision(&mut tx).await?;
-        tx.commit().await.map_err(db_error)?;
-        Ok(AccessDirectory {
-            principals,
-            groups,
-            memberships,
-            roles,
-            capabilities,
-            policy_revision,
+            .map_err(error)?;
+        row.map(|row| {
+            Ok(ResourceAccess::shared(
+                ResourceRef::Bot(bot.to_owned()),
+                created_by_from_row(&row, "created_by")?,
+            ))
         })
+        .transpose()
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    /// Share an unshared root session with the universe. Returns whether it
+    /// changed; `false` when it is already shared, a bot's session, or a
+    /// delegated child.
+    pub async fn share_session(
+        &self,
+        universe: Uuid,
+        session: &str,
+    ) -> Result<bool, AccessStoreError> {
+        Ok(sqlx::query(
+            "UPDATE sessions SET visibility = 'universe'
+             WHERE universe_id = $1 AND session_id = $2 AND origin_root_session_id IS NULL
+               AND bot_id IS NULL AND COALESCE(visibility, 'restricted') = 'restricted'",
+        )
+        .bind(universe)
+        .bind(session)
+        .execute(&self.pool)
+        .await
+        .map_err(error)?
+        .rows_affected()
+            == 1)
+    }
 
-    #[test]
-    fn last_admin_guard_handles_preexisting_orphans_and_multiple_scopes() {
-        let a = AccessScope::Universe {
-            universe_id: Uuid::from_u128(1),
-        };
-        let b = AccessScope::Universe {
-            universe_id: Uuid::from_u128(2),
-        };
-        assert_eq!(
-            guard_administrators(&[a, b], &[a]),
-            Err(AccessError::LastAdministrator { scope: b })
-        );
-        assert!(guard_administrators(&[a], &[a, b]).is_ok());
-        assert!(guard_administrators(&[], &[]).is_ok());
-        assert_eq!(
-            guard_administrators(&[AccessScope::Deployment], &[]),
-            Err(AccessError::LastAdministrator {
-                scope: AccessScope::Deployment
-            })
-        );
+    /// The retention tree determines cascade deletion targets. It is broader
+    /// than controller lineage: a history fork is its own root.
+    pub async fn session_deletion_targets(
+        &self,
+        universe: Uuid,
+        session: &str,
+    ) -> Result<Vec<String>, AccessStoreError> {
+        sqlx::query_scalar(
+            "WITH RECURSIVE tree(session_id) AS (
+            SELECT $2::text UNION SELECT child.session_id FROM sessions child JOIN tree parent
+            ON (child.source_seq IS NOT NULL AND child.source_session_id=parent.session_id)
+            OR child.origin_parent_session_id=parent.session_id WHERE child.universe_id=$1)
+            SELECT session_id FROM tree",
+        )
+        .bind(universe)
+        .bind(session)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(error)
     }
 }
