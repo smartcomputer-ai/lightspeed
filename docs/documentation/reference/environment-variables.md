@@ -85,8 +85,8 @@ provider credential.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_CHAT_PROVIDER` | `openai` | Default provider ID for new runtime and CLI chat configuration. |
-| `LIGHTSPEED_CHAT_MODEL` | `gpt-5.5` | Default model for new runtime and CLI chat configuration. |
+| `LIGHTSPEED_CHAT_PROVIDER` | `openai` | Deployment default provider ID for sessions that do not choose a model. |
+| `LIGHTSPEED_CHAT_MODEL` | `gpt-5.5` | Deployment default model for sessions that do not choose a model. |
 | `OPENAI_API_KEY` | Conditional | Default OpenAI Responses, Chat Completions, and audio-transcription credential. |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Deployment fallback URL for the built-in `openai` provider, shared by Responses, Chat Completions, and audio transcription. Custom universe providers use their stored endpoint instead. |
 | `OPENAI_ORG_ID` | Unset | Optional `OpenAI-Organization` header. |
@@ -147,16 +147,15 @@ plain `ws://` toward anything but loopback.
 ## Rust CLI
 
 These variables configure the `lightspeed` CLI, not the server. Command-line
-flags override their corresponding environment values.
+flags override their corresponding environment values. `lightspeed chat` uses
+the deployment default model unless `--provider`, `--api-kind`, and `--model`
+are given together.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
 | `LIGHTSPEED_API_URL` | **Required unless `--api-url` is supplied** | Lightspeed JSON-RPC endpoint, normally ending in `/rpc`. Also used as the Platform server's fallback gateway URL. |
 | `LIGHTSPEED_API_KEY` | Unset | Bearer key sent to an `api-key` mode gateway. |
 | `LIGHTSPEED_UNIVERSE` | Unset | Value sent as `x-lightspeed-universe` for trusted-header development/proxy flows. |
-| `LIGHTSPEED_CHAT_PROVIDER` | `openai` | Default chat provider ID. |
-| `LIGHTSPEED_CHAT_API_KIND` | `openai:responses` | Default provider API kind used by the CLI's new-session draft. |
-| `LIGHTSPEED_CHAT_MODEL` | `gpt-5.5` | Default chat model. |
 | `LIGHTSPEED_CHAT_REASONING_EFFORT` | `high` | Default effort: `low`, `medium`, `high`, or `none`. Invalid values fall back to `high`. |
 | `LIGHTSPEED_CHAT_MAX_TOKENS` | Unset | Optional positive integer maximum output-token setting for new sessions. |
 

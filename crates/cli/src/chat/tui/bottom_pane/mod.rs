@@ -10,8 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 use crate::chat::protocol::{
-    ChatEvent, ChatProgressStatus, ChatSettingsView, ChatStatus, DEFAULT_CHAT_MODEL,
-    DEFAULT_CHAT_PROVIDER, reasoning_effort_label,
+    ChatEvent, ChatProgressStatus, ChatSettingsView, ChatStatus, reasoning_effort_label,
 };
 use crate::chat::tui::bottom_pane::composer::{ComposerState, composer_band_paragraph};
 use crate::chat::tui::bottom_pane::list_selection::{
@@ -30,6 +29,9 @@ pub(crate) struct BottomPaneState {
     settings: Option<ChatSettingsView>,
     active_view: Option<BottomPaneView>,
     slash_popup: Option<ListSelectionView>,
+    /// Last `models/list` result; empty until discovered or when it failed.
+    models: Vec<api::ModelView>,
+    model_providers: Vec<api::ModelProviderDiscoveryView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +61,8 @@ impl Default for BottomPaneState {
             settings: None,
             active_view: None,
             slash_popup: None,
+            models: Vec::new(),
+            model_providers: Vec::new(),
         }
     }
 }
@@ -109,15 +113,51 @@ impl BottomPaneState {
         }
     }
 
+    pub(crate) fn set_model_catalog(
+        &mut self,
+        models: Vec<api::ModelView>,
+        providers: Vec<api::ModelProviderDiscoveryView>,
+    ) {
+        self.models = models;
+        self.model_providers = providers;
+    }
+
+    fn session_api_kind(&self) -> Option<&str> {
+        self.settings
+            .as_ref()
+            .and_then(|settings| settings.session_api_kind.as_deref())
+    }
+
+    /// Model picker for the session's provider.
     pub(crate) fn open_model_picker(&mut self) {
-        let (current, editable) = self
+        let provider = self
             .settings
             .as_ref()
-            .map(|settings| (settings.model.as_str(), settings.model_editable))
-            .unwrap_or((DEFAULT_CHAT_MODEL, true));
-        self.active_view = Some(BottomPaneView::Picker(ListSelectionView::model(
-            current, editable,
-        )));
+            .map(|settings| settings.provider.clone())
+            .unwrap_or_default();
+        self.open_model_picker_for(&provider);
+    }
+
+    /// Model picker for `provider`; the current model is marked only when
+    /// it is the session's provider.
+    pub(crate) fn open_model_picker_for(&mut self, provider: &str) {
+        let (current, editable) = match self.settings.as_ref() {
+            Some(settings) => (
+                (settings.provider == provider)
+                    .then_some((settings.api_kind.as_str(), settings.model.as_str())),
+                settings.model_editable,
+            ),
+            None => (None, true),
+        };
+        self.active_view = Some(BottomPaneView::Picker(
+            ListSelectionView::discovered_models(
+                provider,
+                current,
+                editable,
+                self.session_api_kind(),
+                &self.models,
+            ),
+        ));
         self.slash_popup = None;
     }
 
@@ -126,21 +166,39 @@ impl BottomPaneState {
             .settings
             .as_ref()
             .map(|settings| (settings.provider.as_str(), settings.provider_editable))
-            .unwrap_or((DEFAULT_CHAT_PROVIDER, true));
-        self.active_view = Some(BottomPaneView::Picker(ListSelectionView::provider(
-            current, editable,
-        )));
+            .unwrap_or(("", true));
+        self.active_view = Some(BottomPaneView::Picker(
+            ListSelectionView::discovered_providers(
+                current,
+                editable,
+                self.session_api_kind(),
+                &self.model_providers,
+                &self.models,
+            ),
+        ));
         self.slash_popup = None;
     }
 
+    /// Effort choices narrow to the current model's discovered efforts when
+    /// a `models/list` result is cached; otherwise every choice is offered.
     pub(crate) fn open_effort_picker(&mut self) {
         let (current, editable) = self
             .settings
             .as_ref()
             .map(|settings| (settings.reasoning_effort, settings.effort_editable))
             .unwrap_or((None, true));
+        let supported = self.settings.as_ref().and_then(|settings| {
+            self.models
+                .iter()
+                .find(|model| {
+                    model.provider_id == settings.provider
+                        && model.api_kind == settings.api_kind
+                        && model.model == settings.model
+                })
+                .and_then(|model| model.capabilities.reasoning_efforts.as_deref())
+        });
         self.active_view = Some(BottomPaneView::Picker(ListSelectionView::effort(
-            current, editable,
+            current, editable, supported,
         )));
         self.slash_popup = None;
     }
@@ -583,6 +641,7 @@ mod tests {
             output_ref: None,
             started_at_ns: 0,
             updated_at_ns: 0,
+            stats: Default::default(),
         }));
 
         let rendered = pane.status_line().to_string();
@@ -635,6 +694,7 @@ mod tests {
             provider: "openai".into(),
             api_kind: "openai:responses".into(),
             model: "gpt-5.5".into(),
+            session_api_kind: None,
             reasoning_effort: None,
             max_tokens: None,
             provider_editable: true,

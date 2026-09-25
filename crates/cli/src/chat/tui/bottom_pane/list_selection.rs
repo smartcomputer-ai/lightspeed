@@ -5,20 +5,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
-use crate::chat::protocol::{
-    ChatSessionSummary, DEFAULT_CHAT_MODEL, DEFAULT_CHAT_PROVIDER, ReasoningEffort,
-    reasoning_effort_label,
-};
+use crate::chat::protocol::{ChatSessionSummary, ReasoningEffort, reasoning_effort_label};
 use crate::chat::tui::slash::{SlashCommandKind, matching_slash_commands};
 
-const MODEL_CHOICES: &[&str] = &[
-    DEFAULT_CHAT_MODEL,
-    "gpt-5.4",
-    "gpt-5.3-codex-spark",
-    "gpt-5.2-codex",
-    "gpt-5.2",
-];
-const PROVIDER_CHOICES: &[&str] = &[DEFAULT_CHAT_PROVIDER, "openai", "anthropic", "mock"];
 const TOKEN_CHOICES: &[Option<u32>] = &[
     None,
     Some(1024),
@@ -44,15 +33,28 @@ pub(crate) struct ListSelectionRow {
     current: bool,
 }
 
+/// Rows visible at once; the window scrolls to keep the selection in view.
+const VISIBLE_ROWS: usize = 8;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PickerSelection {
     Model(String),
     Provider(String),
+    /// A discovered model: provider, API kind, and model switch together.
+    Route {
+        provider: String,
+        api_kind: String,
+        model: String,
+    },
+    /// A discovered provider; the model picker for it opens next.
+    ProviderModels(String),
     Effort(Option<ReasoningEffort>),
     MaxTokens(Option<u32>),
     SlashCommand(SlashCommandKind),
     Session(String),
-    Skill { skill_id: String },
+    Skill {
+        skill_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,65 +188,162 @@ impl ListSelectionView {
         view
     }
 
-    pub(crate) fn model(current: &str, editable: bool) -> Self {
+    /// Discovered models for `provider`. `current` is marked only on the
+    /// current provider. Models of another API kind than the session's are
+    /// listed last and disabled: a session keeps its API kind for life.
+    pub(crate) fn discovered_models(
+        provider: &str,
+        current: Option<(&str, &str)>,
+        editable: bool,
+        session_api_kind: Option<&str>,
+        models: &[api::ModelView],
+    ) -> Self {
         let disabled_reason =
             (!editable).then(|| "model switching is locked while a run is active".to_string());
-        let mut choices = MODEL_CHOICES
+        let mut models = models
             .iter()
-            .map(|value| (*value).to_string())
+            .filter(|model| model.provider_id == provider)
+            .map(|model| {
+                let incompatible =
+                    incompatible_api_kind(session_api_kind, [model.api_kind.as_str()]);
+                (model, incompatible)
+            })
             .collect::<Vec<_>>();
-        ensure_choice(&mut choices, current);
-        Self::new(
-            "Select model",
-            choices
-                .into_iter()
-                .map(|model| {
-                    ListSelectionRow::new(
-                        model.clone(),
-                        if model == current {
-                            "current model"
-                        } else {
-                            "use for future runs in this session"
-                        },
-                        PickerSelection::Model(model.clone()),
-                    )
-                    .with_current(model == current)
-                    .with_disabled_reason(disabled_reason.clone())
-                })
-                .collect(),
-        )
+        models.sort_by_key(|(_, incompatible)| incompatible.is_some());
+        let mut rows = models
+            .into_iter()
+            .map(|(model, incompatible)| {
+                let is_current = current == Some((model.api_kind.as_str(), model.model.as_str()));
+                ListSelectionRow::new(
+                    model.model.clone(),
+                    model_description(model, is_current),
+                    PickerSelection::Route {
+                        provider: model.provider_id.clone(),
+                        api_kind: model.api_kind.clone(),
+                        model: model.model.clone(),
+                    },
+                )
+                .with_current(is_current)
+                .with_disabled_reason(incompatible.or_else(|| disabled_reason.clone()))
+            })
+            .collect::<Vec<_>>();
+        if let Some((_, model)) = current
+            && !rows.iter().any(|row| row.current)
+        {
+            rows.push(
+                ListSelectionRow::new(
+                    model,
+                    "current model (not listed by provider)",
+                    PickerSelection::Model(model.to_owned()),
+                )
+                .with_current(true)
+                .with_disabled_reason(disabled_reason),
+            );
+        }
+        if rows.is_empty() {
+            rows.push(
+                ListSelectionRow::new(
+                    "no models",
+                    format!("{provider} reported no selectable models"),
+                    PickerSelection::Model(String::new()),
+                )
+                .with_disabled_reason(Some("no models discovered".into())),
+            );
+        }
+        Self::new(format!("Select {provider} model"), rows)
     }
 
-    pub(crate) fn provider(current: &str, editable: bool) -> Self {
-        let disabled_reason =
+    /// Discovered providers with credential status. Providers without the
+    /// session's API kind are listed last and disabled.
+    pub(crate) fn discovered_providers(
+        current: &str,
+        editable: bool,
+        session_api_kind: Option<&str>,
+        providers: &[api::ModelProviderDiscoveryView],
+        models: &[api::ModelView],
+    ) -> Self {
+        let locked =
             (!editable).then(|| "provider switching is locked while a run is active".to_string());
-        let mut choices = PROVIDER_CHOICES
+        let mut providers = providers
             .iter()
-            .map(|value| (*value).to_string())
+            .map(|provider| {
+                let incompatible = incompatible_api_kind(
+                    session_api_kind,
+                    provider.api_kinds.iter().map(String::as_str),
+                );
+                (provider, incompatible)
+            })
             .collect::<Vec<_>>();
-        ensure_choice(&mut choices, current);
-        Self::new(
-            "Select provider",
-            choices
-                .into_iter()
-                .map(|provider| {
-                    ListSelectionRow::new(
-                        provider.clone(),
-                        if provider == current {
-                            "current provider"
-                        } else {
-                            "use for future runs in this session"
-                        },
-                        PickerSelection::Provider(provider.clone()),
-                    )
-                    .with_current(provider == current)
-                    .with_disabled_reason(disabled_reason.clone())
-                })
-                .collect(),
-        )
+        providers.sort_by_key(|(_, incompatible)| incompatible.is_some());
+        let mut rows = providers
+            .into_iter()
+            .map(|(provider, incompatible)| {
+                let count = models
+                    .iter()
+                    .filter(|model| model.provider_id == provider.provider_id)
+                    .count();
+                let is_current = provider.provider_id == current;
+                let unusable = match provider.credential {
+                    api::ModelProviderCredentialStatus::Missing => {
+                        Some("no credential configured".to_string())
+                    }
+                    api::ModelProviderCredentialStatus::Invalid => {
+                        Some("credential disabled or rejected".to_string())
+                    }
+                    api::ModelProviderCredentialStatus::Configured
+                    | api::ModelProviderCredentialStatus::NotRequired => None,
+                };
+                let mut description = vec![format!("{count} models")];
+                if is_current {
+                    description.insert(0, "current provider".to_string());
+                }
+                if let Some(error) = provider.error.as_ref() {
+                    description.push(error.clone());
+                }
+                ListSelectionRow::new(
+                    provider.provider_id.clone(),
+                    description.join("  "),
+                    if count > 0 {
+                        PickerSelection::ProviderModels(provider.provider_id.clone())
+                    } else {
+                        PickerSelection::Provider(provider.provider_id.clone())
+                    },
+                )
+                .with_current(is_current)
+                .with_disabled_reason(incompatible.or_else(|| locked.clone()).or(unusable))
+            })
+            .collect::<Vec<_>>();
+        if !current.is_empty() && !rows.iter().any(|row| row.current) {
+            rows.push(
+                ListSelectionRow::new(
+                    current,
+                    "current provider (not discovered)",
+                    PickerSelection::Provider(current.to_owned()),
+                )
+                .with_current(true)
+                .with_disabled_reason(locked),
+            );
+        }
+        if rows.is_empty() {
+            rows.push(
+                ListSelectionRow::new(
+                    "no providers",
+                    "configure a model provider on the server",
+                    PickerSelection::Provider(String::new()),
+                )
+                .with_disabled_reason(Some("no providers discovered".into())),
+            );
+        }
+        Self::new("Select provider", rows)
     }
 
-    pub(crate) fn effort(current: Option<ReasoningEffort>, editable: bool) -> Self {
+    /// `supported` is the model's discovered effort list; `None` (unknown)
+    /// offers every choice. The current value always stays selectable.
+    pub(crate) fn effort(
+        current: Option<ReasoningEffort>,
+        editable: bool,
+        supported: Option<&[String]>,
+    ) -> Self {
         let disabled_reason =
             (!editable).then(|| "wait for the current run before changing effort".to_string());
         let choices = [
@@ -252,7 +351,17 @@ impl ListSelectionView {
             Some(ReasoningEffort::Low),
             Some(ReasoningEffort::Medium),
             Some(ReasoningEffort::High),
-        ];
+        ]
+        .into_iter()
+        .filter(|effort| {
+            *effort == current
+                || supported.is_none_or(|supported| {
+                    supported
+                        .iter()
+                        .any(|value| value == reasoning_effort_label(*effort))
+                })
+        })
+        .collect::<Vec<_>>();
         Self::new(
             "Select thinking effort",
             choices
@@ -338,7 +447,7 @@ impl ListSelectionView {
     }
 
     pub(crate) fn desired_height(&self) -> u16 {
-        self.title_height() + self.rows.len().min(8) as u16
+        self.title_height() + self.rows.len().min(VISIBLE_ROWS) as u16
     }
 
     pub(crate) fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -379,6 +488,11 @@ impl ListSelectionView {
     fn render_lines(&self, _width: u16) -> Vec<Line<'static>> {
         let mut lines = Vec::with_capacity(self.rows.len() + usize::from(self.title.is_some()));
         if let Some(title) = &self.title {
+            let position = if self.rows.len() > VISIBLE_ROWS {
+                format!("  {}/{}", self.selected + 1, self.rows.len())
+            } else {
+                String::new()
+            };
             lines.push(Line::from(vec![
                 Span::styled(
                     title.clone(),
@@ -386,10 +500,14 @@ impl ListSelectionView {
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("  Esc close", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("{position}  Esc close"),
+                    Style::default().fg(Color::DarkGray),
+                ),
             ]));
         }
-        for (idx, row) in self.rows.iter().enumerate() {
+        let first = (self.selected + 1).saturating_sub(VISIBLE_ROWS);
+        for (idx, row) in self.rows.iter().enumerate().skip(first).take(VISIBLE_ROWS) {
             let selected = idx == self.selected;
             let base = if row.disabled_reason.is_some() {
                 Style::default().fg(Color::DarkGray)
@@ -448,10 +566,32 @@ impl ListSelectionRow {
     }
 }
 
-fn ensure_choice(choices: &mut Vec<String>, current: &str) {
-    if !current.is_empty() && !choices.iter().any(|choice| choice == current) {
-        choices.push(current.to_string());
+/// Why a route offering `api_kinds` cannot serve a session pinned to
+/// `session_api_kind`; `None` when compatible or the session is unknown.
+fn incompatible_api_kind<'a>(
+    session_api_kind: Option<&str>,
+    api_kinds: impl IntoIterator<Item = &'a str>,
+) -> Option<String> {
+    let pinned = session_api_kind.filter(|kind| !kind.is_empty())?;
+    (!api_kinds.into_iter().any(|kind| kind == pinned))
+        .then(|| format!("incompatible API kind (session uses {pinned})"))
+}
+
+fn model_description(model: &api::ModelView, current: bool) -> String {
+    let mut parts = Vec::new();
+    if current {
+        parts.push("current".to_string());
     }
+    if model.display_name != model.model {
+        parts.push(model.display_name.clone());
+    }
+    parts.push(model.api_kind.clone());
+    if let Some(efforts) = model.capabilities.reasoning_efforts.as_ref()
+        && !efforts.is_empty()
+    {
+        parts.push(format!("effort {}", efforts.join("/")));
+    }
+    parts.join("  ")
 }
 
 fn session_description(summary: &ChatSessionSummary, current: bool) -> String {
@@ -496,7 +636,7 @@ mod tests {
 
     #[test]
     fn picker_confirms_selected_value() {
-        let mut picker = ListSelectionView::effort(None, true);
+        let mut picker = ListSelectionView::effort(None, true, None);
         assert_eq!(
             picker.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
             ListSelectionAction::Changed
@@ -507,9 +647,231 @@ mod tests {
         );
     }
 
+    fn model(provider: &str, api_kind: &str, model: &str, efforts: &[&str]) -> api::ModelView {
+        serde_json::from_value(serde_json::json!({
+            "providerId": provider,
+            "apiKind": api_kind,
+            "model": model,
+            "displayName": model,
+            "capabilities": {
+                "reasoningEfforts": efforts,
+            },
+            "source": "provider",
+            "fetchedAtMs": 0,
+        }))
+        .expect("model view")
+    }
+
+    fn provider(id: &str, credential: &str) -> api::ModelProviderDiscoveryView {
+        serde_json::from_value(serde_json::json!({
+            "providerId": id,
+            "apiKinds": ["openai:responses"],
+            "credential": credential,
+            "credentialSource": "deployment",
+        }))
+        .expect("provider view")
+    }
+
+    fn enter(picker: &mut ListSelectionView) -> ListSelectionAction {
+        picker.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn discovered_model_picker_lists_provider_routes_and_marks_current() {
+        let models = [
+            model("openai", "openai:responses", "gpt-5.5", &["low", "high"]),
+            model("anthropic", "anthropic:messages", "claude-opus-5-5", &[]),
+            model("openai", "openai:responses", "gpt-5.4", &[]),
+        ];
+        let mut picker = ListSelectionView::discovered_models(
+            "openai",
+            Some(("openai:responses", "gpt-5.4")),
+            true,
+            None,
+            &models,
+        );
+        let labels = picker
+            .rows
+            .iter()
+            .map(|row| row.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, ["gpt-5.5", "gpt-5.4"]);
+        assert!(picker.rows[0].description.contains("effort low/high"));
+        assert_eq!(
+            enter(&mut picker),
+            ListSelectionAction::Selected(PickerSelection::Route {
+                provider: "openai".into(),
+                api_kind: "openai:responses".into(),
+                model: "gpt-5.4".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn discovered_model_picker_keeps_unlisted_current_and_has_no_fallback() {
+        let models = [model("openai", "openai:responses", "gpt-5.5", &[])];
+        let picker = ListSelectionView::discovered_models(
+            "openai",
+            Some(("openai:responses", "my-fine-tune")),
+            true,
+            None,
+            &models,
+        );
+        assert_eq!(picker.rows.len(), 2);
+        assert!(picker.rows[1].current);
+        assert_eq!(
+            picker.rows[1].value,
+            PickerSelection::Model("my-fine-tune".into())
+        );
+
+        let mut empty = ListSelectionView::discovered_models("openai", None, true, None, &[]);
+        assert_eq!(empty.rows.len(), 1);
+        assert_eq!(
+            enter(&mut empty),
+            ListSelectionAction::Rejected("no models discovered".into())
+        );
+
+        let mut no_providers = ListSelectionView::discovered_providers("", true, None, &[], &[]);
+        assert_eq!(
+            enter(&mut no_providers),
+            ListSelectionAction::Rejected("no providers discovered".into())
+        );
+    }
+
+    #[test]
+    fn discovered_provider_picker_opens_models_and_blocks_missing_credentials() {
+        let models = [
+            model("openai", "openai:responses", "gpt-5.5", &[]),
+            model("anthropic", "anthropic:messages", "claude-opus-5-5", &[]),
+        ];
+        let providers = [
+            provider("openai", "configured"),
+            provider("anthropic", "missing"),
+        ];
+        let mut picker =
+            ListSelectionView::discovered_providers("openai", true, None, &providers, &models);
+        assert_eq!(
+            enter(&mut picker),
+            ListSelectionAction::Selected(PickerSelection::ProviderModels("openai".into()))
+        );
+        picker.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(
+            enter(&mut picker),
+            ListSelectionAction::Rejected("no credential configured".into())
+        );
+    }
+
+    #[test]
+    fn pickers_disable_routes_of_another_api_kind() {
+        let pinned = "incompatible API kind (session uses openai:completions)";
+        let models = [
+            model("openai", "openai:responses", "gpt-5.5", &[]),
+            model("openai", "openai:completions", "gpt-4.1", &[]),
+        ];
+        let mut picker = ListSelectionView::discovered_models(
+            "openai",
+            None,
+            true,
+            Some("openai:completions"),
+            &models,
+        );
+        let labels = picker
+            .rows
+            .iter()
+            .map(|row| row.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, ["gpt-4.1", "gpt-5.5"]);
+        assert_eq!(
+            enter(&mut picker),
+            ListSelectionAction::Selected(PickerSelection::Route {
+                provider: "openai".into(),
+                api_kind: "openai:completions".into(),
+                model: "gpt-4.1".into(),
+            })
+        );
+        picker.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(
+            enter(&mut picker),
+            ListSelectionAction::Rejected(pinned.into())
+        );
+
+        let providers: [api::ModelProviderDiscoveryView; 2] =
+            serde_json::from_value(serde_json::json!([
+                {
+                    "providerId": "anthropic",
+                    "apiKinds": ["anthropic:messages"],
+                    "credential": "configured",
+                    "credentialSource": "deployment",
+                },
+                {
+                    "providerId": "openai",
+                    "apiKinds": ["openai:responses", "openai:completions"],
+                    "credential": "configured",
+                    "credentialSource": "deployment",
+                },
+            ]))
+            .expect("provider views");
+        let mut picker = ListSelectionView::discovered_providers(
+            "openai",
+            true,
+            Some("openai:completions"),
+            &providers,
+            &models,
+        );
+        assert_eq!(
+            enter(&mut picker),
+            ListSelectionAction::Selected(PickerSelection::ProviderModels("openai".into()))
+        );
+        picker.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(
+            enter(&mut picker),
+            ListSelectionAction::Rejected(pinned.into())
+        );
+    }
+
+    #[test]
+    fn effort_picker_narrows_to_supported_values_but_keeps_current() {
+        let supported = ["low".to_owned(), "high".to_owned()];
+        let picker =
+            ListSelectionView::effort(Some(ReasoningEffort::Medium), true, Some(&supported));
+        let labels = picker
+            .rows
+            .iter()
+            .map(|row| row.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, ["low", "medium", "high"]);
+    }
+
+    #[test]
+    fn long_picker_scrolls_to_keep_selection_visible() {
+        let rows = (0..12)
+            .map(|n| {
+                ListSelectionRow::new(
+                    format!("s-{n}"),
+                    "",
+                    PickerSelection::Session(format!("s-{n}")),
+                )
+            })
+            .collect();
+        let mut picker = ListSelectionView::new("Select session", rows);
+        for _ in 0..10 {
+            picker.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        let lines = picker
+            .render_lines(80)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1 + VISIBLE_ROWS);
+        assert!(lines[0].contains("11/12"));
+        assert!(lines.last().expect("row").starts_with("> s-10"));
+        assert!(lines[1].contains("s-3"));
+    }
+
     #[test]
     fn disabled_picker_rows_do_not_confirm() {
-        let mut picker = ListSelectionView::model(DEFAULT_CHAT_MODEL, false);
+        let models = [model("openai", "openai:responses", "gpt-5.5", &[])];
+        let mut picker = ListSelectionView::discovered_models("openai", None, false, None, &models);
         assert_eq!(
             picker.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             ListSelectionAction::Rejected("model switching is locked while a run is active".into())

@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 
-use crate::chat::protocol::{ChatDelta, ChatEvent, ChatProgressStatus};
+use crate::chat::protocol::{ChatDelta, ChatEvent, ChatProgressStatus, run_stats_summary};
 use crate::chat::protocol::{ChatToolChainView, ChatTurn};
 use crate::chat::tui::cell::{
     CellRenderState, ChatCell, ChatCellKind, ErrorCell, MessageCell, NoticeCell, ReasoningCell,
@@ -61,6 +61,7 @@ impl TranscriptState {
             }
             ChatEvent::SessionsListed { .. }
             | ChatEvent::SkillsListed { .. }
+            | ChatEvent::ModelsListed { .. }
             | ChatEvent::SessionSelected(_) => {}
             ChatEvent::HistoryReset { session_id } => {
                 self.cells.clear();
@@ -270,6 +271,12 @@ impl TranscriptState {
                                 content.clone(),
                             )));
                         }
+                        ReconstructedItem::Usage { id, text } => {
+                            self.push_committed_cell_if_changed(Box::new(NoticeCell::new(
+                                id.clone(),
+                                text.clone(),
+                            )));
+                        }
                         ReconstructedItem::Reasoning { id, content } => {
                             self.push_committed_cell_if_changed(Box::new(ReasoningCell::new(
                                 id.clone(),
@@ -458,6 +465,10 @@ enum ReconstructedItem {
         id: String,
         content: String,
     },
+    Usage {
+        id: String,
+        text: String,
+    },
 }
 
 fn reconstructed_items(turns: Vec<ChatTurn>) -> Vec<ReconstructedItem> {
@@ -489,7 +500,26 @@ fn reconstructed_items(turns: Vec<ChatTurn>) -> Vec<ReconstructedItem> {
                 content: assistant.content,
             });
         }
-        let _ = turn.run;
+        // Only finished runs: a running total would change and re-emit
+        // into scrollback on every refresh.
+        if let Some(text) = turn
+            .run
+            .as_ref()
+            .filter(|run| {
+                matches!(
+                    run.status,
+                    ChatProgressStatus::Succeeded
+                        | ChatProgressStatus::Failed
+                        | ChatProgressStatus::Cancelled
+                )
+            })
+            .and_then(|run| run_stats_summary(&run.stats))
+        {
+            items.push(ReconstructedItem::Usage {
+                id: format!("{turn_id}:stats"),
+                text,
+            });
+        }
     }
     items
 }
@@ -1211,5 +1241,74 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(assistant_batch[0], "");
         assert!(assistant_batch[1].contains("done"));
+    }
+
+    #[test]
+    fn stats_line_follows_finished_turn_only() {
+        fn turn(status: api::RunStatus) -> ChatTurn {
+            ChatTurn {
+                turn_id: "run-1".into(),
+                user: None,
+                assistant_reasoning: None,
+                assistant: Some(ChatMessageView {
+                    id: "a-1".into(),
+                    role: "assistant".into(),
+                    content: "done".into(),
+                    ref_: None,
+                }),
+                run: Some(crate::chat::protocol::ChatRunView {
+                    id: "run-1".into(),
+                    run_seq: 1,
+                    lifecycle: status,
+                    status: crate::chat::protocol::run_status(status),
+                    provider: "anthropic".into(),
+                    model: "claude-opus-5-5".into(),
+                    reasoning_effort: None,
+                    input_refs: Vec::new(),
+                    output_ref: None,
+                    started_at_ns: 0,
+                    updated_at_ns: 0,
+                    stats: Box::new(crate::chat::protocol::ChatRunStats {
+                        usage: Some(api::LlmUsageView {
+                            input_tokens: Some(2_000),
+                            output_tokens: Some(100),
+                            cached_input_tokens: Some(1_500),
+                            ..Default::default()
+                        }),
+                        duration_ms: Some(4_200),
+                        ..Default::default()
+                    }),
+                }),
+                tool_chains: Vec::new(),
+            }
+        }
+        let lines = |state: &mut TranscriptState| {
+            state
+                .drain_pending_history_lines(80)
+                .into_iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+        };
+
+        let mut state = TranscriptState::default();
+        state.apply_chat_event(ChatEvent::TranscriptDelta(ChatDelta::ReplaceTurns {
+            session_id: "s-1".into(),
+            turns: vec![turn(api::RunStatus::Running)],
+        }));
+        assert!(
+            !lines(&mut state)
+                .iter()
+                .any(|line| line.contains("in 2.0k"))
+        );
+
+        state.apply_chat_event(ChatEvent::TranscriptDelta(ChatDelta::ReplaceTurns {
+            session_id: "s-1".into(),
+            turns: vec![turn(api::RunStatus::Completed)],
+        }));
+        let finished = lines(&mut state);
+        assert_eq!(
+            finished,
+            vec!["4.2s · in 2.0k (cache 75%: 1.5k read) · out 100".to_owned()]
+        );
     }
 }

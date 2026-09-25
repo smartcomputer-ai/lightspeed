@@ -31,22 +31,24 @@ use api::{
     METHOD_ENVIRONMENTS_IDLE_POLICY_PUT, METHOD_ENVIRONMENTS_LIST, METHOD_ENVIRONMENTS_POWER_PUT,
     METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST, METHOD_ENVIRONMENTS_READ,
     METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_PUT,
-    METHOD_MCP_SERVERS_READ, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST, METHOD_PROFILES_PUT,
-    METHOD_PROFILES_READ, METHOD_SESSION_CONFIG_PUT, METHOD_SESSION_ENVIRONMENTS_ACTIVATE,
-    METHOD_SESSION_ENVIRONMENTS_DEACTIVATE, METHOD_SESSION_EVENTS_READ, METHOD_SESSION_LIST,
-    METHOD_SESSION_PROFILES_APPLY, METHOD_SESSION_READ, METHOD_SESSION_RUNS_APPROVALS_DECIDE,
-    METHOD_SESSION_RUNS_CANCEL, METHOD_SESSION_RUNS_START, METHOD_SESSION_RUNS_STEER,
+    METHOD_MCP_SERVERS_READ, METHOD_MODELS_LIST, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST,
+    METHOD_PROFILES_PUT, METHOD_PROFILES_READ, METHOD_SESSION_CONFIG_PUT,
+    METHOD_SESSION_ENVIRONMENTS_ACTIVATE, METHOD_SESSION_ENVIRONMENTS_DEACTIVATE,
+    METHOD_SESSION_EVENTS_READ, METHOD_SESSION_LIST, METHOD_SESSION_PROFILES_APPLY,
+    METHOD_SESSION_READ, METHOD_SESSION_RUNS_APPROVALS_DECIDE, METHOD_SESSION_RUNS_CANCEL,
+    METHOD_SESSION_RUNS_READ, METHOD_SESSION_RUNS_START, METHOD_SESSION_RUNS_STEER,
     METHOD_SESSION_SKILLS_LIST, METHOD_SESSION_START, METHOD_VFS_SNAPSHOTS_COMMIT,
     METHOD_VFS_SNAPSHOTS_READ, METHOD_VFS_WORKSPACES_CREATE, METHOD_VFS_WORKSPACES_DELETE,
     METHOD_VFS_WORKSPACES_LIST, METHOD_VFS_WORKSPACES_READ, METHOD_VFS_WORKSPACES_UPDATE,
     McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams, McpServerListResponse,
     McpServerPutParams, McpServerPutResponse, McpServerReadParams, McpServerReadResponse,
-    ProfileApplyParams, ProfileApplyResponse, ProfileDeleteParams, ProfileDeleteResponse,
-    ProfileListParams, ProfileListResponse, ProfilePutParams, ProfilePutResponse,
-    ProfileReadParams, ProfileReadResponse, RequestId, RunApprovalsDecideParams,
-    RunApprovalsDecideResponse, RunCancelParams, RunCancelResponse, RunStartParams,
-    RunStartResponse, RunSteerParams, RunSteerResponse, SessionConfigPutParams,
-    SessionConfigPutResponse, SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
+    ModelListParams, ModelListResponse, ProfileApplyParams, ProfileApplyResponse,
+    ProfileDeleteParams, ProfileDeleteResponse, ProfileListParams, ProfileListResponse,
+    ProfilePutParams, ProfilePutResponse, ProfileReadParams, ProfileReadResponse, RequestId,
+    RunApprovalsDecideParams, RunApprovalsDecideResponse, RunCancelParams, RunCancelResponse,
+    RunReadParams, RunReadResponse, RunStartParams, RunStartResponse, RunSteerParams,
+    RunSteerResponse, SessionConfigPutParams, SessionConfigPutResponse,
+    SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
     SessionEnvironmentDeactivateParams, SessionEnvironmentDeactivateResponse,
     SessionEventsReadParams, SessionEventsReadResponse, SessionListParams, SessionListResponse,
     SessionReadParams, SessionReadResponse, SessionStartParams, SessionStartResponse,
@@ -187,6 +189,13 @@ impl HttpAgentApi {
         self.request(METHOD_SESSION_READ, params).await
     }
 
+    pub(crate) async fn read_run(
+        &self,
+        params: RunReadParams,
+    ) -> Result<AgentApiOutcome<RunReadResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_RUNS_READ, params).await
+    }
+
     pub(crate) async fn list_sessions(
         &self,
         params: SessionListParams,
@@ -264,6 +273,13 @@ impl HttpAgentApi {
         params: SkillListParams,
     ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError> {
         self.request(METHOD_SESSION_SKILLS_LIST, params).await
+    }
+
+    pub(crate) async fn list_models(
+        &self,
+        params: ModelListParams,
+    ) -> Result<AgentApiOutcome<ModelListResponse>, AgentApiError> {
+        self.request(METHOD_MODELS_LIST, params).await
     }
 
     pub(crate) async fn put_blobs(

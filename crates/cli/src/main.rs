@@ -71,6 +71,8 @@ mod tests {
             "--new",
             "--provider",
             "openai",
+            "--api-kind",
+            "openai:responses",
             "--model",
             "gpt-5.5",
             "--effort",

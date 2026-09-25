@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use crate::chat::driver::ChatSessionDriver;
 use crate::chat::protocol::{
     ChatCommand, ChatDelta, ChatErrorView, ChatEvent, ChatMessageView, ChatProgressStatus,
-    GATEWAY_WORLD_ID,
+    GATEWAY_WORLD_ID, ModelPickerPurpose,
 };
 use crate::chat::tui::app_event::UiEvent;
 use crate::chat::tui::app_event_sender::AppEventSender;
@@ -199,6 +199,18 @@ impl ChatTuiApp {
                     ChatEvent::SkillsListed { catalogs, .. } => {
                         self.bottom_pane.open_skill_picker(catalogs);
                     }
+                    ChatEvent::ModelsListed {
+                        purpose,
+                        models,
+                        providers,
+                    } => {
+                        self.bottom_pane
+                            .set_model_catalog(models.clone(), providers.clone());
+                        match purpose {
+                            ModelPickerPurpose::Model => self.bottom_pane.open_model_picker(),
+                            ModelPickerPurpose::Provider => self.bottom_pane.open_provider_picker(),
+                        }
+                    }
                     ChatEvent::HistoryReset { session_id } => {
                         self.options.session_id = session_id.clone();
                         self.terminal_clear_requested = true;
@@ -369,15 +381,17 @@ impl ChatTuiApp {
                 self.send_chat_command(ChatCommand::SetDraftModel { model });
             }
             SlashCommand::Model(None) => {
-                self.bottom_pane.open_model_picker();
-                self.app_event_tx.send(UiEvent::ComposerChanged);
+                self.send_chat_command(ChatCommand::ListModels {
+                    purpose: ModelPickerPurpose::Model,
+                });
             }
             SlashCommand::Provider(Some(provider)) => {
                 self.send_chat_command(ChatCommand::SetDraftProvider { provider });
             }
             SlashCommand::Provider(None) => {
-                self.bottom_pane.open_provider_picker();
-                self.app_event_tx.send(UiEvent::ComposerChanged);
+                self.send_chat_command(ChatCommand::ListModels {
+                    purpose: ModelPickerPurpose::Provider,
+                });
             }
             SlashCommand::Effort(SlashEffort::Pick) => {
                 self.bottom_pane.open_effort_picker();
@@ -438,6 +452,21 @@ impl ChatTuiApp {
             }
             PickerSelection::Provider(provider) => {
                 self.send_chat_command(ChatCommand::SetDraftProvider { provider });
+            }
+            PickerSelection::Route {
+                provider,
+                api_kind,
+                model,
+            } => {
+                self.send_chat_command(ChatCommand::SetDraftRoute {
+                    provider,
+                    api_kind,
+                    model,
+                });
+            }
+            PickerSelection::ProviderModels(provider) => {
+                self.bottom_pane.open_model_picker_for(&provider);
+                self.app_event_tx.send(UiEvent::ComposerChanged);
             }
             PickerSelection::Effort(effort) => {
                 self.send_chat_command(ChatCommand::SetDraftReasoningEffort { effort });
@@ -689,6 +718,79 @@ mod tests {
     }
 
     #[test]
+    fn model_command_discovers_then_picker_sets_route() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let app_event_tx = AppEventSender::new(tx);
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        let mut app = ChatTuiApp::new(
+            ChatTuiViewOptions {
+                world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
+                session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
+                show_tool_details: false,
+            },
+            app_event_tx,
+            command_tx,
+        );
+        for event in fixture_events(&app.options) {
+            app.handle_ui_event(UiEvent::Chat(event), &FrameRequester::test_dummy());
+        }
+
+        app.submit_local_text("/provider".into());
+        assert_eq!(
+            command_rx.try_recv().expect("list command"),
+            ChatCommand::ListModels {
+                purpose: ModelPickerPurpose::Provider,
+            }
+        );
+
+        let models = serde_json::from_value(serde_json::json!([{
+            "providerId": "anthropic",
+            "apiKind": "anthropic:messages",
+            "model": "claude-opus-5-5",
+            "displayName": "Claude Opus 5.5",
+            "capabilities": {},
+            "source": "provider",
+            "fetchedAtMs": 0,
+        }]))
+        .expect("models");
+        let providers = serde_json::from_value(serde_json::json!([{
+            "providerId": "anthropic",
+            "apiKinds": ["anthropic:messages"],
+            "credential": "configured",
+            "credentialSource": "universe",
+        }]))
+        .expect("providers");
+        app.handle_ui_event(
+            UiEvent::Chat(ChatEvent::ModelsListed {
+                purpose: ModelPickerPurpose::Provider,
+                models,
+                providers,
+            }),
+            &FrameRequester::test_dummy(),
+        );
+        // Provider row, then the model picker it opens.
+        for _ in 0..2 {
+            app.handle_terminal_event(
+                Event::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)),
+                &FrameRequester::test_dummy(),
+            );
+            app.handle_terminal_event(
+                Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+                &FrameRequester::test_dummy(),
+            );
+        }
+
+        assert_eq!(
+            command_rx.try_recv().expect("route command"),
+            ChatCommand::SetDraftRoute {
+                provider: "anthropic".into(),
+                api_kind: "anthropic:messages".into(),
+                model: "claude-opus-5-5".into(),
+            }
+        );
+    }
+
+    #[test]
     fn skills_list_event_opens_picker_and_selection_uses_skill() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let app_event_tx = AppEventSender::new(tx);
@@ -871,7 +973,7 @@ mod tests {
     fn slash_prefix_filters_commands_and_enter_opens_selected_picker() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let app_event_tx = AppEventSender::new(tx);
-        let (command_tx, _command_rx) = mpsc::unbounded_channel();
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
         let mut app = ChatTuiApp::new(
             ChatTuiViewOptions {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
@@ -903,11 +1005,28 @@ mod tests {
             Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             &FrameRequester::test_dummy(),
         );
+        assert_eq!(
+            command_rx.try_recv().expect("list command"),
+            ChatCommand::ListModels {
+                purpose: ModelPickerPurpose::Model,
+            }
+        );
+        // Empty discovery lists only the current model; no built-in choices.
+        app.handle_ui_event(
+            UiEvent::Chat(ChatEvent::ModelsListed {
+                purpose: ModelPickerPurpose::Model,
+                models: Vec::new(),
+                providers: Vec::new(),
+            }),
+            &FrameRequester::test_dummy(),
+        );
 
         let backend = TestBackend::new(80, 12);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
-        assert!(format!("{}", terminal.backend()).contains("Select model"));
+        let rendered = format!("{}", terminal.backend());
+        assert!(rendered.contains("current model (not listed by provider)"));
+        assert!(!rendered.contains("gpt-5.4"));
     }
 
     #[test]
@@ -988,6 +1107,7 @@ mod tests {
             provider: "openai-responses".into(),
             api_kind: "openai:responses".into(),
             model: "gpt-5.5".into(),
+            session_api_kind: None,
             reasoning_effort: None,
             max_tokens: None,
             provider_editable: true,
@@ -1032,6 +1152,7 @@ mod tests {
                         output_ref: None,
                         started_at_ns: 0,
                         updated_at_ns: 0,
+                        stats: Default::default(),
                     }),
                     tool_chains: Vec::new(),
                 }],
