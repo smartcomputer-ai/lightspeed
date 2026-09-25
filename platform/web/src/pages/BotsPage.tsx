@@ -2,7 +2,7 @@ import type { BotReadResponse } from "@lightspeed-ai/agent-client";
 import { ReadError } from "@/components/read-error";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import { NavLink, useParams, useSearchParams } from "react-router-dom";
+import { NavLink, useParams } from "react-router-dom";
 import {
   api,
   botLabel,
@@ -17,7 +17,8 @@ import { BotAvatar } from "@/components/bot/face";
 import { StatusDot, relativeTime, type BotTone } from "@/components/bot/status";
 import { BotFace } from "@/components/icons/bot";
 import { Button } from "@/components/ui/button";
-import { LoadingNote, UniverseNotFound } from "@/components/page";
+import { DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
+import { useCreateParam } from "@/lib/create-param";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { useActionPermissions } from "@/lib/permissions";
@@ -28,8 +29,8 @@ const ROSTER_REFRESH_MS = 5_000;
 export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const { botId, sessionId } = useParams<{ botId?: string; sessionId?: string }>();
-  const [searchParams, setSearchParams] = useSearchParams();
   const permissions = useActionPermissions(universe?.id);
+  const [createOpen, setCreateOpen] = useCreateParam("bot");
 
   if (isLoading) return <LoadingNote />;
   if (!universe) {
@@ -41,13 +42,6 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
   }
 
   const create = permissions.can("create_bot");
-  const createOpen = searchParams.get("new") === "bot";
-  const setCreateOpen = (open: boolean) => {
-    const next = new URLSearchParams(searchParams);
-    if (open) next.set("new", "bot");
-    else next.delete("new");
-    setSearchParams(next, { replace: !open });
-  };
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       <aside
@@ -75,15 +69,12 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
             sessionId={sessionId}
           />
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
-            <BotFace size={40} className="text-muted-foreground/60" />
-            <span>Pick a bot{create ? ", or create one" : ""}.</span>
-            {create && (
-              <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
-                <Plus data-icon="inline-start" /> New bot
-              </Button>
-            )}
-          </div>
+          <DetailPrompt
+            icon={<BotFace size={40} className="text-muted-foreground/60" />}
+            create={create ? { label: "New bot", onClick: () => setCreateOpen(true) } : undefined}
+          >
+            Pick a bot{create ? ", or create one" : ""}.
+          </DetailPrompt>
         )}
       </section>
       {create && createOpen && (
@@ -179,14 +170,7 @@ function BotsPane({
         {bots.isLoading && <p className="p-4 text-sm text-muted-foreground">Loading…</p>}
         {bots.error && <ReadError error={bots.error} loading={!bots.data} className="p-4" />}
         {bots.data && roster.length === 0 && (
-          <div className="grid gap-3 p-4 text-sm text-muted-foreground">
-            <p>No bots yet.</p>
-            {create && (
-              <Button size="sm" onClick={onCreate}>
-                <Plus data-icon="inline-start" /> Create your first bot
-              </Button>
-            )}
-          </div>
+          <ListNote>No bots yet.</ListNote>
         )}
         {groups.map((group) => (
           <div key={group.title}>

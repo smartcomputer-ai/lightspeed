@@ -1,4 +1,6 @@
 import type { ComponentType, ReactNode } from "react";
+import { Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export function PageHeader({
   title,
@@ -59,6 +61,36 @@ export function EmptyState({
       {children && <p className="max-w-lg text-sm text-muted-foreground">{children}</p>}
     </div>
   );
+}
+
+/// The detail side of a list-and-detail page with nothing open: the page's
+/// icon, what to pick, and, for a member who may, the way to create one. The
+/// list header's small add button stays; this is where a newcomer finds it.
+export function DetailPrompt({
+  icon,
+  children,
+  create,
+}: {
+  icon: ReactNode;
+  children: ReactNode;
+  create?: { label: string; onClick: () => void };
+}) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
+      {icon}
+      <span>{children}</span>
+      {create && (
+        <Button size="sm" variant="outline" onClick={create.onClick}>
+          <Plus data-icon="inline-start" /> {create.label}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/// An empty list column: one muted line.
+export function ListNote({ children }: { children: ReactNode }) {
+  return <p className="p-4 text-sm text-muted-foreground">{children}</p>;
 }
 
 export function CenteredNote({ children }: { children: ReactNode }) {

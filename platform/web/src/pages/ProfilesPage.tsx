@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { slugify } from "@lightspeed/platform-shared";
-import { ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import {
   api,
   type ProfileDocument,
@@ -45,7 +45,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LoadingNote, UniverseNotFound } from "@/components/page";
+import { DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
+import { useCreateParam } from "@/lib/create-param";
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
 import {
   resourceFeatureDisableReasons,
@@ -62,6 +63,8 @@ import { useActionPermissions } from "@/lib/permissions";
 export function ProfilesPage(_props: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const { profileId } = useParams<{ profileId: string }>();
+  const canCreate = useActionPermissions(universe?.id).can("create_profile");
+  const [, setCreateOpen] = useCreateParam("profile");
 
   if (isLoading) {
     return <LoadingNote />;
@@ -95,9 +98,12 @@ export function ProfilesPage(_props: { admin: boolean }) {
             profileId={profileId}
           />
         ) : (
-          <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-            Select a profile.
-          </div>
+          <DetailPrompt
+            icon={<SlidersHorizontal className="size-10 text-muted-foreground/60" />}
+            create={canCreate ? { label: "New profile", onClick: () => setCreateOpen(true) } : undefined}
+          >
+            Pick a profile{canCreate ? ", or create one" : ""}.
+          </DetailPrompt>
         )}
       </div>
     </div>
@@ -119,7 +125,7 @@ function ProfilePane({
   });
   const permissions = useActionPermissions(universeId);
   const canCreate = permissions.can("create_profile");
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useCreateParam("profile");
 
   return (
     <>
@@ -143,9 +149,7 @@ function ProfilePane({
           <ReadError error={profiles.error} loading={!profiles.data} className="p-4" />
         )}
         {profiles.data && profiles.data.length === 0 && (
-          <p className="p-4 text-sm text-muted-foreground">
-            No profiles yet.{canCreate ? " Create one to give a bot its configuration." : ""}
-          </p>
+          <ListNote>No profiles yet.</ListNote>
         )}
         <ul>
           {profiles.data?.map((profile) => (

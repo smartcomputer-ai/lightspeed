@@ -51,7 +51,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { LoadingNote, UniverseNotFound } from "@/components/page";
+import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
+import { useCreateParam } from "@/lib/create-param";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 
@@ -66,6 +67,7 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   const params = useParams<{ workspaceId: string; "*": string }>();
   const workspaceId = params.workspaceId;
   const filePath = params["*"] || undefined;
+  const [, setCreateOpen] = useCreateParam("workspace");
 
   if (isLoading) {
     return <LoadingNote />;
@@ -104,11 +106,18 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
             filePath={filePath}
           />
         ) : (
-          <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-            {workspaceId
-              ? "Select a file."
-              : "Select a workspace."}
-          </div>
+          workspaceId ? (
+            <DetailPrompt icon={<File className="size-10 text-muted-foreground/60" />}>
+              Pick a file.
+            </DetailPrompt>
+          ) : (
+            <DetailPrompt
+              icon={<FolderGit2 className="size-10 text-muted-foreground/60" />}
+              create={permissions.can("create_workspace") ? { label: "New workspace", onClick: () => setCreateOpen(true) } : undefined}
+            >
+              Pick a workspace{permissions.can("create_workspace") ? ", or create one" : ""}.
+            </DetailPrompt>
+          )
         )}
       </section>
     </div>
@@ -145,7 +154,7 @@ function WorkspacePane({
       ),
     enabled: workspaceId !== undefined,
   });
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useCreateParam("workspace");
   const [newFileOpen, setNewFileOpen] = useState(false);
 
   // Auto-select the first workspace when landing on bare /workspaces.

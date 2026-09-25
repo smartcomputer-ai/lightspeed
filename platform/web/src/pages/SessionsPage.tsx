@@ -8,7 +8,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { NavLink, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Archive, ArrowLeft, ChevronDown, ListChecks, ListFilter, LoaderCircle, Plus, ShieldCheck, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { Archive, ArrowLeft, ChevronDown, ListChecks, ListFilter, LoaderCircle, MessagesSquare, Plus, ShieldCheck, SlidersHorizontal, Trash2, X } from "lucide-react";
 import {
   api,
   botLabel,
@@ -103,7 +103,8 @@ import { RunSectionView } from "@/components/session/run-section";
 import { TranscriptEntrance, TranscriptMotionProvider } from "@/components/session/transcript-motion";
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/tool-trace";
 import { sectionsByRun, withPendingRunInputs } from "@/lib/sessions/run-sections";
-import { CenteredNote, LoadingNote, UniverseNotFound } from "@/components/page";
+import { CenteredNote, DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
+import { useCreateParam } from "@/lib/create-param";
 import { ReadError } from "@/components/read-error";
 import { useSessionTail } from "@/lib/sessions/tail";
 import {
@@ -143,6 +144,8 @@ export function SessionsPage({ admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const { sessionId } = useParams<{ sessionId: string }>();
   const location = useLocation();
+  const canCreate = useActionPermissions(universe?.id).can("create_session");
+  const [, setCreateOpen] = useCreateParam("session");
 
   if (isLoading) {
     return <LoadingNote />;
@@ -177,9 +180,12 @@ export function SessionsPage({ admin }: { admin: boolean }) {
             sessionHref={(target) => `/u/${slug}/sessions/${target}${location.search}`}
           />
         ) : (
-          <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-            Select a session to view its conversation.
-          </div>
+          <DetailPrompt
+            icon={<MessagesSquare className="size-10 text-muted-foreground/60" />}
+            create={canCreate ? { label: "New session", onClick: () => setCreateOpen(true) } : undefined}
+          >
+            Pick a session{canCreate ? ", or start one" : ""}.
+          </DetailPrompt>
         )}
       </section>
     </div>
@@ -224,13 +230,7 @@ function SessionList({
     refetchInterval: SESSION_LIST_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
-  const createOpen = searchParams.get("new") === "session";
-  const setCreateOpen = (open: boolean) => {
-    const next = new URLSearchParams(searchParams);
-    if (open) next.set("new", "session");
-    else next.delete("new");
-    setSearchParams(next, { replace: !open });
-  };
+  const [createOpen, setCreateOpen] = useCreateParam("session");
   const [selecting, setSelecting] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -613,18 +613,16 @@ function SessionList({
           <ReadError error={pages.error} loading={!pages.data} className="p-4" />
         )}
         {pages.data && allSessions.length === 0 && (
-          <p className="p-4 text-sm text-muted-foreground">
+          <ListNote>
             {filterEntries.length > 0
               ? "No sessions match this metadata filter."
               : !showClosed
                 ? "No open sessions."
-              : "No sessions yet — start one, or bind a chat."}
-          </p>
+                : "No sessions yet."}
+          </ListNote>
         )}
         {pages.data && !showSubagents && allSessions.length > 0 && sessions.length === 0 && (
-          <p className="p-4 text-sm text-muted-foreground">
-            No top-level sessions in the loaded results.
-          </p>
+          <ListNote>No top-level sessions in the loaded results.</ListNote>
         )}
         <ul>
           {tree.map((node) => (
