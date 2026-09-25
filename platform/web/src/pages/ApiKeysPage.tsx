@@ -42,7 +42,7 @@ import {
   TableRow,
   TableTitleCell,
 } from "@/components/ui/table";
-import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
+import { EmptyState, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
 import { useActiveUniverse } from "@/lib/universes";
 import { useActionPermissions } from "@/lib/permissions";
 
@@ -100,14 +100,10 @@ function ApiKeyList({ universeId }: { universeId: string }) {
         <p className="mb-3 text-sm text-destructive">{revoke.error.message}</p>
       )}
       {keys.data && rows.length === 0 && (
-        <div className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-8 text-center">
-          <KeyRound className="size-7 text-muted-foreground" />
-          <p className="text-sm font-medium">No API keys</p>
-          <p className="max-w-md text-sm text-muted-foreground">
-            Create one when an external agent needs access to this universe. The secret is
-            shown only once.
-          </p>
-        </div>
+        <EmptyState icon={KeyRound} title="No API keys yet">
+          Keys let external agents and clients reach this universe. A key's secret is shown only
+          once.
+        </EmptyState>
       )}
       {rows.length > 0 && (
         <TableCard>

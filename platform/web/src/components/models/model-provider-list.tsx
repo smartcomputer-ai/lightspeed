@@ -1,4 +1,5 @@
-import { ChevronRight } from "lucide-react";
+import { EmptyState } from "@/components/page";
+import { BrainCircuit, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -22,10 +23,10 @@ export function ModelProviderList({
 }) {
   if (providers.length === 0) {
     return (
-      <p className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">
-        No model providers yet. Use <span className="font-medium">Add provider</span> to connect an
-        API key, a compatible endpoint, or a coding-agent subscription.
-      </p>
+      <EmptyState icon={BrainCircuit} title="No model providers yet">
+        Provider API keys, compatible endpoints and coding-agent subscriptions that sessions call
+        models through.
+      </EmptyState>
     );
   }
   return (

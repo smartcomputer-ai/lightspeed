@@ -5,16 +5,7 @@ import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { slugify } from "@lightspeed/platform-shared";
-import {
-  CheckCircle2,
-  ExternalLink,
-  Loader2,
-  LogIn,
-  Pencil,
-  Plus,
-  RotateCcw,
-  Trash2,
-} from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2, LogIn, Pencil, Plus, RotateCcw, Server, Trash2 } from "lucide-react";
 import {
   api,
   type AuthGrantOption,
@@ -68,7 +59,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
+import { EmptyState, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import { useActiveUniverse } from "@/lib/universes";
 
@@ -154,9 +145,10 @@ function ServerList({ universeId }: { universeId: string }) {
         <ReadError error={authGrants.error} loading={!authGrants.data} prefix="Access credentials unavailable" />
       )}
       {servers.data && rows.length === 0 && (
-        <p className="mb-4 text-sm text-muted-foreground">
-          No MCP servers configured.
-        </p>
+        <EmptyState icon={Server} title="No MCP servers yet">
+          Remote tool servers that profiles and sessions link, each with its own credential and
+          tool allowance.
+        </EmptyState>
       )}
       {rows.length > 0 && (
         <TableCard>

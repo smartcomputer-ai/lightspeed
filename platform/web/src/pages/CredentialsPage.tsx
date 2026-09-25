@@ -3,7 +3,7 @@ import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, KeyRound, Plus, ShieldOff } from "lucide-react";
+import { ChevronRight, KeyRound, LockKeyhole, Plus, ShieldOff } from "lucide-react";
 import {
   api,
   type GitHubApp,
@@ -62,12 +62,7 @@ import {
   TableRow,
   TableTitleCell,
 } from "@/components/ui/table";
-import {
-  LoadingNote,
-  PageHeader,
-  SectionHeader,
-  UniverseNotFound,
-} from "@/components/page";
+import { EmptyState, LoadingNote, PageHeader, SectionHeader, UniverseNotFound } from "@/components/page";
 import {
   GitHubAppDetails,
   GitHubAppForm,
@@ -188,14 +183,10 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
         <p className="mb-4 text-sm text-destructive">{revokeGrant.error.message}</p>
       )}
       {inventory.data && grants.length === 0 && (
-        <div className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-8 text-center">
-          <KeyRound className="size-7 text-muted-foreground" />
-          <p className="text-sm font-medium">No credentials yet</p>
-          <p className="max-w-lg text-sm text-muted-foreground">
-            Paste a token or environment secret, or connect a GitHub App. The resulting credential
-            can be bound to environments, MCP servers and bot triggers without exposing its value.
-          </p>
-        </div>
+        <EmptyState icon={LockKeyhole} title="No credentials yet">
+          Tokens, environment secrets and GitHub App installations live here, bound to
+          environments, MCP servers and bot triggers without exposing their values.
+        </EmptyState>
       )}
       {grants.length > 0 && (
         <TableCard>

@@ -43,7 +43,7 @@ import {
   TableRow,
   TableTitleCell,
 } from "@/components/ui/table";
-import { LoadingNote, PageHeader } from "@/components/page";
+import { EmptyState, LoadingNote, PageHeader } from "@/components/page";
 import { groupsFor, METHOD_GROUPS } from "@/lib/method-groups";
 import { useUniverses } from "@/lib/universes";
 
@@ -87,10 +87,10 @@ export function AdminApiKeysPage() {
       {keys.error && <ReadError error={keys.error} loading={!keys.data} />}
       {revoke.error && <p className="mb-3 text-sm text-destructive">{revoke.error.message}</p>}
       {keys.data && rows.length === 0 && (
-        <div className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-8 text-center">
-          <KeyRound className="size-7 text-muted-foreground" />
-          <p className="text-sm font-medium">No API keys</p>
-        </div>
+        <EmptyState icon={KeyRound} title="No API keys yet">
+          Keys reach the deployment or one universe and call the method groups they were minted
+          with.
+        </EmptyState>
       )}
       {rows.length > 0 && (
         <TableCard>

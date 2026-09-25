@@ -2,7 +2,7 @@ import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
+import { Boxes, Check, ChevronDown, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
 import {
   api,
   type Environment,
@@ -49,7 +49,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
+import { EmptyState, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
 import { EnvironmentIdlePolicyDialog } from "@/components/environment/idle-policy-dialog";
 import {
   IdlePolicyFields,
@@ -221,13 +221,10 @@ function ProviderList({ universeId }: { universeId: string }) {
         <ReadError error={registrationKeys.error} loading={!registrationKeys.data} prefix="Registration keys unavailable" />
       )}
       {bindings.data && environments.data && environmentRows.length === 0 && (
-        <div className="rounded-xl border border-dashed px-5 py-8 text-center">
-          <p className="text-sm font-medium">No environments yet</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Create one from an enabled provider template, or mint a registration key and start
-            <span className="font-mono"> lightspeed-envd</span> on a machine of your own.
-          </p>
-        </div>
+        <EmptyState icon={Boxes} title="No environments yet">
+          Machines agents run commands on: created from a provider template, or registered by
+          running <span className="font-mono">lightspeed-envd</span> on a machine of your own.
+        </EmptyState>
       )}
       {groupedRows.map((group) => (
         <section key={group.key.registrationKeyId} className="grid gap-3">

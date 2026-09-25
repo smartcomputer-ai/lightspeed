@@ -63,7 +63,7 @@ import {
   TableRow,
   TableTitleCell,
 } from "@/components/ui/table";
-import { CenteredNote, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
+import { EmptyState, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
 import { useActiveUniverse } from "@/lib/universes";
 
 export function ChannelsPage({ admin: _admin }: { admin: boolean }) {
@@ -154,14 +154,10 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
       {toggle.error && <p className="mb-4 text-sm text-destructive">{toggle.error.message}</p>}
 
       {accounts.data && accountRows.length === 0 ? (
-        <CenteredNote>
-          <RadioTower className="mx-auto size-6" />
-          <span className="font-medium text-foreground">No messaging accounts connected</span>
-          <span>Connect a Telegram bot or WhatsApp number without managing credentials separately.</span>
-          <Button className="mx-auto mt-2" onClick={() => setConnectOpen(true)}>
-            Connect channel
-          </Button>
-        </CenteredNote>
+        <EmptyState icon={RadioTower} title="No messaging accounts yet">
+          Telegram bots and WhatsApp numbers that bots talk through; their credentials are kept for
+          you.
+        </EmptyState>
       ) : (
         <div className="grid gap-6">
           <Card>

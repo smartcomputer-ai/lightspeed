@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 export function PageHeader({
   title,
@@ -36,6 +36,27 @@ export function SectionHeader({
         {description && <p className="text-sm text-muted-foreground">{description}</p>}
       </div>
       {actions}
+    </div>
+  );
+}
+
+/// An empty list: what belongs here and where it comes from, under the
+/// page's own icon. The page header holds the action that adds one; the box
+/// does not repeat it.
+export function EmptyState({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  title: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-8 text-center">
+      <Icon className="size-7 text-muted-foreground" />
+      <p className="text-sm font-medium">{title}</p>
+      {children && <p className="max-w-lg text-sm text-muted-foreground">{children}</p>}
     </div>
   );
 }
