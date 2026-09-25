@@ -103,7 +103,7 @@ import { RunSectionView } from "@/components/session/run-section";
 import { TranscriptEntrance, TranscriptMotionProvider } from "@/components/session/transcript-motion";
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/tool-trace";
 import { sectionsByRun, withPendingRunInputs } from "@/lib/sessions/run-sections";
-import { CenteredNote, DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
+import { DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
 import { ReadError } from "@/components/read-error";
 import { useSessionTail } from "@/lib/sessions/tail";
@@ -2037,7 +2037,10 @@ export function SessionDetail({
               {tail.phase === "live" &&
                 entries.length === 0 &&
                 pendingInTranscript.length === 0 && (
-                  <CenteredNote>No conversation yet — say something below.</CenteredNote>
+                  <SessionWelcome
+                    state={closed ? "closed" : !canControl ? "readOnly" : managedGate && !directInput ? "managed" : "open"}
+                    unshared={owner && session.data?.access.visibility === "restricted" && !session.data?.origin}
+                  />
                 )}
               {displaySections.map((section) => (
                 <MessageScrollerItem key={section.key} messageId={section.key}>
@@ -2415,4 +2418,39 @@ function relativeTime(ms: number): string {
   if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`;
   if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`;
   return `${Math.floor(delta / 86_400_000)}d`;
+}
+
+/// An empty session: an invitation to whoever can write to it, a plain note
+/// to anyone who cannot.
+function SessionWelcome({
+  state,
+  unshared,
+}: {
+  state: "open" | "closed" | "readOnly" | "managed";
+  unshared: boolean;
+}) {
+  const [title, body] = {
+    open: [
+      "What should we work on?",
+      "Ask a question or hand over a task. The agent works through it here, step by step, and you can steer it while it runs.",
+    ],
+    managed: [
+      "Nothing here yet",
+      "This session is driven by its manager; its work will appear here.",
+    ],
+    readOnly: ["Nothing here yet", "Messages and the agent's work will appear here."],
+    closed: ["This session is closed", "It ended before anything was said."],
+  }[state];
+  return (
+    <div className="flex min-h-[45vh] flex-col items-center justify-center gap-3 px-4 text-center">
+      <MessagesSquare className="size-10 text-muted-foreground/50" />
+      <h2 className="text-lg font-medium tracking-tight">{title}</h2>
+      <p className="max-w-md text-sm text-muted-foreground">{body}</p>
+      {unshared && state === "open" && (
+        <p className="max-w-md text-xs text-muted-foreground">
+          Only you and the universe's admins see this session until you share it.
+        </p>
+      )}
+    </div>
+  );
 }

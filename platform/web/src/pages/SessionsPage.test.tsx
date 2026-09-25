@@ -360,6 +360,15 @@ it.each([false, true])("keeps a backend-loaded run mounted through history prepe
 
 
 describe("session action permissions", () => {
+  it("invites whoever can write to an empty session, and tells a reader it is empty", async () => {
+    await show("session");
+    expect(container.textContent).toContain("What should we work on?");
+    mocks.permissions = new Set(["read"]);
+    await show("session");
+    expect(container.textContent).toContain("Nothing here yet");
+    expect(container.textContent).not.toContain("What should we work on?");
+  });
+
   it("keeps a reader's transcript visible without input or queue controls", async () => {
     mocks.permissions = new Set(["read"]);
     transcript.entries = [{ kind: "message", key: "reply", role: "assistant", text: "Visible result" }];
