@@ -1,6 +1,6 @@
 import { relations } from "drizzle-orm";
 import { integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { user } from "./auth.js";
+import { organization, user } from "./auth.js";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
 const updatedAt = () =>
@@ -9,10 +9,15 @@ const updatedAt = () =>
     .$onUpdate(() => new Date())
     .notNull();
 
-/// Display/routing metadata only. Universe permissions live in core.
+/// A platform universe: one better-auth organization plus its Lightspeed
+/// linkage. `lightspeedUniverseId` is the id stamped as
+/// `x-lightspeed-universe`; the app creates the engine universe explicitly.
 export const universes = pgTable("universes", {
   id: uuid("id").primaryKey().defaultRandom(),
-  slug: text("slug").notNull().unique(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
   lightspeedUniverseId: uuid("lightspeed_universe_id").notNull().unique(),
   name: text("name").notNull(),
   /// Gateway RPC endpoint; null = the deployment default from env.
@@ -25,7 +30,6 @@ export const universes = pgTable("universes", {
 });
 
 export type UniverseSetupState = {
-  principalId?: string;
   keyPrefix?: string;
   grantId?: string;
   serverId?: string;
@@ -63,7 +67,11 @@ export const universeSetupInstallations = pgTable(
   ],
 );
 
-export const universesRelations = relations(universes, ({ many }) => ({
+export const universesRelations = relations(universes, ({ one, many }) => ({
+  organization: one(organization, {
+    fields: [universes.organizationId],
+    references: [organization.id],
+  }),
   setupInstallations: many(universeSetupInstallations),
 }));
 

@@ -25,7 +25,7 @@
     "check:ci": "npm run check && npm run test:build && npm run test:migrations && npm run test:release-packaging",
     "check:dev": "bash -n dev.sh scripts/dev/env.sh scripts/dev/lib/common.sh scripts/dev/infra/*.sh && node --check scripts/dev/stack.mjs && node --test scripts/dev/*.test.mjs && ./dev.sh --help >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan infra >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan runtime >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan platform >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan demo >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan full >/dev/null",
     "check:identity": "node platform/scripts/check-product-identity.mjs",
-    "check:generated": "npm run check:generated --workspace @lightspeed-ai/agent-client && npm run check:generated --workspace @lightspeed/configurator-mcp && node platform/scripts/generate-config-reference.mjs && git diff --exit-code -- platform/web/src/lib/profile-config-reference.ts",
+    "check:generated": "npm run check:generated --workspace @lightspeed-ai/agent-client && npm run check:generated --workspace @lightspeed/configurator-mcp && node platform/scripts/generate-config-reference.mjs && node platform/scripts/generate-method-roles.mjs && git diff --exit-code -- platform/web/src/lib/profile-config-reference.ts platform/server/src/routes/method-roles.ts",
     "dev": "./dev.sh",
     "generate": "npm run generate --workspace @lightspeed/platform-db",
     "test": "npm run test --workspaces --if-present",

@@ -9,8 +9,8 @@ import {
 import { schema } from "@lightspeed/platform-db";
 import type { UniverseSetupState } from "@lightspeed/platform-db/schema";
 import type { AppContext, ApiVariables } from "../context.js";
-import { engineClientFor } from "./gateway.js";
-import { universeForSession } from "./universes.js";
+import { deploymentClientFor, engineClientFor } from "./gateway.js";
+import { universeForSession, type UniverseAccess } from "./universes.js";
 
 const SETUP_ID = "configurator";
 const SETUP_VERSION = 5;
@@ -18,9 +18,12 @@ const SERVER_ID = "lightspeed-configurator";
 const PROFILE_ID = "lightspeed-configurator";
 const KEY_DISPLAY_NAME = "Lightspeed Configurator service credential";
 const INSTALL_LEASE_MS = 5 * 60 * 1_000;
+/// The method groups the Configurator's key holds: configuring the universe,
+/// never reading or controlling sessions.
+const KEY_GROUPS = ["profiles", "mcp", "environments", "bots", "channels", "auth", "models"] as const;
 const CONFIGURATOR_DESCRIPTION =
   "Creates a dedicated credential, registers the Configurator MCP server, and adds a ready-to-use profile for managing this universe. " +
-  "The server starts restricted to you. Granting it to Default agent identity hands Operator actions to every session and bot running as Default agent identity.";
+  "Anyone who can attach the server configures profiles, MCP servers, environments, bots, channels, credentials and models with its key.";
 
 type Installation = typeof schema.universeSetupInstallations.$inferSelect;
 type Universe = typeof schema.universes.$inferSelect;
@@ -44,7 +47,7 @@ export function setupRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   /// Operators see what templates exist; installing one stays with Admins
-  /// because it creates a service identity with the Operator role.
+  /// because it mints a key that configures the universe.
   app.get("/:id/setups", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access || (access.role !== "admin" && access.role !== "operator")) {
@@ -68,7 +71,7 @@ export function setupRoutes(ctx: AppContext) {
       try {
         const completed = await installConfigurator(
           ctx,
-          access.universe,
+          access,
           session.user.id,
           installation,
         );
@@ -180,7 +183,7 @@ async function claimInstallation(
 
 async function installConfigurator(
   ctx: AppContext,
-  universe: Universe,
+  access: UniverseAccess,
   userId: string,
   installation: Installation,
 ): Promise<Installation> {
@@ -190,8 +193,9 @@ async function installConfigurator(
   }
   new URL(mcpUrl);
 
-  const client = engineClientFor(ctx, universe);
-  const deployment = client;
+  const universe = access.universe;
+  const client = engineClientFor(ctx, access);
+  const deployment = deploymentClientFor(ctx, universe.gatewayUrl);
   let state = { ...installation.state };
 
   state = await ensureCredential(ctx, installation.id, universe, client, deployment, state, mcpUrl);
@@ -254,27 +258,14 @@ async function ensureCredential(
     await client.call("auth/grants/revoke", { grantId: state.grantId });
   }
   if (key && key.revokedAtMs == null && state.keyPrefix) {
-    await deployment.call("deployment/api-keys/revoke", {
-      scope: { kind: "universe", universeId: universe.lightspeedUniverseId },
-      keyPrefix: state.keyPrefix,
-    });
+    await deployment.call("deployment/api-keys/revoke", { keyPrefix: state.keyPrefix });
   }
 
-  if (!state.principalId) {
-    state = await persistState(ctx, installationId, { ...state, principalId: crypto.randomUUID() });
-  }
-  const scope = { kind: "universe" as const, universeId: universe.lightspeedUniverseId };
-  await deployment.call("deployment/identity/apply", {
-    operation: "create_principal", id: state.principalId!, kind: "service",
-    displayName: "Configurator", managementScope: scope,
-  });
-  await deployment.call("deployment/identity/apply", {
-    operation: "assign_role", assignment: { scope, subject: { kind: "principal", id: state.principalId! }, role: "operator" },
-  });
   const minted = await deployment.call("deployment/api-keys/create", {
     scope: { kind: "universe", universeId: universe.lightspeedUniverseId },
     displayName: KEY_DISPLAY_NAME,
-    principalId: state.principalId!,
+    groups: [...KEY_GROUPS],
+    assertActor: false,
   });
   const grantId = `authgrant_lightspeed_configurator_${crypto.randomUUID().replaceAll("-", "")}`;
   try {
@@ -287,10 +278,7 @@ async function ensureCredential(
     });
   } catch (error) {
     await deployment
-      .call("deployment/api-keys/revoke", {
-        scope: { kind: "universe", universeId: universe.lightspeedUniverseId },
-        keyPrefix: minted.result.apiKey.keyPrefix,
-      })
+      .call("deployment/api-keys/revoke", { keyPrefix: minted.result.apiKey.keyPrefix })
       .catch(() => undefined);
     throw error;
   }
@@ -334,14 +322,11 @@ export async function ensureMcpServer(
     ...auth,
     status: "active",
   };
-  // The server acts with an Operator key, so whoever may use it holds
-  // Operator actions. It starts restricted and owned by the installing
-  // Admin; a repair leaves the access someone chose since untouched.
+  // The server acts with the Configurator key, so whoever may attach it
+  // configures the universe with that key's groups.
   await client.call("mcp/servers/put", {
     server,
-    ...(existing
-      ? { expectedRevision: existing.revision }
-      : { access: { visibility: "restricted" } }),
+    ...(existing ? { expectedRevision: existing.revision } : {}),
   });
   return await persistState(ctx, installationId, { ...state, serverId: SERVER_ID });
 }

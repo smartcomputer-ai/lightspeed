@@ -37,7 +37,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/list", {});
       return c.json(response.result);
     });
@@ -53,7 +53,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "invalid body" }, 400);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/create", body as unknown as BotCreateParams);
       return c.json(response.result, 201);
     });
@@ -65,7 +65,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/read", { botId: c.req.param("botId") });
       return c.json(response.result);
     });
@@ -82,7 +82,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "invalid body" }, 400);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/put", {
         bot: { ...bot, botId: c.req.param("botId") },
         expectedRevision: body.expectedRevision,
@@ -97,7 +97,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/close", { botId: c.req.param("botId") });
       return c.json(response.result);
     });
@@ -109,7 +109,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/delete", { botId: c.req.param("botId") });
       return c.json(response.result);
     });
@@ -121,7 +121,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/state/read", {
         botId: c.req.param("botId"),
       });
@@ -135,7 +135,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/sessions/rotate", {
         botId: c.req.param("botId"),
         sessionId: c.req.param("sessionId"),
@@ -150,7 +150,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/triggers/list", {
         botId: c.req.param("botId"),
       });
@@ -167,7 +167,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/triggers/read", {
         botId: c.req.param("botId"),
         triggerId: c.req.param("triggerId"),
@@ -190,7 +190,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "invalid body" }, 400);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/triggers/put", {
         botId: c.req.param("botId"),
         trigger: { ...trigger, triggerId: c.req.param("triggerId") },
@@ -206,7 +206,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/triggers/delete", {
         botId: c.req.param("botId"),
         triggerId: c.req.param("triggerId"),
@@ -226,7 +226,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "invalid body" }, 400);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/events/admit", {
         botId: c.req.param("botId"),
         event,
@@ -245,7 +245,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "invalid body" }, 400);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/events/replay", {
         botId: c.req.param("botId"),
         seq: body.seq,
@@ -265,7 +265,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "invalid limit" }, 400);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/events/list", {
         botId: c.req.param("botId"),
         limit,
@@ -285,7 +285,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "invalid seq" }, 400);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/events/read", {
         botId: c.req.param("botId"),
         seq,
@@ -304,7 +304,7 @@ export function botRoutes(ctx: AppContext) {
       return c.json({ error: "invalid body" }, 400);
     }
     return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access.universe);
+      const client = engineClientFor(ctx, access);
       const response = await client.call("bots/filters/test", {
         botId: c.req.param("botId"),
         filter: body.filter,

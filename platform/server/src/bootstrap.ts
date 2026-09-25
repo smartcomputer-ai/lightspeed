@@ -1,4 +1,3 @@
-import { userClient } from "./runtime-client.js";
 import { count, eq } from "drizzle-orm";
 import { hashPassword } from "better-auth/crypto";
 import { schema, type Db } from "@lightspeed/platform-db";
@@ -19,9 +18,6 @@ export async function bootstrapAdmin(db: Db, env: ServerEnv): Promise<void> {
   if (users > 0) {
     return;
   }
-  if (!env.adminPrincipalId) throw new Error("LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID must name a pre-provisioned core deployment administrator");
-  const rights = await userClient(env, env.adminPrincipalId).call("deployment/identity/self", { scope: { kind: "deployment" } });
-  if (!rights.result.access.roles.includes("deployment_admin")) throw new Error("bootstrap principal must be an active core deployment administrator");
   const userId = crypto.randomUUID();
   const now = new Date();
   await db.transaction(async (tx) => {
@@ -30,7 +26,7 @@ export async function bootstrapAdmin(db: Db, env: ServerEnv): Promise<void> {
       name: env.adminEmail!.split("@")[0] ?? "admin",
       email: env.adminEmail!,
       emailVerified: true,
-      corePrincipalId: env.adminPrincipalId!,
+      role: "admin",
       createdAt: now,
       updatedAt: now,
     });

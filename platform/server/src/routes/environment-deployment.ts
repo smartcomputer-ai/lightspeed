@@ -36,7 +36,7 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   app.use("*", async (c, next) => {
-    if (!isPlatformAdmin()) {
+    if (!isPlatformAdmin(c.get("session"))) {
       return c.json({ error: "platform admin required" }, 403);
     }
     await next();

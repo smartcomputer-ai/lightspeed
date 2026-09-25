@@ -9,13 +9,13 @@ export interface ServerEnv {
   /// Bootstrap admin, applied only when the users table is empty.
   adminEmail: string | null;
   adminPassword: string | null;
-  adminPrincipalId?: string | null;
   /// Explicit local launcher fixtures; disabled in ordinary server startup.
   devSeed?: boolean;
   github: { clientId: string; clientSecret: string } | null;
   /// Authenticated Lightspeed gateway RPC endpoint.
   lightspeedApiUrl: string | null;
-  /// Authenticated Platform service credential; requires deployment assert_user and manage_identity capabilities.
+  /// The Platform's deployment key: every group, and allowed to assert the
+  /// signed-in user as the actor (`server api-key bootstrap`).
   lightspeedApiKey?: string | null;
   /// Public Streamable HTTP endpoint installed by the Configurator setup.
   configuratorMcpUrl: string | null;
@@ -64,7 +64,6 @@ export function loadEnv(): ServerEnv {
     port: Number(process.env.PORT ?? 3000),
     adminEmail: process.env.LIGHTSPEED_PLATFORM_ADMIN_EMAIL ?? null,
     adminPassword: process.env.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD ?? null,
-    adminPrincipalId: process.env.LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID ?? null,
     devSeed: booleanEnv("LIGHTSPEED_PLATFORM_DEV_SEED", false),
     github,
     lightspeedApiUrl: process.env.LIGHTSPEED_API_URL ?? null,

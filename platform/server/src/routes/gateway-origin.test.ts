@@ -1,5 +1,3 @@
-import { requestIdentity } from "../runtime-client.js";
-import type { EffectiveAccess } from "@lightspeed-ai/agent-client";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
@@ -9,7 +7,8 @@ vi.mock("./universes.js", () => ({
   universeForSession: vi.fn(async () => ({
     universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/rpc" },
     slug: "test",
-    role: "owner",
+    role: "operator",
+    member: { userId: "operator", role: "operator" },
   })),
 }));
 
@@ -23,9 +22,13 @@ describe("composer input origin", () => {
     const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer lsk_platform_fixture");
-      expect(new Headers(init.headers).get("x-lightspeed-principal")).toBe("user:11111111-1111-4111-8111-111111111111");
+      expect(new Headers(init.headers).get("x-lightspeed-actor")).toBe("operator");
       expect(init.redirect).toBe("error");
       const rpc = JSON.parse(String(init.body));
+      if (rpc.method === "session/read") {
+        const access = { visibility: "restricted", createdBy: { kind: "actor", id: "operator" } };
+        return Response.json({ id: rpc.id, result: { result: { session: { id: "session", access } }, notifications: [] } });
+      }
       requests.push(rpc);
       return Response.json({
         id: rpc.id,
@@ -38,7 +41,7 @@ describe("composer input origin", () => {
     const app = new Hono<{ Variables: ApiVariables }>();
     app.use("*", async (c, next) => {
       c.set("session", { user: { id: "operator" } } as ApiVariables["session"]);
-      await requestIdentity.run({ principal: { id: "11111111-1111-4111-8111-111111111111" } } as EffectiveAccess, next);
+      await next();
     });
     app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedApiKey: "lsk_platform_fixture" } } as AppContext));
     const response = await app.request(path, {

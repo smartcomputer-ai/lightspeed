@@ -1,16 +1,13 @@
-import { provisioningClient } from "./runtime-client.js";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { admin } from "better-auth/plugins/admin";
 import { bearer } from "better-auth/plugins/bearer";
+import { organization } from "better-auth/plugins/organization";
 import { schema, type Db } from "@lightspeed/platform-db";
 import type { ServerEnv } from "./env.js";
 
 export function createAuth(db: Db, env: ServerEnv) {
   return betterAuth({
-    // The core principal is assigned by the create hook below, never by input.
-    // Better Auth validates required fields before hooks run, so the field
-    // must be optional at the input layer; the database column stays NOT NULL.
-    user: { additionalFields: { corePrincipalId: { type: "string", required: false, input: false } } },
     baseURL: env.baseUrl,
     secret: env.authSecret,
     basePath: "/api/auth",
@@ -18,7 +15,8 @@ export function createAuth(db: Db, env: ServerEnv) {
     database: drizzleAdapter(db, { provider: "pg", schema }),
     emailAndPassword: {
       enabled: true,
-      // Local accounts are created by core deployment administrators.
+      // Invite-only platform: accounts are created by a platform admin (or,
+      // later, through organization invitations); public signup stays closed.
       disableSignUp: true,
     },
     account: {
@@ -38,17 +36,10 @@ export function createAuth(db: Db, env: ServerEnv) {
           },
         }
       : {}),
-    databaseHooks: {
-      user: { create: { before: async (user) => {
-        const corePrincipalId = crypto.randomUUID();
-        await provisioningClient(env).call("deployment/identity/apply", {
-          operation: "create_principal", id: corePrincipalId, kind: "user",
-          displayName: user.name, managementScope: { kind: "deployment" },
-        });
-        return { data: { ...user, corePrincipalId } };
-      } } },
-    },
-    plugins: [bearer()],
+    // Organizations are universes. Their tables are the membership record;
+    // the plugin's own endpoints are not served (see `buildApp`): members and
+    // roles change only through the universe routes.
+    plugins: [organization({ allowUserToCreateOrganization: false }), admin(), bearer()],
   });
 }
 

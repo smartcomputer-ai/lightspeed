@@ -274,7 +274,7 @@ The server accepts the following primary configuration names:
 - `LIGHTSPEED_PLATFORM_BASE_URL`;
 - `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`;
 - `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
-  `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` and `LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID`;
+  `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`;
 - `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` and
   `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_SECRET`;
 - `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL` and the optional
@@ -303,10 +303,11 @@ by `LIGHTSPEED_CONNECTOR_PROVIDERS` for every account the core reports; see
 image.
 
 Runtime calls use `LIGHTSPEED_PLATFORM_API_KEY`; connector hosts use their own
-`LIGHTSPEED_CONNECTOR_API_KEY`. The runtime must use `authenticated` mode.
-Every interactive call asserts the logged-in canonical user. Core owns all roles,
-groups and memberships; Better Auth owns login only. Provision deployment
-`assert_user` and `manage_identity` capabilities on the Platform service. Initial
-login bootstrap requires `LIGHTSPEED_PLATFORM_ADMIN_PRINCIPAL_ID` naming an
-existing active core user with DeploymentAdmin. The identity migration requires
-a fresh Platform database; it never imports old permissions. See [authentication and access](../docs/documentation/deployment/authentication-and-tenancy.md).
+`LIGHTSPEED_CONNECTOR_API_KEY`. The runtime must use `authenticated` mode. The
+Platform key is a deployment key that may assert actors (`server api-key
+bootstrap`): every interactive call names the universe and asserts the
+signed-in user. The Platform owns people: organizations are universes, and
+members hold one of four roles (viewer, contributor, operator, admin) that the
+Platform checks before a request reaches core. The first platform admin comes
+from `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`.
+See [authentication and access](../docs/documentation/deployment/authentication-and-tenancy.md).
