@@ -1,16 +1,15 @@
 # P179 — Core: universes, keys and actors
 
-**Status:** In progress, 2026-09-25. Fourth slice of
-[enterprise authorization](later/pNNN-enterprise-authorization.md) and the
-first of two that replace the model built by
-[identity and universe authorization](p176-identity-and-universe-authorization.md),
-[session access and execution authority](p177-session-access-and-execution-authority.md)
-and [resource access](p178-resource-access-and-session-authority.md). This
-document is the core half; [the Platform half](p180-platform-organizations-roles-and-unshared-work.md)
+**Status:** Implemented, 2026-09-25; only the user documentation (step 8)
+is open. The first of two slices that replace the model the first attempt
+built; [the retrospective](archive/p176-p178-access-retrospective.md) tells
+that story. This document is the core half;
+[the Platform half](p180-platform-organizations-roles-and-unshared-work.md)
 follows it. Together they are the version 0.1 access design that the
-`permissions` branch merges with.
+`permissions` branch merges with. Later work is in
+[enterprise authorization](later/pNNN-enterprise-authorization.md).
 
-It reverses one decision of the parent document: core no longer owns the
+It reverses the first attempt's central decision: core no longer owns the
 effective directory. People, roles and groups live in the Platform. Core
 knows universes, keys and opaque actors, and enforces only what protects
 tenancy and guards the runtime against its own agents.
@@ -96,9 +95,8 @@ The actor is the value of `x-lightspeed-actor`, accepted only from a key
 with `assert_actor`; on any other key the request is `forbidden`. Core
 treats it as an opaque string: it stamps it on sessions and bots it creates,
 records it on runs, steering, cancellations and approval decisions, and
-compares it when a
-list asks for `createdBy` or `visibleTo`. It never resolves it and never
-decides from it.
+compares it when a session list asks for `visibleTo` or a bot list for
+`createdBy`. It never resolves it and never decides from it.
 
 ### 2. Keys carry scope, groups and the actor flag
 
@@ -203,10 +201,12 @@ way sessions and bots do.
 
 `session/share` moves an unshared root session to `universe`, one way. It is
 refused on a bot's session, a delegated child and an already shared session. Views carry `access: { visibility, createdBy }` on
-sessions and bots, from the root. `session/list` accepts `createdBy`,
-`visibility` and `visibleTo` (shared, or created by that actor: what a
-non-administrator sees) filters, applied in SQL on the root so paging stays
-correct; `bots/list` accepts `createdBy`. Core applies whatever it is asked.
+sessions and bots, from the root. `session/list` accepts `visibleTo`
+(shared, or created by that actor: what a non-administrator sees), applied
+in SQL on the root so paging stays correct; `bots/list` accepts `createdBy`.
+Core applies whatever it is asked. Separate `createdBy` and `visibility`
+session filters were built and removed again: nothing but `visibleTo` asked
+for them.
 
 ### 5. What core refuses on its own
 
@@ -278,7 +278,7 @@ deployment/api-keys/create { scope, groups?, assertActor?, displayName }
                       -> { apiKey, secret }                 (secret shown once)
 deployment/api-keys/list { scope? }, revoke { keyPrefix }
 session/share { sessionId } -> { access }
-session/list          += createdBy?, visibility?, visibleTo?
+session/list          += visibleTo?
 bots/list             += createdBy?
 Views                 access: { visibility, createdBy } on sessions and bots;
                       createdBy replaces principal on auth grants;
@@ -363,10 +363,11 @@ Step 4 is the one the Platform half waits for.
 - Actor propagation to MCP servers, so a tool like the Configurator can act
   as the person who requested the run through the Platform. The requester
   is on the run's accepted event; it is not yet carried to tool calls.
-- Everything P177 and P178 built and this slice removes stays designed
-  there: per-person grants, restricted resources, personal execution,
-  exceptional reads, run-as grants, collections, execution bindings, content
-  admission. None returns without a user asking.
+- Everything the first attempt built and this slice removes is listed in
+  [the retrospective](archive/p176-p178-access-retrospective.md): per-person
+  grants, restricted resources, personal execution, exceptional reads,
+  run-as grants, collections, execution bindings, content admission. None
+  returns without a user asking.
 
 ## Current seams
 

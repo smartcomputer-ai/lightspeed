@@ -1,10 +1,12 @@
 # P180 — Platform: organizations, roles and unshared work
 
-**Status:** In progress, 2026-09-25: steps 1 to 4 done, audit and
-invitations deferred, customer documents held. Second half of the version
-0.1 access design; builds on the contract that
+**Status:** In progress, 2026-09-26: steps 1 to 5 done; audit and
+invitations deferred, customer documents held, live Platform validation and
+the merge open (see [what is left](#what-is-left)). Second half of the
+version 0.1 access design; builds on the contract that
 [core: universes, keys and actors](p179-core-universes-keys-and-actors.md)
-defines and is blocked on its step 4. Fifth slice of
+defines. [The retrospective](archive/p176-p178-access-retrospective.md)
+tells how the first, much larger attempt got here; later work is in
 [enterprise authorization](later/pNNN-enterprise-authorization.md).
 
 The Platform is the first integrator of core's public contract, not a
@@ -109,15 +111,18 @@ manifest's `role` metadata must reproduce.
 
 ### 5. Unshared work in the product
 
-- A new session starts **Unshared**. Creation asks no visibility question;
-  prepared team work created by an operator may pass `access: { visibility:
-  "universe" }`.
-- The session page has one action, **Share with universe**, and afterwards
-  shows **Shared with universe**. Bots show the same badge.
-- Admin access to unshared work is explained once, in the universe's
-  settings and the sharing help, never as a banner.
-- Members' lists show shared work and their own unshared work; admins' lists
-  show everything with unshared rows marked.
+- A new session starts **private**, shown by a lock in its header.
+  Creation asks no visibility question; prepared team work created by an
+  operator may pass `access: { visibility: "universe" }`.
+- The session's ⋯ menu has one action, **Share with universe**, confirmed
+  once because it is one way. A shared session shows a people icon in its
+  header and in the list. Bots and their sessions are always shared.
+- That admins see private work is said where it matters and nowhere else:
+  in the new-session dialog, in the note on a private session and its lock,
+  and in the admin role's description on Members. Never as a banner, and no
+  settings card.
+- Members' lists show shared work and their own private work; admins' lists
+  show everything, with shared rows marked.
 - No "Running as", no reader lists, no execution settings anywhere.
 - Files written into a shared workspace or environment follow that
   resource, and content digests are readable across the universe; the
@@ -148,7 +153,17 @@ groups the install needs (`profiles, mcp, environments, bots, channels, auth,
 models` by default) and registers the MCP server unrestricted: whoever can
 attach it acts with that key's groups, which is the accepted 0.1 rule.
 
-### 8. Bootstrap and errors
+### 8. Features can be switched off per universe
+
+An admin switches Bots and Channels on or off for the universe on General
+settings. Channels need Bots, so switching Bots off takes Channels with it.
+The universe stores only the switches that differ from the default; views
+return the effective state to every member, because the web hides pages,
+navigation and trigger kinds from it. Only admins change them: the universe
+update refuses anyone else. Switching off hides and does not enforce; core
+knows nothing of it, and existing bots keep running.
+
+### 9. Bootstrap and errors
 
 The first platform admin is created by `bootstrap.ts` as on `main`; the
 deployment key comes from `server api-keys bootstrap` and is configured as
@@ -161,8 +176,8 @@ refusals are 403 and 404 as decided above.
 
 Uses only: `deployment/universes/*`, `deployment/api-keys/*`, the actor
 header, `access: { visibility }` on session starts, `session/share`, the
-`createdBy`, `visibility` and `visibleTo` list filters, `access` on session
-and bot views, and the manifest's `group`, `target` and `role` fields. Nothing
+`visibleTo` session list filter and the `createdBy` bot list filter,
+`access` on session and bot views, and the manifest's `group`, `target` and `role` fields. Nothing
 Platform-only exists in core; the CLI can do everything the Platform can do
 with a key.
 
@@ -175,7 +190,8 @@ greenfield rule:
   `member.role` constrained to the four roles.
 - `universes` (organization id, core universe id, gateway URL) restored.
 - `user.corePrincipalId` dropped.
-- `identity_audit` added.
+- `identity_audit` added (deferred, see step 4).
+- `universes.features`: the feature switches an admin changed.
 
 ## Implementation order
 
@@ -190,11 +206,10 @@ greenfield rule:
        from the member's role in the universe on screen; Members, API keys
        (admins only) and platform Users pages on the restored routes and the
        admin plugin; demo routes and fixtures on the same shapes. The
-       unshared work UI: an Unshared badge on sessions in lists and headers,
-       a Share with universe action for the creator or an admin with a
-       one-way confirmation, delete offered to the creator or an admin, and
-       the sharing explanation once in General settings and the new-session
-       dialog.
+       private work UI: a lock on private sessions and a people icon on
+       shared ones, Share with universe in the session menu for the creator
+       or an admin with a one-way confirmation, delete offered to the
+       creator or an admin, and the explanation where decision 5 puts it.
 4. [x] Keys admin area: platform admins list, mint (scope, groups,
        `assert_actor`) and revoke every core key under Admin → API keys;
        universe API keys are for universe admins.
@@ -204,6 +219,7 @@ greenfield rule:
        only records, and nothing outlives a deleted session. Both return
        before customer data is loaded.
 5. [x] `platform/README.md`.
+   [x] Per-universe feature switches (decision 8).
    [ ] Held for now: customer documents (below).
    [ ] Merge of `permissions`.
 
@@ -238,6 +254,21 @@ Notes on steps 1 and 2 as built:
   rows for each membership change.
 - Demo build unchanged in behaviour.
 
+The unit cases and the demo build pass. The live Platform suite has not been
+written; the live core suites cover the core half.
+
+## What is left
+
+1. `identity_audit` and member invitations (step 4), before customer data
+   is loaded.
+2. The live Platform suite above, without its audit rows until the audit
+   trail exists.
+3. The customer documents below, and core's user documentation
+   (`identity-and-access.md`, `authentication-and-tenancy.md`, P179 step 8).
+4. A development database reset, then the Temporal live suites, since
+   `001_core.sql` was edited in place.
+5. The merge of `permissions`.
+
 ## Documents that move with this slice
 
 - Customer solution design: §2.1 and §2.2 (Platform decides, core scopes
@@ -254,9 +285,8 @@ Notes on steps 1 and 2 as built:
 - Customer blueprint: PP-03 stands; the Application Architecture paragraph
   "the operator selects the service principal" becomes "the operator
   prepares the universe".
-- [Enterprise authorization](later/pNNN-enterprise-authorization.md): the
-  ownership table moves the directory to the Platform; per-person sharing
-  and exceptional reads become later work.
+- [Enterprise authorization](later/pNNN-enterprise-authorization.md): done;
+  rewritten to hold only later work.
 
 ## Later
 
