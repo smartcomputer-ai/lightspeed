@@ -29,12 +29,17 @@ core alone can enforce it.
 
 ## Later work
 
-**Identity and provisioning**
+**Identity and provisioning** — next, as two slices:
 
-- OIDC and SAML sign-in through the Better Auth SSO plugin; SCIM.
-- Teams mapped to roles, from directory groups.
-- Offboarding that reaches API keys, running work and bots a person created.
-- Human API keys issued by the Platform and proxied to core.
+- [Single sign-on and directory membership](../p181-single-sign-on-and-directory-membership.md):
+  OIDC sign-in with the Platform as the client, and directory
+  groups mapped to universes and roles.
+- [Deprovisioning and directory updates](../p182-deprovisioning-and-directory-updates.md):
+  bounded sessions, SCIM, and what deactivation does to a person's access
+  and work.
+
+After those: SAML, several providers, and human API keys issued by the
+Platform and proxied to core.
 
 **Sharing and visibility**
 
@@ -64,8 +69,6 @@ core alone can enforce it.
 - Which external credential and delegation mechanisms are needed first?
 - For personal event automation, how are task inputs told apart from
   another person's control requests?
-- How do directory changes reach the Platform, and when is offboarding
-  complete?
 - What revocation latency can we promise across tools, streams, jobs and
   running processes, now that nothing is rechecked mid-run?
 - Is a project scope needed between a session and a universe? Collections

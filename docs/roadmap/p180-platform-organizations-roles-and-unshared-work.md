@@ -290,8 +290,11 @@ written; the live core suites cover the core half.
 
 ## Later
 
-- OIDC and SAML sign-in through the Better Auth SSO plugin; SCIM; teams
-  mapped to roles; offboarding propagation.
+- Sign-in through the company's identity provider with directory groups
+  mapped to universes and roles
+  ([P181](p181-single-sign-on-and-directory-membership.md)), and
+  deprovisioning and SCIM
+  ([P182](p182-deprovisioning-and-directory-updates.md)).
 - Human API keys issued by the Platform and proxied to core.
 - Unshare; Operator visibility of unshared running work; private bots.
 - The Configurator acting as the requester, once core propagates the actor
