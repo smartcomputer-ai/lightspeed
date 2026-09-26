@@ -55,7 +55,11 @@ docker run --rm --entrypoint node "$platform_workers_image" \
   --import tsx --input-type=module -e '
     const { parseHostConfig } = await import("./platform/connectors/src/host/config.ts");
     const { connectorTaskQueue, WORKFLOW_CONTRACT_VECTORS } = await import("@lightspeed-ai/agent-client/workflow");
-    const config = parseHostConfig({ LIGHTSPEED_API_URL: "http://runtime:18080/rpc", LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram" });
+    const config = parseHostConfig({
+      LIGHTSPEED_API_URL: "http://runtime:18080/rpc",
+      LIGHTSPEED_CONNECTOR_API_KEY: "lsk_release_smoke_test",
+      LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram",
+    });
     if (config.providers.join(",") !== "telegram") process.exit(1);
     const vector = WORKFLOW_CONTRACT_VECTORS.channels;
     if (connectorTaskQueue(vector.inputs.universeId, vector.inputs.provider, vector.inputs.accountId) !== vector.connectorTaskQueue) process.exit(1);
