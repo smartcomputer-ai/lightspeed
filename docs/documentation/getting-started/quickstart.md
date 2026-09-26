@@ -6,9 +6,11 @@ Rust and a source checkout if you choose the development launcher.
 
 ## Before you start
 
-You need an OpenAI or Anthropic API key with access to a suitable model, and
-an account with permission to manage integrations and sessions: a universe
-owner or admin, or a platform administrator.
+To configure a model, you need an OpenAI or Anthropic API key and an Operator
+or Admin account. If your operator has already connected a model, a Contributor
+account is enough to start a session. Creating a universe requires a Platform
+administrator. See
+[People and roles](../access-and-security/people-and-roles.md).
 
 If someone has already deployed Lightspeed for you, open that installation
 with your assigned account and continue at
@@ -93,14 +95,16 @@ the development account. Unless you have overridden it, use:
 These credentials belong to the local development setup. A deployed
 installation uses an administrator account configured by its operator.
 
-On a fresh installation, the app shows **No universes yet**. Choose **New
-universe**, enter `Getting started`, and choose **Create**. The universe holds
-the sessions, credentials, profiles, and workspaces you create during these
-walkthroughs. If you already have a suitable universe, select it instead.
+Select a universe from the switcher. The development launcher creates a
+**Test** universe you can use for this walkthrough. The universe holds your
+sessions, credentials, profiles, and workspaces.
+
+If the app shows **No universes yet**, sign in as a Platform administrator,
+choose **New universe**, enter `Getting started`, and choose **Create**.
 
 ## Configure a model
 
-In your universe, open **Settings → Integrations → Add integration**. Choose
+In your universe, open **Models → Add provider**. Choose
 **OpenAI (API key)** or **Anthropic (API key)**, enter your key in **API key**,
 and choose **Save key**. Wait for a model list to appear under **Available
 models**, then choose **Done**.
@@ -177,7 +181,7 @@ and launcher checks below apply to the source path.
 | Docker or Compose cannot be reached | Start Docker and check `docker compose version`. |
 | The Rust build cannot find `protoc` or an imported standard protobuf file | Install the compiler and its standard include files. If the build cannot locate the include directory, set `PROTOC_INCLUDE` to that directory. |
 | A port is already in use | Check `./dev.sh status` and the conflicting process. Service ports and overrides are listed in the [development guide](../../../scripts/dev/README.md). |
-| The launcher warns that no provider key is configured | Continue to **Settings → Integrations** and add the key there. The warning alone does not prevent startup. |
+| The launcher warns that no provider key is configured | Continue to **Models → Add provider** and add the key there. The warning alone does not prevent startup. |
 | The session reports missing credentials or model access | Check both the integration and the model selected for this session. They must refer to the same provider. |
 | Sign-in fails with the displayed defaults | Check the credentials printed by the launcher; an existing `.env` or existing user account may use different values. |
 

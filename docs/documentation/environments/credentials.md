@@ -1,7 +1,7 @@
 # Environment credentials
 
 An environment credential binding connects an environment-variable name to
-a stored secret or integration. When Lightspeed starts a process or submits
+a stored credential. When Lightspeed starts a process or submits
 a job to that environment, it resolves the binding and supplies the value to
 the command. The agent can request the operation without placing the secret
 in its instructions or tool arguments.
@@ -12,17 +12,18 @@ from another session, an inherited sub-agent environment, a bot command
 trigger, or a standalone API job. Sharing environment access therefore also
 shares access to its injected credentials.
 
-Use a universe owner/admin or platform administrator account for these setup
-steps. Start with [an environment you can use](using-environments.md).
+Use an Operator or Admin account for these setup steps. Contributors can use
+the resulting environment in sessions they control, including its injected
+credentials. Start with [an environment you can use](using-environments.md).
 
 ## Assign a secret to an existing environment
 
 For a service token used by an Acorn release command:
 
-1. Open **Settings → Secrets → Add secret**.
+1. Open **Credentials → Add credential → Paste a token or secret**.
 2. Choose **Secret type → Environment secret**.
 3. Enter `Acorn release token` as the **Display name** and put the token in
-   **Secret value**. Choose **Add secret**. You can use a disposable sample
+   **Secret value**. Choose **Add credential**. You can use a disposable sample
    value if you only want to test the binding mechanism.
 4. Open **Environments**, find the target machine, and expand **Details**.
 5. Under **Secret environment variables**, choose **Assign credential**.
@@ -70,8 +71,8 @@ variable from the tool or job request and let the binding supply it. Use
 explicit `env` for ordinary non-secret command settings.
 
 Model credentials and environment credentials configure different consumers.
-Adding an OpenAI integration does not automatically inject `OPENAI_API_KEY`
-into every machine. Binding that variable to a machine does not select or
+Adding an OpenAI provider on **Models** does not automatically inject
+`OPENAI_API_KEY` into every machine. Binding that variable to a machine does not select or
 authenticate the model used by the Lightspeed session. See
 [Models and credentials](../using-lightspeed/models-and-credentials.md).
 
@@ -79,9 +80,9 @@ authenticate the model used by the Lightspeed session. See
 
 Configure credential bindings directly on the Environments page. Profiles may
 attach existing environments or, for sub-agents, inherit a parent's
-selection, but they do not create machines or initialize credentials. Sessions using the same machine
-receive the same environment bindings. Create separate environments when work
-requires different credential access.
+selection. Sessions using the same machine receive the same environment
+bindings. Create separate environments when work requires different credential
+access.
 
 ## Understand resolution and renewal
 
@@ -116,11 +117,11 @@ on the environment machine:
 | Codex (ChatGPT subscription), imported token set | `CODEX_AUTH_JSON` |
 | Codex, imported Enterprise access token | `CODEX_ACCESS_TOKEN` |
 
-Create the integration under **Settings → Integrations**, then select it as
-the environment's credential source. Install the corresponding coding agent
-in the environment separately; assigning a token does not install software.
+Open **Models → Add provider**, choose the subscription entry, and import its
+credential. Then select it as the environment's credential source. Install
+the corresponding coding agent on the machine separately.
 
-For the Codex token-set path, the integration details provide a bootstrap
+For the Codex token-set path, the provider details provide a bootstrap
 command that writes `auth.json` in the coding agent's configuration directory.
 Run that setup inside the credentialed process or job before invoking the
 coding agent. The daemon does not write the file automatically. The resulting
@@ -129,7 +130,7 @@ file is another credential copy with the machine's own lifetime.
 Imported subscription credentials are static stored grants. Lightspeed does
 not turn them into refreshable session-model connections, and it does not
 synchronize changes a coding agent makes to its local auth file back into the
-stored integration. Reimport and reassign when the stored credential expires
+stored credential. Reimport and reassign when the stored credential expires
 or becomes stale. Avoid repeatedly overwriting a local token set that the
 coding tool has already refreshed.
 
@@ -152,8 +153,8 @@ credential. Removing a binding or revoking a grant affects future resolution;
 it cannot remove a value already held by a running process or admitted job.
 It also does not erase files or other copies the program created.
 
-Closing an environment is a machine-lifecycle action, not revocation of its
-universe integrations. The effects on the machine depend on its source; see
+Closing an environment leaves the universe's stored credentials in place.
+The effects on the machine depend on its source; see
 [Power and cleanup](power-and-cleanup.md).
 
 ## Use the CLI or API

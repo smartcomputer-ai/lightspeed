@@ -74,7 +74,7 @@ Platform and proxied to core.
 - Is a project scope needed between a session and a universe? Collections
   were built once and removed because nothing used them.
 
-Current boundaries: [authentication](../../documentation/deployment/authentication-and-tenancy.md),
-[identity and access](../../documentation/deployment/identity-and-access.md),
-[tenancy](../../documentation/deployment/multi-tenancy.md),
+Current boundaries: [access and security](../../documentation/access-and-security/overview.md),
+[people and roles](../../documentation/access-and-security/people-and-roles.md),
+[tenancy](../../documentation/access-and-security/tenant-isolation-and-data-protection.md),
 [environment credentials](../../documentation/environments/credentials.md).

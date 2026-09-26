@@ -220,6 +220,8 @@ greenfield rule:
        before customer data is loaded.
 5. [x] `platform/README.md`.
    [x] Per-universe feature switches (decision 8).
+   [x] Product manual: the Access and security section and surrounding guides
+       describe the implemented model; the old core-identity pages are pointers.
    [ ] Held for now: customer documents (below).
    [ ] Merge of `permissions`.
 
@@ -236,8 +238,10 @@ Notes on steps 1 and 2 as built:
   only through the universe routes, which keep the last admin. The four
   roles are enforced on every Platform write rather than by a database
   check constraint.
-- Universe admins mint universe keys (every universe group, no actor) from
-  the universe's API keys page. The Configurator installer already mints its
+- Universe admins mint universe keys from the universe's API keys page,
+  choosing the method groups (presets or one by one, never an actor); the
+  route requires groups so no key silently holds every group, and the list
+  shows what each key may call. The Configurator installer already mints its
   key with the configuration groups.
 
 ## Validation
@@ -263,8 +267,8 @@ written; the live core suites cover the core half.
    is loaded.
 2. The live Platform suite above, without its audit rows until the audit
    trail exists.
-3. The customer documents below, and core's user documentation
-   (`identity-and-access.md`, `authentication-and-tenancy.md`, P179 step 8).
+3. The customer documents below. The product manual and core's user
+   documentation are updated in Access and security.
 4. A development database reset, then the Temporal live suites, since
    `001_core.sql` was edited in place.
 5. The merge of `permissions`.

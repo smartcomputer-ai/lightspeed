@@ -10,7 +10,7 @@ There are two separate integration directions. An application workflow can
 call the ordinary Lightspeed API from an activity, as described in the
 [API guide](api-and-typescript.md). A model can also call a declared workflow
 tool, causing Lightspeed to signal an existing workflow or start one from a
-stored recipe. Both use the public boundaries; custom activities do not need
+stored recipe. Both use public contracts; custom activities do not need
 to be installed on a Lightspeed session worker.
 
 ## Define the participants
@@ -57,7 +57,7 @@ workflow through its generic start adapter.
 
 First store the input schema and start recipe in the same universe's CAS.
 The following function runs in an application process or Temporal activity,
-using an authenticated `LightspeedClient`:
+using a `LightspeedClient` with `session` and `blobs/put` access in that universe:
 
 ```ts
 import { LightspeedClient } from "@lightspeed-ai/agent-client";
@@ -281,19 +281,18 @@ must progress independently of the wait for the run.
 
 ## Preserve declaration and delivery semantics
 
-Managed creation admits at most 32 function-tool declarations, with unique
-tool IDs and names that do not collide with other installed tools. Schemas
-and recipes must already exist and validate. Retrying the same session ID
+Managed creation validates tool identities, name collisions, schemas, and
+recipes before admitting the declarations. Retrying the same session ID
 requires the same admitted declaration; changing receiver, schema, recipe,
 or completion behavior requires a new session. An ordinary session cannot be
 upgraded into a managed one through configuration replacement.
 
 A tools-only declaration may omit the lifecycle controller. That supplies
 workflow tools without the UI's controller-owned lifecycle designation. The
-managed-start API is universe-scoped; it is not restricted to service-account
-or operator methods. Lifecycle ownership describes coordination policy rather
-than a runtime ACL preventing another authorized universe caller from closing
-the session.
+managed-start API uses the `session` key group. Lifecycle ownership tells the
+runtime where to send lifecycle notifications; it does not change which API
+callers can control or close the session. See
+[Agent and tool access](../access-and-security/agent-and-tool-access.md).
 
 Delivery is bounded and can repeat. Pushed invocations and start requests use
 bounded retries; failures become observable delivery/start failures and fail

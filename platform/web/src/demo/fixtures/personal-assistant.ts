@@ -9,7 +9,7 @@
 import type { Environment, SecretGrant, UniverseSetup } from "@/api";
 import type { SessionSummaryView } from "@lightspeed-ai/agent-client";
 import { appendExchange, appendScriptedRun, closeSession, newSession } from "../engine";
-import type { DemoResponder, DemoStore, DemoToolCall, DemoTurn, SessionRecord, UniverseState } from "../store";
+import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
 import {
   BOT_TOOLS,
   DAY_MS,
@@ -820,13 +820,14 @@ function seedMembers(store: DemoStore, universe: UniverseState): void {
     member(store, universe, "user-marco", "admin", ago(38 * DAY_MS)),
     member(store, universe, "user-priya", "contributor", ago(22 * DAY_MS)),
   );
-  universe.apiKeys.push({
+  universe.apiKeys.push(universeApiKey(universe, {
     keyPrefix: "lsk_pa_2f8d",
     displayName: "iPhone Shortcuts (voice notes → session)",
+    groups: ["session", "blobs/put"],
     createdAtMs: ago(19 * DAY_MS),
+    createdBy: "user-marco",
     lastUsedAtMs: ago(HOUR_MS + 12 * MINUTE_MS),
-    revokedAtMs: null,
-  });
+  }));
 }
 
 function seedProfiles(universe: UniverseState): void {

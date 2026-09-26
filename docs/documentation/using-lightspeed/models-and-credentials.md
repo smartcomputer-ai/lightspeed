@@ -10,18 +10,23 @@ For example, `openai` identifies the built-in OpenAI connection, while
 a model available on that connection. An OpenAI-compatible service can use
 the same wire format under its own provider ID and endpoint.
 
-Provider connections belong to a universe. Use a universe owner/admin or
-platform administrator account to configure them. Once connected, select the
-model in a [profile](profiles-and-instructions.md) or session setup.
+Provider connections belong to a universe. Use an Operator or Admin account
+to configure them on the **Models** page. Once connected, select the model in
+a [profile](profiles-and-instructions.md) or session setup.
 
 ## Connect OpenAI or Anthropic
 
-1. Open **Settings → Integrations → Add integration**.
+1. Open **Models → Add provider**.
 2. Choose **OpenAI (API key)** or **Anthropic (API key)**.
 3. Enter the provider API key and choose **Save key**.
 4. Check **Available models**, then choose **Done**.
 5. Open a profile and select one of those models under **Model configuration
    → Model**. Save the profile and create a new session from it.
+
+![Add model provider dialog offering OpenAI and Anthropic API keys, an OpenAI-compatible provider, Claude Code subscription, and Codex ChatGPT subscription.](../images/model-providers.png)
+
+*The demo's provider catalogue separates connections for session models from
+subscriptions used by coding agents inside environments.*
 
 Run a small task to verify that generation works. Then test one capability the
 profile actually needs, such as reading a workspace file. Model discovery
@@ -29,9 +34,10 @@ confirms that a model is selectable; it does not prove that every tool,
 generation setting, or media input works with that model.
 
 The **Claude Code (subscription)** and **Codex (ChatGPT subscription)**
-integrations have a different purpose. They supply credentials to those coding
-agents running inside execution environments. They do not authenticate Lightspeed's own
-session model calls. Use a model-provider connection for those calls.
+options on the same page supply credentials to coding agents running inside
+execution environments. Lightspeed's own session model calls use the API-key
+connections above. See [Environment credentials](../environments/credentials.md)
+to use a subscription inside a machine.
 
 ## Connect an OpenAI-compatible provider
 
@@ -39,7 +45,7 @@ Compatible providers let Lightspeed use a service implementing OpenAI-style
 Responses or Chat Completions endpoints. Compatibility describes the request
 format; individual services and models can support different features.
 
-Open **Settings → Integrations → Add integration → OpenAI-compatible
+Open **Models → Add provider → OpenAI-compatible
 provider**. Choose a **Provider** preset for DeepSeek, OpenRouter, Ollama, or
 vLLM, or choose **Custom provider**. Configure:
 
@@ -82,11 +88,9 @@ are available. Choose **Enter model manually** to specify the full route:
 | **API kind** | `openai:responses`, `openai:completions`, or `anthropic:messages`, as supported by that connection. |
 | **Model** | The exact model identifier accepted by the provider. |
 
-Use manual entry when discovery omits an otherwise supported model, or when
-you deliberately need Chat Completions instead of the picker's preferred
-Responses route. An OpenAI-compatible connection supports the OpenAI API
-kinds; it does not become an Anthropic Messages connection by changing this
-field.
+Use manual entry when discovery omits a supported model, or when you need
+Chat Completions instead of the picker's preferred Responses route. Select
+an API kind implemented by that provider.
 
 For an existing session, change compatible model settings only while it is
 idle. The API kind is fixed for that session because its conversation is
@@ -113,8 +117,9 @@ The runtime defaults to provider `openai` and API kind `openai:responses`.
 `LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL` change the default
 provider ID and model name. The runtime's default API kind remains Responses,
 so setting an Anthropic provider ID alone does not create an Anthropic route.
-Select the full route in a profile when using Anthropic or a compatible service. Exact deployment
-settings are in the [environment-variable reference](../reference/environment-variables.md).
+Select the full route in a profile when using Anthropic or a compatible
+service. Exact deployment settings are in the
+[environment-variable reference](../reference/environment-variables.md).
 
 The API also supports model OAuth records that refer to a suitable stored
 grant and audience. The broker refreshes access tokens for those records.

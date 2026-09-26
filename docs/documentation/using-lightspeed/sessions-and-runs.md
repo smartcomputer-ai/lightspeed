@@ -10,8 +10,9 @@ after the current task, or change what the agent is doing now. The session
 retains both the work and its history when you leave the page.
 
 Use a Contributor, Operator or Admin account in the universe for the web
-procedures below. To control an existing standalone session, you must own it or
-hold a write grant on its root. If you haven't completed a task yet, start with
+procedures below. To control an existing private session, you must be its
+creator or an Admin; shared sessions can be controlled by Contributors and
+above. If you haven't completed a task yet, start with
 [Build your first agent](../getting-started/first-agent.md).
 
 ## Start and continue a session
@@ -19,8 +20,8 @@ hold a write grant on its root. If you haven't completed a task yet, start with
 Open **Sessions → New session**, enter a **Name**, and select a **Profile**.
 Choose **Create** to use the saved profile. **Customize setup…** lets you
 change the setup for this session without saving those changes back to the
-profile. You can also start without a profile and configure the session
-directly.
+profile. After customizing, choose **Create session**. You can also start
+without a profile and configure the session directly.
 
 Send a task in the composer. For the release editor from the first-agent
 walkthrough, try:
@@ -36,29 +37,23 @@ use the earlier conversation and its linked files. Starting a new session
 from the same profile gives you a fresh conversation; workspace attachments may
 still point to the same shared files.
 
-## Choose who can read and who runs the work
+## Share a session with the universe
 
-The creation form separates **Who can read** from **Running as**. New standalone
-sessions default to visibility for universe members and execution as the universe
-service. If the universe enables personal execution, **Me** runs the session
-under your authority and defaults its audience to restricted. Execution identity
-is fixed at creation; the audience can be changed through **Access**.
+New standalone sessions are private: through the Platform, only their creator
+and Admins can read them. To share a review with the team, open the session
+title menu, choose **Share with universe…**, and confirm with **Share**. This
+also shares its sub-agents. Sharing cannot be undone.
 
-Open **Access** to see the owner and audience, add people or groups, and save their
-grants. A control grant lets another person start work under the session's
-existing execution identity. Bot conversations and delegated sessions inherit
-access from their bot or parent session. The dialog links to that resource:
-sharing changes apply to everything using the same policy. A lock
-marks restricted work in the list. **Privileged read** means the displayed view
-includes content read through an explicitly assigned private-content capability,
-which is audited separately from ordinary reads.
+Every member can then read the conversation, and Contributors and above can
+continue or control it. Sharing and deletion remain creator-or-Admin actions
+and require at least the Contributor role. Bot conversations are always
+shared; delegated sessions follow their root's visibility.
 
-For example, keep a review session restricted while drafting, then share read
-access with a colleague who belongs to the universe. Files written into an
-attached shared workspace remain visible through that workspace. Restricting
-the session does not restrict its attachments. See [Authentication and
-access](../deployment/authentication-and-tenancy.md#audience-and-control) for
-sharing, execution choices and the effect of revocation.
+Files written into an attached shared workspace remain visible through that
+workspace even while the conversation is private. Direct core keys with the
+`session` method group also have access to private sessions in their universe.
+See [Private and shared work](../access-and-security/private-and-shared-work.md)
+for the access model.
 
 ## Queue, steer, or stop work
 
@@ -102,25 +97,20 @@ that policy.
 
 ## Inspect what happened
 
-The transcript shows messages and tool activity. Every step a run takes is
-one row: an icon for the kind of activity, a verb such as **Read**, **Run**,
-**Delegate**, or **Emit**, its target, and how long it took. A finished step
-carries no badge; only running, waiting, failed, and cancelled steps are
-marked. Click a row to inspect its **Arguments**, **Result**, **Error**, and
-any reported **Effects**, with the raw tool name, call id, timing, and output
-size on a small line beneath. A final answer saying that a file was saved is
-useful, but the tool result and the file itself let you verify the operation.
-Images and documents a tool handed the model appear above the tool's result
-as thumbnails and document chips; click one to open it at full size. Images
-sent with your own message show in the input band the same way, and an image
-or document the assistant references by its `media:` handle renders inline
-in the reply.
+The transcript shows messages and tool activity. Each tool row names the
+operation, its target, and how long it took. Open a row to inspect its
+**Arguments**, **Result**, **Error**, and any reported **Effects**. For example,
+after the agent says it saved a file, inspect the write result and open the
+file to verify the change.
+
+Images and documents appear as thumbnails and document links beside the
+message or tool result that supplied them. Click one to open it at full size.
+The agent can also reference those items inline in its answer.
 
 When a run finishes, its thinking, tool calls, and interim notes fold behind
-one strip that names the outcome ("Worked for 2m 14s", "Failed after 38s")
-and the number of tool calls; the final reply stays visible below it. Click
-the strip to open that run. **Collapse completed runs** in the session title
-menu controls whether runs load folded; turning it off keeps every run open.
+one strip that names the outcome and number of tool calls; the final reply
+stays visible below it. Click the strip to open the run, or turn off
+**Collapse completed runs** in the session title menu to keep runs open.
 Events delivered to a bot appear as bands headed by their sender and kind.
 
 ![Expanded tool activity showing a completed search command, Arguments and Result tabs, and the matching file and line in its result.](../images/session-tool-result.png)
@@ -128,12 +118,9 @@ Events delivered to a bot appear as bands headed by their sender and kind.
 *Demo mode: an expanded tool call in “Fix flaky scheduler test.” The result
 shows what the command found; **Arguments** shows the submitted request.*
 
-Each finished run's strip ends with its context and usage figures (on a
-phone they sit at the top of the opened run instead); click them for the
-breakdown, or turn them off with **Show run statistics** in the session title
-menu. The context figure describes the last model request; cumulative token
-figures cover the run. These answer different questions: how much context the
-last call used, and how much model work the whole task consumed. A missing
+Click a finished run's context and usage figures for a breakdown, or hide them
+with **Show run statistics** in the session title menu. Context describes the
+last model request; cumulative tokens describe the whole run. A missing
 measurement means it was unavailable.
 
 Long conversations load a recent window first. Scroll upward to load older
@@ -144,11 +131,10 @@ important source material in files it can read again.
 
 ## Find and change a session
 
-Use **Filter sessions** in the session list to show closed sessions or
-sub-agent sessions. Both can be hidden by the **Hide closed sessions** and
-**Hide sub-agent sessions** checkboxes. **Metadata filters** accept
-`key=value` pairs, and **Metadata keys to show** adds useful values to the
-list.
+Open **Filter sessions** in the session list. Under **Include**, select
+**Closed sessions**, **Sub-agent sessions**, or **Managed sessions** to show
+those conversations. **Metadata filters** accept `key=value` pairs, and
+**Metadata keys to show** adds useful values to the list.
 
 Metadata is a descriptive map, for example `project=acorn` and
 `purpose=release-review`. It does not grant access or instruct the model.
@@ -161,10 +147,8 @@ their source profile does not update them automatically. See
 [Profiles and instructions](profiles-and-instructions.md) for explicit profile
 application and the different behavior of bot conversations.
 
-The core and storage support history forks and configuration-only clones, but
-the current web app, user CLI, and public RPC contract do not expose an action
-to create them. To start a fresh conversation with the same setup, create a
-session from the same profile.
+To start a fresh conversation with the same setup, create another session
+from the same profile.
 
 ## Continue from the CLI
 
@@ -176,25 +160,27 @@ from the release matching your server. You can also build it from the repository
 cargo build --locked -p cli
 ```
 
-The example below uses the source build's `target/debug/lightspeed`; replace
-that path with `./lightspeed` if you extracted the release binary into your
-current directory.
+The examples use `lightspeed` on your executable path. Use `./lightspeed`
+for a release binary in the current directory, or `target/debug/lightspeed`
+for the source build above.
 
-For the development launcher stack from the quickstart, use its private runtime gateway
-and the universe UUID from **Settings → General → Identifiers → Lightspeed
-universe**:
+For the authenticated development launcher stack from the quickstart, use its
+runtime gateway and a universe API key created by an Admin. See
+[API keys and service access](../access-and-security/api-keys-and-service-access.md)
+for creating and revoking keys. A universe key already selects its universe:
 
 ```bash
 export LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc
-export LIGHTSPEED_UNIVERSE="<Lightspeed universe UUID>"
-target/debug/lightspeed chat --session "<session-id>"
+export LIGHTSPEED_API_KEY="<universe API key>"
+unset LIGHTSPEED_UNIVERSE
+lightspeed chat --session "<session-id>"
 ```
 
-Copy the session ID from **Session details** in the web app's title menu.
-The universe UUID is distinct from the readable slug in the browser URL.
+Copy **Session ID** from the web app's session title menu.
 For a remote installation, use the gateway address and authentication supplied
-by the operator. API-key gateway mode uses `LIGHTSPEED_API_KEY`; it does not
-use the trusted universe header from this local example.
+by the operator. A deployment key needs `LIGHTSPEED_UNIVERSE` set to the core
+universe UUID, distinct from the readable slug in the browser URL. Local
+single mode accepts neither API keys nor universe headers.
 
 Inside the terminal interface, `/help` lists commands. `/steer` sends an
 instruction to the active run, and `/approve` or `/reject` decides a pending
@@ -236,5 +222,5 @@ the [bot conversation](bots-and-triggers.md) or connected chat for normal work.
 | Steering has no immediate visible effect | The current model call or tool batch must finish before the next model turn can consume it. |
 | Work starts again after stopping | Check for other queued runs. Stopping one run leaves those tasks in place. |
 | Setup changes are refused | Wait for active work to finish and drain or cancel queued runs. Reload settings if another editor changed them. |
-| A finished child or closed conversation is missing | Clear both hide filters, or follow the child link from the parent transcript. |
+| A finished child or closed conversation is missing | Under **Filter sessions → Include**, select **Closed sessions** and **Sub-agent sessions**, or follow the child link from the parent transcript. |
 | The agent lost a detail from much earlier | Inspect the retained history and restate the needed fact or point it to the source file. The current model context can be smaller than the transcript. |

@@ -16,8 +16,7 @@ run Node commands from there.
 - `connectors/` — the connector host: one process serving every enabled
   Telegram and WhatsApp account across universes, discovered through the core
   API, with grant-leased provider tokens and one Temporal activity worker per
-  account queue. It replaces the former `bots/`, `channels/`, and `workers/`
-  packages; Bots and Channels core now live in the Rust runtime.
+  account queue. Bot and channel workflows run in the Rust runtime.
 - `configurator-mcp/` — generated Streamable HTTP MCP facade over the
   universe-scoped Lightspeed API.
 - `scripts/` — product-identity check and the generated profile configuration
@@ -31,124 +30,45 @@ Committed wire artifacts are owned by `crates/api/contract/`.
 The repository-level Docker Compose development environment lives under
 `scripts/dev/`.
 
-Specific tool choices in session and profile configuration use registry IDs
-(for example, `env.run_process`). The runtime chooses builtin names and schemas
-for each model. Transcripts preserve each call's original `toolName` alongside
-its optional admitted `toolId`; the UI does not resolve historical names again.
-Demo tool fixtures record these identities explicitly as well.
+The [session configuration editor](web/src/components/session/session-config-editor.tsx)
+controls workspace, environment, and MCP attachments. Access is set per
+resource; an MCP selection can narrow the registered server's allowance.
+Environment attachments also hold a working directory and default selection.
+Profiles can inherit the parent's active environment for sub-agents. See
+[Profiles and instructions](../docs/documentation/using-lightspeed/profiles-and-instructions.md)
+for how saved setup reaches ordinary sessions and bots.
 
-Session and profile editors configure workspace and environment attachments
-with access per resource. Environment rows also carry a default selection and
-working directory; saved profiles can inherit a parent environment for
-sub-agents. MCP server allowances and session subsets share a searchable
-tool picker with live descriptions and connection errors. Session subsets
-can only narrow the server's allowance. Session activation controls offer attached environments
-and remain separate from profile defaults. Session creation uses the default
-environment attachment in the effective config, without a separate override.
+Transcripts preserve each call's original `toolName` and optional admitted
+`toolId`; they do not remap historical calls to today's model-facing names.
+[Demo fixtures](web/src/demo/) follow the same rule. Message and reasoning
+views carry their projected text, while detailed run reads retain `output`
+and `outputText` after the message leaves active context. Tool previews load
+bounded excerpts and expand through `blobs/read`.
 
-Context views and run outputs share a content descriptor. Assistant messages,
-reasoning, and audio transcripts can reference JSON; API views include their
-full projected text. Detailed run reads include `output` and `outputText` even
-after the message leaves active context. The transcript renders messages and
-reasoning directly. Tool previews stay bounded and expand their original bytes
-through `blobs/read`.
+Input `origin` is display metadata, not authorization. The Platform derives
+`user:<id>` from the signed-in user for messages and steering, and ignores
+body-supplied origin claims. Bot deliveries use `event`; other API clients
+may supply their own strings. Authorization and requester attribution are
+explained in [Access and security](../docs/documentation/access-and-security/overview.md).
 
-Conversation input items accept an optional `origin` string (1–200 bytes, not
-blank). The message and steering routes derive `user:<id>` from the authenticated
-platform session; request bodies cannot override it. Bot deliveries, their media,
-and batch framing use `event`, including steering and context-only delivery.
-Other API clients may supply other origin strings. Origin is display metadata,
-not an authorization claim, and absent origin means unknown. It is persisted on
-each input/context entry and returned by context, event, and detailed run reads.
-All user-role inputs use the standard muted message palette, regardless of
-origin, including optimistic sends and steering. The composer uses the standard
-background, muted placeholder, and visible focus ring. Origin adds no visible
-label or color emphasis. All user-role messages collapse to
-about 206px when their rendered text exceeds 160px, with a bottom fade and
-keyboard-accessible Show more / Show less controls. Resizing rechecks wrapping,
-and expansion leaves bottom-following to keep the message in view.
-Locally submitted run inputs keep the same message element and expansion state
-through confirmation, whether acknowledgement arrives through the POST or event
-stream first. Submitted messages, steering, and queued inputs use their normal
-opacity immediately; acceptance causes no visual change. Failed sends remove
-the optimistic message and show an error in the composer.
-Backend-loaded runs use run IDs as rendering keys. Loading an older input or
-submission acknowledgement does not remount the run or reset its expanded state.
-New inputs, activity boxes, and assistant messages enter with a 200 ms fade and
-4 px rise. Initial history and older-page arrivals stay still; confirmation,
-text updates, final-answer promotion, and opening hidden activity do not replay
-entrances. Reduced-motion preferences disable them, and layout height is not animated.
-Messages arriving while their activity box is entering share that animation;
-only messages arriving after it ends get an individual entrance. Thinking traces
-and tool batches do not animate separately inside the box.
+The [history loader](web/src/components/session/history-loader.tsx) starts
+with recent events, while the [live reader](web/src/lib/sessions/tail.ts)
+follows from that window's head. Older pages load as the reader scrolls up.
+[Transcript reconstruction](web/src/lib/sessions/transcript.ts) merges those
+streams by event and entry ID; historical lifecycle events must not overwrite
+live session controls. Changing sessions cancels both read paths. Transient
+read failures retain existing content while retrying, and authorization or
+integrity errors remain visible immediately.
 
-Session transcripts open with one recent event window from
-`session/events/read` with `direction: "backward"`, then follow `session/events/read` strictly after
-that initial window's head. Scrolling near the top automatically requests
-older windows through an independent exclusive `before` cursor. There is no
-history cutoff or load-more button. The message scroller preserves the visible
-message when older entries are prepended; its loading sentinel sits outside
-the content element so it cannot hide prepends from the scroller.
-
-Windows may split a run or tool batch. Results without a loaded call start
-render as continued tool activity and acquire their original metadata as older
-pages arrive. Partial generation totals are not presented as whole-run usage.
-The transcript groups entries into run sections: the input band, the work
-(thinking, tool calls, interim notes, steering, context updates), the final
-reply, and the outcome. Every step is one row — activity icon, verb, target,
-detail, duration — and success carries no badge; running, waiting, failed and
-cancelled rows are the only marked ones. Row details (Arguments, Result,
-Effects) open beneath the row with a mono meta line: tool name, call id, start
-time, duration, output size. Activity families come from the API's
-`ToolCallDisplayGroup` (explore, edit, execute, mcp, agent, bot, message,
-other); bot rows use the bot mark, and Emit rows resolve peer bot ids to
-display names through the bot roster. Delivered bot events (`origin: "event"`)
-render as bands headed by sender, kind and `#N`.
-Completed replies are selected by the run's recorded output reference, not by
-the last transcript row. Chat Completions reasoning appears before the message
-from the same turn; this display ordering does not rewrite stored context or
-reorder other providers' native output items. Missing output entries become
-visible as their history page loads, without promoting an interim message.
-A finished run's work folds behind one strip naming the outcome and duration
-("Worked for 2m 14s", "Failed after 38s"), the tool call count and failures.
-From medium widths up the strip ends with a hoverable statistics button
-showing last-call context and cumulative input-plus-output usage; on narrow
-screens that button is the first row of the opened run instead, so the strip
-stays readable. A run that did no tool work shows the same figures on its
-outcome line. Counts below 1,000 stay exact; larger counts use `k`. Its
-popover breaks usage into input, output, model calls, tool calls, and the
-cache-hit share; duration lives on the strip, not in the popover. Missing
-provider counts remain unavailable rather than becoming zero. Failed and
-cancelled runs retain their visible status. The context measurement describes
-the last request, not the next request's assembled context or the model's
-capacity. Statistics stay in the transcript; the composer has no context
-indicator. Durations render as whole milliseconds under 100 ms, tenths of a
-second under 10 s, then seconds, minutes and hours. Two preferences live in
-the session-title and active bot-conversation menus: "Collapse completed runs"
-(default on; applies when a session or older history loads, and a strip click
-overrides it per run until the preference changes) and "Show run statistics"
-(default on; hides the statistics button and standalone duration lines for
-runs without activity, while failures and cancellations stay visible). Both
-are saved per user in local storage, shared across sessions, bots, universes,
-and tabs in this browser. A live run streams open with a status row at its
-foot; a folded run mounts none of its work.
-History is reconstructed chronologically and deduplicated by event/entry ID;
-historical lifecycle transitions never overwrite live controls. History errors
-retry independently of live polling, and changing sessions aborts both paths.
-Live polling retries a transient connection failure immediately with `waitMs: 0`
-and at most one event from the unchanged cursor. A failed recovery probe starts
-a ten-second presentation grace period before a muted disconnect notice;
-an empty successful probe clears it immediately and resumes normal long-polling.
-Authorization and event-integrity errors remain visible immediately. Live reads
-have a deadline ten seconds beyond their requested wait so stalled connections
-cannot stop updates indefinitely.
-Transcript and list read errors share this presentation rule: transient transport,
-timeout, rate-limit, and server errors stay quiet for ten seconds in transcripts
-and three seconds in lists, then show a
-muted connection notice. Initial reads show loading during that interval; cached
-content remains visible. Lists retain one retry for transient failures and expose
-actionable errors without a retry delay. Notices only say "retrying" where the
-transcript reader continues retrying; mutation error handling is unchanged.
+[Run sections](web/src/lib/sessions/run-sections.ts) select the final answer
+from the run's recorded output reference, so loading older history cannot
+promote an interim message to the final answer. Partially loaded runs must
+not present partial usage as a whole-run total. Context statistics describe
+the last model request; cumulative usage describes the run. Missing provider
+measurements remain unavailable. The
+[transcript view](web/src/components/session/transcript-view.tsx) owns the
+presentation and its tests; see [Sessions and runs](../docs/documentation/using-lightspeed/sessions-and-runs.md)
+for the user controls.
 
 The authoritative configuration reference is
 [environment-variable reference](../docs/documentation/reference/environment-variables.md), with separate sections for the
@@ -180,11 +100,12 @@ its channels, keeps running.
 The Platform owns people; core knows universes, keys and opaque actors, and
 records who asked for each run, steer, cancellation and approval.
 
-**Accounts.** Better Auth signs people in with email and password, and with
-GitHub when configured; public sign-up is closed. The first platform admin
+**Accounts.** The browser signs people in with email and password; public
+sign-up is closed. The server can configure GitHub OAuth through Better Auth,
+but the current sign-in page has no GitHub button. The first platform admin
 comes from `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
 `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`. Platform admins (the Better Auth `admin`
-role) create accounts under **Admin → Users**, where they also change a user's
+role) create accounts under **Platform admin → Users**, where they also change a user's
 name, verified email, platform-admin role and password; a password reset
 revokes the user's sessions. Signed-in users change their own name and
 password under **Account**. Self-service email changes wait for an
@@ -195,7 +116,7 @@ four roles, least to most:
 
 | Role | May |
 | --- | --- |
-| viewer | read shared work |
+| viewer | read shared work and their own private sessions |
 | contributor | also start and continue sessions and runs, invoke bots, share their own sessions |
 | operator | also configure profiles, bots, environments, MCP servers, credentials and channels |
 | admin | also manage members and keys, and read, share and delete any session |
@@ -232,11 +153,15 @@ work with a lock and shared work with people; lists mark only shared sessions.
 Bots and their conversations are always shared.
 
 **Keys.** `LIGHTSPEED_PLATFORM_API_KEY` is the Platform's deployment key, with
-every method group and allowed to assert actors (`server api-key bootstrap`).
+every method group and permission to assert actors. Follow
+[Bootstrap the Platform](../docs/documentation/access-and-security/api-keys-and-service-access.md#bootstrap-the-platform)
+to create it.
 The runtime must run in `authenticated` mode, and connector hosts use their own
 `LIGHTSPEED_CONNECTOR_API_KEY`. Universe admins mint keys for their universe
-under **API keys** (every universe group, no actor). Platform admins see and
-mint every key under **Admin → API keys**, choosing what a key reaches (the
+under **API keys**, choosing the method groups each key may call from presets
+(agent client, configuration, all groups) or one by one; they never assert
+actors, and credential leasing and channel delivery are opt-in. Platform admins see and
+mint every key under **Platform admin → API keys**, choosing what a key reaches (the
 deployment or one universe), the method groups it may call, and whether it
 speaks for people. A secret is shown once; keys never change, so revoke and mint
 instead. The Configurator template mints its own universe key with the

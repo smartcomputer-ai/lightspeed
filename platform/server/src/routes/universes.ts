@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { and, eq, ne } from "drizzle-orm";
-import { LightspeedRpcError } from "@lightspeed-ai/agent-client";
+import { LightspeedRpcError, type MethodGroup } from "@lightspeed-ai/agent-client";
 import { schema } from "@lightspeed/platform-db";
 import {
   effectiveFeatures,
@@ -141,6 +141,9 @@ const adoptSchema = z.object({
 
 const apiKeyCreateSchema = z.object({
   displayName: z.string().trim().min(1).max(120),
+  /// Required, so a universe key never silently holds every group; core
+  /// validates the names and refuses deployment groups.
+  groups: z.array(z.string().min(1).max(100)).min(1).max(32),
 });
 
 export function universeRoutes(ctx: AppContext) {
@@ -274,8 +277,8 @@ export function universeRoutes(ctx: AppContext) {
   });
 
   /// Universe API keys, for a universe admin. Keys are minted with the
-  /// Platform's deployment key, scoped to this universe, with every universe
-  /// group and no actor assertion. The plaintext secret exists only in the
+  /// Platform's deployment key, scoped to this universe, with the groups the
+  /// admin chose and no actor assertion. The plaintext secret exists only in the
   /// create response and is never persisted by the platform.
   app.get("/:id/api-keys", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
@@ -303,6 +306,7 @@ export function universeRoutes(ctx: AppContext) {
       const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call("deployment/api-keys/create", {
         scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
         displayName: body.data.displayName,
+        groups: body.data.groups as MethodGroup[],
         assertActor: false,
       });
       return c.json(response.result, 201);

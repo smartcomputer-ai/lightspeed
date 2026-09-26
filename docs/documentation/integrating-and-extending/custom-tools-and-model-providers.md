@@ -1,10 +1,8 @@
 # Extend tools and model providers
 
-Lightspeed can reach additional tools and models through several boundaries.
-Some integrations need only a configured endpoint and capability grant. Others
-change the runtime's executable code. Choose the smallest boundary that
-supports the behavior so the integration keeps the existing admission,
-credential, and durability rules.
+Lightspeed can connect to an external tool or model service through a configured
+endpoint. A new built-in tool or model wire protocol requires runtime code.
+Start with the extension path that fits the work:
 
 | Requirement | Extension path |
 | --- | --- |
@@ -12,12 +10,12 @@ credential, and durability rules.
 | Start or coordinate durable external work | Declare a workflow tool and run its receiver or execution on a custom worker. |
 | Add a built-in runtime capability | Implement and register a compiled tool, including its admission and execution paths. |
 | Use another service speaking Responses or Chat Completions | Configure an OpenAI-compatible provider connection and select its model route. |
-| Support another model wire protocol | Implement a native client/materializer and extend the compiled API-kind boundary. |
+| Support another model wire protocol | Implement a native client and request materializer, then add its API kind to the runtime. |
 
 The runtime has no general plugin-directory loader or public RPC for installing
 an arbitrary Rust handler. A compiled extension becomes part of a new runtime
-build. MCP and [workflow tools](workflow-tools.md) provide the existing
-boundaries for separately deployed implementations.
+build. MCP and [workflow tools](workflow-tools.md) let an implementation run
+in its own service or worker.
 
 ## Add an external tool through MCP
 
@@ -29,7 +27,7 @@ its tools to every agent.
 
 Native execution supports the existing Responses, Chat Completions, and
 Anthropic Messages routes. Provider-hosted MCP has different reachability and
-capability constraints. Choose deliberately, and test discovery, one valid
+capability constraints. Test discovery, one valid
 call, an argument error, and the expected approval behavior. For private
 endpoints, both the record and the deployment network allowlist must permit
 access. See [Tools and MCP](../using-lightspeed/tools-and-mcp.md).
@@ -85,10 +83,12 @@ grant access to an operation that was not installed.
 
 Keep VFS and machine operations in their respective contexts. A VFS tool uses
 workspace storage; an environment tool uses the selected environment's
-filesystem and process boundary. Avoid making an adapter silently copy files
+filesystem and processes. Avoid making an adapter silently copy files
 or execute on the runtime host because its intended context is missing.
 
-### Decide retry behavior explicitly
+<a id="decide-retry-behavior-explicitly"></a>
+
+### Design for retries
 
 Tool execution policy includes an execution class and whether the operation
 is retry-safe. Those are trusted implementation facts, not fields the model
@@ -203,7 +203,9 @@ instead of accepting configuration that cannot work. Classify retries from
 known transient conditions; a validation error is not made recoverable by
 repeating it.
 
-## Regenerate and verify the changed boundary
+<a id="regenerate-and-verify-the-changed-boundary"></a>
+
+## Regenerate and verify the integration
 
 If public wire types or method metadata change, regenerate the API contract
 and TypeScript consumers through the existing exporters. Do the same for a
@@ -218,6 +220,6 @@ admission, endpoint selection, credential isolation, and failure classification.
 Add engine replay coverage if deterministic behavior changes.
 
 The existing tool-definition, provider-key, catalog-parity, materialization,
-and endpoint-override tests provide focused starting points. Local fixtures
-establish those boundaries before a deliberately configured live integration
-exercise with the target service.
+and endpoint-override tests provide focused starting points. Use local fixtures
+first, then test against the target service with an appropriate test account
+and credentials.

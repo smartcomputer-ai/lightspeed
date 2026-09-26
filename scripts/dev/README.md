@@ -44,7 +44,7 @@ run TypeScript, it installs the root npm workspace when dependencies are
 missing or `package-lock.json` changed. A root `.env` is loaded automatically.
 The `full` and `runtime` profiles can start without `OPENAI_API_KEY` or
 `ANTHROPIC_API_KEY`. The launcher warns when neither deployment key is set;
-in the full product, add a universe-scoped key under **Settings → Integrations**.
+in the full product, add a universe-scoped key under **Models → Add provider**.
 Provider-backed runs still need a valid credential for the selected model.
 
 To require a deployment key before startup, for example in CI:
@@ -98,13 +98,15 @@ Existing passwords and universe content are preserved. Set
 [development logins](../../docs/documentation/development/local-development.md#development-logins).
 
 The `full` profile defaults to authenticated runtime access. Without a configured
-`LIGHTSPEED_PLATFORM_API_KEY`, the launcher explicitly initializes a local
-service principal and mints a key, passing the secret to child processes in memory.
+`LIGHTSPEED_PLATFORM_API_KEY`, the launcher bootstraps the configured universe
+and mints a deployment key with every method group and actor assertion, passing
+the secret to child processes in memory.
 The `runtime` profile defaults to `single` for direct CLI development.
 
 Platform waits for the configured runtime's HTTP health endpoint before starting,
-including in the `platform` profile. First-login bootstrap validates the canonical
-administrator through that API, so Rust compilation must finish first. The
+including in the `platform` profile. Its universe operations need that runtime,
+so Rust compilation must finish first. Platform creates its first local admin
+from the configured email and password when its own user table is empty. The
 supervisor logs this dependency wait and fails startup after 60 seconds if the
 runtime never becomes ready. `--plan` also shows startup dependencies.
 
@@ -119,9 +121,12 @@ LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh
 LIGHTSPEED_CHANNELS_CONNECTORS=telegram,whatsapp ./dev.sh
 ```
 
-Configurator setup provisions a universe-managed service identity and scoped
-bearer key. The old loopback trusted-header path is retired. Enabled connectors
-require their own `LIGHTSPEED_CONNECTOR_API_KEY` and scoped capabilities.
+Configurator setup provisions a universe key with configuration method groups
+and stores it in a credential grant. Enabled connectors require their own
+`LIGHTSPEED_CONNECTOR_API_KEY` with the groups needed for account discovery,
+inbound admission, credential leasing, and media upload. See
+[API keys and service access](../../docs/documentation/access-and-security/api-keys-and-service-access.md)
+for the exact groups and request headers.
 
 Use `./dev.sh --plan full` to inspect a profile without starting services.
 Planning an enabled local daemon can create its working directory.

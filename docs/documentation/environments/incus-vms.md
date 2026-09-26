@@ -2,8 +2,8 @@
 
 The included Incus provider creates and manages virtual machines for Lightspeed
 environments. An operator supplies trusted images and templates; a universe
-receives access through a provider binding. Users can then provision machines
-from those templates directly or through their agent profiles.
+receives access through a provider binding. Universe Operators and Admins
+create machines from those templates, then attach them to sessions or profiles.
 
 The provider runs as a separate process. It talks to Incus using an HTTPS
 client certificate, exposes a private controller to Lightspeed, and relays
@@ -35,7 +35,7 @@ agent or browser endpoints. [Networking and ingress](networking-and-ingress.md)
 describes the separate authenticated runtime route and optional public app edge.
 
 A Platform administrator registers the physical provider and binds universes.
-Universe owner/admin users can then create environments from the enabled
+Universe Operators and Admins can then create environments from the enabled
 offerings.
 
 ## Build the provider and guest image
@@ -175,8 +175,8 @@ provider**. Enter:
 | Transport | `WebSocket` |
 | Controller endpoint | `ws://127.0.0.1:19090/control` |
 
-Choose **Register**. The ID is a stable deployment-wide identifier; profiles
-refer to it. For another topology, use the private endpoint reachable from
+Choose **Register**. The ID is a stable deployment-wide identifier used by its
+universe bindings. For another topology, use the private endpoint reachable from
 the environment gateway rather than its own loopback address.
 
 Choose **Bind universe**, select the **Universe**, leave **Binding id** at the
@@ -197,7 +197,7 @@ test, then configure it under [Power and cleanup](power-and-cleanup.md).
 
 The environment progresses through provisioning and booting toward ready.
 Expand **Details** to inspect the environment ID, provider, template, and
-provider target. Attach it with **Exec** access and select it in a session
+provider target. Attach it with **Run commands** access and select it in a session
 with **Environments** enabled, then ask the agent to run `pwd` and a harmless
 file check.
 

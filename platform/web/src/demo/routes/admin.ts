@@ -107,16 +107,9 @@ export function adminRoutes(store: DemoStore): Hono {
 
   app.get("/admin/environment-providers", (c) => c.json([...store.environmentProviders.values()]));
 
-  /// Every key: deployment keys, and each universe's keys with the groups
-  /// they hold.
+  /// Every key: deployment keys, and each universe's keys.
   app.get("/admin/api-keys", (c) => {
-    const universeKeys = [...store.universes.values()].flatMap((state) => state.apiKeys.map((key): DeploymentApiKeyView => ({
-      ...key,
-      scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId },
-      groups: store.keyGrants.get(key.keyPrefix)?.groups ?? groupsFor("universe"),
-      assertActor: store.keyGrants.get(key.keyPrefix)?.assertActor ?? false,
-      createdBy: { kind: "actor", id: store.currentUser.id },
-    })));
+    const universeKeys = [...store.universes.values()].flatMap((state) => state.apiKeys);
     return c.json([...store.deploymentKeys, ...universeKeys]);
   });
 
@@ -138,12 +131,11 @@ export function adminRoutes(store: DemoStore): Hono {
       const universeId = body.scope.universeId;
       const state = store.universes.get(universeId);
       if (!state) return notFound(c, "universe not found");
-      state.apiKeys.push(key);
-      store.keyGrants.set(key.keyPrefix, { groups, assertActor });
       const apiKey: DeploymentApiKeyView = {
         ...key, scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId }, groups, assertActor,
         createdBy: { kind: "actor", id: store.currentUser.id },
       };
+      state.apiKeys.push(apiKey);
       return c.json({ apiKey, secret }, 201);
     }
     const apiKey: DeploymentApiKeyView = { ...key, scope: { kind: "deployment" }, groups, assertActor, createdBy: { kind: "actor", id: store.currentUser.id } };

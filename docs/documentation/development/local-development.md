@@ -32,8 +32,8 @@ its own database migrations during startup. Wait for the readiness checks,
 then open [http://localhost:5173/app/](http://localhost:5173/app/).
 
 A root `.env` is loaded automatically if present. You can start without a
-model API key and add a universe credential through **Settings →
-Integrations**. A provider-backed run still needs a valid credential for its
+model API key and add a universe credential through **Models → Add provider**.
+A provider-backed run still needs a valid credential for its
 selected model. The [quickstart](../getting-started/quickstart.md#configure-a-model)
 covers that first connection and the development account.
 
@@ -43,7 +43,7 @@ that directory is not a sandbox. Sessions must still have an environment
 configured before using it. Pass `--no-envd` when your work doesn't need a
 machine, or follow the
 [local attachment walkthrough](../environments/bring-your-own-compute.md#direct-attachment-for-local-development)
-to use it deliberately.
+to configure it.
 
 ## Development logins
 
@@ -58,16 +58,18 @@ and these accounts on every startup:
 | Viewer | `viewer@lightspeed.dev` |
 
 New accounts share `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`, defaulting to
-`lightspeed-dev-password`. Admin keeps its deployment administrator role; the
+`lightspeed-dev-password`. Admin keeps its Platform administrator role; the
 other accounts receive only their listed universe role. Startup reuses existing
-accounts and the Test universe, restores missing role assignments, and preserves
+accounts and the Test universe, restores the listed universe roles, and preserves
 existing passwords and content. Changing the password variable does not reset
 existing logins.
 
 Set `LIGHTSPEED_PLATFORM_DEV_SEED=false` to disable these fixtures. Ordinary
-Platform startup and other launcher profiles leave them disabled; a configured
-Platform service key must support the usual administrator bootstrap and identity
-operations when seeding is enabled.
+Platform startup and other launcher profiles leave them disabled. Seeding creates
+the runtime universe through the Platform's deployment key, then records the
+accounts and memberships in the Platform database. A supplied key needs
+`deployment/universes` access for that step and the usual Platform permissions
+for interactive work.
 
 ## Choose the processes you need
 
@@ -99,10 +101,11 @@ daemon's working directory. It does not start the services. The complete
 override table is in the
 [environment-variable reference](../reference/environment-variables.md#local-development).
 
-The full profile uses authenticated runtime access and explicitly bootstraps a
-local service key when no Platform key is configured. The runtime-only profile
-uses `single` with a named local development principal. See
-[Authentication and access](../deployment/authentication-and-tenancy.md).
+The full profile uses authenticated runtime access and bootstraps a
+deployment key when no Platform key is configured. The runtime-only profile
+uses `single`: no key or actor, with ordinary requests pinned to the configured
+universe. Keep that listener private. See
+[API keys and service access](../access-and-security/api-keys-and-service-access.md).
 
 Telegram and WhatsApp connector processes are opt-in. For example,
 `LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh` enables Telegram account
@@ -110,7 +113,7 @@ discovery through the core API. Configure the corresponding account and
 credentials before expecting messages to flow. Bots and Channels core already
 run inside the Rust runtime; they don't require the connector host to exist.
 See [Channel connectors](../integrating-and-extending/channel-connectors.md)
-for that development boundary.
+for connector development and setup.
 
 ## Follow a change to its owner
 
@@ -128,7 +131,7 @@ those pieces have different responsibilities.
 | Machine execution or provisioning | The environment protocol, daemon, client, or provider; see [Environment providers](../integrating-and-extending/environment-providers.md). |
 
 Use [Architecture](../how-it-works/architecture.md) to understand those
-boundaries, then the nearest `Cargo.toml`, `package.json`, and module tests to
+responsibilities, then the nearest `Cargo.toml`, `package.json`, and module tests to
 find the actual implementation. The workspace manifests remain the current
 inventory. A domain crate can validate a record without owning the database
 or network operation that eventually uses it.
@@ -170,8 +173,8 @@ npm run test --workspace @lightspeed/platform-web
 
 The demo backend makes many visual and interaction changes easy to inspect
 without services. Validate against the full product when the change depends
-on real authorization, persistence, runtime progress, or errors from those
-boundaries. [Testing and evaluation](testing-and-evaluation.md) explains how
+on real authorization, persistence, runtime progress, or service errors.
+[Testing and evaluation](testing-and-evaluation.md) explains how
 to widen checks as a change reaches more of the system.
 
 For a manually launched Rust process or CLI, load the local connection

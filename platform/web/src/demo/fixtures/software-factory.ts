@@ -8,8 +8,9 @@
 /// is seeded here, with timestamps hung off boot time.
 import type { Environment, GitHubApp, SecretGrant, SessionOrigin, UniverseSetup } from "@/api";
 import type { BotEventOutcome, ModelConfig, SessionSummaryView } from "@lightspeed-ai/agent-client";
+import { groupsFor } from "@/lib/method-groups";
 import { appendExchange, appendScriptedRun, closeSession, newSession } from "../engine";
-import type { DemoResponder, DemoStore, DemoToolCall, DemoTurn, SessionRecord, UniverseState } from "../store";
+import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
 import {
   BOT_TOOLS,
   DAY_MS,
@@ -591,19 +592,23 @@ function seedProfiles(universe: UniverseState): void {
 function seedMembers(store: DemoStore, universe: UniverseState): void {
   universe.members.push(member(store, universe, "user-marco", "admin", ago(68 * DAY_MS)), member(store, universe, "user-priya", "contributor", ago(61 * DAY_MS)));
   universe.apiKeys.push(
-    {
+    universeApiKey(universe, {
       keyPrefix: "lsk_acme_cfg_9b21",
       displayName: "Configurator MCP",
+      groups: ["profiles", "mcp", "environments", "bots", "channels", "auth", "models"],
       createdAtMs: ago(38 * DAY_MS),
+      createdBy: "user-marco",
       lastUsedAtMs: ago(2 * HOUR_MS + 11 * MINUTE_MS),
-    },
-    {
+    }),
+    universeApiKey(universe, {
       keyPrefix: "lsk_acme_mr_c19e",
       displayName: "Marco's laptop (rotated)",
+      groups: groupsFor("universe"),
       createdAtMs: ago(60 * DAY_MS),
+      createdBy: "user-marco",
       revokedAtMs: ago(12 * DAY_MS),
       lastUsedAtMs: ago(13 * DAY_MS),
-    },
+    }),
   );
 }
 

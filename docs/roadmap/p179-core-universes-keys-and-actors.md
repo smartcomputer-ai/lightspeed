@@ -1,7 +1,8 @@
 # P179 — Core: universes, keys and actors
 
-**Status:** Implemented, 2026-09-25; only the user documentation (step 8)
-is open. The first of two slices that replace the model the first attempt
+**Status:** Implemented, 2026-09-25; user documentation completed 2026-09-26
+in [Access and security](../documentation/access-and-security/overview.md).
+The first of two slices that replace the model the first attempt
 built; [the retrospective](archive/p176-p178-access-retrospective.md) tells
 that story. This document is the core half;
 [the Platform half](p180-platform-organizations-roles-and-unshared-work.md)
@@ -335,10 +336,10 @@ but the tables changed, so a development database needs `./dev.sh reset`.
    [x] Local PostgreSQL, Temporal, MinIO and MCP live suites green against
        disposable services. The slow activity-timeout and external provider
        suites were excluded.
-8. [ ] Deferred for now: documentation of `identity-and-access.md` and
-       `authentication-and-tenancy.md` rewritten to "core scopes and
-       records, the Platform decides". Until then both describe the
-       removed directory, roles and audit table.
+8. [x] User documentation now lives in the six-page Access and security
+       section: core scopes and records, the Platform decides. The former
+       identity and authentication pages point there; surrounding guides and
+       the configuration reference describe the same boundary.
 
 Step 4 is the one the Platform half waits for.
 

@@ -11,15 +11,15 @@ conversation keeps its own agent session and history. Custom routing can
 deliberately combine conversations.
 
 Start with a working bot from [Bots and triggers](bots-and-triggers.md) and a
-model suited to its tasks. Use a universe owner/admin or platform
-administrator account to manage channel accounts and bot triggers.
+model suited to its tasks. Use an Operator or Admin account to manage channel
+accounts and bot triggers.
 
 ## Make the connector available
 
-The operator must run the gateway, session, bots, and channels runtime roles,
-plus the Node connector host for the selected providers. The roles can run in
-one runtime process. The connector host needs access to the core API and
-Temporal; it discovers the accounts configured in the product.
+The deployment needs a connector host for Telegram or WhatsApp alongside the
+Lightspeed runtime. Ask the operator to enable the provider before connecting
+an account. The connector discovers accounts configured in the product and
+handles their incoming and outgoing messages.
 
 For the full local stack, enable Telegram when launching:
 
@@ -34,10 +34,9 @@ defaults the authentication directory to `.lightspeed-dev/whatsapp-auth`.
 Keep the key and account state across restarts so the host can keep using the
 linked account and stored media references.
 
-The connector host requires an authenticated core endpoint and its own
-`LIGHTSPEED_CONNECTOR_API_KEY` with discovery, leasing and admission capabilities.
-See the
-[connector host guide](../../../platform/connectors/README.md) and
+The host also needs a service key for account discovery, credential leasing,
+message admission, and attachment upload. See
+[Channel connectors](../integrating-and-extending/channel-connectors.md) and
 [connector variables](../reference/environment-variables.md#connector-host) for deployment setup.
 
 ## Connect a Telegram account
@@ -46,9 +45,8 @@ Open **Channels → Connect channel** and choose **Telegram**. Enter the bot
 token supplied by BotFather, optionally set a display name, and choose
 **Connect Telegram**.
 
-Lightspeed checks the token against Telegram and stores an encrypted
-credential grant for the account. You do not need to create a separate
-secret first. The connector discovers the account and starts serving it.
+Lightspeed checks the token against Telegram and encrypts it for the account.
+The connector discovers the account and starts serving it.
 Allow for its discovery interval, which defaults to 30 seconds.
 
 Use only one Telegram update consumer for this token. A second connector host
@@ -109,9 +107,9 @@ conversation is busy.
 
 Pairing controls which chat belongs to the trigger. To restrict individual
 senders, set **Who may talk to the bot → Listed handles only**, then enter
-**Allowed handles**. Use provider sender identifiers: Telegram numeric
-user IDs as strings, or WhatsApp JIDs. These are not display names or Telegram
-`@username` values, even where the current input placeholder suggests a handle.
+**Allowed handles**. Enter Telegram numeric user IDs or WhatsApp JIDs. The
+field expects those provider identifiers, even if the placeholder suggests
+a display name or `@username`.
 
 **Control commands** is a separate list of senders allowed to use `/status`
 and `/activation mention` or `/activation always`. An empty control list

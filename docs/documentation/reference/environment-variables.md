@@ -52,10 +52,10 @@ They do not configure the TypeScript Platform server.
 | `LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES` | `67108864` | Maximum gateway request body size in bytes. |
 | `LIGHTSPEED_PUBLIC_BASE_URL` | `http://{LIGHTSPEED_GATEWAY_BIND}` | Externally reachable gateway base URL used for OAuth callbacks, bot webhook ingest URLs (`/hooks/bots/…`), and as the environment route base when the process runs the `gateway` role. Hosted deployments should set it explicitly. |
 | `LIGHTSPEED_MCP_PRIVATE_NETWORKS` | Empty (`localhost,127.0.0.1,::1` in `dev.sh` profiles) | Comma-separated exact hosts and CIDRs that outbound requests may reach on private networks: native MCP discovery and execution (where the MCP server record must also opt in with `allowPrivateNetwork`) and bot URL polls. All other targets retain public-only HTTPS/SSRF policy. |
-| `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL` | Unset | Retired; a nonempty value fails startup. Use a scoped service key. |
+| `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL` | Unset | Retired; a nonempty value fails startup. Use a scoped API key. |
 | `LIGHTSPEED_MCP_OAUTH_ALLOW_PRIVATE_NETWORKS` | `false` (`true` in `dev.sh` profiles) | Allows MCP OAuth metadata, registration, exchange, and refresh to use HTTP or private endpoints. This does not authorize discovery or tool execution; those use `LIGHTSPEED_MCP_PRIVATE_NETWORKS` plus the record opt-in. |
-| `LIGHTSPEED_AUTH_MODE` | **Required** | `single` (one universe, every request acts as an unauthenticated deployment administrator; local development only) or `authenticated` (canonical scoped bearer keys). There is no default: the process refuses to start without it. Configurator uses the same mode. |
-| `LIGHTSPEED_SECRETS_MASTER_KEY` | Unset | Base64-encoded 32-byte AES key for encrypted grants and secrets. Required before encrypted secret material can be persisted or resolved. Keep stable across restarts. |
+| `LIGHTSPEED_AUTH_MODE` | **Required** | `single` (no credential check, ordinary methods use one configured universe; local development only) or `authenticated` (bearer keys with a scope and allowed method groups). There is no default: the process refuses to start without it. Configurator uses the same mode. |
+| `LIGHTSPEED_SECRETS_MASTER_KEY` | Unset | Base64-encoded 32-byte AES key for encrypted secret values and grant tokens. Required before encrypted secret material can be persisted or resolved. Keep stable across restarts. |
 | `LIGHTSPEED_BLOB_CACHE_BYTES` | `268435456` | Per-process CAS blob-cache budget. `0` disables the cache. |
 | `LIGHTSPEED_CAS_SWEEP_GRACE_MS` | `604800000` (seven days) | Minimum time since a blob's last put or API admission before an unheld blob is eligible for collection; reads do not refresh it. `0` disables background collection. One elected `sessions` process examines up to 100,000 old catalog rows per universe per hourly pass in pages of at most 1,024 rows, resuming its cursor next time. Passes have a soft 10-minute budget between pages; database statements have a five-second timeout and a one-second lock timeout. `lightspeed-server cas-sweep [--dry-run]` runs one bounded pass; deletion yields to an active background leader. Profiles and uncommitted workflow handoffs do not retain blobs; a handoff stalled beyond grace may require resubmission. |
 | `LIGHTSPEED_LLM_DEBUG_DUMPS` | `false` | Store every generation's raw provider request (credentials redacted) and raw response as unreferenced CAS blobs and log their refs at debug level. Nothing references the dumps, so they are collected after one grace period. Each request carries the whole context; leave this off outside debugging. |
@@ -64,14 +64,17 @@ They do not configure the TypeScript Platform server.
 | `RUST_LOG` | Built-in service filter | Standard tracing filter override, for example `temporal_server=debug`. |
 
 `LIGHTSPEED_UNIVERSE_AUTO_CREATE` is retired. Setting it is an error; create
-universes explicitly through the operator API or `lightspeed-server universe
+universes explicitly through the deployment API or `lightspeed-server universe
 create`.
 
-In authenticated mode, bearer keys resolve canonical active principals. A
-universe key selects its own universe; a deployment key selects one through
-`x-lightspeed-universe`. A user assertion in `x-lightspeed-principal` requires
-scoped `assert_user` and never adds the service's rights to the user's rights.
-Single mode rejects identity headers. See [authentication and access](../deployment/authentication-and-tenancy.md).
+In authenticated mode, the gateway checks the key's status, scope, and allowed
+method groups on each request. A universe key selects its own universe and
+must omit `x-lightspeed-universe`. A deployment key sends that header for
+universe/service methods and omits it for deployment methods.
+`x-lightspeed-actor` requires the key's `assertActor` flag and supplies attribution,
+not a person's permissions. The removed `x-lightspeed-principal` header is
+rejected. Single mode rejects all credential, universe, and actor headers.
+See [API keys and service access](../access-and-security/api-keys-and-service-access.md).
 
 ### Default model and provider transport
 
@@ -236,7 +239,7 @@ the Rust runtime database and gateway authentication.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_PLATFORM_API_KEY` | Unset | The Platform's deployment key, from `server api-key bootstrap`: every method group and allowed to assert actors. Interactive calls name the universe and assert the signed-in user as the actor. Full development provisions one when omitted. |
+| `LIGHTSPEED_PLATFORM_API_KEY` | Unset | The Platform's deployment key: every method group and allowed to assert actors. Create with `lightspeed-server api-key create --deployment --assert-actor`. Interactive calls name the universe and assert the signed-in user as the actor after Platform permission checks. Full development provisions a key when omitted. |
 | `LIGHTSPEED_PLATFORM_DATABASE_URL` | **Required** | Platform PostgreSQL connection URL. |
 | `LIGHTSPEED_PLATFORM_AUTH_SECRET` | **Required** | Better Auth signing/encryption secret. Use a strong, stable deployment secret. |
 | `LIGHTSPEED_PLATFORM_BASE_URL` | `http://localhost:3000` | Public Platform origin used by authentication and trusted-origin checks. |
@@ -267,14 +270,16 @@ accounts across many universes. It reads no database; its only dependencies
 are the core JSON-RPC endpoint and Temporal. Accounts are discovered through
 `deployment/channels/accounts/list`, provider tokens are leased through
 `auth/grants/lease` (never configured in the environment), and every
-universe-scoped call carries `x-lightspeed-universe` and a bearer service key.
-Core must use authenticated mode. The service needs deployment
-`discover_channel_accounts` and scoped `lease_credentials` / `admit_channel_inbound`.
+universe-scoped call carries `x-lightspeed-universe` and its bearer key.
+Core must use authenticated mode. The host needs a deployment-scoped key with
+the `deployment/channels`, `auth/lease`, `channels/inbound`, and `blobs/put`
+method groups. These allow discovery, credential leasing, inbound admission,
+and attachment uploads without session reads.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
 | `LIGHTSPEED_API_URL` | **Required** | Core JSON-RPC endpoint. |
-| `LIGHTSPEED_CONNECTOR_API_KEY` | **Required** | Canonical service bearer key for the core gateway. |
+| `LIGHTSPEED_CONNECTOR_API_KEY` | **Required** | Deployment-scoped bearer key with the connector method groups listed above. |
 | `LIGHTSPEED_CONNECTOR_PROVIDERS` | `telegram,whatsapp` | Comma-separated providers this host serves. |
 | `LIGHTSPEED_CONNECTOR_ACCOUNTS` | All discovered accounts | Comma-separated `<universeId>/<accountId>` entries narrowing the served accounts. |
 | `LIGHTSPEED_CONNECTOR_DISCOVERY_INTERVAL_MS` | `30000` | Positive interval between discovery passes; new accounts start, disabled or removed ones stop, and a changed revision or a failed runner restarts without a process restart. |
@@ -299,7 +304,7 @@ upstream Lightspeed gateway.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_AUTH_MODE` | `single` | `single` (explicit local development identity) or `authenticated` (canonical scoped bearer keys). Configurator uses the same mode. |
+| `LIGHTSPEED_AUTH_MODE` | `single` | `single` (private development, no identity headers) or `authenticated` (scoped bearer keys). Must match the upstream gateway. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_HOST` | `127.0.0.1` | HTTP bind host. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | HTTP bind port. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL` | `http://127.0.0.1:18080/rpc` | Upstream Lightspeed JSON-RPC endpoint. |
@@ -330,8 +335,7 @@ Configurator variables documented above.
 
 The `full` and `runtime` development profiles warn when neither
 `OPENAI_API_KEY` nor `ANTHROPIC_API_KEY` is set: they still start, and provider
-API keys can be added per universe from the Platform UI (Settings →
-Integrations); the Sessions view shows a banner until a usable key exists.
+API keys can be added per universe from the Platform UI (**Models → Add provider**); the Sessions view shows a banner until a usable key exists.
 Pass `./dev.sh --require-api-keys` to make a missing deployment key fatal
 (useful in CI). `--allow-missing-api-keys` is still accepted and is a no-op.
 

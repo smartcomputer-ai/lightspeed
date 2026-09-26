@@ -11,8 +11,8 @@ the daemon brings back the same environment.
 
 ## Prepare the machine
 
-You need a running Lightspeed installation and an account that can manage the
-universe's environments and sessions. The [local quickstart](../getting-started/quickstart.md)
+You need a running Lightspeed installation and an Operator or Admin account in
+the universe. The [local quickstart](../getting-started/quickstart.md)
 provides both. For a deployed installation, the operator must expose the
 environment registration routes described in
 [Self-hosting](../deployment/self-hosting.md#configure-the-public-edge).
@@ -122,8 +122,8 @@ within its limits. Removing this local file does not revoke that key.
 
 Open a session with a working model, such as the one from the
 [first-agent walkthrough](../getting-started/first-agent.md). When the session
-is idle, open the sliders button labeled **Session settings**. Enable
-**Environments**, attach **My workstation** with **Exec** access, choose it
+is idle, open **Session settings**. Enable
+**Environments**, attach **My workstation** with **Run commands** access, choose it
 under **Active environment**, and choose **Apply setup**.
 
 You do not need to enable model-driven selection or background jobs to use
@@ -172,9 +172,7 @@ a replacement needs a fresh state directory and a valid registration key.
 To remove this machine's access permanently, clear the session's active
 environment, stop the daemon, and close its environment through the CLI or
 API described in [Power and cleanup](power-and-cleanup.md#close-a-machine-deliberately).
-The current web app has no individual close button for registered or external
-environments. Revoke the registration key when you no longer need it to admit
-machines.
+Revoke the registration key when you no longer need it to admit machines.
 
 Revoking a key alone blocks new identities. Already admitted environments
 can continue reconnecting until you close them. Closing a registered

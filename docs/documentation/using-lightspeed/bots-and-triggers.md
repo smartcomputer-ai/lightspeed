@@ -10,30 +10,13 @@ Other events can create separate threads, for example one conversation per
 incident or pull request. The bot record remains the same while those
 conversations have their own histories and lifecycles.
 
-Bot session instructions include the bot ID, exact session ID, and session
-kind: `main`, `keyed`, or `per-event`. Keyed threads also receive their original
-routing key, plus a human-readable thread label when it differs from the key.
-Keys and labels appear as JSON-quoted data. Main and per-event sessions have
-no routing key.
-
-A routing key identifies a logical thread within a bot, such as `pr-42` or a
-chat conversation key. Resetting that thread changes its concrete session ID
-but retains the routing key. With `bot_emit`, omit `to` and pass that original
-key as `sessionKey` to send an event back to the keyed thread. Omitting
-`sessionKey` sends a self-event to Main, even from a routed thread. A session
-ID or thread label is not a substitute for the original key.
-
-These instructions are composed when a session is created or its bot profile
-is reapplied. Existing routed threads retain their instructions until reset;
-older routing records may lack the original key, which is then omitted rather
-than inferred from the label or session ID.
-
 This walkthrough builds `release-watch`, which reviews the Acorn release
 files from [Build your first agent](../getting-started/first-agent.md). First
 create the read-only `release-reviewer` profile from
 [Profiles and instructions](profiles-and-instructions.md#create-a-profile-for-a-job).
-Use a Contributor, Operator or Admin account in the universe. The deployment
-must run the bot controller role as well as the gateway and session workers;
+Use an Operator or Admin account to create and configure the bot. Contributors
+can invoke an existing bot. The deployment must run the bot controller role
+as well as the gateway and session workers;
 the local full stack includes it.
 
 ## Create the bot and send its first event
@@ -75,24 +58,22 @@ Typing into the bot's Chat composer sends a conversational message. It is
 useful for discussing the work, but it does not exercise the same numbered
 event admission as **Send a test event**.
 
-## Share the bot's work
+## Work with a shared bot
 
-A bot and its conversations share one audience. The creation form offers
-**Who can read** and **Running as** alongside the job settings. New bots normally
-run as the universe service. Their conversations inherit the bot's audience and
-execution identity, so new conversations remain part of the same shared work.
+Bots, their conversations, and their sub-agents are always shared with the
+universe. Every member can inspect them. Contributors and above can invoke a
+bot and control work in its conversations; Operators and Admins can configure
+it, manage triggers, replay events, reset conversations, and close or delete
+the bot. Current trigger-read responses include webhook ingest paths and chat
+pairing codes, and every member can call those reads. These bearer values are
+not restricted to bot managers even when the UI hides management controls.
 
-Use **Access** in the bot header to inspect or change that audience. Sharing the
-bot applies to its conversations as well. A colleague with read access
-can inspect the work; invocation and management still follow the bot's role and
-grant rules. Trigger secrets remain visible only to managers.
-
-If personal execution is enabled, a standalone bot can run as its creator.
-Disabling that person or removing resource-use rights prevents new run admission
-and fails the next model-call check in active work. A bot running as the universe
-service keeps that authority when its owner changes or leaves. The
-[execution guide](../deployment/authentication-and-tenancy.md#execution-authority)
-explains the fixed choice and the limits of those checks.
+The bot executes for the universe. Removing its creator's membership prevents
+that person's subsequent Platform requests but does not stop the bot or work
+already running.
+See [People and roles](../access-and-security/people-and-roles.md) for membership
+changes and [Agent and tool access](../access-and-security/agent-and-tool-access.md)
+for the bot controller's own limits.
 
 ## Add a schedule
 
@@ -144,8 +125,9 @@ Use a distinct source occurrence field for a genuinely new occurrence. To
 deliberately repeat an already stored event, use Activity's replay action.
 
 The other verification choices are **HMAC-SHA256 signature** and **GitHub
-(signed)**. They need an active retrievable secret grant. The GitHub preset
-uses GitHub's signature format and delivery ID, maps events to kinds such as
+(signed)**. Create a bearer token on **Credentials** with **Retrievable by
+trusted services** enabled, then enter its ID in **Credential grant ID**.
+The GitHub preset uses GitHub's signature format and delivery ID, maps events to kinds such as
 `issues.opened` and `pull_request.opened`, and can route by issue or pull
 request. Configure the sender to use the matching verification scheme.
 
@@ -164,20 +146,17 @@ next poll produces an event.
 
 A URL poll reaches public addresses over HTTPS and does not follow redirects;
 hosts on the deployment's private-network list (`LIGHTSPEED_MCP_PRIVATE_NETWORKS`)
-may also use HTTP. A poll can send a stored credential, which goes only where
-that credential belongs: the grant's audience must cover the poll URL, and a
-grant without an audience can be attached only by someone who may configure
-the universe.
+may also use HTTP. For an authenticated endpoint, enter the ID of a credential
+with **Retrievable by trusted services** enabled. If that credential is bound to
+an audience, the audience must cover the poll URL.
 
 An execution poll needs an existing, lasting execution environment and a
 command that prints JSON to stdout. The UI enables **Run a command** when the
 profile attaches a default environment. Enter one argument per line in the
 command form. Create and configure the machine independently before enabling
 the trigger. Leaving **Environment** blank runs the poll on the profile's
-default attachment. The poll follows that default even when the bot's
-conversation has since switched to another attached machine, because a live
-selection is never overridden; name the environment explicitly when the poll
-must share the conversation's machine.
+default attachment, even if the bot conversation has switched to another
+machine. Select a specific environment when the poll must always use it.
 
 Changing a poll specification resets its cursor and establishes a new
 baseline. Ten consecutive poll failures disable the trigger; fix the source
@@ -199,6 +178,13 @@ full configuration in the
 | Queue | Starts a later run when the target conversation is busy. This is the default busy-session policy. |
 | Steer | Offers the event to the active run at a subsequent model turn. |
 | Append as context only | Adds context without starting a run, even when the session is idle. |
+
+A routing key identifies a thread such as `pr-42`. The bot's instructions
+include this key, so it can send later work to the same thread. For a
+self-event, `bot_emit` with `sessionKey` uses that thread; omitting it sends
+the event to Main. Use the original routing key, rather than its display
+label or current session ID. Resetting a thread preserves the key while
+starting a new conversation.
 
 CEL filters can inspect `event`, `data`, and `headers`. A false result or
 filter error refuses admission; the refused event is not stored as ordinary
@@ -240,8 +226,8 @@ The daily run limit includes bot runs and their sub-agent descendants. Work
 held by the limit waits for the next UTC day. Flood protection can also pause
 an individual trigger, which must be resumed separately.
 
-The named session profile is reapplied to Main at an idle boundary after it
-changes. Open routed threads keep their setup until closed. Use the
+The named session profile is reapplied to Main when it is idle after the
+profile changes. Open routed threads keep their setup until closed. Use the
 conversation menu's **Reset Main…** or corresponding thread reset when you
 want a fresh conversation. Reset closes the old conversation and its open
 children at an idle boundary and retains the previous history according to

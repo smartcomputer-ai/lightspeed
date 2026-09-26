@@ -20,7 +20,6 @@ import type {
   SessionSummary,
   SessionView,
   Universe,
-  UniverseApiKey,
   UniverseSetup,
   WorkspaceRow,
   WorkspaceTree,
@@ -132,7 +131,8 @@ export interface UniverseState {
   /// stores them; `universe.features` is what they add up to.
   featureOverrides: FeatureOverrides;
   members: Member[];
-  apiKeys: UniverseApiKey[];
+  /// Universe keys as core lists them.
+  apiKeys: DeploymentApiKeyView[];
   profiles: Map<string, ProfileDocument>;
   sessions: Map<string, SessionRecord>;
   workspaces: Map<string, WorkspaceRecord>;
@@ -182,10 +182,8 @@ export class DemoStore {
   /// Engine universes no platform row links to (admin reconcile view).
   readonly orphanEngineUniverses: EngineUniverse[] = [];
   readonly environmentProviders = new Map<string, DeploymentEnvironmentProviderView>();
-  /// Deployment keys, and what each universe key may call beyond the
-  /// universe page's default of every universe group (admin API keys page).
+  /// Deployment keys; universe keys live on their universe.
   readonly deploymentKeys: DeploymentApiKeyView[] = [];
-  readonly keyGrants = new Map<string, { groups: MethodGroup[]; assertActor: boolean }>();
   channelsStatus: ChannelsStatus = { connectors: [] };
   readonly blobs = new Map<string, BlobContent>();
   readonly defaultInstructionsRef: string;
@@ -301,6 +299,24 @@ export class DemoStore {
       lastActivityAtMs,
     };
   }
+}
+
+/// A key scoped to `state`'s universe, as core lists it.
+export function universeApiKey(
+  state: UniverseState,
+  key: { keyPrefix: string; displayName: string; groups: MethodGroup[]; createdAtMs: number; createdBy: string; lastUsedAtMs?: number | null; revokedAtMs?: number | null },
+): DeploymentApiKeyView {
+  return {
+    keyPrefix: key.keyPrefix,
+    displayName: key.displayName,
+    scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId },
+    groups: key.groups,
+    assertActor: false,
+    createdBy: { kind: "actor", id: key.createdBy },
+    createdAtMs: key.createdAtMs,
+    lastUsedAtMs: key.lastUsedAtMs ?? null,
+    revokedAtMs: key.revokedAtMs ?? null,
+  };
 }
 
 export function sessionSummary(record: SessionRecord): SessionSummary {

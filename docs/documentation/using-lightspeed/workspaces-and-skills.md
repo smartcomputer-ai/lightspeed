@@ -1,9 +1,8 @@
 # Workspaces and skills
 
 A VFS workspace holds persistent files that agents and people can read and
-edit. A session attaches the workspace at an absolute path, such as `/workspace`.
-The attachment makes those files visible to the agent without attaching an operating
-system or starting a machine.
+edit. A session attaches the workspace at a path such as `/workspace`, making
+the files available without starting a machine.
 
 The same files can also supply instructions and reusable skills. Prompt files
 provide instructions that are loaded for the session. Skills describe
@@ -11,8 +10,9 @@ procedures the agent can discover and read when a task calls for them. This
 lets a project keep its source material and working conventions together.
 
 This guide extends the `release-notes` workspace from
-[Build your first agent](../getting-started/first-agent.md). Use a universe
-owner/admin or platform administrator account to manage workspaces and profiles.
+[Build your first agent](../getting-started/first-agent.md). Contributors can
+create and edit workspaces. Creating the profiles in this guide requires an
+Operator or Admin account.
 
 ## Attach files to a session
 
@@ -21,28 +21,28 @@ relative to that workspace, and creates directories in the path as needed.
 Open a file, edit its contents, and choose **Save**.
 
 In a profile's **Virtual File System: Files, Instructions, Skills** section,
-enabling VFS turns on **Prompt loading** and **Skill discovery** and lets you
-add a **Workspace attachment**. Adjust these independently. Existing configurations
-keep their saved settings. New rows attach workspaces. JSON and API configurations
-can also attach immutable snapshots, which always use **Read** access.
+enabling VFS turns on **Prompt loading** and **Skill discovery**. Choose **Add
+workspace** under **Workspace attachments** and configure its path and access.
+You can adjust the two discovery switches independently; existing profiles
+keep their saved settings.
 
 | Setting | Meaning |
 | --- | --- |
 | **Workspace** | Selects the live workspace to attach. |
 | **Session path** | The absolute path where this agent sees the attached files. |
-| **Access → Read** | Lets the agent inspect the attached files. |
-| **Access → Edit** | Also lets the agent write, edit, and patch files under this path. |
+| **Access → Read only** | Lets the agent inspect the attached files. |
+| **Access → Read and write** | Also lets the agent write, edit, and patch files under this path. |
 
-There is no separate file-tool switch. Attaching any workspace installs the VFS
-read tools, and an **Edit** attachment adds the write tools; the toolset follows the
-union of the attachments' access, and a write under a **Read** attachment is refused. To
-edit `release-notes`, attach the live workspace at `/workspace` with **Edit**
-access. A reviewer attaches it with **Read**. Attachment paths cannot overlap, and
-prompt or skill roots must fall inside a configured attachment.
+To edit `release-notes`, attach it at `/workspace` with **Read and write**
+access. Give a reviewer **Read only**. Lightspeed supplies the corresponding
+file tools and checks access at the target path, so another writable
+attachment does not let the reviewer edit this one. Attachment paths cannot
+overlap, and prompt or skill roots must fall inside an attachment.
 
 A profile attaching the same workspace into several sessions shares its live
 files. A change made by one session becomes visible to another on a subsequent
-file operation. A snapshot gives a reader a fixed version instead. For tasks
+file operation. JSON and API configurations can instead attach an immutable
+snapshot with read-only access. For tasks
 that must produce independent artifacts, create separate workspaces or use
 different output paths deliberately.
 
@@ -59,11 +59,10 @@ Use "Acorn 1.2" as the release name. Preserve uncertainty in the source:
 an absent compatibility statement is not evidence of compatibility.
 ```
 
-Open the release-editor profile and enable **Prompt loading** under
-**Virtual File System**. Root overrides are optional: choose **Customize roots** under
-**Prompt loading** to edit them. Leave **VFS prompt roots** empty to use conventional
-directories beneath each workspace attachment. Save, then create a new session from the
-profile or apply the updated setup to an existing idle session.
+Open the release-editor profile and check that **Prompt loading** is enabled
+under **Virtual File System**. Its default roots are `.agents/prompts` and
+`.lightspeed/prompts` beneath each workspace attachment. Save, then create a
+new session or apply the updated setup to an existing idle session.
 
 Lightspeed loads all `.md` and `.txt` files directly inside each configured
 prompt root in alphabetical (case-sensitive filename) order, without recursion.
@@ -75,14 +74,11 @@ For example, this optional file adds a second instruction source:
 .lightspeed/prompts/010-style.md
 ```
 
-Use it for a short convention such as “Use sentence case for headings.” The
-capability is explicit: merely placing `.lightspeed` files in a workspace does
-not enable sourcing. With `prompts: {}`, Lightspeed searches `.agents/prompts`
-and `.lightspeed/prompts` beneath each workspace attachment, including snapshot attachments.
-Optional comma-separated root overrides replace these defaults. Clearing the
-field restores defaults; switching off **Prompt loading** disables sourcing
-and removes its sourced instructions at the next reconciliation. Roots have a
-deterministic order; their order in the textbox is not a priority mechanism.
+Use it for a short convention such as “Use sentence case for headings.” If
+your project keeps instructions elsewhere, choose **Customize roots** under
+**Prompt loading**. Comma-separated **VFS prompt roots** replace the defaults;
+clearing that field restores them. Switch off **Prompt loading** to remove
+the sourced instructions when the session next refreshes its setup.
 
 Sourced files combine with the profile's custom text. Keep them consistent;
 their ordering does not resolve conflicting instructions. See
@@ -117,9 +113,10 @@ Ask before editing either file.
 *The walkthrough's skill file, entered in demo mode. The file tree shows its
 workspace-relative path; the instructions use session paths under `/workspace`.*
 
-Enable **Skill discovery** under **Virtual File System** and set **VFS skill roots** in the profile to `/workspace/.lightspeed/skills`, keeping
-the workspace attachment in place; any attachment grants the read tools the agent needs
-to read the skill. Save the profile and start a session from it. The resulting workspace layout is:
+Check that **Skill discovery** is enabled under **Virtual File System**.
+The default roots include `.lightspeed/skills`, so no override is needed for
+this example. Keep the workspace attached, save the profile, and start a
+session. The resulting workspace layout is:
 
 ```text
 release-notes/
@@ -128,17 +125,16 @@ release-notes/
 └── .lightspeed/
     ├── prompts/
     │   ├── 010-style.md          # Optional ordering prefix
-    │   └── instructions.txt
+    │   └── instructions.md
     └── skills/
         └── release-review/
             └── SKILL.md
 ```
 
 The filename must be `SKILL.md`. Both `name` and `description` are required
-frontmatter fields. Frontmatter is YAML: multiline descriptions and nested optional
-metadata are supported. Unknown metadata does not grant permissions or execute hooks.
-Discovery checks skill directories immediately inside each root rather than
-recursively searching arbitrary directory trees.
+frontmatter fields. Multiline YAML descriptions are supported. Discovery checks
+skill directories immediately inside each root, so place `release-review`
+directly under `.lightspeed/skills` as shown.
 
 Now send:
 
@@ -158,18 +154,17 @@ With the [CLI connection settings](sessions-and-runs.md#continue-from-the-cli)
 configured, list the discovered skills:
 
 ```bash
-target/debug/lightspeed skills list --session "<session-id>"
+lightspeed skills list --session "<session-id>"
 ```
 
 Copy the returned skill ID. It identifies a catalog entry and may differ from
 the skill's name. Submit a request to read and use it:
 
 ```bash
-target/debug/lightspeed skills use --session "<session-id>" "<skill-id>"
+lightspeed skills use --session "<session-id>" "<skill-id>"
 ```
 
-This starts an ordinary run when idle, or steers the current run. The instruction
-includes the source domain, document path, and base directory for supporting files. In the
+This starts an ordinary run when idle, or steers the current run. In the
 chat TUI, `/skills` lists entries, `/skill` opens the picker, and
 `/skill <skill-id>` selects an entry directly, including during an active run.
 
@@ -177,18 +172,16 @@ API clients can use `session/skills/list` to obtain the same locations and submi
 ordinary input through `session/runs/start` or `session/runs/steer`. See the
 [API reference](../../../crates/api/contract/api-reference.md).
 
-Skill selection has no activation state, scope, or deactivation operation.
-Skill reads and any skill text inserted as ordinary conversation content can be
-compacted like other messages and tool results. The current catalog remains
-available; the agent can reread a skill if needed. Mandatory persistent guidance
-belongs in the existing instruction mechanism.
+Selecting a skill asks the agent to read and use it for the task. Its contents
+can later be compacted like other conversation history, and the agent can
+reread the file when needed. Use prompt loading for guidance that should
+remain in the session's instructions.
 
 ## Configure VFS discovery explicitly
 
-VFS skill discovery is independently opt-in through the session or profile's
-`features.vfs.skills` block. An empty block enables `.agents/skills` and
-`.lightspeed/skills` beneath each workspace attachment, including snapshot attachments.
-No attachments means nothing to discover. For example:
+The form manages the same configuration available through JSON and the API.
+An empty `features.vfs.skills` block enables `.agents/skills` and
+`.lightspeed/skills` beneath each workspace attachment. For example:
 
 ```json
 {
@@ -203,31 +196,17 @@ No attachments means nothing to discover. For example:
 }
 ```
 
-Omitting `features.vfs.skills` disables discovery and removes its runtime
-catalog. To replace the conventional roots, supply a nonempty `roots` list of
-absolute paths inside workspace attachments, such as
-`"skills": { "roots": ["/workspace/team-skills"] }`. An explicit empty list
-and paths outside attachments are invalid. Each entry of `workspaces` names a
-`workspaceId` or an immutable `snapshotRef` at an absolute `path` with `read`
-or `edit` access; snapshots must be `read`. Workspace attachments, prompt sourcing,
-and CLI chat defaults do not enable skill discovery.
+Omit `features.vfs.skills` to disable discovery. To search elsewhere, provide
+a nonempty list of absolute roots inside attachments, such as
+`"skills": { "roots": ["/workspace/team-skills"] }`. In the form, use
+**Skill discovery → Customize roots → VFS skill roots**; clearing the field
+restores defaults. The `features.vfs.prompts` block follows the same pattern.
 
-The profile editor, new-session form, and session settings expose a
-**Skill discovery** switch under **Virtual File System**. It enables defaults
-immediately. Optional **VFS skill roots** replace the defaults; clearing the
-field restores defaults while leaving discovery enabled. Turn the switch off
-to disable discovery. CLI profile documents use the same configuration.
-
-The same enablement rules apply to `features.vfs.prompts`: absent is disabled,
-`prompts: {}` uses conventional roots, and explicit roots replace them. Prompts
-are loaded automatically as instructions; skills are advertised for the agent
-to read when relevant.
-
-Changes are discovered at eligible idle boundaries, including preparation for
-new work when no run is active or queued. There are no within-run refresh
-hooks. Disabling VFS discovery removes only its catalog; independently
-configured environment discovery and its catalog are unchanged. Catalogs keep
-separate identities with no cross-domain merging, deduplication, or fallback.
+The wire access values are `read` and `edit`. A workspace entry can use
+`snapshotRef` instead of `workspaceId` to attach a fixed version; snapshots
+require `read` access. See the
+[API reference](../../../crates/api/contract/api-reference.md) for the full
+configuration.
 
 ## Discover skills installed on a machine
 
@@ -258,59 +237,29 @@ empty uses the machine's default.
 }
 ```
 
-Empty source blocks search `.agents/skills` and `.lightspeed/skills`, or
-`.agents/prompts` and `.lightspeed/prompts`, beneath the effective working
-directory and execution user's home. No ancestors, `.claude`, or `.codex`
-directories are searched automatically. Optional `roots` lists replace **all**
-defaults, including home. These paths name actual source directories and can
-be absolute or relative to the active attachment's working directory. Users may explicitly include
-Claude/Codex directories as overrides. Empty override lists are invalid;
-clearing the editor field restores defaults. Omitting a source block disables it.
+By default, Lightspeed searches `.agents/skills` and `.lightspeed/skills`, or
+`.agents/prompts` and `.lightspeed/prompts`, beneath the working directory and
+execution user's home. It does not walk parent directories. To use a different
+location, including a `.claude` or `.codex` directory, choose **Customize roots**.
+Overrides replace all defaults, including home, and may be absolute or relative
+to the active attachment's working directory. Clearing the field restores
+defaults.
 
-Environment prompt files use the same direct `.md` and `.txt` file
-convention as VFS prompts. They load as instructions under the separate
-`instructions.110.environment` source. Its provenance report identifies the
-environment, file paths, and availability. Failed scans replace that source with
-an unavailable diagnostic rather than silently retaining old instructions.
-Disabling loading or switching environments removes only the corresponding
-runtime-owned environment instructions and catalog. Discovery never wakes a
-machine. No new scan occurs during a run or after an individual command.
+Environment prompt files use the same direct `.md` and `.txt` convention as
+VFS prompts. Skills appear in a separate environment section in the catalog
+and CLI picker, because the agent reads them from the machine. Copies in both
+VFS and the environment remain separate entries. Running a script supplied
+by an environment skill also requires process access to that machine.
 
-Directory symlinks may point to canonical installations inside the endpoint's
-filesystem access scope. Aliases to one canonical skill directory collapse;
-independent copies and equal names remain separate entries.
+Discovery refreshes when the session is idle with no queued runs, including
+preparation for new work. Installing a skill during a run does not refresh the
+catalog during that run. Switching environments removes the old machine's
+catalog; the new machine is scanned at the next eligible refresh.
 
-The environment catalog has the stable context key
-`runtime.catalog.skills.environment`; VFS retains `runtime.catalog.skills.vfs`.
-`session/skills/list` returns a `catalogs` array. Every catalog has a `source`
-(`{ "type": "vfs" }` or `{ "type": "environment", "environmentId": "…" }`),
-`catalogRef`, `availability`, `skills`, and `warnings`. Source identity belongs
-to the catalog; each skill contains metadata and readable directory/document
-paths. Runtime context keys are not exposed in this response. An absent catalog
-is omitted; an observed empty or unavailable catalog retains its own section.
-The CLI and chat picker retain separate catalog sections and select skills by
-their distinct IDs. Environment skills are
-read with environment file tools and their scripts run with process tools on
-that machine. VFS skills continue to use VFS tools. Copies in both domains are
-advertised independently, with no deduplication or automatic fallback.
-
-The runtime scans only at an eligible idle refresh (including idle API reads and
-preparation before new work), with no active or queued run. Installing a skill,
-finishing a tool/job, or continuing a model turn does not trigger discovery.
-Direct file reads always see the current machine file. Selecting another
-machine invalidates the former machine's catalog before the next model call;
-discovering the new machine waits for the next eligible idle boundary.
-
-Discovery never wakes an offline or paused machine. It requires `fs/scan`,
-filesystem read access, and endpoint home/default-directory metadata; there is
-no shell or per-file discovery fallback. A scan is bounded to 32 roots, 4,096
-visited entries, depth 8, 64 KiB per document, 2 MiB of inspected content, and a
-2-second local scan budget. Network discovery is bounded to four seconds.
-Missing roots are successful empty observations; inaccessible roots, dangling
-links, loops, or limits make the source incomplete. A failed/incomplete refresh
-publishes an unavailable catalog with diagnostics instead of retaining paths
-from an older scope or presenting a partial list as complete. A changed body without changed catalog metadata causes no context
-update. Changed metadata appends the usual bounded catalog successor.
+The machine must be online and support filesystem scanning. Discovery does
+not wake it. If a scan fails or exceeds its limits, the catalog reports that
+source as unavailable with diagnostics. Check the machine's state, root
+paths, and read permissions before trying again.
 
 ## Update files and handle concurrent edits
 
@@ -320,17 +269,10 @@ changed it, the write can fail with a conflict; Lightspeed does not merge
 competing edits automatically. Reload the current file, compare the changes,
 and make the intended edit against the new revision.
 
-Prompt sources and skill catalogs refresh at an idle run boundary, or through
-the relevant idle API reads. There is no catalog refresh within a run. A later
-ordinary skill read sees the current live workspace contents; an immutable
-snapshot read keeps its snapshot semantics. Discovery does not pin a separate
-copy of the skill body. Previously recorded tool results and inserted text
-retain their original bytes during replay, even after the source changes.
-
-A VFS workspace remains a separate filesystem from any execution environment.
-Linking `/workspace` does not mount it into a container or daemon machine.
-Transfer files explicitly when a process needs them; see
-[Environments](../environments/overview.md).
+Prompt sources and skill catalogs refresh while idle, before the next task
+starts. File reads use the current live contents even when the catalog has
+not changed, so a skill body can be updated independently of its description.
+Use a snapshot when the task must keep reading a fixed version.
 
 ## If files or instructions are missing
 

@@ -5,40 +5,27 @@ which infrastructure should receive it. Lightspeed first resolves the call to
 an admitted operation. That operation determines how arguments are interpreted,
 which adapter can execute them, and how the result returns to the session.
 
-This boundary supports very different kinds of work. Reading a VFS file can
-return immediately from an activity. A long-running job or delegated task
-needs an execution with its own lifetime. Bots and channel conversations add
-continuing policy around sessions. Each case uses the same small agent loop,
-with the additional ownership and delivery handled outside it.
+A VFS file read can return immediately from an activity. A long-running job
+or delegated task needs its own workflow. Bots and channel conversations
+coordinate ongoing work around sessions. The agent loop records each request
+and result; adapters and controllers manage the work outside it.
 
 ## Give an operation a stable identity
 
-The engine's tool registry records logical identities and admitted execution
-policy. A logical identity names an operation such as `env.run_process`; the
-name shown to a model is a presentation chosen for that turn.
-
-The runtime builds the tool catalog for the effective model, including any
-run override. A shared built-in resolver selects names, descriptions, schemas,
-argument adapters, and result renderers. One operation can have several
-presentations. For example, `env.continue_process` exposes `BashOutput` and
+The tool registry gives each operation a logical identity, such as
+`env.run_process`. The model sees names and argument formats chosen for its
+provider. For example, `env.continue_process` appears as `BashOutput` and
 `KillShell` in the Claude-style presentation normally used for Anthropic.
 
-The model returns an exposed name and arguments. The request-local reverse
-mapping identifies the admitted operation and the selected variant. Only
-advertised client calls receive a routable identity, and exposed names must
-be unique. A provider-hosted helper cannot become a local function call merely
-by using a similar name.
+When the model calls a tool, the runtime maps the advertised name back to its
+logical operation. Only tools advertised for that request can be called, and
+each exposed name must be unique. Changing presentation therefore does not
+grant a new operation. The native conversation still retains the original
+name, arguments, and call ID so the provider sees a consistent continuation.
 
-This separates two kinds of stability. Scheduling, workflow lookup, and
-environment rules use the logical identity. The native conversation retains
-the original exposed name, arguments, and call ID so the provider can see a
-consistent continuation of its own call.
-
-Built-in definitions live in runtime code. Externally authored function and
-native declarations load their definition references from CAS; MCP inventories
-are resolved by the runtime. A specific tool choice names a logical identity
-and resolves to its primary presentation. The model-facing vocabulary can
-change without granting a different underlying operation.
+Built-in definitions live in runtime code. External declarations are loaded
+from CAS, and MCP inventories are resolved from connected servers. The runtime
+assembles the catalog for the turn's effective model, including run overrides.
 
 There is no archive of every historical built-in implementation. Replay
 reduces recorded results without rerunning adapters. An activity execution or
@@ -128,17 +115,13 @@ The completion behavior is another independent choice:
 | `joined` | The final tool reply after the batch waits on a runtime-owned promise. |
 | `promises` | Model-visible keyed promise handles that can be awaited later. |
 
-The valid combinations express the delivery guarantee the caller needs. Pull
-dispatch supports accepted completion only. Joined calls require push delivery
-or a started execution and a nonzero hard deadline. Started executions must
-have promise-bearing completion. A single call can produce several keyed
-promises, which is useful when submitting several compute jobs together.
+A single call can produce several keyed promises, useful when submitting
+several compute jobs together. The [workflow-tool integration guide](../integrating-and-extending/workflow-tools.md)
+explains the supported combinations and required deadlines.
 
-The destination is not a model argument. An agent cannot redirect a tool by
-inventing a workflow ID or task queue. Admitted bindings also do not change
-with an ordinary session configuration edit. Trusted system bindings can be
-added through their separate admission path without making the session
-lifecycle-managed.
+Because the declaration fixes the destination, model arguments cannot redirect
+a tool to another workflow or task queue. An ordinary session configuration
+edit cannot change an admitted binding either.
 
 ## Follow a joined call across workflows
 
@@ -163,17 +146,15 @@ sequenceDiagram
   Session->>Model: Continue with the tool result
 ```
 
-Push requests, replies, cancellation notices, and lifecycle notifications use
-the fixed `deliver_emission` envelope. Pull receivers instead read authorized
-invocations from the log. Start-on-call uses the generic recipe adapter, and
-started producers expose a fixed recovery query to recover terminal results
-when delivery was missed. A bound receiver does not automatically acquire
-that polling recovery path.
+Requests, replies, and cancellation notices use the `deliver_emission`
+envelope. Started executions also expose a recovery query, allowing the
+session to recover a terminal result whose delivery was missed. Existing
+receivers must arrange their own reliable reply delivery.
 
 The reply must match the stored producer workflow identity and completion
 correlation. An optional immutable reply schema is checked in an activity.
-Terminal resolutions converge through ordinary admission, so a late success
-does not revive an already cancelled promise.
+The session records one terminal outcome, so a late success cannot revive an
+already cancelled promise.
 
 This protocol keeps feature-specific transports out of the stable session
 worker. Adding a workflow tool does not require teaching the engine a new
@@ -198,9 +179,9 @@ execution. The execution owns cleanup of its activities and external
 resources. A job workflow can therefore cancel one submitted job without
 cancelling its siblings merely because they were started by the same call.
 
-Stable identities and recorded terminal facts make repeated deliveries
-converge, but they do not roll back external effects. The producer still needs
-appropriate idempotency and cleanup at its own boundary, as described in
+Stable identities let the session recognize repeated deliveries. The producer
+still needs to avoid repeating external effects and clean up its resources,
+as described in
 [The agent loop and durability](agent-loop-and-durability.md#make-retries-converge-at-explicit-boundaries).
 
 ## Give lifecycle ownership to a controller
@@ -279,18 +260,12 @@ their completion keys, and routes cancellation to the corresponding jobs.
 The session deals with admitted tool calls and durable promises rather than
 implementing daemon polling itself.
 
-The job still runs on a real machine. Durable orchestration does not make its
-operating-system process replayable, and a daemon restart has different
-consequences from a session worker restart. VFS tools also remain separate
-from environment file and process tools: one operates on CAS-backed workspace files,
-the other on the batch's selected machine. The installed environment tools
-are the union of the configuration's attachments; a call the active machine's
-own access does not cover is refused at execution rather than removed from
-the toolset, so switching machines never changes the advertised tools. [Processes and jobs](../environments/processes-and-jobs.md)
-describes those execution limits.
+The job still runs on a real machine. Its operating-system process cannot be
+replayed, and restarting the daemon has different consequences from restarting
+a session worker. [Processes and jobs](../environments/processes-and-jobs.md)
+explains what survives each kind of failure.
 
-The common structure is now visible. A session records an admitted operation,
-an adapter performs the immediate effect, and a controller or execution owns
-work that needs an independent lifetime. Results return as facts the same
-deterministic core can reduce, regardless of whether they came from a file
-read, a child agent, a bot receiver, or a machine job.
+Environment tools check access against the machine selected for the batch.
+Switching machines keeps the same advertised tools, but a call can be refused
+if the newly selected machine lacks the required access. VFS tools operate on
+workspace files independently of that machine.

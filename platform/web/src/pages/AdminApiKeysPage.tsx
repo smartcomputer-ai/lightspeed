@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus, ShieldOff } from "lucide-react";
 import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/agent-client";
 import { api, type Universe } from "@/api";
+import { GroupSummary, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
 import { ApiKeySecret } from "@/components/api-keys/secret-once";
 import { ReadError } from "@/components/read-error";
 import {
@@ -18,7 +19,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -44,7 +44,7 @@ import {
   TableTitleCell,
 } from "@/components/ui/table";
 import { EmptyState, LoadingNote, PageHeader } from "@/components/page";
-import { groupsFor, METHOD_GROUPS } from "@/lib/method-groups";
+import { groupSummary, groupsFor } from "@/lib/method-groups";
 import { useUniverses } from "@/lib/universes";
 
 const DEPLOYMENT = "deployment";
@@ -117,8 +117,8 @@ export function AdminApiKeysPage() {
                         <span className="mt-1 block text-xs text-muted-foreground">Asserts people</span>
                       )}
                     </TableCell>
-                    <TableCell className="max-w-72 text-xs text-muted-foreground">
-                      {groupSummary(key)}
+                    <TableCell className="text-xs text-muted-foreground">
+                      <GroupSummary summary={groupSummary(key.scope.kind, key.groups)} />
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {key.lastUsedAtMs == null ? "Never" : formatTimestamp(key.lastUsedAtMs)}
@@ -179,13 +179,6 @@ export function AdminApiKeysPage() {
   );
 }
 
-/// "All groups" when a key holds everything its scope allows.
-function groupSummary(key: DeploymentApiKeyView): string {
-  const allowed = groupsFor(key.scope.kind);
-  if (allowed.every((group) => key.groups.includes(group))) return "All groups";
-  return key.groups.map((group) => METHOD_GROUPS[group]?.label ?? group).join(", ");
-}
-
 function CreateKeyDialog({
   open,
   onOpenChange,
@@ -229,12 +222,6 @@ function CreateKeyDialog({
     setAssertActor(false);
     setCreated(null);
     create.reset();
-  };
-  const toggle = (group: MethodGroup, on: boolean) => {
-    const next = new Set(chosen);
-    if (on) next.add(group);
-    else next.delete(group);
-    setGroups(next);
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -291,23 +278,7 @@ function CreateKeyDialog({
                     : "A universe key reaches only this universe."}
                 </FieldDescription>
               </Field>
-              <fieldset className="grid gap-2">
-                <legend className="mb-1 text-sm font-medium">May call</legend>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {allowed.map((group) => (
-                    <div key={group} className="flex items-center gap-2">
-                      <Checkbox
-                        id={`admin-key-group-${group}`}
-                        checked={chosen.has(group)}
-                        onCheckedChange={(checked) => toggle(group, checked === true)}
-                      />
-                      <Label htmlFor={`admin-key-group-${group}`} className="text-sm font-normal">
-                        {METHOD_GROUPS[group].label}
-                      </Label>
-                    </div>
-                  ))}
-                </div>
-              </fieldset>
+              <MethodGroupPicker idPrefix="admin-key" allowed={allowed} chosen={chosen} onChange={setGroups} />
               <div className="flex items-center justify-between gap-3 rounded-md border p-3">
                 <Label htmlFor="admin-key-assert-actor" className="min-w-0 text-sm">
                   Speaks for people

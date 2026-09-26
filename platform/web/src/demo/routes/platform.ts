@@ -3,8 +3,9 @@
 /// real server applies passes.
 import { Hono } from "hono";
 import { effectiveFeatures, featureOverridesSchema, memberUpdateSchema, mergeFeatureOverrides, slugify, universeRoleSchema } from "@lightspeed/platform-shared";
-import type { EngineUniverse, Member, Universe, UniverseApiKey } from "@/api";
-import type { DemoStore, UniverseState } from "../store";
+import type { MethodGroup } from "@lightspeed-ai/agent-client";
+import type { EngineUniverse, Member, Universe } from "@/api";
+import { universeApiKey, type DemoStore, type UniverseState } from "../store";
 import { conflict, badRequest, notFound, nowIso, readBody, universeFor } from "./common";
 
 export function platformRoutes(store: DemoStore): Hono {
@@ -184,17 +185,18 @@ export function platformRoutes(store: DemoStore): Hono {
   app.post("/universes/:id/api-keys", async (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const body = await readBody<{ displayName?: string }>(c);
+    const body = await readBody<{ displayName?: string; groups?: MethodGroup[] }>(c);
     const displayName = body.displayName?.trim();
     if (!displayName) return badRequest(c, "validation failed — displayName: required");
+    if (!body.groups?.length) return badRequest(c, "validation failed — groups: required");
     const secret = `lsk_${randomHex(24)}`;
-    const apiKey: UniverseApiKey = {
+    const apiKey = universeApiKey(state, {
       keyPrefix: secret.slice(0, 12),
       displayName,
+      groups: body.groups,
       createdAtMs: Date.now(),
-      revokedAtMs: null,
-      lastUsedAtMs: null,
-    };
+      createdBy: store.currentUser.id,
+    });
     state.apiKeys.push(apiKey);
     return c.json({ apiKey, secret }, 201);
   });

@@ -1,19 +1,20 @@
 # Tools and MCP
 
-Tools let an agent do work outside a model response: read a file, fetch a web
-page, call another agent, or act through an external service. A profile's
-capability grants determine which tools Lightspeed exposes. Instructions can
-explain how to use a tool, but they cannot grant one that is absent from the
-setup.
+Tools let an agent read files, fetch web pages, delegate tasks, and act through
+external services. The session's configuration determines which tools it can
+use. Save that configuration in a profile when several sessions need the
+same setup.
 
 Start with the smallest toolset that can complete the task. The release editor
 needs VFS access to read its source and save a document. If it later needs to
 check an issue tracker, connect that tracker through MCP and grant the relevant
 tools. That keeps the agent's access understandable as its job grows.
 
-Use a universe owner/admin or platform administrator account for the setup
-procedures. Configure tools in a profile for reuse, or in an idle session's
-**Session settings** for a local change.
+Use an Operator or Admin account to register MCP servers and configure
+profiles. A Contributor can change tools in an idle session they can control
+under **Session settings**. See
+[Agent and tool access](../access-and-security/agent-and-tool-access.md) for
+how tool configuration and external credentials determine what an agent can do.
 
 ## Choose built-in capabilities
 
@@ -29,15 +30,15 @@ The model-configuration editor groups capabilities by what the agent can do:
 | **MCP Servers** | Calling tools supplied by registered external MCP servers. |
 
 Each feature has its own settings. VFS tools come from attached workspaces,
-and process access needs an environment attached with `exec` access. After
-changing the profile,
+and process access needs an environment attached with `exec` or higher access.
+After changing the profile,
 create a new session or [apply the setup](profiles-and-instructions.md#apply-changes-deliberately)
 to an existing idle one.
 
 ## Built-in tool formats
 
-Lightspeed selects model-facing names, arguments, and results from the effective
-turn model's API kind:
+Tool names vary with the model's API kind. These are the names you may see in
+the transcript for the same kinds of work:
 
 | API kind | Filesystem editing | Process execution |
 | --- | --- | --- |
@@ -50,21 +51,10 @@ Attached VFS workspaces have their own prefixed filesystem tools; they are
 separate from environment files. Each operation still requires its capability
 grant.
 
-`exec_command` accepts a shell command string. It normally returns within ten
-seconds with output and either an exit code or a handle for `write_stdin`.
-Yielding a handle does not kill the process. Polling or sending input continues
-that process; separate executions start fresh shells. Interactive input requires
-an opt-in PTY. Sessions without process continuation receive a one-shot command
-tool instead.
-
-Generic Completions does not advertise `apply_patch` or `vfs_apply_patch`.
-Integrators can explicitly select `BuiltinToolPresentation::CodexLike` to
-include patch tools, or `Canonical` to retain argument-array process execution
-and patch tools. These are Rust toolset options, not session UI settings;
-they never add permissions. Defaults do not guess a tool preference from a
-provider or model name. Historical calls retain their original names, arguments,
-and result formats, including already-admitted Completions calls issued before
-the default changed.
+Long-running commands can return output while the process continues. The
+agent uses the returned handle to collect more output or send input. See
+[Processes and jobs](../environments/processes-and-jobs.md) to choose between
+an interactive command and a background job, and to stop either safely.
 
 ## Add web access
 
@@ -77,7 +67,6 @@ Completions supports page fetching but not this search feature. Responses
 search uses the provider's cached search mode; the UI has no switch to turn
 on live external access. Anthropic uses its native search and fetch tools,
 while the other API kinds use Lightspeed's public-URL fetch for page content.
-Do not treat a search result as proof that a page was fetched live.
 
 Optional allowed or blocked domains restrict search results. These fields are
 hidden under **Customize domains** by default; configured filters remain
@@ -96,7 +85,7 @@ stores the server's URL and authentication in the universe; a profile then
 references that server by ID. Registering it alone does not expose its tools
 to every agent.
 
-1. Open **Settings → MCP servers → Add server**.
+1. Open **MCP servers → Add server**.
 2. Enter a **Name** and **Server URL**, then choose **Continue**. Use the
    server's Streamable HTTP endpoint. This field does not accept a local
    executable or a stdio command.
@@ -108,14 +97,14 @@ to every agent.
 5. Configure authentication and finish adding the server.
 
 For **No authentication**, the server must accept unauthenticated requests.
-For **Bearer token**, first open **Settings → Secrets → Add secret**, set
-**Secret type** to **Bearer token**, enter a **Display name** and **Secret
-value**, and choose **Add secret**. Select that credential in the MCP form.
+For **Bearer token**, first open **Credentials → Add credential → Paste a
+token or secret**. Set **Secret type** to **Bearer token**, enter a **Display
+name** and **Secret value**, and choose **Add credential**. Select that
+credential in the MCP form.
 
-For **OAuth sign-in**, choose **Add and connect**, then **Open the sign-in**
-in the OAuth dialog. Complete the external service's consent flow and return
-until the connection shows **Connected**. The consent authorizes the MCP
-connection; it does not grant the server to a profile yet.
+For **OAuth sign-in**, choose **Add and connect**, then **Open the sign-in**.
+Complete the external service's consent flow and return until the connection
+shows **Connected**. The next step selects which profiles can use it.
 
 ## Select tools and grant the server
 
@@ -129,8 +118,7 @@ before loading tools.
 
 For an issue-tracker integration, an initial review profile might need issue
 search and issue read operations. Add a write operation when the task also
-needs to update issues. Tool names and arguments come from the actual server;
-there is no common issue-tracker tool name to paste into every configuration.
+needs to update issues. Use the names advertised by your server.
 
 Loading tools discovers their metadata without invoking them. Read descriptions
 and safety annotations as claims from that server. The allowlist and approval
@@ -144,25 +132,18 @@ To narrow them for this profile, choose **Customize tools**, then **Selected
 tools**. The same picker shows only tools within the server's allowance, plus
 any saved selections that are no longer allowed so you can remove them.
 
-The all-tools mode includes future tools within the server's allowance;
-**Selected tools** keeps the explicit names you chose, even if you selected
-every currently available tool. Switching modes preserves your selection draft
-while the editor is open. Refreshing discovers live metadata without changing
-your selections. Missing tools remain visible and removable, and an empty
-selection must be filled or switched back to all tools before saving.
+The all-tools mode includes future tools within the server's allowance.
+**Selected tools** keeps the names you chose, even if that includes every
+current tool. Refreshing the inventory leaves your selection unchanged;
+remove unavailable tools or update the selection before saving.
 
 Save and start a session from that profile. Ask it to perform a small read-only
 lookup against a known object, then inspect the arguments and returned result
 in the transcript.
 
-The profile references the server ID and may narrow the server's allowlist
-further for that session. In JSON, `features.mcp.servers` is a list such as
-`[{ "serverId": "tracker", "tools": ["search_issues", "get_issue"] }]`; the
-optional `tools` subset must fall within the record's allowlist and narrows
-both up-front injection and search-on-demand. The universe record owns its
-endpoint, credential, execution path, exposure, allowlist, deferral, and
-approval policy. Changes to that shared record can affect every profile using
-it; it is not copied into each profile as an independent connection.
+The registered server is shared configuration: changing its endpoint,
+credential, tools, or approval policy can affect every profile using it.
+Profiles reference that connection and may narrow its tool selection.
 
 ## Choose how MCP executes
 
@@ -192,38 +173,25 @@ authorize tool-call egress. See the
 
 ## See images and documents from tools
 
-Tools can show the model images and PDF documents, not only text. An MCP
-server whose result carries `image` blocks or embedded PDF resources, and a
-`read_file` (or **Read**) of a PNG, JPEG, GIF, WebP, or PDF file in a
-workspace or environment, hand the bytes to the model as provider-native
-media on every supported API: Anthropic Messages, OpenAI Responses, and
-OpenAI Chat Completions. Nothing is converted or resized. Audio, video, and
-other types are dropped with a note in the tool result, as is any asset over
-10 MB or beyond eight per result, so a wrong tool call or an accidental read
-of a binary file never fails the run. A text-only model such as DeepSeek
-receives a note in place of the media instead of an error.
+Reading a PNG, JPEG, GIF, WebP, or PDF can return the file to the model as
+media. MCP servers can also supply image blocks and embedded PDFs. The
+transcript shows those items as thumbnails or document links, and the agent
+can reference them in its answer. Sub-agents can pass the same media back in
+their results.
 
-Every media item is named by a **handle**: `media:` followed by the first
-twelve characters of its content hash, for example `media:3f9a2c1d4e7b`. The
-tool result announces each item by position and handle
-(`[image 1 · media:3f9a2c1d4e7b · image/png · 38 KiB]`), and the model
-refers to media the same way, writing `![caption](media:3f9a2c1d4e7b)` or
-`[report](media:9b21e04c77a1)` in its answer. The transcript resolves those
-links against the session's media and renders the image or a document link
-in place; a handle the session never saw shows as a broken reference. A
-sub-agent hands an image or document up to its parent by linking it in its
-final answer the same way.
-
-One provider caveat: Claude Opus 5's refusal classifier rejects some
-tool-produced media follow-ups, reliably a PDF that arrives after a tool
-round-trip, and a refusal fails the turn. Other Claude models and both OpenAI
-APIs read the same content; choose one of them for sessions whose tools
-return documents.
+Lightspeed accepts up to eight media items per tool result, each at most
+10 MiB. Unsupported types and oversized items produce an explanatory note.
+The bytes are passed through without resizing or conversion, so the selected
+model must support the format. A text-only model receives a note instead;
+provider-specific limits or refusals can still reject a model request. Test a
+representative document before choosing a model for a document-heavy task.
+Claude Opus 5 has refused some tool-produced PDF follow-ups in Lightspeed's
+live tests; verify that combination with the documents your task will use.
 
 ## Require approval for tool calls
 
-The server's **Advanced options → Tool approval** (the record's `approval`
-field) defaults to **Never require approval**. Choose **Always require approval** to pause proposed calls for a
+The server's **Advanced options → Tool approval** defaults to **Never require
+approval**. Choose **Always require approval** to pause proposed calls for a
 decision. The transcript shows each pending operation and its arguments;
 choose **Approve** to allow it or **Reject** to refuse it. A batch continues
 after all pending decisions are supplied.
@@ -256,4 +224,4 @@ already completed.
 
 This guide connects external tools to Lightspeed agents. To let another MCP
 client manage Lightspeed itself, use
-[Configurator MCP](../../../platform/configurator-mcp/README.md).
+[Configurator MCP](../integrating-and-extending/configurator-mcp.md).

@@ -119,20 +119,6 @@ export interface Member {
   createdAt: string;
 }
 
-export interface UniverseApiKey {
-  keyPrefix: string;
-  displayName?: string | null;
-  createdAtMs: number;
-  revokedAtMs?: number | null;
-  lastUsedAtMs?: number | null;
-}
-
-export interface UniverseApiKeyCreated {
-  apiKey: UniverseApiKey;
-  /// Returned once at creation and never recoverable from Lightspeed.
-  secret: string;
-}
-
 export interface UniverseSetup {
   id: string;
   name: string;

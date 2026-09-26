@@ -16,14 +16,17 @@ bot owns its inbox, routing, conversations, and future work.
 | Notify an ongoing release bot that a review is ready | A federation event. |
 | Ask another bot to handle work on its own schedule and report later | Federation with a requested reply receipt. |
 
-Both mechanisms require explicit grants. Use a universe owner/admin or
-platform administrator account to configure them.
+Enable sub-agents in the parent profile, and bot messaging in the sending
+and receiving bots' settings. Use an Operator or Admin account to configure
+them. These settings determine the agent's tools;
+[Agent and tool access](../access-and-security/agent-and-tool-access.md) explains
+the runtime boundaries.
 
 ## Delegate a release review
 
 First create the `release-reviewer` profile from
 [Profiles and instructions](profiles-and-instructions.md#create-a-profile-for-a-job).
-It should have a clear description and its own `read` link to the
+It should have a clear description and its own read-only attachment to the
 `release-notes` workspace at `/workspace`.
 
 Open the parent `release-editor` profile and enable **Sub-agents**. In
@@ -45,14 +48,14 @@ against the files, then report the changes you recommend. Do not edit yet.
 The child receives the supplied brief and its own profile. It does not receive
 the parent's conversation or inherit its tool grants. Include the facts,
 paths, and expected result the child needs in the brief. In this example,
-both profiles explicitly link the same workspace, so both agents can read
+both profiles attach the same workspace, so both agents can read
 the files without copying them into the child conversation.
 
 Inspect the parent's tool activity and follow the **Sub-agents** link to the
 child transcript. A completed child should show its own reads and review;
 the parent should use that result in its answer. To find finished children in
-the main session list, clear **Hide sub-agent sessions** and **Hide closed
-sessions**.
+the session list, open **Filter sessions → Include** and select **Sub-agent
+sessions** and **Closed sessions**.
 
 ## Understand the child boundary
 
@@ -61,21 +64,16 @@ that can write to a database delegates that authority even if the parent
 cannot call the database tool directly. Review the child profile as part of
 the parent's access design.
 
-Workspace attachments are shared only when both profiles point to the same live
-workspace. They do not create isolated copies. Give a reviewer `read`
-access, or use a snapshot when it must review a fixed version while another
-agent continues editing.
+Attaching the same live workspace lets both agents see the same files. Give
+a reviewer **Read only** access, or use a snapshot when it must review a fixed
+version while another agent continues editing.
 
-Environment behavior is also explicit. An attached environment or an inherited
-parent environment shares a real filesystem. The child profile's
-**Inherit the parent's active environment (sub-agents only)** attachment
-(`"inherit": true`) resolves to the parent's active machine when the child is
-spawned, with the access level the child's attachment declares. It is
-dropped when the parent has no active environment, and an explicit attachment
-of the same machine wins over it. The child can also attach a different
-existing machine with its own access; profiles never provision one. VFS files
-remain separate from these machine files; see
-[Environments](../environments/overview.md).
+The child can use its own attached machine or share its parent's. The child
+profile's **Inherit parent environment**
+attachment resolves to the parent's active machine when the child is spawned,
+with the child attachment's chosen access. If the parent has no active
+machine, that attachment is omitted. Sharing a machine shares its filesystem
+and process credentials. See [Environments](../environments/overview.md).
 
 A sub-agent spawned by a bot does not become another bot. It gets its profile
 and brief, without the parent's bot history, inbox, or controller-specific
@@ -86,7 +84,7 @@ tools.
 The parent uses `agent_run` for a result returned with the tool call. Several
 calls in the same model turn can run concurrently and return together.
 For work that can proceed alongside other parent activity, `agent_spawn`
-returns a promise that the parent can await later.
+returns a promise: a handle the parent can await later.
 
 Both calls accept the same model-facing arguments. For example:
 
@@ -120,13 +118,10 @@ finishes or is canceled; force-closing the session cancels it.
 
 The result includes a status such as `completed`, `failed`, `cancelled`, or
 `deadline`, plus output or error information and the child session ID. Check
-the status before treating the output as a completed review. A child that
-looked at images or documents hands them up by linking their `media:` handles
-in its answer: the result's `media` list names each one, and the parent sees
-them as media right after the result, under the same handles. A handle the
-child never saw stays plain text. A child returns
-one run's result and closes automatically; there is no child-continuation
-conversation tool.
+the status before treating the output as a completed review. Images and
+documents referenced in the child's answer can also pass back to the parent.
+A child returns one run's result and closes automatically. Delegate a new
+task when more work is needed.
 
 ## Bound the delegation tree
 
@@ -134,10 +129,10 @@ The default limits are depth `2`, `16` total descendants, `4` concurrent open
 descendants, and a one-hour deadline per child. The deadline ceiling is
 24 hours. Configure smaller values when a task should be quick and shallow.
 
-These limits apply through the root's delegation tree. **Max descendants** is
-a lifetime count, not a slot returned whenever a child finishes. **Max
-concurrent** limits open descendants. Nested grants can narrow the limits but
-cannot widen the limits already pinned by their origin.
+These limits apply across the root's delegation tree. **Max descendants**
+counts every child created during the tree's lifetime; finishing a child does
+not return that capacity. **Max concurrent** limits children still open.
+Further delegation can narrow the inherited limits but cannot widen them.
 
 The child records its profile revision, parent, and root, so its execution can
 be inspected against the setup it received. Changing the saved profile does
@@ -152,9 +147,8 @@ different records even when their IDs match. Give the bot a brief describing
 how to review incoming requests and resolve their events with findings.
 
 Open `release-watch` and choose **Settings → Other bots**. Enable **Can
-message other bots** and save. Check **Accepts messages from** as well: enabling
-sending can also open an otherwise disabled inbox in the form. Set the
-receiving policy you actually intend.
+message other bots** and save. Review **Accepts messages from** at the same
+time; enabling sending can also open an otherwise disabled inbox.
 
 On the receiving `release-reviewer` bot, set **Accepts messages from → Only
 these bots**, select `release-watch`, and save. **Nobody** disables acceptance;

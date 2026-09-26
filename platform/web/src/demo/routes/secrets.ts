@@ -15,7 +15,7 @@ import type {
   SecretProvider,
   UniverseSetup,
 } from "@/api";
-import { base64ToText, type DemoStore, type UniverseState } from "../store";
+import { base64ToText, universeApiKey, type DemoStore, type UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
 
 const MODEL_PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -338,13 +338,13 @@ function configuratorSetup(universe: UniverseState): UniverseSetup {
 function finishConfiguratorInstall(store: DemoStore, universe: UniverseState, setup: UniverseSetup): void {
   const now = Date.now();
   const keyPrefix = `lsk_${hex().slice(0, 8)}`;
-  universe.apiKeys.push({
+  universe.apiKeys.push(universeApiKey(universe, {
     keyPrefix,
     displayName: "Lightspeed Configurator setup",
+    groups: ["profiles", "mcp", "environments", "bots", "channels", "auth", "models"],
     createdAtMs: now,
-    revokedAtMs: null,
-    lastUsedAtMs: null,
-  });
+    createdBy: store.currentUser.id,
+  }));
   const grant = mintGrant(store, universe, {
     grantId: `authgrant_lightspeed_configurator_${hex()}`,
     providerId: "lightspeed-configurator",

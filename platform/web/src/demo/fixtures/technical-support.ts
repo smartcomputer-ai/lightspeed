@@ -7,7 +7,7 @@
 /// end to end, plus the profiles, KB, environment, and integrations behind it.
 import type { Environment, GitHubApp, SecretGrant } from "@/api";
 import { appendScriptedRun, newSession } from "../engine";
-import type { DemoResponder, DemoStore, DemoToolCall, DemoTurn, UniverseState } from "../store";
+import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type UniverseState } from "../store";
 import {
   BOT_TOOLS,
   DAY_MS,
@@ -675,13 +675,14 @@ function seedMembers(store: DemoStore, universe: UniverseState): void {
     member(store, universe, "user-jonas", "admin", ago(47 * DAY_MS)),
     member(store, universe, "user-priya", "contributor", ago(32 * DAY_MS)),
   );
-  universe.apiKeys.push({
+  universe.apiKeys.push(universeApiKey(universe, {
     keyPrefix: "lsk_ts_4c9e",
     displayName: "Developer dashboard support widget",
+    groups: ["session", "blobs/put", "models"],
     createdAtMs: ago(26 * DAY_MS),
+    createdBy: "user-jonas",
     lastUsedAtMs: ago(9 * MINUTE_MS),
-    revokedAtMs: null,
-  });
+  }));
 }
 
 function seedProfiles(universe: UniverseState): void {
