@@ -72,8 +72,8 @@ function ModeHeader({ title }: { title: string }) {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton size="lg" render={<Link to="/" />}>
-          <div className="flex size-8 items-center justify-center rounded-lg border">
+        <SidebarMenuButton size="lg" render={<Link to="/" />} tooltip="Back">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border">
             <ArrowLeft className="size-4" />
           </div>
           <div className="grid flex-1 text-left leading-tight">
@@ -111,13 +111,20 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
     }
   }, [active]);
 
-  // The main menu's width can be dragged; it is kept per account.
-  const { sidebarWidth, setSidebarWidth } = useUserPreferences();
+  // The main menu's width can be dragged, and dragged narrow enough it
+  // folds to icons; both are kept per account.
+  const { sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed } = useUserPreferences();
   const sidebarResize = useResizableWidth({
     stored: sidebarWidth,
     fallback: 256,
     min: 192,
     max: 384,
+    collapse: {
+      collapsed: sidebarCollapsed,
+      below: 160,
+      collapsedWidth: 48,
+      onCollapse: setSidebarCollapsed,
+    },
     onCommit: setSidebarWidth,
   });
 
@@ -130,6 +137,8 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
 
   return (
     <SidebarProvider
+      open={!sidebarResize.collapsed}
+      onOpenChange={(open) => setSidebarCollapsed(!open)}
       style={{ "--sidebar-width": `${sidebarResize.width}px` } as CSSProperties}
       // A drag moves the menu with the pointer, not behind its animation.
       className={cn(
@@ -137,7 +146,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           && "[&_[data-slot=sidebar-container]]:transition-none [&_[data-slot=sidebar-gap]]:transition-none",
       )}
     >
-      <Sidebar>
+      <Sidebar collapsible="icon">
         <SidebarHeader>
           {mode === "universe" ? (
             <UniverseSwitcher active={active} admin={admin} />
@@ -191,19 +200,19 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
               <SidebarGroupContent>
                 <SidebarMenu>
                   <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("profile")}>
+                    <SidebarMenuButton onClick={() => scrollToSection("profile")} tooltip="Profile">
                       <UserRound />
                       <span>Profile</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("security")}>
+                    <SidebarMenuButton onClick={() => scrollToSection("security")} tooltip="Security">
                       <KeyRound />
                       <span>Security</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("appearance")}>
+                    <SidebarMenuButton onClick={() => scrollToSection("appearance")} tooltip="Appearance">
                       <Palette />
                       <span>Appearance</span>
                     </SidebarMenuButton>

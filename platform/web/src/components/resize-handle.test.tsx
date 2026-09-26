@@ -111,3 +111,77 @@ it("does not take two quick drags for a double-click reset", async () => {
   await act(async () => handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
   expect(onCommit).toHaveBeenCalledExactlyOnceWith(340);
 });
+
+function Menu({ onCommit, onCollapse, collapsed, stored = 256 }: { onCommit: (width: number | null) => void; onCollapse: (collapsed: boolean) => void; collapsed: boolean; stored?: number }) {
+  const resizable = useResizableWidth({
+    stored,
+    fallback: 256,
+    min: 192,
+    max: 384,
+    collapse: { collapsed, below: 160, collapsedWidth: 48, onCollapse },
+    onCommit,
+  });
+  return (
+    <div data-width={resizable.width} data-collapsed={resizable.collapsed}>
+      <ResizeHandle label="Resize menu" handle={resizable.handle} />
+    </div>
+  );
+}
+
+async function menu(collapsed: boolean, stored?: number) {
+  const onCommit = vi.fn();
+  const onCollapse = vi.fn();
+  await act(async () => root.render(<Menu collapsed={collapsed} stored={stored} onCommit={onCommit} onCollapse={onCollapse} />));
+  const handle = container.querySelector<HTMLDivElement>('[role="separator"]')!;
+  const shown = () => container.querySelector<HTMLElement>("[data-width]")!.dataset;
+  return { onCommit, onCollapse, handle, shown };
+}
+
+it("folds to icons when dragged narrower than the snap point, keeping its width", async () => {
+  const { onCommit, onCollapse, handle, shown } = await menu(false);
+  await act(async () => pointer(handle, "pointerdown", 256));
+  await act(async () => pointer(handle, "pointermove", 170));
+  expect(shown().collapsed).toBe("false");
+  expect(shown().width).toBe("192");
+  await act(async () => pointer(handle, "pointermove", 150));
+  expect(shown().collapsed).toBe("true");
+  expect(shown().width).toBe("256");
+  await act(async () => pointer(handle, "pointerup", 150));
+  expect(onCollapse).toHaveBeenCalledExactlyOnceWith(true);
+  expect(onCommit).not.toHaveBeenCalled();
+});
+
+it("expands from icons by a click, or by a drag past the snap point to where it ends", async () => {
+  const clicked = await menu(true);
+  await act(async () => pointer(clicked.handle, "pointerdown", 48));
+  await act(async () => pointer(clicked.handle, "pointerup", 48));
+  expect(clicked.onCollapse).toHaveBeenCalledExactlyOnceWith(false);
+  expect(clicked.onCommit).not.toHaveBeenCalled();
+  // The double-click that click belongs to does not reset the width.
+  await act(async () => clicked.handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+  expect(clicked.onCommit).not.toHaveBeenCalled();
+
+  const dragged = await menu(true);
+  await act(async () => pointer(dragged.handle, "pointerdown", 48));
+  await act(async () => pointer(dragged.handle, "pointermove", 120));
+  expect(dragged.shown().collapsed).toBe("true");
+  await act(async () => pointer(dragged.handle, "pointermove", 300));
+  expect(dragged.shown().collapsed).toBe("false");
+  await act(async () => pointer(dragged.handle, "pointerup", 300));
+  expect(dragged.onCommit).toHaveBeenCalledExactlyOnceWith(300);
+  expect(dragged.onCollapse).toHaveBeenCalledExactlyOnceWith(false);
+});
+
+it("folds and unfolds by keyboard at its narrowest", async () => {
+  const expanded = await menu(false);
+  await act(async () => expanded.handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
+  expect(expanded.onCommit).toHaveBeenLastCalledWith(240);
+  expect(expanded.onCollapse).not.toHaveBeenCalled();
+  const narrowest = await menu(false, 192);
+  await act(async () => narrowest.handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
+  expect(narrowest.onCollapse).toHaveBeenCalledExactlyOnceWith(true);
+  expect(narrowest.onCommit).not.toHaveBeenCalled();
+  const collapsed = await menu(true);
+  await act(async () => collapsed.handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+  expect(collapsed.onCollapse).toHaveBeenCalledExactlyOnceWith(false);
+});

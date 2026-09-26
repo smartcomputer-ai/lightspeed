@@ -36,7 +36,7 @@ it("shares the choice across consumers, persists reloads, and scopes it to the u
   expect(container.textContent).toBe("truetrue");
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="bot"]')!.click());
   expect(container.textContent).toBe("falsefalse");
-  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: false, collapseCompletedRuns: true, sidebarWidth: null, listWidth: null });
+  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: false, collapseCompletedRuns: true, sidebarWidth: null, sidebarCollapsed: false, listWidth: null });
   await act(async () => root.render(null));
   await render();
   expect(container.textContent).toBe("falsefalse");
@@ -79,7 +79,7 @@ it("stores the run collapse choice beside the statistics choice and reads it bac
   expect(container.textContent).toBe("truetrue");
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="collapse"]')!.click());
   expect(container.textContent).toBe("falsetrue");
-  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: true, collapseCompletedRuns: false, sidebarWidth: null, listWidth: null });
+  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: true, collapseCompletedRuns: false, sidebarWidth: null, sidebarCollapsed: false, listWidth: null });
   localStorage.setItem(key, '{"showRunStatistics":false}');
   await act(async () => window.dispatchEvent(new StorageEvent("storage", { key })));
   expect(container.textContent).toBe("truefalse");

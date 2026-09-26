@@ -11,6 +11,8 @@ export interface UserPreferences {
   collapseCompletedRuns: boolean;
   /** The main menu's dragged width in pixels; null keeps the default. */
   sidebarWidth: number | null;
+  /** The main menu shows icons only. */
+  sidebarCollapsed: boolean;
   /** The dragged width of every page's list column, so it holds from page
    * to page; null keeps the default. */
   listWidth: number | null;
@@ -20,6 +22,7 @@ const DEFAULTS: UserPreferences = {
   showRunStatistics: true,
   collapseCompletedRuns: true,
   sidebarWidth: null,
+  sidebarCollapsed: false,
   listWidth: null,
 };
 
@@ -31,12 +34,14 @@ const Context = createContext<UserPreferences & {
   setShowRunStatistics: (show: boolean) => void;
   setCollapseCompletedRuns: (collapse: boolean) => void;
   setSidebarWidth: (width: number | null) => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
   setListWidth: (width: number | null) => void;
 }>({
   ...DEFAULTS,
   setShowRunStatistics: () => {},
   setCollapseCompletedRuns: () => {},
   setSidebarWidth: () => {},
+  setSidebarCollapsed: () => {},
   setListWidth: () => {},
 });
 
@@ -51,6 +56,7 @@ export function readUserPreferences(userId: string): UserPreferences {
       collapseCompletedRuns: typeof record.collapseCompletedRuns === "boolean"
         ? record.collapseCompletedRuns : DEFAULTS.collapseCompletedRuns,
       sidebarWidth: storedWidth(record.sidebarWidth),
+      sidebarCollapsed: record.sidebarCollapsed === true,
       listWidth: storedWidth(record.listWidth),
     };
   } catch {
@@ -89,6 +95,7 @@ function AccountPreferences({ userId, children }: { userId: string; children: Re
         setShowRunStatistics: (showRunStatistics) => update({ showRunStatistics }),
         setCollapseCompletedRuns: (collapseCompletedRuns) => update({ collapseCompletedRuns }),
         setSidebarWidth: (sidebarWidth) => update({ sidebarWidth }),
+        setSidebarCollapsed: (sidebarCollapsed) => update({ sidebarCollapsed }),
         setListWidth: (listWidth) => update({ listWidth }),
       }}
     >

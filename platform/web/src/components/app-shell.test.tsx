@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SessionUser } from "@/auth";
 import { PermissionIdentityProvider } from "@/lib/permissions";
+import { UserPreferencesProvider } from "@/lib/user-preferences";
 import { AppShell } from "./app-shell";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
@@ -100,4 +101,32 @@ it("links each page at its flat route", async () => {
     "/u/test/credentials", "/u/test/api-keys", "/u/test/members",
     "/u/test/settings/general", "/u/test/settings/channels", "/u/test/settings/templates",
   ]);
+});
+
+it("keeps the menu folded to icons from the account's preference, and ⌘B unfolds it", async () => {
+  const key = "lightspeed:user-preferences:user";
+  localStorage.setItem(key, JSON.stringify({ sidebarCollapsed: true }));
+  mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
+    if (path === "/api/v1/universes") return [{ id: "universe", slug: "test", name: "Test", status: "active", role: "viewer" }];
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  await act(async () => root.render(
+    <QueryClientProvider client={client}><UserPreferencesProvider userId="user"><PermissionIdentityProvider userId="user" platformAdmin={false}>
+      <MemoryRouter initialEntries={["/u/test/bots"]}>
+        <Routes>
+          <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} admin={false} />}>
+            <Route path="*" element={null} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </PermissionIdentityProvider></UserPreferencesProvider></QueryClientProvider>,
+  ));
+  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  const sidebar = () => container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
+  expect(sidebar().dataset.state).toBe("collapsed");
+  expect(sidebar().dataset.collapsible).toBe("icon");
+  await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true })));
+  expect(sidebar().dataset.state).toBe("expanded");
+  expect(JSON.parse(localStorage.getItem(key)!).sidebarCollapsed).toBe(false);
+  localStorage.removeItem(key);
 });
