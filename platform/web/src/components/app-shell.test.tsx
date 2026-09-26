@@ -42,10 +42,10 @@ afterEach(async () => {
 });
 
 /// The sidebar as label → nav items, with the unlabelled first group as "".
-async function sidebarFor(role: string): Promise<Record<string, string[]>> {
+async function sidebarFor(role: string, features = { bots: true, channels: true }): Promise<Record<string, string[]>> {
   mocks.role = role;
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path === "/api/v1/universes") return [{ id: "universe", slug: "test", name: "Test", status: "active", role: mocks.role }];
+    if (path === "/api/v1/universes") return [{ id: "universe", slug: "test", name: "Test", status: "active", role: mocks.role, features }];
     throw new Error(`Unexpected request: ${path}`);
   });
   await act(async () => root.render(
@@ -90,6 +90,20 @@ it("adds API keys and general settings for an Admin", async () => {
     Setup: SETUP,
     Access: ["Credentials", "API keys", "Members"],
     Settings: ["General", "Channels", "Templates"],
+  });
+});
+
+it("leaves switched-off channels out of the menu", async () => {
+  expect(await sidebarFor("admin", { bots: true, channels: false })).toMatchObject({
+    "": WORK,
+    Settings: ["General", "Templates"],
+  });
+});
+
+it("leaves bots, and the channels they need, out of the menu", async () => {
+  expect(await sidebarFor("admin", { bots: false, channels: false })).toMatchObject({
+    "": ["Sessions"],
+    Settings: ["General", "Templates"],
   });
 });
 

@@ -14,18 +14,29 @@ import {
   Users,
 } from "lucide-react";
 import { Navigate } from "react-router-dom";
+import type { FeatureKey, FeatureStates } from "@lightspeed/platform-shared";
 import { BotFaceIcon } from "@/components/icons/bot";
 import { useActionPermissions, type PermissionAction } from "@/lib/permissions";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
 
 /// One universe page in the sidebar. The item shows when the caller holds
-/// `action` in the universe; the page applies its own gate as well.
+/// `action` in the universe and its feature, if any, is on; the page applies
+/// its own gate as well.
 export interface UniverseNavItem {
   /// Relative to `/u/:slug/`.
   path: string;
   label: string;
   icon: ComponentType;
   action: PermissionAction;
+  feature?: FeatureKey;
+}
+
+export function navItemVisible(
+  item: UniverseNavItem,
+  can: (action: PermissionAction) => boolean,
+  features: FeatureStates | undefined,
+): boolean {
+  return can(item.action) && (!item.feature || features?.[item.feature] !== false);
 }
 
 export interface UniverseNavGroup {
@@ -36,7 +47,7 @@ export interface UniverseNavGroup {
 /// The universe's own configuration, in the order `/settings` resolves.
 const SETTINGS_NAV: UniverseNavItem[] = [
   { path: "settings/general", label: "General", icon: Settings, action: "manage_access" },
-  { path: "settings/channels", label: "Channels", icon: RadioTower, action: "configure_resource" },
+  { path: "settings/channels", label: "Channels", icon: RadioTower, action: "configure_resource", feature: "channels" },
   { path: "settings/templates", label: "Templates", icon: PackageOpen, action: "configure_resource" },
 ];
 
@@ -47,7 +58,7 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
   {
     // Unlabelled: the universe switcher above already names the universe.
     items: [
-      { path: "bots", label: "Bots", icon: BotFaceIcon, action: "read" },
+      { path: "bots", label: "Bots", icon: BotFaceIcon, action: "read", feature: "bots" },
       { path: "sessions", label: "Sessions", icon: MessagesSquare, action: "read" },
     ],
   },
@@ -76,11 +87,11 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
 /// Bare `/settings`: the first settings page the caller may see, else the
 /// universe's home.
 export function settingsIndexPath(
-  slug: string,
+  universe: { slug: string; features?: FeatureStates },
   can: (action: PermissionAction) => boolean,
 ): string {
-  const first = SETTINGS_NAV.find((item) => can(item.action));
-  return first ? `/u/${slug}/${first.path}` : universeHome(slug);
+  const first = SETTINGS_NAV.find((item) => navItemVisible(item, can, universe.features));
+  return first ? `/u/${universe.slug}/${first.path}` : universeHome(universe);
 }
 
 export function SettingsIndexRedirect() {
@@ -89,5 +100,5 @@ export function SettingsIndexRedirect() {
   if (!universe || permissions.isLoading) {
     return null;
   }
-  return <Navigate to={settingsIndexPath(universe.slug, permissions.can)} replace />;
+  return <Navigate to={settingsIndexPath(universe, permissions.can)} replace />;
 }

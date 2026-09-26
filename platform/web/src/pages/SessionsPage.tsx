@@ -114,7 +114,7 @@ import {
 } from "@/lib/sessions/resource-features";
 import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
 import { useActionPermissions } from "@/lib/permissions";
-import { useActiveUniverse } from "@/lib/universes";
+import { useActiveUniverse, useFeature } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import {
   metadataFilterFromSearchParams,
@@ -1541,7 +1541,10 @@ export function SessionDetail({
   const managed = session.data?.managed === true;
   const managerLabel = managedSessionOwnerLabel(management);
   const owningBotId = managedSessionBotId(management, session.data?.metadata);
-  const owningBotHref = owningBotId
+  // With bots switched off, a bot's session reads as managed, with no way
+  // into the hidden bot page.
+  const botsOn = useFeature("bots");
+  const owningBotHref = owningBotId && botsOn
     ? `/u/${slug}/bots/${encodeURIComponent(owningBotId)}/chat/${encodeURIComponent(sessionId)}`
     : null;
   // Emit rows and event bands name peer bots; only a bot's own sessions

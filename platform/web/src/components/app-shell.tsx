@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/sidebar";
 import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
-import { UNIVERSE_NAV } from "@/components/universe-nav";
+import { UNIVERSE_NAV, navItemVisible } from "@/components/universe-nav";
 import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { cn } from "@/lib/utils";
@@ -156,7 +156,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         </SidebarHeader>
         <SidebarContent>
           {mode === "universe" && active && UNIVERSE_NAV.map((group, index) => {
-            const items = group.items.filter((item) => permissions.can(item.action));
+            const items = group.items.filter((item) => navItemVisible(item, permissions.can, active.features));
             if (items.length === 0) return null;
             return (
               <SidebarGroup key={group.label ?? index}>

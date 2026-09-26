@@ -1,4 +1,4 @@
-import type { UniverseRole } from "@lightspeed/platform-shared";
+import type { FeatureStates, UniverseRole } from "@lightspeed/platform-shared";
 import type {
   Attribution,
   ResourceAccessSummary,
@@ -82,6 +82,8 @@ export interface Universe {
   /// Own membership role; null for platform admins browsing a universe
   /// they are not a member of.
   role?: UniverseRole | null;
+  /// What is switched on in this universe, requirements applied.
+  features: FeatureStates;
 }
 
 /// Engine-side universe inventory entry (deployment/universes/list view).

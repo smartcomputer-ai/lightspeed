@@ -29,13 +29,14 @@ import { SessionsPage } from "@/pages/SessionsPage";
 import { SetupsPage } from "@/pages/SetupsPage";
 import { WorkspacesPage } from "@/pages/WorkspacesPage";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
+import { FeatureGate } from "@/components/feature-gate";
 
 function UniverseIndexRedirect() {
-  const { universe, slug } = useActiveUniverse();
+  const { universe } = useActiveUniverse();
   if (!universe) {
     return null;
   }
-  return <Navigate to={universeHome(slug ?? "")} replace />;
+  return <Navigate to={universeHome(universe)} replace />;
 }
 
 export function App() {
@@ -94,15 +95,15 @@ export function App() {
           path="u/:slug/workspaces/:workspaceId/files/*"
           element={<WorkspacesPage admin={admin} />}
         />
-        <Route path="u/:slug/bots" element={<BotsPage admin={admin} />} />
-        <Route path="u/:slug/bots/:botId" element={<BotsPage admin={admin} view="chat" />} />
+        <Route path="u/:slug/bots" element={<FeatureGate feature="bots"><BotsPage admin={admin} /></FeatureGate>} />
+        <Route path="u/:slug/bots/:botId" element={<FeatureGate feature="bots"><BotsPage admin={admin} view="chat" /></FeatureGate>} />
         <Route
           path="u/:slug/bots/:botId/chat/:sessionId"
-          element={<BotsPage admin={admin} view="chat" />}
+          element={<FeatureGate feature="bots"><BotsPage admin={admin} view="chat" /></FeatureGate>}
         />
         <Route
           path="u/:slug/bots/:botId/activity"
-          element={<BotsPage admin={admin} view="activity" />}
+          element={<FeatureGate feature="bots"><BotsPage admin={admin} view="activity" /></FeatureGate>}
         />
         <Route path="u/:slug/profiles" element={<ProfilesPage admin={admin} />} />
         <Route
@@ -122,7 +123,7 @@ export function App() {
         />
         <Route
           path="u/:slug/settings/channels"
-          element={<ChannelsPage admin={admin} />}
+          element={<FeatureGate feature="channels"><ChannelsPage admin={admin} /></FeatureGate>}
         />
         <Route
           path="u/:slug/settings/templates"

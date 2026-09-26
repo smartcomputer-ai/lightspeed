@@ -155,16 +155,25 @@ The authoritative configuration reference is
 Platform server, connector host, Configurator MCP, and development-only
 settings.
 
-The universe sidebar groups the work (Bots, Sessions, Profiles, Workspaces),
-**Resources** agents use (Environments, MCP servers), **Access** (Models,
-Credentials, API keys, Members) and the universe's **Settings** (General, Channels,
-Templates) at flat `/u/:slug/...` routes; bare `/u/:slug/settings` opens the
-first settings page the caller may see. Models holds model provider keys,
+The universe sidebar groups the work (Bots, Sessions), the **Setup** agents are
+made from (Profiles, Workspaces, Models, Environments, MCP servers), **Access**
+(Credentials, API keys, Members) and the universe's **Settings** (General,
+Channels, Templates) at flat `/u/:slug/...` routes; bare `/u/:slug/settings`
+opens the first settings page the caller may see. Models holds model provider keys,
 compatible endpoints and coding-agent subscriptions. Credentials lists reusable
 tokens, environment secrets, GitHub App installations and custom OAuth grants;
 model and MCP server logins stay on their own pages, while credential pickers
 still offer every grant. Credentials, Channels and Templates are for Operators
 and Admins; API keys and General are for Admins.
+
+**Features.** A universe admin switches parts of the product on or off under
+General → Features; today Bots and Channels, where Channels need Bots. The
+registry is `FEATURES` in `platform/shared`, and a universe stores only the
+switches set away from their default (`universes.features`). The universe list
+carries each feature's effective state, and the web hides a switched-off
+feature's pages, menu items and choices. Switching off hides; it does not
+enforce: the API stays open, and what already runs, such as a bot answering on
+its channels, keeps running.
 
 ## People, universes and access
 
@@ -216,10 +225,11 @@ The Platform's own refusals are 403 and 404. Core refusing the Platform is a
 server fault (500 or 502), since the member was already admitted. The web's
 permission hints come from the same role and never replace these checks.
 
-**Unshared work.** Sessions start unshared: their creator and the universe's
-admins see them. **Share with universe** in the session header shares a session
-and its sub-agents, once and for good, and lists mark unshared sessions. Bots
-and their conversations are always shared. General settings says this once.
+**Private work.** Sessions start private: their creator and the universe's
+admins see them. **Share with universe…** in the session's ⋯ menu shares a
+session and its sub-agents, once and for good. The session header marks private
+work with a lock and shared work with people; lists mark only shared sessions.
+Bots and their conversations are always shared.
 
 **Keys.** `LIGHTSPEED_PLATFORM_API_KEY` is the Platform's deployment key, with
 every method group and allowed to assert actors (`server api-key bootstrap`).
