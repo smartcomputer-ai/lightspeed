@@ -122,6 +122,28 @@ export function applyEntries(
   joins: EventJoinsView = {},
   at = Date.now(),
 ): SessionEventView {
+  // Entry provenance is read independently of event joins, including when
+  // matching the recorded final output to its run in the transcript.
+  const { runId, turnId, toolBatchId } = joins;
+  if (runId && turnId) {
+    entries = entries.map((entry): ContextEntryView => {
+      if (entry.source) return entry;
+      switch (entry.kind.type) {
+        case "message":
+          return entry.kind.role === "assistant"
+            ? { ...entry, source: { type: "assistantOutput", runId, turnId } }
+            : entry;
+        case "toolCall":
+          return { ...entry, source: { type: "assistantOutput", runId, turnId } };
+        case "reasoningState":
+          return { ...entry, source: { type: "reasoning", runId, turnId } };
+        case "toolResult":
+          return { ...entry, source: { type: "tool", runId, turnId, batchId: toolBatchId } };
+        default:
+          return entry;
+      }
+    });
+  }
   const baseRevision = session.activeContext.revision;
   const revision = baseRevision + 1;
   session.activeContext.revision = revision;

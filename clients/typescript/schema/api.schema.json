@@ -6336,6 +6336,29 @@
         }
       ]
     },
+    "CallerAccess": {
+      "description": "What the calling credential may do, so a client can offer only the\nmethods it may call. Descriptive: core still checks every call.",
+      "properties": {
+        "groups": {
+          "description": "The method groups the caller may call. A request without a key holds\nevery group. `initialize` belongs to no group and is always allowed.",
+          "items": {
+            "$ref": "#/definitions/MethodGroup"
+          },
+          "type": "array"
+        },
+        "keyPrefix": {
+          "description": "Display prefix of the calling key; absent for a request without a\nkey, such as local development.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "groups"
+      ],
+      "type": "object"
+    },
     "ChannelAccountCreateParams": {
       "properties": {
         "account": {
@@ -10447,6 +10470,9 @@
     },
     "InitializeResponse": {
       "properties": {
+        "caller": {
+          "$ref": "#/definitions/CallerAccess"
+        },
         "capabilities": {
           "$ref": "#/definitions/ServerCapabilities"
         },
@@ -10460,7 +10486,8 @@
       "required": [
         "protocolVersion",
         "serverInfo",
-        "capabilities"
+        "capabilities",
+        "caller"
       ],
       "type": "object"
     },

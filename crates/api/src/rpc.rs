@@ -346,7 +346,7 @@ api_methods! {
     METHOD_VFS_WORKSPACES_FILES_READ => read_vfs_workspace_file(VfsWorkspaceFileReadParams) -> BlobReadResponse =>
         ["Read a workspace file", "Reads bytes at a path in the current workspace head."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse =>
-        ["Inspect the Lightspeed protocol", "Returns protocol version, server identity, and supported capabilities without changing universe state."], access: MethodAccess::Universe(UniverseAction::Read),
+        ["Inspect the Lightspeed protocol", "Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_SESSION_START => start_session(SessionStartParams) -> SessionStartResponse =>
         ["Create or reopen a session", "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience."], access: MethodAccess::Universe(UniverseAction::CreateSession),
     METHOD_SESSION_MANAGED_START => start_managed_session(ManagedSessionStartParams) -> SessionStartResponse =>

@@ -192,9 +192,15 @@ The repository's [tool filter](../../../platform/configurator-mcp/tool-filter.js
 controls generation exclusions. To change that surface in a custom build,
 edit the filter and regenerate; do not edit
 `src/generated/tools.ts`. A filter is deployment-wide, not a per-user
-authorization policy. A listed tool can still be refused because its method
-group is absent from the caller's key. Configurator has no separate tool-approval
-layer; use the calling client's controls and the key's allowed method groups.
+authorization policy.
+
+Within that surface, each request sees only the tools its key may call. The
+Configurator reads the key's method groups from the runtime's handshake on
+every request, lists only tools in those groups, and treats any other tool as
+unknown. A key minted with the configuration groups therefore sees no session
+or workspace tools. The runtime still checks every call. Configurator has no
+separate tool-approval layer; use the calling client's controls and the key's
+method groups.
 
 ## Let a Lightspeed agent use Configurator
 

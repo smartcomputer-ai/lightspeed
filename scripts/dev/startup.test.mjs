@@ -97,6 +97,39 @@ test("failed runtime readiness never spawns Platform", { timeout: 5_000 }, async
   ], {
     start: (process) => started.push(process.name),
     wait: (service) => waitForService(service, { timeoutMs: 50, pollMs: 10 }),
-  }), /runtime gateway did not become ready/);
+  }), (error) => {
+    assert.match(error.message, /runtime gateway did not become ready/);
+    assert.ok(error.details.includes(`Endpoint: ${runtime.service.url}`));
+    assert.match(error.details.join("\n"), /HTTP 503/);
+    return true;
+  });
   assert.deepEqual(started, ["runtime"]);
+});
+
+test("stopping a dependency wait does not start the waiting process or report a timeout", async () => {
+  let stopping = false;
+  const started = [];
+  await startProcesses([{ name: "platform", startAfter: { name: "runtime" } }], {
+    start: (process) => started.push(process.name),
+    wait: async (service) => {
+      stopping = true;
+      await waitForService(service, { isStopping: () => stopping });
+    },
+    isStopping: () => stopping,
+  });
+  assert.deepEqual(started, []);
+});
+
+test("readiness distinguishes a refused connection from an HTTP failure", { timeout: 5_000 }, async () => {
+  const server = createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = server.address().port;
+  await new Promise((resolve) => server.close(resolve));
+  await assert.rejects(waitForService({ name: "fixture", url: `http://127.0.0.1:${port}/health` }, {
+    timeoutMs: 50, pollMs: 5,
+  }), (error) => {
+    assert.match(error.details.join("\n"), /Connection refused/);
+    return true;
+  });
 });

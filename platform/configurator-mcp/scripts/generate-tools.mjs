@@ -43,9 +43,15 @@ const tools = methods.map((entry) => {
     throw new Error(`MCP tool name collision: ${name} for ${prior} and ${entry.method}`);
   }
   seenNames.set(name, entry.method);
+  // Tools are listed by the caller's groups, so a groupless method would be
+  // offered to every key; only `initialize` has none, and it is excluded.
+  if (typeof entry.group !== "string" || entry.group.length === 0) {
+    throw new Error(`method ${entry.method} has no method group`);
+  }
   return {
     name,
     method: entry.method,
+    group: entry.group,
     summary: entry.summary,
     description: entry.description,
     paramsType: entry.params.type,

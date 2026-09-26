@@ -5,10 +5,14 @@ import {
   type AgentProfileInput,
   type LightspeedClient,
   type McpServerInput,
+  type MethodGroup,
 } from "@lightspeed-ai/agent-client";
+import { z } from "zod";
 import { schema } from "@lightspeed/platform-db";
 import type { UniverseSetupState } from "@lightspeed/platform-db/schema";
 import type { AppContext, ApiVariables } from "../context.js";
+import { parseBody } from "../http.js";
+import { universeKeyClient } from "../runtime-client.js";
 import { deploymentClientFor, engineClientFor } from "./gateway.js";
 import { universeForSession, type UniverseAccess } from "./universes.js";
 
@@ -18,12 +22,29 @@ const SERVER_ID = "lightspeed-configurator";
 const PROFILE_ID = "lightspeed-configurator";
 const KEY_DISPLAY_NAME = "Lightspeed Configurator service credential";
 const INSTALL_LEASE_MS = 5 * 60 * 1_000;
-/// The method groups the Configurator's key holds: configuring the universe,
-/// never reading or controlling sessions.
-const KEY_GROUPS = ["profiles", "mcp", "environments", "bots", "channels", "auth", "models"] as const;
 const CONFIGURATOR_DESCRIPTION =
   "Creates a dedicated credential, registers the Configurator MCP server, and adds a ready-to-use profile for managing this universe. " +
-  "Anyone who can attach the server configures profiles, MCP servers, environments, bots, channels, credentials and models with its key.";
+  "The server offers only the tools its key may call, and anyone who can attach it acts with that key.";
+
+/// Which key the Configurator acts with, chosen on every install, repair and
+/// upgrade: a new key the setup mints and owns, an existing universe key
+/// whose secret the admin pastes (core keeps only hashes, so it cannot be
+/// read back), or the key the installation already uses.
+const keyChoiceSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("new"),
+    /// Core validates the names and refuses deployment groups.
+    groups: z.array(z.string().min(1).max(100)).min(1).max(32),
+  }),
+  z.object({
+    kind: z.literal("existing"),
+    keyPrefix: z.string().min(1).max(64),
+    secret: z.string().regex(/^lsk_\S+$/).max(512),
+  }),
+  z.object({ kind: z.literal("current") }),
+]);
+const installSchema = z.object({ key: keyChoiceSchema });
+export type KeyChoice = z.infer<typeof keyChoiceSchema>;
 
 type Installation = typeof schema.universeSetupInstallations.$inferSelect;
 type Universe = typeof schema.universes.$inferSelect;
@@ -41,6 +62,7 @@ export interface UniverseSetupView {
 }
 
 class SetupConflict extends Error {}
+class SetupInvalid extends Error {}
 class SetupUnavailable extends Error {}
 
 export function setupRoutes(ctx: AppContext) {
@@ -65,6 +87,11 @@ export function setupRoutes(ctx: AppContext) {
     if (access.role !== "admin") {
       return c.json({ error: "universe admin required" }, 403);
     }
+    const body = await parseBody(c, installSchema);
+    if (!body.ok) {
+      return body.response;
+    }
+    const key = body.data.key;
     const session = c.get("session");
     try {
       const installation = await claimInstallation(ctx, access.universe.id, session.user.id);
@@ -72,8 +99,8 @@ export function setupRoutes(ctx: AppContext) {
         const completed = await installConfigurator(
           ctx,
           access,
-          session.user.id,
           installation,
+          key,
         );
         return c.json(setupView(ctx, completed));
       } catch (error) {
@@ -83,6 +110,9 @@ export function setupRoutes(ctx: AppContext) {
     } catch (error) {
       if (error instanceof SetupConflict) {
         return c.json({ error: error.message }, 409);
+      }
+      if (error instanceof SetupInvalid) {
+        return c.json({ error: error.message }, 400);
       }
       if (error instanceof SetupUnavailable) {
         return c.json({ error: error.message }, 501);
@@ -184,8 +214,8 @@ async function claimInstallation(
 async function installConfigurator(
   ctx: AppContext,
   access: UniverseAccess,
-  userId: string,
   installation: Installation,
+  key: KeyChoice,
 ): Promise<Installation> {
   const mcpUrl = ctx.env.configuratorMcpUrl;
   if (!mcpUrl) {
@@ -198,7 +228,8 @@ async function installConfigurator(
   const deployment = deploymentClientFor(ctx, universe.gatewayUrl);
   let state = { ...installation.state };
 
-  state = await ensureCredential(ctx, installation.id, universe, client, deployment, state, mcpUrl);
+  const verify = (secret: string) => universeKeyClient(ctx.env, universe.gatewayUrl, secret);
+  state = await ensureCredential(ctx, installation.id, universe, client, deployment, verify, state, mcpUrl, key);
   state = await ensureMcpServer(
     ctx,
     installation.id,
@@ -226,68 +257,119 @@ async function installConfigurator(
   return completed;
 }
 
-async function ensureCredential(
+/// Points the setup's bearer grant at the chosen key. A key the setup
+/// minted is revoked once replaced; a key an admin brought is never revoked
+/// here, only the grant holding its secret. Retrying the same choice keeps
+/// a live key and grant.
+export async function ensureCredential(
   ctx: AppContext,
   installationId: string,
-  universe: Universe,
+  universe: Pick<Universe, "lightspeedUniverseId">,
   client: LightspeedClient,
   deployment: LightspeedClient,
+  verify: (secret: string) => LightspeedClient,
   state: UniverseSetupState,
   mcpUrl: string,
+  choice: KeyChoice,
 ): Promise<UniverseSetupState> {
-  const keys = await deployment.call("deployment/api-keys/list", {
+  const keys = (await deployment.call("deployment/api-keys/list", {
     scope: { kind: "universe", universeId: universe.lightspeedUniverseId },
-  });
-  const key = state.keyPrefix
-    ? (keys.result.apiKeys ?? []).find((candidate) => candidate.keyPrefix === state.keyPrefix)
-    : undefined;
-  const grant = state.grantId
-    ? await readGrant(client, state.grantId)
-    : null;
-  if (
-    key &&
-    key.revokedAtMs == null &&
-    key.displayName === KEY_DISPLAY_NAME &&
-    grant?.status === "active" &&
-    grant.audience === mcpUrl
-  ) {
-    return state;
-  }
+  })).result.apiKeys ?? [];
+  const live = (prefix: string | undefined) =>
+    prefix ? keys.find((key) => key.keyPrefix === prefix && key.revokedAtMs == null) : undefined;
+  const current = live(state.keyPrefix);
+  const grant = state.grantId ? await readGrant(client, state.grantId) : null;
+  const usable = current !== undefined && grant?.status === "active" && grant.audience === mcpUrl;
+  const minted = state.keySource !== "existing";
 
-  if (grant?.status === "active" && state.grantId) {
-    await client.call("auth/grants/revoke", { grantId: state.grantId });
-  }
-  if (key && key.revokedAtMs == null && state.keyPrefix) {
-    await deployment.call("deployment/api-keys/revoke", { keyPrefix: state.keyPrefix });
-  }
+  /// Revokes the grant, and the key too when the setup minted it and it is
+  /// not the key being kept.
+  const retire = async (keeping?: string) => {
+    if (grant?.status === "active" && state.grantId) {
+      await client.call("auth/grants/revoke", { grantId: state.grantId });
+    }
+    if (current && minted && current.keyPrefix !== keeping) {
+      await deployment.call("deployment/api-keys/revoke", { keyPrefix: current.keyPrefix });
+    }
+  };
 
-  const minted = await deployment.call("deployment/api-keys/create", {
-    scope: { kind: "universe", universeId: universe.lightspeedUniverseId },
-    displayName: KEY_DISPLAY_NAME,
-    groups: [...KEY_GROUPS],
-    assertActor: false,
-  });
+  switch (choice.kind) {
+    case "current": {
+      if (!usable) {
+        throw new SetupConflict("The Configurator's key or credential is no longer active; choose a key");
+      }
+      return await persistState(ctx, installationId, { ...state, keyGroups: current.groups });
+    }
+    case "new": {
+      const groups = [...new Set(choice.groups)].sort() as MethodGroup[];
+      if (usable && minted && current.displayName === KEY_DISPLAY_NAME && sameGroups(current.groups, groups)) {
+        return await persistState(ctx, installationId, { ...state, keyGroups: current.groups });
+      }
+      await retire();
+      const created = await deployment.call("deployment/api-keys/create", {
+        scope: { kind: "universe", universeId: universe.lightspeedUniverseId },
+        displayName: KEY_DISPLAY_NAME,
+        groups,
+        assertActor: false,
+      });
+      const grantId = await importGrant(client, created.result.secret, mcpUrl).catch(async (error: unknown) => {
+        await deployment
+          .call("deployment/api-keys/revoke", { keyPrefix: created.result.apiKey.keyPrefix })
+          .catch(() => undefined);
+        throw error;
+      });
+      return await persistState(ctx, installationId, {
+        ...state,
+        keyPrefix: created.result.apiKey.keyPrefix,
+        keyGroups: groups,
+        keySource: "minted",
+        grantId,
+      });
+    }
+    case "existing": {
+      const chosen = live(choice.keyPrefix);
+      if (!chosen) {
+        throw new SetupInvalid("That key is not an active key of this universe");
+      }
+      if (usable && current.keyPrefix === chosen.keyPrefix) {
+        return await persistState(ctx, installationId, { ...state, keyGroups: chosen.groups });
+      }
+      // Core names the key a secret belongs to; a wrong or revoked secret
+      // never reaches the credential store.
+      const caller = await verify(choice.secret)
+        .call("initialize", { clientInfo: { name: "lightspeed-platform", version: null }, capabilities: null })
+        .then((response) => response.result.caller, () => null);
+      if (caller?.keyPrefix !== chosen.keyPrefix) {
+        throw new SetupInvalid("The secret does not belong to the chosen key");
+      }
+      await retire(chosen.keyPrefix);
+      const grantId = await importGrant(client, choice.secret, mcpUrl);
+      return await persistState(ctx, installationId, {
+        ...state,
+        keyPrefix: chosen.keyPrefix,
+        keyGroups: chosen.groups,
+        keySource: "existing",
+        grantId,
+      });
+    }
+  }
+}
+
+async function importGrant(client: LightspeedClient, token: string, mcpUrl: string): Promise<string> {
   const grantId = `authgrant_lightspeed_configurator_${crypto.randomUUID().replaceAll("-", "")}`;
-  try {
-    await client.call("auth/grants/import", {
-      grantId,
-      providerId: "lightspeed-configurator",
-      token: minted.result.secret,
-      displayName: "Lightspeed Configurator setup",
-      audience: mcpUrl,
-    });
-  } catch (error) {
-    await deployment
-      .call("deployment/api-keys/revoke", { keyPrefix: minted.result.apiKey.keyPrefix })
-      .catch(() => undefined);
-    throw error;
-  }
-
-  return await persistState(ctx, installationId, {
-    ...state,
-    keyPrefix: minted.result.apiKey.keyPrefix,
+  await client.call("auth/grants/import", {
     grantId,
+    providerId: "lightspeed-configurator",
+    token,
+    displayName: "Lightspeed Configurator setup",
+    audience: mcpUrl,
   });
+  return grantId;
+}
+
+function sameGroups(left: readonly string[], right: readonly string[]): boolean {
+  const set = new Set(left);
+  return set.size === new Set(right).size && right.every((group) => set.has(group));
 }
 
 export async function ensureMcpServer(

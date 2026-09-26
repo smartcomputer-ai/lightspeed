@@ -148,10 +148,13 @@ user and the session. Core's session log carries `requestedBy` and
 
 An admin area mints core keys through `deployment/api-keys/create`,
 choosing scope, groups and `assert_actor`, and revokes them. The secret is
-shown once. The Configurator installer mints its own universe key with the
-groups the install needs (`profiles, mcp, environments, bots, channels, auth,
-models` by default) and registers the MCP server unrestricted: whoever can
-attach it acts with that key's groups, which is the accepted 0.1 rule.
+shown once. The Configurator installer asks which key the server acts with:
+the current one, a new key with chosen groups (the configuration groups
+`profiles, mcp, environments, bots, channels, auth, models` by default), or an
+existing universe key whose pasted secret core confirms through
+`initialize`. It revokes only keys it minted. The MCP server lists only the
+tools its key's groups allow and is registered unrestricted: whoever can
+attach it acts with that key, which is the accepted 0.1 rule.
 
 ### 8. Features can be switched off per universe
 
@@ -241,8 +244,8 @@ Notes on steps 1 and 2 as built:
 - Universe admins mint universe keys from the universe's API keys page,
   choosing the method groups (presets or one by one, never an actor); the
   route requires groups so no key silently holds every group, and the list
-  shows what each key may call. The Configurator installer already mints its
-  key with the configuration groups.
+  shows what each key may call. The Configurator installer lets an admin keep
+  its key, mint one with chosen groups, or bring an existing key.
 
 ## Validation
 

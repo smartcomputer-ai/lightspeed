@@ -15,7 +15,7 @@ import { authenticateHeaders, HttpAuthError } from "./request-auth.js";
 import {
   createUpstreamClientFactory,
   type UpstreamClientFactory,
-  validateUpstreamIdentity,
+  identifyCaller,
 } from "./upstream-client.js";
 
 export interface ConfiguratorAppOptions {
@@ -117,14 +117,14 @@ async function handleMcpPost(
 
   try {
     const auth = authenticateHeaders(config.authMode, req.headers);
-    await validateUpstreamIdentity(
+    const caller = await identifyCaller(
       upstreamFactory,
       auth,
       abort.signal,
       config.upstreamTimeoutMs,
     );
 
-    const handler = createMcpHandler(() => registry.createServer(auth));
+    const handler = createMcpHandler(() => registry.createServer(auth, caller));
     const nodeHandler = toNodeHandler(handler);
     res.once("close", () => {
       void handler.close();

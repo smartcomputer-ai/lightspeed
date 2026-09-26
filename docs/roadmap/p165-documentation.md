@@ -158,6 +158,17 @@ supported behavior.
 
 ## Implementation progress
 
+The root launcher serves the manual with `./dev.sh docs`, also accepted as
+`doc` or `documentation`. It bootstraps npm dependencies without Docker or Rust,
+watches documentation edits, and stops the server through the usual supervisor
+lifecycle. Standalone `npm run dev:docs` remains available.
+
+Launcher failures now identify the failed step, retain recent command output,
+and give a next diagnostic step. Readiness failures preserve the last HTTP or
+connection result. Stack traces are opt-in with `--debug`; shutdown stops host
+processes and reports infrastructure left in place. Isolated launcher fixtures
+cover port conflicts, migration and runtime failures, and supervisor cleanup.
+
 The initial writing batch is complete:
 
 - [Core concepts](../documentation/getting-started/concepts.md)

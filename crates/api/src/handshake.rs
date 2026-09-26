@@ -52,6 +52,21 @@ pub struct InitializeResponse {
     pub protocol_version: String,
     pub server_info: ServerInfo,
     pub capabilities: ServerCapabilities,
+    pub caller: CallerAccess,
+}
+
+/// What the calling credential may do, so a client can offer only the
+/// methods it may call. Descriptive: core still checks every call.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CallerAccess {
+    /// Display prefix of the calling key; absent for a request without a
+    /// key, such as local development.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_prefix: Option<String>,
+    /// The method groups the caller may call. A request without a key holds
+    /// every group. `initialize` belongs to no group and is always allowed.
+    pub groups: Vec<MethodGroup>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

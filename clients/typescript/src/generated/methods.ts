@@ -148,7 +148,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "Inspect the Lightspeed protocol",
-    description: "Returns protocol version, server identity, and supported capabilities without changing universe state.",
+    description: "Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it.",
   },
   "session/start": {
     scope: "universe",
@@ -945,7 +945,7 @@ export interface MethodMap {
   /**
    * Inspect the Lightspeed protocol
    *
-   * Returns protocol version, server identity, and supported capabilities without changing universe state.
+   * Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it.
    */
   "initialize": {
     params: Api.InitializeParams;
@@ -2124,7 +2124,7 @@ export const rpc = {
   /**
    * Inspect the Lightspeed protocol
    *
-   * Returns protocol version, server identity, and supported capabilities without changing universe state.
+   * Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it.
    */
   initialize(client: RpcCaller, params: Api.InitializeParams): Promise<Api.AgentApiOutcomeOfInitializeResponse> {
     return client.call("initialize", params);

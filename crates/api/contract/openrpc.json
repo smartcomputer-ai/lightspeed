@@ -6336,6 +6336,29 @@
           }
         ]
       },
+      "CallerAccess": {
+        "description": "What the calling credential may do, so a client can offer only the\nmethods it may call. Descriptive: core still checks every call.",
+        "properties": {
+          "groups": {
+            "description": "The method groups the caller may call. A request without a key holds\nevery group. `initialize` belongs to no group and is always allowed.",
+            "items": {
+              "$ref": "#/components/schemas/MethodGroup"
+            },
+            "type": "array"
+          },
+          "keyPrefix": {
+            "description": "Display prefix of the calling key; absent for a request without a\nkey, such as local development.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "groups"
+        ],
+        "type": "object"
+      },
       "ChannelAccountCreateParams": {
         "properties": {
           "account": {
@@ -10447,6 +10470,9 @@
       },
       "InitializeResponse": {
         "properties": {
+          "caller": {
+            "$ref": "#/components/schemas/CallerAccess"
+          },
           "capabilities": {
             "$ref": "#/components/schemas/ServerCapabilities"
           },
@@ -10460,7 +10486,8 @@
         "required": [
           "protocolVersion",
           "serverInfo",
-          "capabilities"
+          "capabilities",
+          "caller"
         ],
         "type": "object"
       },
@@ -17851,7 +17878,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Returns protocol version, server identity, and supported capabilities without changing universe state.",
+      "description": "Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it.",
       "name": "initialize",
       "paramStructure": "by-name",
       "params": [

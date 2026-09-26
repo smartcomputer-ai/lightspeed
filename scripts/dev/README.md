@@ -65,15 +65,19 @@ npm run dev -- platform
 ```
 
 The supervisor keeps stateful dependencies in Docker and runs editable Rust
-and TypeScript processes on the host. It supports five profiles:
+and TypeScript processes on the host. It supports six profiles:
 
 ```bash
 ./dev.sh full       # default: complete product, without credentialed connectors
 ./dev.sh platform   # Platform API/UI against the runtime at LIGHTSPEED_API_URL
 ./dev.sh runtime    # migrated Rust runtime only
 ./dev.sh demo       # web UI only, over the in-browser demo backend (no Docker)
+./dev.sh docs       # documentation with live reload (aliases: doc, documentation)
 ./dev.sh infra      # Postgres, pgAdmin, MinIO, and Temporal only
 ```
+
+The docs profile opens the manual at `http://127.0.0.1:4321/docs/` and needs only
+Node and npm. Ctrl-C or `./dev.sh stop` stops its server.
 
 The `full` and `runtime` profiles also start a local `lightspeed-envd` by
 default, listening on `127.0.0.1:19091` with its working directory under
@@ -147,6 +151,30 @@ processes first, then infrastructure.
 stores its local process metadata under the ignored `.lightspeed/` directory.
 `reset` refuses to recreate databases while the supervisor is running; stop it
 first.
+
+## Startup errors
+
+Failures identify the step and service, explain what was observed, and suggest
+the next check. Failed commands include their working directory, exit status,
+and recent output. A readiness timeout includes the endpoint and last HTTP or
+connection error. Port conflicts are checked before infrastructure or migrations
+start.
+
+The launcher stops its host processes after a startup failure and reports any
+forced termination. Docker infrastructure stays in place; use `./dev.sh status`
+to inspect it and `./dev.sh down` to stop it. Fix the reported problem before
+retrying; a migration failure is not a reason to reset your database.
+
+For launcher stack traces, add `--debug` to the same command:
+
+```bash
+./dev.sh docs --debug
+./dev.sh runtime --debug
+```
+
+Service output still streams normally, including any diagnostics printed by
+the service itself. Recent output is held in memory for the failure summary,
+not written to an additional log file.
 
 ## Infrastructure primitives
 

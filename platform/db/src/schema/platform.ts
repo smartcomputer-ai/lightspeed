@@ -34,6 +34,12 @@ export const universes = pgTable("universes", {
 
 export type UniverseSetupState = {
   keyPrefix?: string;
+  /// What the setup's key may call, shown on the template.
+  keyGroups?: string[];
+  /// `minted` keys belong to the setup and are revoked when replaced;
+  /// `existing` keys were brought by an admin and never are. Absent means
+  /// minted, as every installation before this choice was.
+  keySource?: "minted" | "existing";
   grantId?: string;
   serverId?: string;
   profileId?: string;

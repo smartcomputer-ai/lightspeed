@@ -8,6 +8,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_workspaces_files_read",
     "method": "vfs/workspaces/files/read",
+    "group": "vfs",
     "summary": "Read a workspace file",
     "description": "Reads bytes at a path in the current workspace head.",
     "paramsType": "VfsWorkspaceFileReadParams",
@@ -36,6 +37,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_start",
     "method": "session/start",
+    "group": "session",
     "summary": "Create or reopen a session",
     "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.",
     "paramsType": "SessionStartParams",
@@ -1119,6 +1121,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_read",
     "method": "session/read",
+    "group": "session",
     "summary": "Read a session",
     "description": "Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
     "paramsType": "SessionReadParams",
@@ -1148,6 +1151,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_list",
     "method": "session/list",
+    "group": "session",
     "summary": "List sessions",
     "description": "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.",
     "paramsType": "SessionListParams",
@@ -1226,6 +1230,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_config_put",
     "method": "session/config/put",
+    "group": "session",
     "summary": "Replace session configuration",
     "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
     "paramsType": "SessionConfigPutParams",
@@ -2092,6 +2097,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_rename",
     "method": "session/rename",
+    "group": "session",
     "summary": "Rename a session",
     "description": "Sets the display name, or clears it when displayName is omitted.",
     "paramsType": "SessionRenameParams",
@@ -2119,6 +2125,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_metadata_put",
     "method": "session/metadata/put",
+    "group": "session",
     "summary": "Replace session metadata",
     "description": "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.",
     "paramsType": "SessionMetadataPutParams",
@@ -2147,6 +2154,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_retention_put",
     "method": "session/retention/put",
+    "group": "session",
     "summary": "Replace session retention",
     "description": "Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.",
     "paramsType": "SessionRetentionPutParams",
@@ -2180,6 +2188,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_close",
     "method": "session/close",
+    "group": "session",
     "summary": "Close a session",
     "description": "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
     "paramsType": "SessionCloseParams",
@@ -2205,6 +2214,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_delete",
     "method": "session/delete",
+    "group": "session",
     "summary": "Delete closed sessions",
     "description": "Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.",
     "paramsType": "SessionDeleteParams",
@@ -2229,6 +2239,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_share",
     "method": "session/share",
+    "group": "session",
     "summary": "Share a session with the universe",
     "description": "Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.",
     "paramsType": "SessionShareParams",
@@ -2252,6 +2263,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_events_read",
     "method": "session/events/read",
+    "group": "session",
     "summary": "Read the session event stream",
     "description": "Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls.",
     "paramsType": "SessionEventsReadParams",
@@ -2340,6 +2352,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_context_append",
     "method": "session/context/append",
+    "group": "session",
     "summary": "Append keyed session context",
     "description": "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.",
     "paramsType": "ContextAppendParams",
@@ -2503,6 +2516,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_context_remove",
     "method": "session/context/remove",
+    "group": "session",
     "summary": "Remove keyed session context",
     "description": "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
     "paramsType": "ContextRemoveParams",
@@ -2531,6 +2545,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_context_compact",
     "method": "session/context/compact",
+    "group": "session",
     "summary": "Compact session context",
     "description": "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
     "paramsType": "ContextCompactParams",
@@ -2551,6 +2566,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_runs_start",
     "method": "session/runs/start",
+    "group": "session",
     "summary": "Start an agent run",
     "description": "Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
     "paramsType": "RunStartParams",
@@ -2952,6 +2968,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_runs_list",
     "method": "session/runs/list",
+    "group": "session",
     "summary": "List session runs",
     "description": "Returns a newest-first keyset page of bounded run summaries projected from current reducer state.",
     "paramsType": "RunListParams",
@@ -2987,6 +3004,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_runs_read",
     "method": "session/runs/read",
+    "group": "session",
     "summary": "Read one session run",
     "description": "Reads and projects one run from its bounded event interval, paged by event sequence.",
     "paramsType": "RunReadParams",
@@ -3011,6 +3029,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_runs_cancel",
     "method": "session/runs/cancel",
+    "group": "session",
     "summary": "Cancel a run",
     "description": "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
     "paramsType": "RunCancelParams",
@@ -3035,6 +3054,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_runs_approvals_decide",
     "method": "session/runs/approvals/decide",
+    "group": "session",
     "summary": "Decide pending run approvals",
     "description": "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.",
     "paramsType": "RunApprovalsDecideParams",
@@ -3096,6 +3116,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_runs_steer",
     "method": "session/runs/steer",
+    "group": "session",
     "summary": "Steer the active run",
     "description": "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.",
     "paramsType": "RunSteerParams",
@@ -3249,6 +3270,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_skills_list",
     "method": "session/skills/list",
+    "group": "session",
     "summary": "List available session skills",
     "description": "Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted.",
     "paramsType": "SkillListParams",
@@ -3269,6 +3291,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_profiles_apply",
     "method": "session/profiles/apply",
+    "group": "session",
     "summary": "Apply a profile to a session",
     "description": "Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
     "paramsType": "ProfileApplyParams",
@@ -4288,6 +4311,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_environments_activate",
     "method": "session/environments/activate",
+    "group": "session",
     "summary": "Activate a session environment",
     "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
     "paramsType": "SessionEnvironmentActivateParams",
@@ -4312,6 +4336,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_environments_deactivate",
     "method": "session/environments/deactivate",
+    "group": "session",
     "summary": "Deactivate the session environment",
     "description": "Clears active environment selection without changing or closing the universe environment.",
     "paramsType": "SessionEnvironmentDeactivateParams",
@@ -4332,6 +4357,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_credentials_bind",
     "method": "environments/credentials/bind",
+    "group": "environments",
     "summary": "Bind a credential into an environment",
     "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
     "paramsType": "EnvironmentCredentialBindParams",
@@ -4414,6 +4440,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_credentials_list",
     "method": "environments/credentials/list",
+    "group": "environments",
     "summary": "List environment credential bindings",
     "description": "Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.",
     "paramsType": "EnvironmentCredentialListParams",
@@ -4434,6 +4461,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_credentials_unbind",
     "method": "environments/credentials/unbind",
+    "group": "environments",
     "summary": "Unbind an environment credential",
     "description": "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
     "paramsType": "EnvironmentCredentialUnbindParams",
@@ -4458,6 +4486,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_create",
     "method": "environments/create",
+    "group": "environments",
     "summary": "Create an environment",
     "description": "Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.",
     "paramsType": "EnvironmentCreateParams",
@@ -4551,6 +4580,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_read",
     "method": "environments/read",
+    "group": "environments",
     "summary": "Read an environment",
     "description": "Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.",
     "paramsType": "EnvironmentReadParams",
@@ -4571,6 +4601,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_list",
     "method": "environments/list",
+    "group": "environments",
     "summary": "List environments",
     "description": "Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.",
     "paramsType": "EnvironmentListParams",
@@ -4654,6 +4685,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_close",
     "method": "environments/close",
+    "group": "environments",
     "summary": "Close an environment",
     "description": "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.",
     "paramsType": "EnvironmentCloseParams",
@@ -4674,6 +4706,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_external_create",
     "method": "environments/external/create",
+    "group": "environments",
     "summary": "Register an external environment",
     "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.",
     "paramsType": "EnvironmentExternalCreateParams",
@@ -4767,6 +4800,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_ingress_put",
     "method": "environments/ingress/put",
+    "group": "environments",
     "summary": "Configure environment public ingress",
     "description": "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
     "paramsType": "EnvironmentIngressPutParams",
@@ -4791,6 +4825,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_power_put",
     "method": "environments/power/put",
+    "group": "environments",
     "summary": "Set environment power intent",
     "description": "Records the desired power state (running, paused, suspended, or stopped) of a provisioned environment; the lifecycle reconciler converges the provider target asynchronously. Powered-down environments wake transparently on their next use. Rejected when the provider does not support the state.",
     "paramsType": "EnvironmentPowerPutParams",
@@ -4848,6 +4883,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_idle-policy_put",
     "method": "environments/idle-policy/put",
+    "group": "environments",
     "summary": "Set environment idle policy",
     "description": "Replaces or clears the staged idle policy of a provisioned environment. The power reaper measures the daemon's idle duration against the pause/suspend/stop/close thresholds and escalates through the stages the provider supports.",
     "paramsType": "EnvironmentIdlePolicyPutParams",
@@ -4919,6 +4955,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_provider-bindings_list",
     "method": "environments/provider-bindings/list",
+    "group": "environments",
     "summary": "List environment provider bindings",
     "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",
     "paramsType": "EnvironmentProviderBindingListParams",
@@ -4931,6 +4968,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_provider-bindings_read",
     "method": "environments/provider-bindings/read",
+    "group": "environments",
     "summary": "Read an environment provider binding",
     "description": "Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.",
     "paramsType": "EnvironmentProviderBindingReadParams",
@@ -4951,6 +4989,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_templates_list",
     "method": "environments/templates/list",
+    "group": "environments",
     "summary": "List environment templates",
     "description": "Reads immutable templates directly from the selected bound provider controller.",
     "paramsType": "EnvironmentTemplateListParams",
@@ -4971,6 +5010,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_templates_read",
     "method": "environments/templates/read",
+    "group": "environments",
     "summary": "Read an environment template",
     "description": "Returns one immutable template version from the selected bound provider controller.",
     "paramsType": "EnvironmentTemplateReadParams",
@@ -4995,6 +5035,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_models_list",
     "method": "models/list",
+    "group": "models",
     "summary": "Discover available models",
     "description": "Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others.",
     "paramsType": "ModelListParams",
@@ -5014,6 +5055,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_profiles_create",
     "method": "profiles/create",
+    "group": "profiles",
     "summary": "Create an agent profile",
     "description": "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
     "paramsType": "ProfileCreateParams",
@@ -5983,6 +6025,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_profiles_read",
     "method": "profiles/read",
+    "group": "profiles",
     "summary": "Read an agent profile",
     "description": "Returns the complete profile document and current revision.",
     "paramsType": "ProfileReadParams",
@@ -6008,6 +6051,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_profiles_list",
     "method": "profiles/list",
+    "group": "profiles",
     "summary": "List agent profiles",
     "description": "Returns lightweight summaries of universe-scoped reusable profiles.",
     "paramsType": "ProfileListParams",
@@ -6020,6 +6064,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_profiles_put",
     "method": "profiles/put",
+    "group": "profiles",
     "summary": "Create or replace an agent profile",
     "description": "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
     "paramsType": "ProfilePutParams",
@@ -6998,6 +7043,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_profiles_delete",
     "method": "profiles/delete",
+    "group": "profiles",
     "summary": "Delete an agent profile",
     "description": "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
     "paramsType": "ProfileDeleteParams",
@@ -7023,6 +7069,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_blobs_put",
     "method": "blobs/put",
+    "group": "blobs/put",
     "summary": "Store content-addressed blobs",
     "description": "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
     "paramsType": "BlobPutParams",
@@ -7058,6 +7105,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_blobs_read",
     "method": "blobs/read",
+    "group": "session",
     "summary": "Read a content-addressed blob",
     "description": "Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.",
     "paramsType": "BlobReadParams",
@@ -7078,6 +7126,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_blobs_has",
     "method": "blobs/has",
+    "group": "session",
     "summary": "Check blob availability",
     "description": "Checks a batch of content references without returning blob bodies, preserving request order.",
     "paramsType": "BlobHasParams",
@@ -7099,6 +7148,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_snapshots_commit",
     "method": "vfs/snapshots/commit",
+    "group": "vfs",
     "summary": "Commit a VFS snapshot",
     "description": "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
     "paramsType": "VfsSnapshotCommitParams",
@@ -7117,6 +7167,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_snapshots_read",
     "method": "vfs/snapshots/read",
+    "group": "vfs",
     "summary": "Read a VFS snapshot",
     "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
     "paramsType": "VfsSnapshotReadParams",
@@ -7137,6 +7188,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_workspaces_create",
     "method": "vfs/workspaces/create",
+    "group": "vfs",
     "summary": "Create a mutable VFS workspace",
     "description": "Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.",
     "paramsType": "VfsWorkspaceCreateParams",
@@ -7170,6 +7222,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_workspaces_read",
     "method": "vfs/workspaces/read",
+    "group": "vfs",
     "summary": "Read a VFS workspace",
     "description": "Returns workspace metadata, current head snapshot, and revision for safe updates.",
     "paramsType": "VfsWorkspaceReadParams",
@@ -7190,6 +7243,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_workspaces_list",
     "method": "vfs/workspaces/list",
+    "group": "vfs",
     "summary": "List VFS workspaces",
     "description": "Lists the mutable universe workspaces with head snapshots, sizes, and revisions.",
     "paramsType": "VfsWorkspaceListParams",
@@ -7202,6 +7256,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_workspaces_update",
     "method": "vfs/workspaces/update",
+    "group": "vfs",
     "summary": "Update a VFS workspace",
     "description": "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
     "paramsType": "VfsWorkspaceUpdateParams",
@@ -7240,6 +7295,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_workspaces_delete",
     "method": "vfs/workspaces/delete",
+    "group": "vfs",
     "summary": "Delete a VFS workspace",
     "description": "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
     "paramsType": "VfsWorkspaceDeleteParams",
@@ -7260,6 +7316,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_mcp_servers_put",
     "method": "mcp/servers/put",
+    "group": "mcp",
     "summary": "Create or replace an MCP server record",
     "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.",
     "paramsType": "McpServerPutParams",
@@ -7560,6 +7617,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_mcp_servers_auth_discover",
     "method": "mcp/servers/auth/discover",
+    "group": "mcp",
     "summary": "Discover MCP server authentication",
     "description": "Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.",
     "paramsType": "McpServerAuthDiscoverParams",
@@ -7581,6 +7639,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_mcp_servers_tools_discover",
     "method": "mcp/servers/tools/discover",
+    "group": "mcp",
     "summary": "Discover MCP server tools",
     "description": "Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.",
     "paramsType": "McpServerToolsDiscoverParams",
@@ -7605,6 +7664,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_mcp_servers_read",
     "method": "mcp/servers/read",
+    "group": "mcp",
     "summary": "Read an MCP server record",
     "description": "Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.",
     "paramsType": "McpServerReadParams",
@@ -7625,6 +7685,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_mcp_servers_list",
     "method": "mcp/servers/list",
+    "group": "mcp",
     "summary": "List MCP server records",
     "description": "Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.",
     "paramsType": "McpServerListParams",
@@ -7660,6 +7721,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_mcp_servers_delete",
     "method": "mcp/servers/delete",
+    "group": "mcp",
     "summary": "Delete an MCP server record",
     "description": "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
     "paramsType": "McpServerDeleteParams",
@@ -7680,6 +7742,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_grants_import",
     "method": "auth/grants/import",
+    "group": "auth",
     "summary": "Import a static bearer grant",
     "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
     "paramsType": "AuthGrantImportParams",
@@ -7764,6 +7827,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_grants_read",
     "method": "auth/grants/read",
+    "group": "auth",
     "summary": "Read authentication grant metadata",
     "description": "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
     "paramsType": "AuthGrantReadParams",
@@ -7784,6 +7848,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_grants_list",
     "method": "auth/grants/list",
+    "group": "auth",
     "summary": "List authentication grants",
     "description": "Lists non-secret grant metadata for the universe, optionally filtered by status.",
     "paramsType": "AuthGrantListParams",
@@ -7819,6 +7884,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_grants_revoke",
     "method": "auth/grants/revoke",
+    "group": "auth",
     "summary": "Revoke an authentication grant",
     "description": "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
     "paramsType": "AuthGrantRevokeParams",
@@ -7839,6 +7905,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_clients_create",
     "method": "auth/clients/create",
+    "group": "auth",
     "summary": "Register an OAuth client",
     "description": "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
     "paramsType": "AuthClientCreateParams",
@@ -7956,6 +8023,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_clients_read",
     "method": "auth/clients/read",
+    "group": "auth",
     "summary": "Read OAuth client metadata",
     "description": "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
     "paramsType": "AuthClientReadParams",
@@ -7976,6 +8044,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_clients_list",
     "method": "auth/clients/list",
+    "group": "auth",
     "summary": "List OAuth clients",
     "description": "Lists non-secret OAuth client registrations in the universe.",
     "paramsType": "AuthClientListParams",
@@ -7988,6 +8057,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_clients_delete",
     "method": "auth/clients/delete",
+    "group": "auth",
     "summary": "Delete an OAuth client",
     "description": "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
     "paramsType": "AuthClientDeleteParams",
@@ -8008,6 +8078,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_flows_start",
     "method": "auth/flows/start",
+    "group": "auth",
     "summary": "Start an OAuth authorization flow",
     "description": "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
     "paramsType": "AuthFlowStartParams",
@@ -8060,6 +8131,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_flows_read",
     "method": "auth/flows/read",
+    "group": "auth",
     "summary": "Read OAuth flow status",
     "description": "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
     "paramsType": "AuthFlowStatusParams",
@@ -8080,6 +8152,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_providers_create",
     "method": "auth/providers/create",
+    "group": "auth",
     "summary": "Register an authentication provider",
     "description": "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
     "paramsType": "AuthProviderCreateParams",
@@ -8244,6 +8317,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_providers_read",
     "method": "auth/providers/read",
+    "group": "auth",
     "summary": "Read authentication provider metadata",
     "description": "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
     "paramsType": "AuthProviderReadParams",
@@ -8264,6 +8338,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_providers_list",
     "method": "auth/providers/list",
+    "group": "auth",
     "summary": "List authentication providers",
     "description": "Lists non-secret model/GitHub provider registrations for the universe.",
     "paramsType": "AuthProviderListParams",
@@ -8276,6 +8351,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_providers_delete",
     "method": "auth/providers/delete",
+    "group": "auth",
     "summary": "Delete an authentication provider",
     "description": "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
     "paramsType": "AuthProviderDeleteParams",
@@ -8296,6 +8372,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_github_installations_list",
     "method": "auth/github/installations/list",
+    "group": "auth",
     "summary": "List GitHub App installations",
     "description": "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
     "paramsType": "AuthGitHubInstallationListParams",
@@ -8316,6 +8393,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_github_installations_grant",
     "method": "auth/github/installations/grant",
+    "group": "auth",
     "summary": "Grant access to a GitHub App installation",
     "description": "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
     "paramsType": "AuthGitHubInstallationGrantParams",
@@ -8370,6 +8448,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_create",
     "method": "bots/create",
+    "group": "bots",
     "summary": "Create a bot",
     "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
     "paramsType": "BotCreateParams",
@@ -9202,6 +9281,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_put",
     "method": "bots/put",
+    "group": "bots",
     "summary": "Create or replace a bot document",
     "description": "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.",
     "paramsType": "BotPutParams",
@@ -9339,6 +9419,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_read",
     "method": "bots/read",
+    "group": "bots",
     "summary": "Read a bot",
     "description": "Returns the bot record, its current revision, and lifecycle columns.",
     "paramsType": "BotReadParams",
@@ -9364,6 +9445,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_list",
     "method": "bots/list",
+    "group": "bots",
     "summary": "List bots",
     "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.",
     "paramsType": "BotListParams",
@@ -9385,6 +9467,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_close",
     "method": "bots/close",
+    "group": "bots",
     "summary": "Close a bot",
     "description": "Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.",
     "paramsType": "BotCloseParams",
@@ -9410,6 +9493,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_delete",
     "method": "bots/delete",
+    "group": "bots",
     "summary": "Delete a bot",
     "description": "Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.",
     "paramsType": "BotDeleteParams",
@@ -9435,6 +9519,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_state_read",
     "method": "bots/state/read",
+    "group": "bots",
     "summary": "Read bot controller state",
     "description": "Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.",
     "paramsType": "BotStateReadParams",
@@ -9460,6 +9545,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_sessions_rotate",
     "method": "bots/sessions/rotate",
+    "group": "bots",
     "summary": "Rotate a bot session",
     "description": "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.",
     "paramsType": "BotSessionRotateParams",
@@ -9490,6 +9576,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_triggers_put",
     "method": "bots/triggers/put",
+    "group": "bots",
     "summary": "Create or replace a trigger",
     "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
     "paramsType": "BotTriggerPutParams",
@@ -10225,6 +10312,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_triggers_read",
     "method": "bots/triggers/read",
+    "group": "bots",
     "summary": "Read a trigger",
     "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.",
     "paramsType": "BotTriggerReadParams",
@@ -10257,6 +10345,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_triggers_list",
     "method": "bots/triggers/list",
+    "group": "bots",
     "summary": "List a bot's triggers",
     "description": "Returns every trigger of the bot ordered by id, secrets included for bot-management callers.",
     "paramsType": "BotTriggerListParams",
@@ -10282,6 +10371,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_triggers_delete",
     "method": "bots/triggers/delete",
+    "group": "bots",
     "summary": "Delete a trigger",
     "description": "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.",
     "paramsType": "BotTriggerDeleteParams",
@@ -10314,6 +10404,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_events_admit",
     "method": "bots/events/admit",
+    "group": "bots",
     "summary": "Admit an event manually",
     "description": "Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.",
     "paramsType": "BotEventAdmitParams",
@@ -10392,6 +10483,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_events_replay",
     "method": "bots/events/replay",
+    "group": "bots",
     "summary": "Replay a stored event",
     "description": "Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.",
     "paramsType": "BotEventReplayParams",
@@ -10423,6 +10515,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_events_list",
     "method": "bots/events/list",
+    "group": "bots",
     "summary": "List a bot's events",
     "description": "Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.",
     "paramsType": "BotEventListParams",
@@ -10464,6 +10557,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_events_read",
     "method": "bots/events/read",
+    "group": "bots",
     "summary": "Read an event by number",
     "description": "Returns the event row and its full stored envelope document.",
     "paramsType": "BotEventReadParams",
@@ -10495,6 +10589,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_bots_filters_test",
     "method": "bots/filters/test",
+    "group": "bots",
     "summary": "Test a CEL filter",
     "description": "Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.",
     "paramsType": "BotFilterTestParams",
@@ -10537,6 +10632,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_channels_accounts_create",
     "method": "channels/accounts/create",
+    "group": "channels",
     "summary": "Create a channel account",
     "description": "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.",
     "paramsType": "ChannelAccountCreateParams",
@@ -10622,6 +10718,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_channels_accounts_put",
     "method": "channels/accounts/put",
+    "group": "channels",
     "summary": "Create or replace a channel account",
     "description": "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.",
     "paramsType": "ChannelAccountPutParams",
@@ -10715,6 +10812,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_channels_accounts_read",
     "method": "channels/accounts/read",
+    "group": "channels",
     "summary": "Read a channel account",
     "description": "Returns the account document and revision.",
     "paramsType": "ChannelAccountReadParams",
@@ -10740,6 +10838,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_channels_accounts_list",
     "method": "channels/accounts/list",
+    "group": "channels",
     "summary": "List channel accounts",
     "description": "Lists this universe's provider accounts, optionally by provider.",
     "paramsType": "ChannelAccountListParams",
@@ -10769,6 +10868,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_channels_accounts_delete",
     "method": "channels/accounts/delete",
+    "group": "channels",
     "summary": "Delete a channel account",
     "description": "Removes the account and its pairings; chat triggers that reference it stop serving conversations.",
     "paramsType": "ChannelAccountDeleteParams",
@@ -10794,6 +10894,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_channels_pairings_list",
     "method": "channels/pairings/list",
+    "group": "channels",
     "summary": "List chat pairings",
     "description": "Lists conversations paired to chat triggers, optionally by account or bot.",
     "paramsType": "ChannelPairingListParams",
@@ -10836,6 +10937,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_channels_pairings_delete",
     "method": "channels/pairings/delete",
+    "group": "channels",
     "summary": "Unpair a conversation",
     "description": "Removes one pairing; the conversation must present the pairing code again to reconnect.",
     "paramsType": "ChannelPairingDeleteParams",
@@ -10865,6 +10967,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_channels_conversations_read",
     "method": "channels/conversations/read",
+    "group": "channels",
     "summary": "Read a conversation snapshot",
     "description": "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
     "paramsType": "ChannelConversationReadParams",

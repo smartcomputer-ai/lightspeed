@@ -52,12 +52,18 @@ const dialogText = () => document.querySelector('[role="dialog"]')?.textContent 
 const checkbox = (group: string) =>
   document.getElementById(`api-key-group-${group}`)!.parentElement!.querySelector<HTMLElement>('[role="checkbox"]')!;
 
-it("lists active keys first with what each may call", async () => {
+it("lists active keys with what each may call, and revoked keys only on request", async () => {
   await render();
-  const rows = [...container.querySelectorAll("tbody tr")].map((row) => row.textContent);
-  expect(rows[0]).toContain("Agent");
-  expect(rows[0]).toContain("Sessions and runs, reading blobs, Uploading blobs");
-  expect(rows[1]).toContain("revoked");
+  const rows = () => [...container.querySelectorAll("tbody tr")].map((row) => row.textContent);
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toContain("Agent");
+  expect(rows()[0]).toContain("Sessions and runs, reading blobs, Uploading blobs");
+
+  const toggle = [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("Show revoked keys (1)"));
+  await act(async () => toggle!.querySelector<HTMLElement>('[role="switch"]')!.click());
+  await settle();
+  expect(rows()).toHaveLength(2);
+  expect(rows()[1]).toContain("revoked");
 });
 
 it("starts a key as an agent client and sends exactly the groups chosen", async () => {

@@ -12,6 +12,9 @@ covers client setup, deployment authentication, and the management workflow.
 The default surface excludes managed-session creation, environment jobs,
 environment registration keys, and the redundant Lightspeed handshake.
 Edit that file and run `npm run generate` to tune the advertised surface.
+Each request then lists only the tools whose method group the caller's key
+holds, as reported by the runtime's `initialize` response; other tools are
+unknown to that caller.
 Tool descriptions come from the canonical Rust method manifest and focus on
 operational semantics such as revision guards, lifecycle prerequisites,
 idempotency, and secret handling.

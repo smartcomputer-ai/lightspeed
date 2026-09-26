@@ -5266,9 +5266,29 @@ export interface AgentApiOutcomeOfInitializeResponse {
  * via the `definition` "InitializeResponse".
  */
 export interface InitializeResponse {
+  caller: CallerAccess;
   capabilities: ServerCapabilities;
   protocolVersion: string;
   serverInfo: ServerInfo;
+}
+/**
+ * What the calling credential may do, so a client can offer only the
+ * methods it may call. Descriptive: core still checks every call.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CallerAccess".
+ */
+export interface CallerAccess {
+  /**
+   * The method groups the caller may call. A request without a key holds
+   * every group. `initialize` belongs to no group and is always allowed.
+   */
+  groups: MethodGroup[];
+  /**
+   * Display prefix of the calling key; absent for a request without a
+   * key, such as local development.
+   */
+  keyPrefix?: string | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

@@ -1,4 +1,4 @@
-import type { LightspeedClient, MethodParams } from "@lightspeed-ai/agent-client";
+import type { CallerAccess, LightspeedClient, MethodParams } from "@lightspeed-ai/agent-client";
 import {
   ProtocolError,
   ProtocolErrorCode,
@@ -16,7 +16,9 @@ import { requestSignal, type UpstreamClientFactory } from "./upstream-client.js"
 
 export interface ToolRegistry {
   readonly tools: readonly Tool[];
-  createServer(auth: RequestAuthContext): Server;
+  /// A server for one request, offering only the tools whose method group
+  /// the caller's key holds. Core still checks every call.
+  createServer(auth: RequestAuthContext, caller: CallerAccess): Server;
 }
 
 export function createToolRegistry(
@@ -30,7 +32,10 @@ export function createToolRegistry(
 
   return {
     tools,
-    createServer(auth) {
+    createServer(auth, caller) {
+      const groups = new Set(caller.groups);
+      const visible = descriptors.flatMap((descriptor, index) =>
+        groups.has(descriptor.group) ? [tools[index]!] : []);
       const server = new Server(
         {
           name: "lightspeed-configurator",
@@ -39,17 +44,19 @@ export function createToolRegistry(
         {
           capabilities: { tools: {} },
           instructions:
-            "These tools expose the complete universe-scoped Lightspeed API. " +
+            "These tools expose the universe-scoped Lightspeed API methods this credential may call. " +
             "Revision-guarded puts require the caller to read the current document first.",
         },
       );
 
-      server.setRequestHandler("tools/list", async () => ({ tools: [...tools] }));
+      server.setRequestHandler("tools/list", async () => ({ tools: [...visible] }));
       server.setRequestHandler(
         "tools/call",
         async (request, ctx): Promise<CallToolResult> => {
           const descriptor = byName.get(request.params.name);
-          if (!descriptor) {
+          // A tool outside the caller's groups is not offered, so it is
+          // unknown to this caller rather than forbidden.
+          if (!descriptor || !groups.has(descriptor.group)) {
             throw new ProtocolError(
               ProtocolErrorCode.InvalidParams,
               `unknown tool: ${request.params.name}`,

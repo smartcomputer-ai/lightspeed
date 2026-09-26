@@ -18,15 +18,11 @@ Read only the material relevant to the change:
 - `platform/README.md` — TypeScript management server, web UI, demo backend,
   connectors, and Configurator MCP.
 - `crates/api/contract/api-reference.md` — generated public API reference.
-- `docs/roadmap/` and `docs/spec/` — detailed decisions and historical context.
-
-Use `Cargo.toml` for the current Rust workspace and the nearest `Cargo.toml`,
-`package.json`, or module documentation to understand a component. Do not copy
-crate inventories or feature specifications into this file.
+- `docs/roadmap/` — detailed decisions and historical context.
 
 When documentation disagrees with executable code or generated contracts,
-verify the intended behavior and update the stale documentation as part of the
-change.
+verify the intended behavior and propose the documentation fix as part of the
+change (see Maintenance for sign-off).
 
 ## Architecture Boundaries
 
@@ -55,33 +51,15 @@ change.
   session worker.
 - VFS workspaces and execution environments are distinct filesystem domains.
   Do not overlay or implicitly synchronize them.
-- Preserve Rust 2024 and the existing crate-local `thiserror` style.
-
-Feature-specific invariants (active-run control, catalogs, sub-agents, bots,
-channels, MCP, environments, provider lowering, and prompt caching) are tested
-and documented beside their implementations and in `docs/roadmap/`. Consult
-those sources before changing the corresponding subsystem.
+- Preserve the existing crate-local `thiserror` style.
 
 ## Build and Test
 
-Prefer checks scoped to the component you changed, then widen when the change
-crosses boundaries:
-
-```bash
-cargo build
-cargo test -p <crate>
-cargo test
-npm install
-npm run check
-```
-
-Useful focused forms include:
-
-```bash
-cargo test -p <crate> test_name
-cargo test -p <crate> -- --nocapture
-npm run test --workspace <workspace>
-```
+Prefer checks scoped to the component you changed (`cargo test -p <crate>`,
+`npm run test --workspace <workspace>`), then widen when the change crosses
+boundaries. `npm run check` is the full TypeScript gate; its `check:generated`
+step fails while regenerated files are uncommitted, so run the remaining steps
+directly until they are committed.
 
 Testing rules:
 
@@ -108,18 +86,15 @@ source scripts/dev/env.sh
 cargo test -p temporal-server --test <suite> [test_name] -- --ignored --test-threads=1
 ```
 
-Avoid running `runs_live_slow`, it contains tests that wait out production activity budgets and can take roughly 30 minutes. Ask for confirmation if you need to run them (because you made a change that affects these tests directly). 
+Avoid running `runs_live_slow`: it waits out production activity budgets and
+takes roughly 30 minutes. Ask for confirmation first if a change affects it
+directly, and then run it by itself.
 
 ## Generated Artifacts
 
 After changing public API wire types or method metadata, regenerate the
-committed API contract and all TypeScript consumers:
-
-```bash
-cargo run -p api --bin export-schema
-npm install
-npm run check
-```
+committed API contract and every TypeScript consumer, following
+[Regenerate the public API and consumers](docs/documentation/development/changing-contracts.md#regenerate-the-public-api-and-consumers).
 
 After changing the workflow integration contract, regenerate it:
 
@@ -132,24 +107,11 @@ are stale. Never hand-edit generated contract or client files.
 
 ## Database and Development Runtime
 
-Use the root launcher as the supported local entry point; details and profiles
-are in `scripts/dev/README.md`:
-
-```bash
-./dev.sh
-./dev.sh --plan full
-./dev.sh status
-./dev.sh stop
-./dev.sh down
-```
+Use `./dev.sh` as the supported local entry point; profiles and lifecycle
+commands are in `docs/documentation/development/local-development.md`.
 
 The Rust server never migrates PostgreSQL implicitly. Before manual startup
-against a new or upgraded database, run:
-
-```bash
-cargo run -p temporal-server -- migrate
-cargo run -p temporal-server -- schema-version  # diagnostic only
-```
+against a new or upgraded database, run `cargo run -p temporal-server -- migrate`.
 
 When adding, removing, or renumbering Rust schema migrations, keep
 `crates/store-pg`'s `REQUIRED_SCHEMA_REVISION` and
@@ -166,8 +128,10 @@ release boundary with `scripts/release/verify-metadata.sh`.
   Roadmap numbering is unstable; explain the current invariant or rationale in
   self-contained domain language instead. Roadmap files may reference one
   another inside `docs/roadmap/`.
-- Update the relevant design/spec/roadmap document when a high-level architecture or public capability changes. 
-- However, check with the user first before you make changes to the documentation, because he needs to validate and quality check any documentation changes.
+- Update the relevant design or roadmap document when a high-level architecture
+  or public capability changes, but check with the user before changing any
+  documentation: the user validates and quality-checks every documentation
+  change.
 - Record implementation progress in an active roadmap document, but do not
   promote completed roadmap detail into this file.
 - Add or update tests for behavioral changes. For deterministic engine changes,

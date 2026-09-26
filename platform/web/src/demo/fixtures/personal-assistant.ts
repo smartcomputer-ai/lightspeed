@@ -821,6 +821,14 @@ function seedMembers(store: DemoStore, universe: UniverseState): void {
     member(store, universe, "user-priya", "contributor", ago(22 * DAY_MS)),
   );
   universe.apiKeys.push(universeApiKey(universe, {
+    keyPrefix: "lsk_pa_cfg_5a19",
+    displayName: "Lightspeed Configurator service credential",
+    groups: ["auth", "bots", "channels", "environments", "mcp", "models", "profiles"],
+    createdAtMs: ago(21 * DAY_MS),
+    createdBy: "user-marco",
+    lastUsedAtMs: ago(3 * DAY_MS),
+  }));
+  universe.apiKeys.push(universeApiKey(universe, {
     keyPrefix: "lsk_pa_2f8d",
     displayName: "iPhone Shortcuts (voice notes → session)",
     groups: ["session", "blobs/put"],
@@ -1201,7 +1209,11 @@ function seedIntegrations(universe: UniverseState): void {
     available: true,
     status: "ready",
     installedVersion: 4,
-    resources: { keyPrefix: "lsk_pa_cfg_5a19", serverId: "configurator" },
+    resources: {
+      keyPrefix: "lsk_pa_cfg_5a19",
+      keyGroups: ["auth", "bots", "channels", "environments", "mcp", "models", "profiles"],
+      serverId: "configurator",
+    },
   };
   universe.setups.push(configurator);
 }

@@ -13,6 +13,7 @@ import type {
   EnvironmentRegistrationKeyView,
   EnvironmentTemplateView,
   EnvironmentView,
+  MethodGroup,
   ProfileSessionRetention as ProfileSessionRetentionView,
   SessionEventView,
   SessionEventsReadResponse,
@@ -130,6 +131,10 @@ export interface UniverseSetup {
   error?: string;
   resources?: {
     keyPrefix?: string;
+    /// The groups the admin chose for the Configurator's key.
+    keyGroups?: MethodGroup[];
+    /// `existing` when an admin brought the key; the setup never revokes it.
+    keySource?: "minted" | "existing";
     grantId?: string;
     serverId?: string;
     profileId?: string;

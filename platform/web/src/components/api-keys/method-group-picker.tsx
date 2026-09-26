@@ -1,7 +1,42 @@
 import type { MethodGroup } from "@lightspeed-ai/agent-client";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Label } from "@/components/ui/label";
-import { METHOD_GROUPS } from "@/lib/method-groups";
+import { METHOD_GROUPS, presetFor, UNIVERSE_KEY_PRESETS } from "@/lib/method-groups";
+
+/** Preset starting points for a universe key's groups; ticking a box makes it custom. */
+export function KeyPresetField({
+  groups,
+  onChange,
+}: {
+  groups: ReadonlySet<MethodGroup>;
+  onChange: (next: Set<MethodGroup>) => void;
+}) {
+  const preset = presetFor(groups);
+  return (
+    <Field>
+      <FieldLabel>Start from</FieldLabel>
+      <div className="flex flex-wrap gap-2">
+        {UNIVERSE_KEY_PRESETS.map((candidate) => (
+          <Button
+            key={candidate.id}
+            type="button"
+            size="sm"
+            variant={preset?.id === candidate.id ? "secondary" : "outline"}
+            aria-pressed={preset?.id === candidate.id}
+            onClick={() => onChange(new Set(candidate.groups))}
+          >
+            {candidate.label}
+          </Button>
+        ))}
+      </div>
+      <FieldDescription>
+        {preset?.description ?? "Custom: only the groups ticked below."}
+      </FieldDescription>
+    </Field>
+  );
+}
 
 /** The method groups a new key may call, with each chosen group's caution. */
 export function MethodGroupPicker({

@@ -23,7 +23,7 @@ Reads bytes at a path in the current workspace head.
 
 **Inspect the Lightspeed protocol**
 
-Returns protocol version, server identity, and supported capabilities without changing universe state.
+Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `none`

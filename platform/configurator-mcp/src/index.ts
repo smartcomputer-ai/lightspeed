@@ -17,6 +17,6 @@ export {
 } from "./transport.js";
 export {
   createUpstreamClientFactory,
-  validateUpstreamIdentity,
+  identifyCaller,
   type UpstreamClientFactory,
 } from "./upstream-client.js";

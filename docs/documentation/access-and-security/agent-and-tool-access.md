@@ -96,10 +96,12 @@ For example, an agent using Configurator MCP makes core API requests with the
 Configurator connection's key. Those requests obey the key's groups, not the
 controller rules above.
 
-The Platform's built-in Configurator setup grants configuration groups and
-omits session access. An independently supplied key can have different
-authority, including reading private sessions when it has the `session`
-group. See [API keys and service access](api-keys-and-service-access.md#connect-services)
+The Platform's built-in Configurator setup asks an Admin which key the
+Configurator acts with on every install, repair or upgrade: the current key, a
+new key (starting from the configuration groups, without session access), or
+an existing universe key whose secret the Admin pastes. The setup revokes only
+keys it minted. Configurator lists only the tools its key may call. A key with
+the `session` group can read private sessions. See [API keys and service access](api-keys-and-service-access.md#connect-services)
 before attaching a management connection to a profile.
 
 Resource sharing also shares practical access. Two sessions attached to the

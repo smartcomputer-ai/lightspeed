@@ -7,16 +7,19 @@ Lightspeed runtime, credentials, a database, or the neighboring `ls-site` repo.
 From the repository root:
 
 ```bash
-npm install
-npm run dev:docs       # local preview; open the printed URL under /docs/
+./dev.sh docs          # installs dependencies and serves http://127.0.0.1:4321/docs/
 npm run check:docs     # adapter tests, Astro diagnostics, build, and link checks
 npm run build:docs     # static output in docs/site/dist/
 npm run preview:docs   # serve the production build, including search
 ```
 
-Astro's development server watches the original manual and the included
-references. Editing a source updates the preview. Astro 7 runs the development
-server in the background; `npm exec --workspace @lightspeed/docs -- astro dev stop`
+`./dev.sh doc` and `./dev.sh documentation` are aliases. The server watches the
+original manual and included references; edits update the preview. Ctrl-C or
+`./dev.sh stop` stops it.
+
+For a standalone preview alongside another launcher profile, `npm run dev:docs`
+still invokes Astro directly. Astro can run that server in the background when
+it detects an agent; `npm exec --workspace @lightspeed/docs -- astro dev stop`
 stops it. Search is indexed during the production build, so use `preview:docs`
 when checking search behavior.
 
@@ -72,6 +75,7 @@ npm run dev:demo --workspace @lightspeed/platform-web -- --host 127.0.0.1
 
 | Image | Demo view and state |
 | --- | --- |
+| `../../images/ls-screenshot-factory.png` | Bots → Implementer → lin-1421-c; leave run activity collapsed and scroll to the top. Capture the full UI at 1440 × 900, including the sub-agent link and final replies. Copy the same PNG to `public/social.png`. |
 | `welcome-session.png` | Sessions → Fix flaky scheduler test; expand the first run's activity and scroll the conversation to the top. Leave individual tool calls collapsed. Capture the full UI at 1440 × 960, including navigation and the sub-agent link. |
 | `new-session.png` | Sessions → New session; name `First conversation`, no profile, before customizing. Capture the dialog. |
 | `profile-editor.png` | Profiles → Release scribe → Form; capture the header, instructions, and model configuration, with Customize run controls closed. |

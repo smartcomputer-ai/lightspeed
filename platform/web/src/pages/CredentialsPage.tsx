@@ -62,7 +62,7 @@ import {
   TableRow,
   TableTitleCell,
 } from "@/components/ui/table";
-import { EmptyState, LoadingNote, PageHeader, SectionHeader, UniverseNotFound } from "@/components/page";
+import { EmptyState, LoadingNote, PageHeader, SectionHeader, ShowHiddenToggle, UniverseNotFound } from "@/components/page";
 import {
   GitHubAppDetails,
   GitHubAppForm,
@@ -136,10 +136,13 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
     onSuccess: () => void invalidate(),
   });
 
+  const [showRevoked, setShowRevoked] = useState(false);
   const allGrants = inventory.data?.grants ?? [];
-  const grants = allGrants
+  const reusable = allGrants
     .filter(isReusableCredential)
     .sort((a, b) => b.createdAtMs - a.createdAtMs);
+  const revokedCount = reusable.filter((grant) => grant.status === "revoked").length;
+  const grants = showRevoked ? reusable : reusable.filter((grant) => grant.status !== "revoked");
   const apps = github.data?.apps ?? [];
   const appGrants = (app: GitHubApp) =>
     (github.data?.grants ?? []).filter((grant) => grant.providerId === app.providerId);
@@ -182,7 +185,7 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
       {revokeGrant.error && (
         <p className="mb-4 text-sm text-destructive">{revokeGrant.error.message}</p>
       )}
-      {inventory.data && grants.length === 0 && (
+      {inventory.data && reusable.length === 0 && (
         <EmptyState icon={LockKeyhole} title="No credentials yet">
           Tokens, environment secrets and GitHub App installations live here, bound to
           environments, MCP servers and bot triggers without exposing their values.
@@ -277,6 +280,17 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
           </Table>
         </TableCard>
       )}
+      {inventory.data && reusable.length > 0 && grants.length === 0 && (
+        <p className="text-sm text-muted-foreground">Every credential here is revoked.</p>
+      )}
+      <div className="mt-3">
+        <ShowHiddenToggle
+          label="Show revoked credentials"
+          count={revokedCount}
+          checked={showRevoked}
+          onCheckedChange={setShowRevoked}
+        />
+      </div>
 
       {github.error && (
         <ReadError error={github.error} loading={!github.data} prefix="GitHub Apps unavailable" className="mt-8" />

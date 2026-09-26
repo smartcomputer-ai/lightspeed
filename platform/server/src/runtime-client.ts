@@ -37,6 +37,12 @@ export function deploymentClient(env: ServerEnv, endpoint?: string | null): Ligh
   return new LightspeedClient(clientOptions(env, endpoint, {}));
 }
 
+/// Calls as a universe key someone handed the Platform, to learn which key a
+/// secret is before the Platform stores it. Never used on a member's behalf.
+export function universeKeyClient(env: ServerEnv, endpoint: string | null | undefined, secret: string): LightspeedClient {
+  return new LightspeedClient(clientOptions(env, endpoint, { authorization: `Bearer ${secret}` }));
+}
+
 /// Universe methods on a member's behalf: the deployment key names the
 /// universe and asserts the user as the actor, and every call passes the
 /// member gate first.

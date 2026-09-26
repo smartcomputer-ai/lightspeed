@@ -2,6 +2,7 @@ import { request as httpRequest } from "node:http";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ConfiguratorConfig } from "../src/config.js";
+import type { MethodGroup } from "@lightspeed-ai/agent-client";
 import { GENERATED_TOOLS } from "../src/generated/tools.js";
 import { startConfigurator, type RunningConfigurator } from "../src/transport.js";
 
@@ -52,6 +53,29 @@ describe("Streamable HTTP configurator", () => {
     expect(upstream.find((request) => request.method === "models/list")?.params).toEqual({
       selectableOnly: true,
     });
+    await client.close();
+  });
+
+  it("offers only the tools whose group the caller's key holds", async () => {
+    const upstream: UpstreamRequest[] = [];
+    const groups: MethodGroup[] = ["profiles", "models"];
+    const server = await start("authenticated", fakeUpstream(upstream, 0, groups));
+    const { client, transport } = mcpClient(server, { authorization: "Bearer lsk_config" });
+
+    await client.connect(transport as Parameters<typeof client.connect>[0]);
+    const listed = await client.listTools();
+    const expected = GENERATED_TOOLS.filter((tool) => groups.includes(tool.group)).map((tool) => tool.name);
+    expect(listed.tools.map((tool) => tool.name)).toEqual(expected);
+    expect(expected).toContain("lightspeed_profiles_list");
+    expect(expected).not.toContain("lightspeed_session_list");
+
+    // A tool outside the key's groups is unknown and never reaches core.
+    await expect(
+      client.callTool({ name: "lightspeed_session_list", arguments: {} }),
+    ).rejects.toThrow(/unknown tool/);
+    expect(upstream.some((request) => request.method === "session/list")).toBe(false);
+    await client.callTool({ name: "lightspeed_models_list", arguments: {} });
+    expect(upstream.some((request) => request.method === "models/list")).toBe(true);
     await client.close();
   });
 
@@ -244,7 +268,10 @@ function mcpClient(server: RunningConfigurator, headers: Record<string, string>)
   return { client, transport };
 }
 
-function fakeUpstream(requests: UpstreamRequest[], delayMs = 0): typeof fetch {
+const ALL_GROUPS = [...new Set(GENERATED_TOOLS.map((tool) => tool.group))];
+
+/// A core that answers `initialize` with `groups` as the caller's.
+function fakeUpstream(requests: UpstreamRequest[], delayMs = 0, groups: MethodGroup[] = ALL_GROUPS): typeof fetch {
   return async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as {
       id: number | string;
@@ -266,6 +293,7 @@ function fakeUpstream(requests: UpstreamRequest[], delayMs = 0): typeof fetch {
               eventLog: true,
               localExecution: false,
             },
+            caller: { keyPrefix: "lsk_test", groups },
           }
         : body.method === "models/list"
           ? { models: [], providers: [] }

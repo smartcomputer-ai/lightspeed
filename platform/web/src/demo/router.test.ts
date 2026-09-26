@@ -14,6 +14,7 @@ import type {
 } from "@/api";
 import { SOFTWARE_FACTORY_UNIVERSE_ID } from "./fixtures/software-factory";
 import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
+import { sectionsByRun } from "@/lib/sessions/run-sections";
 import { appendScriptedRun } from "./engine";
 
 /// Walks the demo router the way the UI does: every read path each page
@@ -60,6 +61,30 @@ const universeReads = [
 ];
 
 describe("demo router", () => {
+  it("keeps seeded final replies outside each run's collapsible activity", async () => {
+    const { store } = await boot();
+    let checked = 0;
+    for (const universe of store.universes.values()) {
+      for (const session of universe.sessions.values()) {
+        const transcript = applyEvents(emptyTranscript(), session.events);
+        const sections = sectionsByRun(transcript.entries, null).filter((section) => section.kind === "run");
+        for (const run of session.runs.values()) {
+          if (run.status !== "completed" || !run.outputText) continue;
+          const section = sections.find((section) => section.runId === run.id);
+          expect(section?.reply, `${universe.universe.slug}/${session.view.id}/${run.id}`).toMatchObject({
+            role: "assistant",
+            runId: run.id,
+            contentRef: run.output?.contentRef,
+            text: run.outputText,
+          });
+          expect(section?.work).not.toContain(section?.reply);
+          checked += 1;
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
   it("shares an unshared root session once, with its sub-agents", async () => {
     const { store, call } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
@@ -263,7 +288,9 @@ describe("demo router", () => {
     expect((await call("GET", base)).json).toMatchObject([{ id: "configurator" }]);
     expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
     state.universe.role = "admin";
-    expect((await call("POST", `${base}/configurator/install`)).json).toMatchObject({ status: "installing" });
+    expect((await call("POST", `${base}/configurator/install`, {})).status).toBe(400);
+    expect((await call("POST", `${base}/configurator/install`, { key: { kind: "current" } })).json)
+      .toMatchObject({ status: "installing" });
   });
 
   it("mints scoped keys from the admin keys page and revokes them", async () => {
@@ -356,10 +383,12 @@ describe("demo router", () => {
     let acceptedSubmission: string | null | undefined;
     let userEntrySource: unknown = null;
     let userEntryOrigin: string | null | undefined;
+    let transcript = emptyTranscript();
     for (let i = 0; i < 20 && !completed; i++) {
       const page = (
         await call("GET", `/api/v1/universes/${universe!.id}/sessions/${sessionId}/events?after=${after}&limit=100&waitMs=3000`)
       ).json as SessionEventsPage;
+      transcript = applyEvents(transcript, page.events ?? []);
       for (const event of page.events ?? []) {
         after = event.cursor.seq;
         if (event.kind.type === "runAccepted" && event.kind.runId === runId) {
@@ -390,6 +419,14 @@ describe("demo router", () => {
     };
     expect(view.status).toBe("idle");
     expect(view.runs.find((run) => run.id === runId)?.status).toBe("completed");
+    const section = sectionsByRun(transcript.entries, null)
+      .filter((section) => section.kind === "run")
+      .find((section) => section.runId === runId);
+    expect(section?.summary?.outputContentRef).toBeTruthy();
+    expect(section?.reply).toMatchObject({
+      role: "assistant", runId, contentRef: section?.summary?.outputContentRef,
+    });
+    expect(section?.work).not.toContain(section?.reply);
   }, 30_000);
 
   it("copies profile metadata and selects only its default environment attachment", async () => {

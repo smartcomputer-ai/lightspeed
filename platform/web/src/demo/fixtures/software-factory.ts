@@ -1545,7 +1545,11 @@ function seedIntegrations(universe: UniverseState): void {
     available: true,
     status: "ready",
     installedVersion: 4,
-    resources: { keyPrefix: "lsk_acme_cfg_9b21", serverId: "configurator" },
+    resources: {
+      keyPrefix: "lsk_acme_cfg_9b21",
+      keyGroups: ["auth", "bots", "channels", "environments", "mcp", "models", "profiles"],
+      serverId: "configurator",
+    },
   };
   universe.setups.push(configurator);
 }

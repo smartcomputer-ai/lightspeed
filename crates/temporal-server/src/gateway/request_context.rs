@@ -2,7 +2,7 @@
 //! Missing context is an error: background work must carry explicit attribution.
 use std::collections::BTreeSet;
 
-use api::{AccessScope, AgentApiError, Attribution, MethodGroup};
+use api::{AccessScope, AgentApiError, Attribution, CallerAccess, MethodGroup};
 use tracing::Instrument as _;
 
 /// The key that authenticated a request.
@@ -43,6 +43,21 @@ impl RequestContext {
         match (&self.key, MethodGroup::of(method)) {
             (Some(key), Some(group)) => key.groups.contains(&group),
             _ => true,
+        }
+    }
+
+    /// What `initialize` reports: the key's groups, or every group for a
+    /// request without a key, matching [`Self::permits`].
+    pub fn caller_access(&self) -> CallerAccess {
+        match &self.key {
+            Some(key) => CallerAccess {
+                key_prefix: Some(key.prefix.clone()),
+                groups: key.groups.iter().copied().collect(),
+            },
+            None => CallerAccess {
+                key_prefix: None,
+                groups: MethodGroup::ALL.to_vec(),
+            },
         }
     }
 
@@ -163,6 +178,21 @@ mod tests {
         assert!(
             RequestContext::local(AccessScope::Deployment).permits("deployment/universes/delete")
         );
+    }
+
+    #[test]
+    fn caller_access_reports_what_permits_allows() {
+        let connector = keyed(&[MethodGroup::ChannelsInbound, MethodGroup::BlobsPut], None);
+        assert_eq!(
+            connector.caller_access(),
+            CallerAccess {
+                key_prefix: Some("lsk_abcdefgh".into()),
+                groups: vec![MethodGroup::BlobsPut, MethodGroup::ChannelsInbound],
+            }
+        );
+        let local = RequestContext::local(AccessScope::Deployment).caller_access();
+        assert_eq!(local.key_prefix, None);
+        assert_eq!(local.groups, MethodGroup::ALL.to_vec());
     }
 
     #[test]

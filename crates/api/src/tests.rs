@@ -1834,6 +1834,10 @@ impl AgentApiService for TestService {
                 event_log: true,
                 local_execution: false,
             },
+            caller: CallerAccess {
+                key_prefix: None,
+                groups: MethodGroup::ALL.to_vec(),
+            },
         }))
     }
 

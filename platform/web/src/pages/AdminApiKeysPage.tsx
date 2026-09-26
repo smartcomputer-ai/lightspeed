@@ -43,7 +43,7 @@ import {
   TableRow,
   TableTitleCell,
 } from "@/components/ui/table";
-import { EmptyState, LoadingNote, PageHeader } from "@/components/page";
+import { EmptyState, LoadingNote, PageHeader, ShowHiddenToggle } from "@/components/page";
 import { groupSummary, groupsFor } from "@/lib/method-groups";
 import { useUniverses } from "@/lib/universes";
 
@@ -68,8 +68,11 @@ export function AdminApiKeysPage() {
       api<DeploymentApiKeyView>("DELETE", `/api/v1/admin/api-keys/${encodeURIComponent(keyPrefix)}`),
     onSuccess: () => void invalidate(),
   });
-  const rows = [...(keys.data ?? [])].sort((a, b) =>
+  const [showRevoked, setShowRevoked] = useState(false);
+  const allRows = [...(keys.data ?? [])].sort((a, b) =>
     Number(a.revokedAtMs != null) - Number(b.revokedAtMs != null) || b.createdAtMs - a.createdAtMs);
+  const revokedCount = allRows.filter((key) => key.revokedAtMs != null).length;
+  const rows = showRevoked ? allRows : allRows.filter((key) => key.revokedAtMs == null);
 
   return (
     <>
@@ -86,7 +89,7 @@ export function AdminApiKeysPage() {
       {keys.isLoading && <LoadingNote />}
       {keys.error && <ReadError error={keys.error} loading={!keys.data} />}
       {revoke.error && <p className="mb-3 text-sm text-destructive">{revoke.error.message}</p>}
-      {keys.data && rows.length === 0 && (
+      {keys.data && allRows.length === 0 && (
         <EmptyState icon={KeyRound} title="No API keys yet">
           Keys reach the deployment or one universe and call the method groups they were minted
           with.
@@ -169,6 +172,17 @@ export function AdminApiKeysPage() {
           </Table>
         </TableCard>
       )}
+      {keys.data && allRows.length > 0 && rows.length === 0 && (
+        <p className="text-sm text-muted-foreground">Every key here is revoked.</p>
+      )}
+      <div className="mt-3">
+        <ShowHiddenToggle
+          label="Show revoked keys"
+          count={revokedCount}
+          checked={showRevoked}
+          onCheckedChange={setShowRevoked}
+        />
+      </div>
       <CreateKeyDialog
         open={createOpen}
         onOpenChange={setCreateOpen}

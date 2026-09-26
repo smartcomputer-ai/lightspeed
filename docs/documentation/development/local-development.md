@@ -82,6 +82,7 @@ profiles stored in a universe.
 | `./dev.sh runtime` | Rust runtime and daemon work against local infrastructure, without Platform or Configurator. |
 | `./dev.sh platform` | Platform API and UI work against the existing runtime named by `LIGHTSPEED_API_URL`. It starts local infrastructure but does not start that runtime. |
 | `./dev.sh demo` | UI work against the in-browser demo backend at `http://localhost:5175/demo/`. It needs neither Docker nor the Rust runtime. |
+| `./dev.sh docs` | Documentation with live reload at `http://127.0.0.1:4321/docs/`. Needs only Node and npm; `doc` and `documentation` are aliases. |
 | `./dev.sh infra` | Just PostgreSQL, pgAdmin, MinIO, and Temporal, for manual processes or live tests. |
 
 The supervisor tracks one application profile at a time. Use `full` for
@@ -195,6 +196,12 @@ also shows split-role startup and a direct CLI conversation.
 
 The launcher prints readiness and process output in its terminal. Use
 `./dev.sh status` to inspect the tracked supervisor and Compose services.
+If startup fails, the final error names the failing step, shows recent command
+output or the last health-check result, and suggests what to check next. Add
+`--debug` to the same command for launcher stack traces. The launcher stops
+its host processes after a failure and reports whether Docker infrastructure
+was left in place.
+
 For durable work, the local Temporal UI is at `http://localhost:8233`;
 pgAdmin is at `http://localhost:15080`, and the MinIO Console is at
 `http://localhost:29001`. The

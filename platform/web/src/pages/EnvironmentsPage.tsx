@@ -49,7 +49,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { EmptyState, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
+import { EmptyState, LoadingNote, PageHeader, ShowHiddenToggle, UniverseNotFound } from "@/components/page";
 import { EnvironmentIdlePolicyDialog } from "@/components/environment/idle-policy-dialog";
 import {
   IdlePolicyFields,
@@ -149,9 +149,14 @@ function ProviderList({ universeId }: { universeId: string }) {
   const templateRows = (templates.data ?? [])
     .slice()
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
-  const environmentRows = (environments.data ?? [])
+  const [showClosed, setShowClosed] = useState(false);
+  const allEnvironmentRows = (environments.data ?? [])
     .slice()
     .sort((a, b) => environmentName(a).localeCompare(environmentName(b)));
+  const closedCount = allEnvironmentRows.filter((environment) => environment.status === "closed").length;
+  const environmentRows = showClosed
+    ? allEnvironmentRows
+    : allEnvironmentRows.filter((environment) => environment.status !== "closed");
   // One lookup for every card: configuring an environment is decided per
   // environment, not from the universe role alone.
   const decisions = useActionPermissions(universeId);
@@ -220,7 +225,7 @@ function ProviderList({ universeId }: { universeId: string }) {
       {registrationKeys.error && (
         <ReadError error={registrationKeys.error} loading={!registrationKeys.data} prefix="Registration keys unavailable" />
       )}
-      {bindings.data && environments.data && environmentRows.length === 0 && (
+      {bindings.data && environments.data && allEnvironmentRows.length === 0 && (
         <EmptyState icon={Boxes} title="No environments yet">
           Machines agents run commands on: created from a provider template, or registered by
           running <span className="font-mono">lightspeed-envd</span> on a machine of your own.
@@ -267,6 +272,17 @@ function ProviderList({ universeId }: { universeId: string }) {
             secrets={secrets.data}
           />
         ))}
+      </div>
+      {environments.data && allEnvironmentRows.length > 0 && environmentRows.length === 0 && (
+        <p className="text-sm text-muted-foreground">Every environment here is closed.</p>
+      )}
+      <div className="mt-3">
+        <ShowHiddenToggle
+          label="Show closed environments"
+          count={closedCount}
+          checked={showClosed}
+          onCheckedChange={setShowClosed}
+        />
       </div>
       {writable && keyRows.length > 0 && <RegistrationKeys universeId={universeId} keys={keyRows} />}
       {bindingRows.length > 0 && <ProviderBindings bindings={bindingRows} />}
@@ -730,6 +746,9 @@ function RegistrationKeys({
   universeId: string;
   keys: EnvironmentRegistrationKey[];
 }) {
+  const [showInactive, setShowInactive] = useState(false);
+  const inactiveCount = keys.filter((key) => key.status !== "active").length;
+  const rows = showInactive ? keys : keys.filter((key) => key.status === "active");
   return (
     <section className="mt-6">
       <h2 className="text-sm font-semibold">Registration keys</h2>
@@ -739,7 +758,7 @@ function RegistrationKeys({
         while registered ones keep reconnecting.
       </p>
       <div className="mt-3 grid gap-2">
-        {keys.map((key) => (
+        {rows.map((key) => (
           <div key={key.registrationKeyId} className="flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3">
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{key.displayName}</p>
@@ -766,6 +785,17 @@ function RegistrationKeys({
             )}
           </div>
         ))}
+        {rows.length === 0 && (
+          <p className="text-sm text-muted-foreground">Every registration key here is revoked or expired.</p>
+        )}
+      </div>
+      <div className="mt-3">
+        <ShowHiddenToggle
+          label="Show revoked and expired keys"
+          count={inactiveCount}
+          checked={showInactive}
+          onCheckedChange={setShowInactive}
+        />
       </div>
     </section>
   );

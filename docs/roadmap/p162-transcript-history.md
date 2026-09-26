@@ -29,6 +29,10 @@ Status: implemented and verified.
   Responses and Anthropic preserve native order. Live updates and older-page
   reconstruction share this behavior, with regression coverage for repeated
   content, missing output, and collapsed final-answer visibility.
+  Demo histories and newly submitted messages also carry entry-level run and
+  turn provenance, so their final replies remain outside the activity fold.
+  Regression coverage checks completed replies across all seeded universes
+  and a new run read through the event tail.
 
 - Open with the latest 500 events, position at the end, and begin independent
   forward long-polling from the initial response's fenced head.

@@ -2040,6 +2040,7 @@ impl AgentApiService for GatewayAgentApi {
         let _capabilities = params.capabilities.unwrap_or(ClientCapabilities {
             experimental_api: false,
         });
+        let caller = crate::gateway::request_context::request_context()?.caller_access();
         Ok(AgentApiOutcome::new(InitializeResponse {
             protocol_version: api::PROTOCOL_VERSION.to_owned(),
             server_info: ServerInfo {
@@ -2059,6 +2060,7 @@ impl AgentApiService for GatewayAgentApi {
                 event_log: true,
                 local_execution: false,
             },
+            caller,
         }))
     }
 

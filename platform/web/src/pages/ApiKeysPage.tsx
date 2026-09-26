@@ -3,7 +3,7 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus, ShieldOff } from "lucide-react";
 import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/agent-client";
-import { GroupSummary, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
+import { GroupSummary, KeyPresetField, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
 import { ApiKeySecret } from "@/components/api-keys/secret-once";
 import { api } from "@/api";
 import {
@@ -40,10 +40,10 @@ import {
   TableRow,
   TableTitleCell,
 } from "@/components/ui/table";
-import { EmptyState, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
+import { EmptyState, LoadingNote, PageHeader, UniverseNotFound, ShowHiddenToggle } from "@/components/page";
 import { useActiveUniverse } from "@/lib/universes";
 import { useActionPermissions } from "@/lib/permissions";
-import { DEFAULT_UNIVERSE_KEY_GROUPS, groupSummary, groupsFor, presetFor, UNIVERSE_KEY_PRESETS } from "@/lib/method-groups";
+import { DEFAULT_UNIVERSE_KEY_GROUPS, groupSummary, groupsFor } from "@/lib/method-groups";
 
 export function ApiKeysPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
@@ -79,8 +79,11 @@ function ApiKeyList({ universeId }: { universeId: string }) {
     onSuccess: () => void invalidate(),
   });
 
-  const rows = [...(keys.data ?? [])].sort((a, b) =>
+  const [showRevoked, setShowRevoked] = useState(false);
+  const allRows = [...(keys.data ?? [])].sort((a, b) =>
     Number(a.revokedAtMs != null) - Number(b.revokedAtMs != null) || b.createdAtMs - a.createdAtMs);
+  const revokedCount = allRows.filter((key) => key.revokedAtMs != null).length;
+  const rows = showRevoked ? allRows : allRows.filter((key) => key.revokedAtMs == null);
 
   return (
     <>
@@ -99,7 +102,7 @@ function ApiKeyList({ universeId }: { universeId: string }) {
       {revoke.error && (
         <p className="mb-3 text-sm text-destructive">{revoke.error.message}</p>
       )}
-      {keys.data && rows.length === 0 && (
+      {keys.data && allRows.length === 0 && (
         <EmptyState icon={KeyRound} title="No API keys yet">
           Keys let external agents and clients reach this universe and call the method groups
           they were minted with. A key's secret is shown only once.
@@ -189,6 +192,17 @@ function ApiKeyList({ universeId }: { universeId: string }) {
           </Table>
         </TableCard>
       )}
+      {keys.data && allRows.length > 0 && rows.length === 0 && (
+        <p className="text-sm text-muted-foreground">Every key here is revoked.</p>
+      )}
+      <div className="mt-3">
+        <ShowHiddenToggle
+          label="Show revoked keys"
+          count={revokedCount}
+          checked={showRevoked}
+          onCheckedChange={setShowRevoked}
+        />
+      </div>
       <p className="mt-4 text-sm text-muted-foreground">
         Use a key as <code className="font-mono text-xs">Authorization: Bearer lsk_…</code>.
         Keys reach this universe only. A key never changes; revoke it and create another to
@@ -219,7 +233,6 @@ function CreateApiKeyDialog({
   const [groups, setGroups] = useState<Set<MethodGroup>>(() => new Set(DEFAULT_UNIVERSE_KEY_GROUPS));
   const [created, setCreated] = useState<DeploymentApiKeyCreateResponse | null>(null);
   const allowed = groupsFor("universe");
-  const preset = presetFor(groups);
 
   const create = useMutation({
     mutationFn: () =>
@@ -283,26 +296,7 @@ function CreateApiKeyDialog({
                 />
                 <FieldDescription>Shown in this list; it is not part of the secret.</FieldDescription>
               </Field>
-              <Field>
-                <FieldLabel>Start from</FieldLabel>
-                <div className="flex flex-wrap gap-2">
-                  {UNIVERSE_KEY_PRESETS.map((candidate) => (
-                    <Button
-                      key={candidate.id}
-                      type="button"
-                      size="sm"
-                      variant={preset?.id === candidate.id ? "secondary" : "outline"}
-                      aria-pressed={preset?.id === candidate.id}
-                      onClick={() => setGroups(new Set(candidate.groups))}
-                    >
-                      {candidate.label}
-                    </Button>
-                  ))}
-                </div>
-                <FieldDescription>
-                  {preset?.description ?? "Custom: only the groups ticked below."}
-                </FieldDescription>
-              </Field>
+              <KeyPresetField groups={groups} onChange={setGroups} />
               <MethodGroupPicker idPrefix="api-key" allowed={allowed} chosen={groups} onChange={setGroups} />
               {create.error && (
                 <p className="text-sm text-destructive">{create.error.message}</p>

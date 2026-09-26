@@ -1,6 +1,7 @@
 import type { ComponentType, ReactNode } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 
 export function PageHeader({
   title,
@@ -115,4 +116,26 @@ export function UniverseNotFound({ slug }: { slug: string | undefined }) {
 
 export function LoadingNote() {
   return <p className="text-sm text-muted-foreground">Loading…</p>;
+}
+
+/// Reveals the rows a list hides by default, such as revoked keys or closed
+/// environments, with how many there are. Renders nothing when none exist.
+export function ShowHiddenToggle({
+  label,
+  count,
+  checked,
+  onCheckedChange,
+}: {
+  label: string;
+  count: number;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  if (count === 0) return null;
+  return (
+    <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      {label} ({count})
+    </label>
+  );
 }
