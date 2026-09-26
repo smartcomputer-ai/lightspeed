@@ -29,6 +29,9 @@ use crate::bots::{
 
 const DEFAULT_EVENT_PAGE: usize = 50;
 const MAX_EVENT_PAGE: usize = 200;
+/// Full session pages a bot's state reads before it stops, so a runaway
+/// sub-agent tree cannot make the read unbounded.
+const BOT_STATE_MAX_SESSION_PAGES: usize = 10;
 const DEFAULT_FILTER_SAMPLE: usize = 20;
 const MAX_FILTER_SAMPLE: usize = 50;
 /// How long `bots/delete` waits for a closing controller to complete.
@@ -570,22 +573,36 @@ impl GatewayAgentApi {
     ) -> Result<BotStateView, AgentApiError> {
         self.read_bot_record(bot_id).await?;
         let controller = self.query_bot_controller(bot_id).await?;
-        let mut descendants = Vec::new();
-        if let Some(snapshot) = &controller {
-            for session in &snapshot.sessions {
-                let listed = self
+        // The controller knows its sessions; the session layer lists them and
+        // their sub-agents, each with what it is doing now.
+        let trees: Vec<String> = controller
+            .iter()
+            .flat_map(|snapshot| &snapshot.sessions)
+            .map(|session| session.session_id.clone())
+            .collect();
+        let mut sessions = Vec::new();
+        let mut cursor = None;
+        if !trees.is_empty() {
+            for _ in 0..BOT_STATE_MAX_SESSION_PAGES {
+                let page = self
                     .list_sessions(SessionListParams {
+                        cursor: cursor.take(),
                         limit: Some(MAX_SESSION_LIST_LIMIT as u32),
-                        root_session_id: Some(session.session_id.clone()),
+                        trees: trees.clone(),
                         ..Default::default()
                     })
-                    .await?;
-                descendants.extend(listed.result.sessions);
+                    .await?
+                    .result;
+                sessions.extend(page.sessions);
+                match page.next_cursor {
+                    Some(next) => cursor = Some(next),
+                    None => break,
+                }
             }
         }
         Ok(BotStateView {
             controller,
-            descendants,
+            sessions,
         })
     }
 
@@ -890,6 +907,7 @@ impl GatewayAgentApi {
                     trigger_count: row.trigger_count,
                     pending_count: row.pending_count,
                     last_event: row.last_event.map(|event| event.view()),
+                    activity: row.activity,
                 })
                 .collect(),
         })

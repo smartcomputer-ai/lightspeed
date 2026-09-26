@@ -46,6 +46,11 @@ function metadataQueryFilter(values: string[] | undefined): Record<string, strin
   return filter;
 }
 
+/// A yes/no list filter: `true` or `false`; anything else does not filter.
+function booleanQuery(value: string | undefined): boolean | undefined {
+  return value === "true" ? true : value === "false" ? false : undefined;
+}
+
 export function sessionRoutes(store: DemoStore): Hono {
   const app = new Hono();
 
@@ -62,16 +67,21 @@ export function sessionRoutes(store: DemoStore): Hono {
     if (!universe) return notFound(c);
     const limit = Math.min(intQuery(c, "limit", 50), 200);
     const offset = intQuery(c, "cursor", 0);
-    const rootSessionId = c.req.query("rootSessionId") || null;
-    const parentSessionId = c.req.query("parentSessionId") || null;
-    const excludeClosed = c.req.query("excludeClosed") === "true";
+    const closed = booleanQuery(c.req.query("closed"));
+    const managed = booleanQuery(c.req.query("managed"));
+    const subagent = booleanQuery(c.req.query("subagent"));
+    const parent = c.req.query("parent") || null;
     const metadata = metadataQueryFilter(c.req.queries("metadata"));
     const all = [...universe.sessions.values()]
-      .filter((record) => !rootSessionId || record.view.origin?.rootSessionId === rootSessionId)
-      .filter(
-        (record) => !parentSessionId || record.view.origin?.parentSessionId === parentSessionId,
-      )
-      .filter((record) => !excludeClosed || record.view.status !== "closed")
+      .filter((record) => !parent || record.view.origin?.parentSessionId === parent)
+      .filter((record) => closed === undefined || (record.view.status === "closed") === closed)
+      .filter((record) => subagent === undefined || Boolean(record.view.origin) === subagent)
+      // Managed work follows its root, as the core list does.
+      .filter((record) => {
+        if (managed === undefined) return true;
+        const root = universe.sessions.get(record.view.origin?.rootSessionId ?? record.view.id) ?? record;
+        return root.view.managed === managed;
+      })
       .filter((record) =>
         Object.entries(metadata).every(([key, value]) => value
           ? record.view.metadata?.[key] === value

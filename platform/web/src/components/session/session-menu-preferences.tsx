@@ -1,15 +1,11 @@
-import {
-  DropdownMenuCheckboxItem, DropdownMenuGroup, DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenuCheckboxItem, DropdownMenuGroup } from "@/components/ui/dropdown-menu";
 import { useUserPreferences } from "@/lib/user-preferences";
 
 /** Shared account-wide display controls in session and bot conversation menus. */
 export function SessionMenuPreferences() {
   const preferences = useUserPreferences();
   return (
-    <>
-      <DropdownMenuSeparator />
-      <DropdownMenuGroup>
+    <DropdownMenuGroup>
         <DropdownMenuCheckboxItem
           checked={preferences.collapseCompletedRuns}
           onCheckedChange={preferences.setCollapseCompletedRuns}
@@ -24,7 +20,6 @@ export function SessionMenuPreferences() {
         >
           Show run statistics
         </DropdownMenuCheckboxItem>
-      </DropdownMenuGroup>
-    </>
+    </DropdownMenuGroup>
   );
 }

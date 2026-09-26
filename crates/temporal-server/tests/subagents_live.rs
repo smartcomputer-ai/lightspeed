@@ -682,12 +682,9 @@ async fn list_children(
 ) -> anyhow::Result<Vec<engine::storage::SessionRecord>> {
     Ok(sessions
         .list_sessions(engine::storage::ListSessions {
-            metadata: Default::default(),
-            cursor: None,
             limit: 50,
-            root_session_id: None,
-            parent_session_id: Some(parent.clone()),
-            exclude_closed: false,
+            parent: Some(parent.clone()),
+            ..Default::default()
         })
         .await?
         .sessions)
@@ -930,15 +927,10 @@ async fn run_agent_run_inline_live_client(
     assert_eq!(child_view.status, api::SessionStatus::Closed);
     let listed = api
         .list_sessions(api::SessionListParams {
-            metadata: Default::default(),
-            cursor: None,
             limit: None,
-            created_by: None,
-            visibility: None,
-            visible_to: None,
-            root_session_id: Some(session_id.as_str().to_owned()),
-            parent_session_id: None,
-            exclude_closed: false,
+            trees: vec![session_id.as_str().to_owned()],
+            subagent: Some(true),
+            ..Default::default()
         })
         .await?;
     assert_eq!(listed.result.sessions.len(), 1);

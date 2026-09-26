@@ -67,12 +67,12 @@ function SharingCard() {
       </CardHeader>
       <CardContent className="grid gap-2 text-sm text-muted-foreground">
         <p>
-          A new session is unshared: its creator reads and controls it. Sharing it with the
+          A new session is private: its creator reads and controls it. Sharing it with the
           universe is one action and cannot be undone; members then see and continue it by their
           role. Bots and their conversations are always shared.
         </p>
         <p>
-          Admins read unshared work, and can share or delete any session. Files written into a
+          Admins read private work, and can share or delete any session. Files written into a
           shared workspace or environment follow that resource, and content can be read across
           the universe by its digest.
         </p>

@@ -88,6 +88,8 @@ impl PgStore {
                 b.closed_sessions_json, b.created_at_ms, b.updated_at_ms,
                 tc.trigger_count,
                 pc.pending_count,
+                act.working,
+                act.waiting,
                 {last_event_columns},
                 b.created_by
             FROM bots b
@@ -109,6 +111,15 @@ impl PgStore {
                 ORDER BY e.received_at_ms DESC, e.seq DESC
                 LIMIT 1
             ) le ON true
+            LEFT JOIN LATERAL (
+                SELECT count(*) > 0 AS working, COALESCE(bool_or(a.activity = 'waiting'), false) AS waiting
+                FROM session_activity a
+                JOIN sessions s ON s.universe_id = a.universe_id AND s.session_id = a.session_id
+                LEFT JOIN sessions r ON r.universe_id = s.universe_id
+                    AND r.session_id = COALESCE(s.origin_root_session_id, s.session_id)
+                WHERE a.universe_id = b.universe_id
+                  AND COALESCE(r.bot_id, s.bot_id) = b.bot_id
+            ) act ON true
             WHERE b.universe_id = $1 AND ($2::text IS NULL OR {created_by_match})
             ORDER BY b.bot_id
             "#
@@ -128,6 +139,12 @@ impl PgStore {
                 let pending_count: i64 = row
                     .try_get("pending_count")
                     .map_err(|error| bot_sql_error("decode pending count", error))?;
+                let working: bool = row
+                    .try_get("working")
+                    .map_err(|error| bot_sql_error("decode working", error))?;
+                let waiting: bool = row
+                    .try_get("waiting")
+                    .map_err(|error| bot_sql_error("decode waiting", error))?;
                 let last_event_id: Option<String> = row
                     .try_get(format!("{ROSTER_EVENT_PREFIX}event_id").as_str())
                     .map_err(|error| bot_sql_error("decode last event id", error))?;
@@ -148,6 +165,13 @@ impl PgStore {
                         trigger_count: u32::try_from(trigger_count).unwrap_or(u32::MAX),
                         pending_count: u64::try_from(pending_count).unwrap_or(0),
                         last_event,
+                        activity: if waiting {
+                            api::SessionActivity::Waiting
+                        } else if working {
+                            api::SessionActivity::Working
+                        } else {
+                            api::SessionActivity::Idle
+                        },
                     },
                     api::ResourceAccessSummary {
                         visibility: api::Visibility::Universe,

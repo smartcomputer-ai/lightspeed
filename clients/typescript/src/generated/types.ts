@@ -302,6 +302,14 @@ export type RunSummarySourceView = {
 export type RunStatus =
   "queued" | "running" | "parked" | "cancelling" | "completed" | "failed" | "cancelled";
 /**
+ * What a session is doing now. A queued run counts as idle until it starts;
+ * a closed session is idle.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionActivity".
+ */
+export type SessionActivity = "idle" | "working" | "waiting";
+/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "CompactionPolicy".
  */
@@ -1885,6 +1893,11 @@ export interface SessionView {
    */
   activeRun?: RunSummaryView | null;
   activeTools?: ActiveToolsView;
+  /**
+   * What the session is doing now: idle, working on a run, or waiting for
+   * an approval. Lists carry the same value.
+   */
+  activity: SessionActivity;
   closedAtMs?: number | null;
   /**
    * The stored sparse config document, exactly as last put (model and
@@ -3690,6 +3703,11 @@ export interface BotListResponse {
  */
 export interface BotListItem {
   access: ResourceAccessSummary;
+  /**
+   * What the bot's sessions are doing now: waiting when one waits for an
+   * approval, else working when one is running, else idle.
+   */
+  activity: SessionActivity;
   botId: BotId;
   breaker?: BotBreaker | null;
   /**
@@ -3830,9 +3848,11 @@ export interface BotStateView {
    */
   controller?: BotControllerSnapshot | null;
   /**
-   * Sub-agent sessions delegated under the bot's sessions.
+   * The bot's sessions and their sub-agents, most recently updated
+   * first, each with what it is doing now. Bounded at 2,000 sessions;
+   * the least recently updated fall off a larger tree.
    */
-  descendants?: SessionSummaryView[];
+  sessions?: SessionSummaryView[];
 }
 /**
  * The controller's live snapshot (its `bot_state` query).
@@ -3923,6 +3943,11 @@ export interface SessionSummaryView {
    * universe, and who created it.
    */
   access: ResourceAccessSummary;
+  /**
+   * What the session is doing now: idle, working on a run, or waiting for
+   * an approval.
+   */
+  activity: SessionActivity;
   closedAtMs?: number | null;
   createdAtMs: number;
   displayName?: string | null;
@@ -7733,39 +7758,42 @@ export interface SessionEventsReadParams {
  */
 export interface SessionListParams {
   /**
-   * Only sessions whose root this actor created.
+   * Only closed sessions (`true`), or only new and open ones (`false`).
+   * Absent lists both. Every filter here narrows the list, and an absent
+   * one does not filter.
    */
-  createdBy?: string | null;
+  closed?: boolean | null;
   /**
    * Opaque cursor from the previous page's `nextCursor`.
    */
   cursor?: string | null;
-  /**
-   * Exclude closed sessions. New sessions that have not run yet remain in
-   * the result alongside open sessions.
-   */
-  excludeClosed?: boolean;
   limit?: number | null;
+  /**
+   * Only work whose root a lifecycle controller manages (`true`), or
+   * work nobody manages (`false`); sub-agents follow their root. Absent
+   * lists both.
+   */
+  managed?: boolean | null;
   /**
    * Only sessions matching every entry (AND semantics). A non-empty value
    * requires an exact key/value pair; an empty value requires key presence.
-   * Combines with the lineage filters.
    */
   metadata?: {
     [k: string]: string;
   };
   /**
-   * Only sub-agent sessions delegated directly by this session.
+   * Only sub-agent sessions this session delegated directly.
    */
-  parentSessionId?: string | null;
+  parent?: string | null;
   /**
-   * Only sub-agent sessions whose lineage root is this session.
+   * Only sub-agent sessions (`true`), or only root sessions (`false`).
+   * Absent lists both.
    */
-  rootSessionId?: string | null;
+  subagent?: boolean | null;
   /**
-   * Only sessions whose root has this visibility.
+   * Only these root sessions and all their sub-agents.
    */
-  visibility?: Visibility | null;
+  trees?: string[];
   /**
    * Only sessions whose root is shared with the universe or was created
    * by this actor: what that actor sees as a non-administrator.

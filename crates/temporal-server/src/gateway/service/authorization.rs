@@ -227,6 +227,55 @@ impl GatewayAgentApi {
         .map_err(access_error)
     }
 
+    /// A bot may finish rotating one of its own sessions after its row was
+    /// removed. With no row, ordinary session/close cannot establish control.
+    /// Stop the orphaned workflow before the controller advances generation.
+    pub(crate) async fn retire_missing_owned_bot_session(
+        &self,
+        session_id: &str,
+    ) -> Result<bool, AgentApiError> {
+        let Some(controller) = self.current_controller() else {
+            return Ok(false);
+        };
+        let ResourceRef::Bot(bot_id) = controller.actor else {
+            return Ok(false);
+        };
+        let bot_id = api::BotId::try_new(bot_id).map_err(|_| denied())?;
+        if !::bots::ids::is_bot_session(&bot_id, session_id) {
+            return Ok(false);
+        }
+        let missing = self
+            .access_store()
+            .session_access(self.universe_id(), session_id)
+            .await
+            .map_err(access_error)?
+            .is_none();
+        if !missing {
+            return Ok(false);
+        }
+        let session_id = SessionId::try_new(session_id.to_owned()).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let handle = self.workflow_handle(&session_id);
+        match handle.describe(WorkflowDescribeOptions::default()).await {
+            Ok(description) if description.status() != WorkflowExecutionStatus::Running => {}
+            Ok(_) => match handle
+                .terminate(
+                    WorkflowTerminateOptions::builder()
+                        .reason("bot session row was removed before reset")
+                        .build(),
+                )
+                .await
+            {
+                Ok(_) | Err(WorkflowInteractionError::NotFound(_)) => {}
+                Err(error) => return Err(map_workflow_interaction_error(error)),
+            },
+            Err(WorkflowInteractionError::NotFound(_)) => {}
+            Err(error) => return Err(map_workflow_interaction_error(error)),
+        }
+        Ok(true)
+    }
+
     /// The audience a session or bot view carries.
     pub(super) async fn access_summary(
         &self,

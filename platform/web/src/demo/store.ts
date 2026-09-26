@@ -312,6 +312,7 @@ export function sessionSummary(record: SessionRecord): SessionSummary {
     managed: view.managed,
     origin: view.origin ?? null,
     access: view.access,
+    activity: view.activity,
   };
 }
 

@@ -2,6 +2,7 @@ import type { UniverseRole } from "@lightspeed/platform-shared";
 import type {
   Attribution,
   ResourceAccessSummary,
+  SessionActivity,
   ContextEntryView,
   RunSummaryView,
   RunStatus,
@@ -423,6 +424,8 @@ export interface SessionOrigin {
 
 export interface SessionSummary {
   access: ResourceAccessSummary;
+  /// What the session is doing now: idle, working, or waiting for approval.
+  activity: SessionActivity;
   id: string;
   displayName?: string | null;
   /// Descriptive key/value metadata; absent or empty when none was set.
@@ -463,6 +466,8 @@ export interface ManagedWorkflowTool {
 
 export interface SessionView {
   access: ResourceAccessSummary;
+  /// What the session is doing now: idle, working, or waiting for approval.
+  activity: SessionActivity;
   id: string;
   displayName?: string | null;
   metadata?: Record<string, string>;

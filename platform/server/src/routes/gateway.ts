@@ -107,6 +107,11 @@ function metadataQueryFilter(values: string[] | undefined): Record<string, strin
   return filter;
 }
 
+/// A yes/no list filter: `true` or `false`; anything else does not filter.
+function booleanQuery(value: string | undefined): boolean | undefined {
+  return value === "true" ? true : value === "false" ? false : undefined;
+}
+
 const sessionConfigPutSchema = z.object({
   config: looseDocumentSchema,
   expectedConfigRevision: z.number().int().min(0),
@@ -428,8 +433,9 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   /// Paged session summaries, newest activity first (engine keyset
-  /// paging). Roots-only/tree filtering arrives with engine D1
-  /// (parentSessionId) — today channel-managed and web-created sessions are roots.
+  /// paging). The filters mirror `session/list`: `closed`, `managed` and
+  /// `subagent` are yes/no, absent lists both; `parent` lists direct
+  /// sub-agents.
   app.get("/:id/sessions", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
@@ -438,19 +444,20 @@ export function gatewayRoutes(ctx: AppContext) {
     const cursor = c.req.query("cursor") ?? null;
     const limitRaw = Number(c.req.query("limit") ?? 50);
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, limitRaw), 200) : 50;
-    // Sub-agent lineage filters: children of a root or of a parent.
-    const rootSessionId = c.req.query("rootSessionId") || null;
-    const parentSessionId = c.req.query("parentSessionId") || null;
-    const excludeClosed = c.req.query("excludeClosed") === "true";
+    const closed = booleanQuery(c.req.query("closed"));
+    const managed = booleanQuery(c.req.query("managed"));
+    const subagent = booleanQuery(c.req.query("subagent"));
+    const parent = c.req.query("parent") || null;
     const metadata = metadataQueryFilter(c.req.queries("metadata"));
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const response = await client.call("session/list", {
         cursor,
         limit,
-        ...(rootSessionId ? { rootSessionId } : {}),
-        ...(parentSessionId ? { parentSessionId } : {}),
-        ...(excludeClosed ? { excludeClosed: true } : {}),
+        ...(closed !== undefined ? { closed } : {}),
+        ...(managed !== undefined ? { managed } : {}),
+        ...(subagent !== undefined ? { subagent } : {}),
+        ...(parent ? { parent } : {}),
         ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       });
       return c.json({

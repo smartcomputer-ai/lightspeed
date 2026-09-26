@@ -100,10 +100,12 @@ export function rosterLine(bot: BotListItem): { text: string; tone: BotTone } {
     };
   }
   const last = bot.lastEvent;
+  if (bot.activity === "waiting") return { text: "Waiting for approval", tone: "waiting" };
   if (bot.pendingCount > 0) {
     const on = last && last.outcome == null ? ` on #${last.seq}` : "";
     return { text: `Working${on} · ${last?.kind ?? "event"}`, tone: "live" };
   }
+  if (bot.activity === "working") return { text: "Working", tone: "live" };
   if (!last) return { text: "Waiting for its first event", tone: "idle" };
   const failed = last.outcome === "run_failed" || last.outcome === "blocked";
   const detail = last.outcomeDetail?.trim() || last.kind;

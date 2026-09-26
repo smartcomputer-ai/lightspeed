@@ -34,6 +34,11 @@ pub struct SessionRecord {
     /// Observation time of the terminal lifecycle event. Cleared on reopen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_at_ms: Option<u64>,
+    /// What the session is doing now, projected from run events for lists.
+    /// Stores keep it apart from the catalog row; the event log remains
+    /// authoritative.
+    #[serde(default)]
+    pub activity: SessionActivity,
     /// Immutable owner of this session's retention tree. Fresh sessions and
     /// config-only clones own themselves; forks and delegated children inherit
     /// their source/parent root.
@@ -147,6 +152,18 @@ pub fn check_origin_limits(
         ));
     }
     Ok(())
+}
+
+/// What a session is doing now, as lists show it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionActivity {
+    #[default]
+    Idle,
+    /// A run has started and not yet ended.
+    Working,
+    /// The active run is parked on approvals: it needs a person.
+    Waiting,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,20 +293,27 @@ pub struct SessionListCursor {
     pub session_id: SessionId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListSessions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<SessionListCursor>,
     pub limit: usize,
-    /// Only sessions whose origin names this root.
+    /// Only closed sessions (`true`), or only new and open ones (`false`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root_session_id: Option<SessionId>,
+    pub closed: Option<bool>,
+    /// Only sessions whose root is managed (`true`) or unmanaged (`false`)
+    /// by a lifecycle controller; sub-agents follow their root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<bool>,
+    /// Only sessions with an origin (`true`), or only roots (`false`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<bool>,
     /// Only sessions whose origin names this parent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_session_id: Option<SessionId>,
-    /// Exclude closed sessions while retaining both new and open sessions.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub exclude_closed: bool,
+    pub parent: Option<SessionId>,
+    /// Only these root sessions and their sub-agents. Empty means no filter.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trees: Vec<SessionId>,
     /// Only sessions matching every entry. Empty values mean key presence;
     /// non-empty values mean exact key/value containment. An empty map means
     /// no metadata filter.
@@ -677,6 +701,7 @@ impl SessionStore for InMemorySessionStore {
             lifecycle_status: SessionLifecycleStatus::New,
             closed_at_seq: None,
             closed_at_ms: None,
+            activity: Default::default(),
             retention_root_session_id,
             delete_after_close_ms: request.delete_after_close_ms,
             delete_at_ms: None,
@@ -725,15 +750,7 @@ impl SessionStore for InMemorySessionStore {
         let mut sessions: Vec<SessionRecord> = records
             .into_iter()
             .filter(|record| {
-                request.root_session_id.as_ref().is_none_or(|root| {
-                    record
-                        .origin
-                        .as_ref()
-                        .is_some_and(|origin| &origin.root_session_id == root)
-                })
-            })
-            .filter(|record| {
-                request.parent_session_id.as_ref().is_none_or(|parent| {
+                request.parent.as_ref().is_none_or(|parent| {
                     record
                         .origin
                         .as_ref()
@@ -741,9 +758,28 @@ impl SessionStore for InMemorySessionStore {
                 })
             })
             .filter(|record| {
-                !request.exclude_closed || record.lifecycle_status != SessionLifecycleStatus::Closed
+                request.closed.is_none_or(|closed| {
+                    closed == (record.lifecycle_status == SessionLifecycleStatus::Closed)
+                })
+            })
+            .filter(|record| {
+                request
+                    .subagent
+                    .is_none_or(|subagent| subagent == record.origin.is_some())
             })
             .filter(|record| session_metadata_matches(&record.metadata, &request.metadata))
+            .filter(|record| {
+                let root = record
+                    .origin
+                    .as_ref()
+                    .map_or(&record.session_id, |origin| &origin.root_session_id);
+                let managed = inner
+                    .records
+                    .get(root)
+                    .map_or(record.managed, |root| root.managed);
+                request.managed.is_none_or(|wanted| managed == wanted)
+                    && (request.trees.is_empty() || request.trees.contains(root))
+            })
             .filter(|record| {
                 request.cursor.as_ref().is_none_or(|cursor| {
                     (record.updated_at_ms, record.session_id.as_str())
@@ -968,6 +1004,7 @@ impl SessionStore for InMemorySessionStore {
             lifecycle_status: SessionLifecycleStatus::New,
             closed_at_seq: None,
             closed_at_ms: None,
+            activity: Default::default(),
             retention_root_session_id: request.session_id.clone(),
             delete_after_close_ms: None,
             delete_at_ms: None,
@@ -1025,6 +1062,7 @@ impl SessionStore for InMemorySessionStore {
             lifecycle_status,
             closed_at_seq,
             closed_at_ms,
+            activity: Default::default(),
             retention_root_session_id: source.retention_root_session_id.clone(),
             delete_after_close_ms: None,
             delete_at_ms: None,
@@ -1370,8 +1408,26 @@ pub fn apply_lifecycle_projection(record: &mut SessionRecord, entry: &StoredSess
             record.lifecycle_status = SessionLifecycleStatus::Closed;
             record.closed_at_seq = Some(entry.position.seq);
             record.closed_at_ms = Some(entry.observed_at_ms);
+            record.activity = SessionActivity::Idle;
             refresh_delete_at(record);
         }
+        // Activity follows the run: working from its start, waiting while it
+        // is parked on approvals, working again at its next step (a run only
+        // steps on once every approval is decided), idle once it ends.
+        "lightspeed.core.run.started" => record.activity = SessionActivity::Working,
+        "lightspeed.core.approval.run_parked" => record.activity = SessionActivity::Waiting,
+        "lightspeed.core.turn.started"
+        | "lightspeed.core.turn.generation_requested"
+        | "lightspeed.core.tool.call_started"
+        | "lightspeed.core.tool.batch_resumed"
+            if record.activity == SessionActivity::Waiting =>
+        {
+            record.activity = SessionActivity::Working;
+        }
+        "lightspeed.core.run.completed"
+        | "lightspeed.core.run.failed"
+        | "lightspeed.core.run.cancelled"
+        | "lightspeed.core.run.force_cancelled" => record.activity = SessionActivity::Idle,
         "lightspeed.core.workflow_tool_config.managed_bindings_admitted" => {
             if matches!(
                 CoreAgentCodec.decode_event(&entry.event),
@@ -1694,12 +1750,8 @@ mod tests {
 
         let first = store
             .list_sessions(ListSessions {
-                metadata: Default::default(),
-                cursor: None,
                 limit: 2,
-                root_session_id: None,
-                parent_session_id: None,
-                exclude_closed: false,
+                ..Default::default()
             })
             .await
             .expect("first page");
@@ -1715,12 +1767,9 @@ mod tests {
 
         let second = store
             .list_sessions(ListSessions {
-                metadata: Default::default(),
                 cursor: Some(cursor),
                 limit: 2,
-                root_session_id: None,
-                parent_session_id: None,
-                exclude_closed: false,
+                ..Default::default()
             })
             .await
             .expect("second page");
@@ -1741,12 +1790,9 @@ mod tests {
         close_session(&store, "session-c").await;
         let without_closed = store
             .list_sessions(ListSessions {
-                metadata: Default::default(),
-                cursor: None,
                 limit: 1,
-                root_session_id: None,
-                parent_session_id: None,
-                exclude_closed: true,
+                closed: Some(false),
+                ..Default::default()
             })
             .await
             .expect("list without closed sessions");
@@ -1756,16 +1802,22 @@ mod tests {
             "lifecycle filtering happens before the page limit"
         );
         assert!(without_closed.next_cursor.is_some());
+        let only_closed = store
+            .list_sessions(ListSessions {
+                limit: 10,
+                closed: Some(true),
+                ..Default::default()
+            })
+            .await
+            .expect("list closed sessions");
+        assert_eq!(only_closed.sessions.len(), 1);
+        assert_eq!(only_closed.sessions[0].session_id.as_str(), "session-c");
 
         assert!(matches!(
             store
                 .list_sessions(ListSessions {
-                    metadata: Default::default(),
-                    cursor: None,
                     limit: 0,
-                    root_session_id: None,
-                    parent_session_id: None,
-                    exclude_closed: false,
+                    ..Default::default()
                 })
                 .await,
             Err(SessionStoreError::InvalidLimit { limit: 0 })
@@ -2039,44 +2091,40 @@ mod tests {
         };
         let under_a = store
             .list_sessions(ListSessions {
-                metadata: Default::default(),
-                cursor: None,
                 limit: 10,
-                root_session_id: Some(SessionId::new("root-a")),
-                parent_session_id: None,
-                exclude_closed: false,
+                trees: vec![SessionId::new("root-a")],
+                subagent: Some(true),
+                ..Default::default()
             })
             .await
             .expect("list by root");
         assert_eq!(ids(under_a), vec!["a-child", "a-grandchild"]);
         let children_of_a = store
             .list_sessions(ListSessions {
-                metadata: Default::default(),
-                cursor: None,
                 limit: 10,
-                root_session_id: None,
-                parent_session_id: Some(SessionId::new("root-a")),
-                exclude_closed: false,
+                parent: Some(SessionId::new("root-a")),
+                ..Default::default()
             })
             .await
             .expect("list by parent");
         assert_eq!(ids(children_of_a), vec!["a-child"]);
         let everything = store
             .list_sessions(ListSessions {
-                metadata: Default::default(),
-                cursor: None,
                 limit: 10,
-                root_session_id: None,
-                parent_session_id: None,
-                exclude_closed: false,
+                ..Default::default()
             })
             .await
             .expect("list all");
-        assert_eq!(
-            everything.sessions.len(),
-            5,
-            "roots have no origin and are listed only unfiltered"
-        );
+        assert_eq!(everything.sessions.len(), 5);
+        let roots = store
+            .list_sessions(ListSessions {
+                limit: 10,
+                subagent: Some(false),
+                ..Default::default()
+            })
+            .await
+            .expect("list roots");
+        assert_eq!(ids(roots), vec!["root-a", "root-b"]);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2112,12 +2160,9 @@ mod tests {
             .expect("create other");
 
         let list = |metadata: BTreeMap<String, String>| ListSessions {
-            cursor: None,
             limit: 10,
-            root_session_id: None,
-            parent_session_id: None,
-            exclude_closed: false,
             metadata,
+            ..Default::default()
         };
         let by_job = store
             .list_sessions(list(BTreeMap::from([(
@@ -2225,6 +2270,198 @@ mod tests {
                 .await,
             Err(SessionStoreError::SessionNotFound { .. })
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn lists_filter_managed_work_and_whole_trees_by_their_root() {
+        let store = InMemorySessionStore::new();
+        let create = |id: &'static str, parent: Option<&'static str>| {
+            let store = store.clone();
+            async move {
+                store
+                    .create_session(CreateSession {
+                        metadata: Default::default(),
+                        session_id: SessionId::new(id),
+                        display_name: None,
+                        origin: parent.map(|parent| SessionOrigin {
+                            kind: SessionOriginKind::Subagent,
+                            parent_session_id: SessionId::new(parent),
+                            parent_run_id: 1,
+                            root_session_id: SessionId::new(parent),
+                            depth: 1,
+                            invocation_id: format!("call-{id}"),
+                            profile_id: "child".into(),
+                            profile_revision: 1,
+                            limits: SubagentLimits::default(),
+                        }),
+                        delete_after_close_ms: None,
+                        created_at_ms: 1,
+                    })
+                    .await
+                    .expect("create");
+            }
+        };
+        create("managed", None).await;
+        create("managed-child", Some("managed")).await;
+        create("plain", None).await;
+        store
+            .append(AppendSessionEvents {
+                session_id: SessionId::new("managed"),
+                expected_head: None,
+                events: vec![
+                    lifecycle_opened_event(10),
+                    managed_bindings_event(
+                        11,
+                        Some(crate::WorkflowEndpointRef {
+                            workflow_id: "controller".to_owned(),
+                            workflow_kind: "controllerWorkflowV1".to_owned(),
+                        }),
+                    ),
+                ],
+            })
+            .await
+            .expect("admit management");
+        let list = |managed: Option<bool>, trees: Vec<SessionId>| {
+            let store = store.clone();
+            async move {
+                let mut ids = store
+                    .list_sessions(ListSessions {
+                        limit: 10,
+                        managed,
+                        trees,
+                        ..Default::default()
+                    })
+                    .await
+                    .expect("list")
+                    .sessions
+                    .into_iter()
+                    .map(|record| record.session_id.as_str().to_owned())
+                    .collect::<Vec<_>>();
+                ids.sort();
+                ids
+            }
+        };
+        assert_eq!(list(Some(false), Vec::new()).await, ["plain"]);
+        assert_eq!(
+            list(Some(true), Vec::new()).await,
+            ["managed", "managed-child"]
+        );
+        assert_eq!(
+            list(None, vec![SessionId::new("managed")]).await,
+            ["managed", "managed-child"]
+        );
+        assert_eq!(list(None, Vec::new()).await.len(), 3);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn activity_projection_follows_the_run_and_its_approval_park() {
+        let store = InMemorySessionStore::new();
+        let session = SessionId::new("session");
+        store
+            .create_session(CreateSession {
+                metadata: Default::default(),
+                session_id: session.clone(),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        async fn step(
+            store: &InMemorySessionStore,
+            session: &SessionId,
+            kinds: &[&'static str],
+        ) -> SessionRecord {
+            let expected_head = store
+                .load_session(session)
+                .await
+                .expect("load")
+                .expect("exists")
+                .head;
+            let events = kinds
+                .iter()
+                .enumerate()
+                .map(|(index, kind)| test_event(10 + index as u64, kind))
+                .collect();
+            store
+                .append(AppendSessionEvents {
+                    session_id: session.clone(),
+                    expected_head,
+                    events,
+                })
+                .await
+                .expect("append");
+            store
+                .load_session(session)
+                .await
+                .expect("load")
+                .expect("exists")
+        }
+        let activity = |record: SessionRecord| record.activity;
+        let record = step(
+            &store,
+            &session,
+            &[
+                CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND,
+                "lightspeed.core.run.accepted",
+            ],
+        )
+        .await;
+        assert_eq!(
+            activity(record),
+            SessionActivity::Idle,
+            "a queued run is not work yet"
+        );
+        let record = step(&store, &session, &["lightspeed.core.run.started"]).await;
+        assert_eq!(activity(record), SessionActivity::Working);
+        let record = step(
+            &store,
+            &session,
+            &[
+                "lightspeed.core.approval.requested",
+                "lightspeed.core.approval.requested",
+                "lightspeed.core.approval.run_parked",
+            ],
+        )
+        .await;
+        assert_eq!(activity(record), SessionActivity::Waiting);
+        let record = step(&store, &session, &["lightspeed.core.approval.decided"]).await;
+        assert_eq!(
+            activity(record),
+            SessionActivity::Waiting,
+            "one approval still pending"
+        );
+        let record = step(
+            &store,
+            &session,
+            &[
+                "lightspeed.core.approval.decided",
+                "lightspeed.core.tool.batch_resumed",
+            ],
+        )
+        .await;
+        assert_eq!(
+            activity(record),
+            SessionActivity::Working,
+            "the run stepped on"
+        );
+        let record = step(&store, &session, &["lightspeed.core.run.cancelled"]).await;
+        assert_eq!(activity(record), SessionActivity::Idle);
+        let record = step(
+            &store,
+            &session,
+            &[
+                "lightspeed.core.run.started",
+                CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
+            ],
+        )
+        .await;
+        assert_eq!(
+            activity(record),
+            SessionActivity::Idle,
+            "a closed session is idle"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

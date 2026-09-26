@@ -22,10 +22,10 @@ use api::{
     AgentApiService, AgentProfileInput, BotBreaker, BotCloseParams, BotCoalescePolicy,
     BotControllerStatus, BotCreateParams, BotDeleteParams, BotDocument, BotEventAdmitParams,
     BotEventInput, BotEventListParams, BotEventOutcome, BotEventView, BotId, BotInput,
-    BotPutParams, BotReadParams, BotStateReadParams, BotTriggerDeleteParams, BotTriggerDocument,
-    BotTriggerId, BotTriggerInput, BotTriggerPutParams, BotTriggerSpec, ProfileCreateParams,
-    ProfileDocument, ProfileId, ProfileInstructions, SessionReadParams, SessionStatus,
-    WebhookVerification,
+    BotPutParams, BotReadParams, BotSessionRotateParams, BotSetupStatus, BotStateReadParams,
+    BotTriggerDeleteParams, BotTriggerDocument, BotTriggerId, BotTriggerInput, BotTriggerPutParams,
+    BotTriggerSpec, ProfileCreateParams, ProfileDocument, ProfileId, ProfileInstructions,
+    SessionReadParams, SessionStatus, WebhookVerification,
 };
 use bots::ids::{bot_controller_workflow_id, bot_main_session_id, bot_schedule_id};
 use engine::{CoreAgentLlm, CoreAgentTools, storage::BlobStore};
@@ -44,7 +44,9 @@ use temporal_server::{
 };
 use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
 use temporalio_client::{Client, WorkflowDescribeOptions};
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::{
+    protos::temporal::api::enums::v1::WorkflowExecutionStatus, worker::WorkerTaskTypes,
+};
 
 const WAIT: Duration = Duration::from_secs(90);
 
@@ -382,6 +384,70 @@ async fn bots_live_manual_event_runs_and_records_outcome() -> anyhow::Result<()>
             .result;
         assert!(duplicate.duplicate);
         assert_eq!(duplicate.event.seq, 1);
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires the local Temporal + PostgreSQL stack (source scripts/dev/env.sh)"]
+async fn bots_live_reset_main_recovers_a_missing_session_row() -> anyhow::Result<()> {
+    run_bots_live(Llm::Fake, |api, client| async move {
+        let profile_id = create_profile(&api, "You are a live-test bot.").await?;
+        let bot_id = create_bot(&api, &profile_id, |_| {}, Vec::new()).await?;
+        let first = bot_main_session_id(&bot_id, 1);
+        wait_for_controller_settled(&api, &client, &bot_id, |controller| {
+            controller.setup_status == BotSetupStatus::Ready && controller.main_session_id == first
+        })
+        .await?;
+
+        // Leave the original Temporal workflow running while removing its
+        // projection, as can happen when local database state is reset.
+        let store = pg_store_from_env().await?;
+        let deleted =
+            sqlx::query("DELETE FROM sessions WHERE universe_id = $1 AND session_id = $2")
+                .bind(live_universe_id()?)
+                .bind(&first)
+                .execute(store.pool())
+                .await?;
+        assert_eq!(deleted.rows_affected(), 1);
+
+        assert!(
+            api.rotate_bot_session(BotSessionRotateParams {
+                bot_id: bot_id.clone(),
+                session_id: first.clone(),
+            })
+            .await?
+            .result
+            .accepted
+        );
+        let second = bot_main_session_id(&bot_id, 2);
+        wait_for_controller_settled(&api, &client, &bot_id, |controller| {
+            controller.setup_status == BotSetupStatus::Ready && controller.main_session_id == second
+        })
+        .await?;
+        let session = api
+            .read_session(SessionReadParams {
+                session_id: second,
+                run_limit: None,
+            })
+            .await?
+            .result
+            .session;
+        assert_eq!(session.status, SessionStatus::Idle);
+        let first_workflow = client.get_workflow_handle::<temporal_workflow::AgentSessionWorkflow>(
+            temporal_workflow::compose_workflow_id(
+                live_universe_id()?,
+                &engine::session::SessionId::new(first),
+            ),
+        );
+        assert_ne!(
+            first_workflow
+                .describe(WorkflowDescribeOptions::default())
+                .await?
+                .status(),
+            WorkflowExecutionStatus::Running
+        );
         Ok(())
     })
     .await

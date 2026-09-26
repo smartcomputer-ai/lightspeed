@@ -57,6 +57,8 @@ pub struct BotRosterRow {
     pub trigger_count: u32,
     pub pending_count: u64,
     pub last_event: Option<BotEventRecord>,
+    /// What the bot's sessions are doing now.
+    pub activity: api::SessionActivity,
 }
 
 #[async_trait]

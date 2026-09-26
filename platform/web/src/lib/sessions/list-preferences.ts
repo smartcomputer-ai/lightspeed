@@ -1,6 +1,9 @@
 export interface SessionListPreferences {
   showClosed: boolean;
   showSubagents: boolean;
+  /// Managed work (bots' conversations, workflow-driven sessions) has its
+  /// manager's page; the list shows it only when asked.
+  showManagedSessions: boolean;
   showSessionIds: boolean;
   metadataKeys: string[];
 }
@@ -8,18 +11,28 @@ export interface SessionListPreferences {
 export const DEFAULT_SESSION_LIST_PREFERENCES: SessionListPreferences = {
   showClosed: true,
   showSubagents: true,
+  showManagedSessions: false,
   showSessionIds: false,
   metadataKeys: [],
 };
 
-/** Display-only preferences intentionally do not contribute to this count. */
-export function sessionListActiveFilterCount(
-  metadataFilter: Record<string, string>,
-  preferences: Pick<SessionListPreferences, "showClosed" | "showSubagents">,
-): number {
-  return Object.keys(metadataFilter).length
-    + Number(!preferences.showClosed)
-    + Number(!preferences.showSubagents);
+/**
+ * What the list's scope leaves out, as a sentence for an empty list, or null
+ * when it leaves out nothing. Scope is not a filter and is never counted as
+ * one; only metadata filters are.
+ */
+export function hiddenSessionsNote(
+  preferences: Pick<SessionListPreferences, "showClosed" | "showSubagents" | "showManagedSessions">,
+): string | null {
+  const hidden = [
+    !preferences.showClosed && "closed",
+    !preferences.showSubagents && "sub-agent",
+    !preferences.showManagedSessions && "managed",
+  ].filter((kind): kind is string => Boolean(kind));
+  const last = hidden.pop();
+  if (!last) return null;
+  const listed = hidden.length === 0 ? last : `${hidden.join(", ")} and ${last}`;
+  return `${listed.charAt(0).toUpperCase()}${listed.slice(1)} sessions are hidden.`;
 }
 
 const LIST_PREFERENCES_KEY_PREFIX = "lightspeed:sessions:list-preferences:";
@@ -53,6 +66,9 @@ export function readSessionListPreferences(
       showSubagents: typeof record.showSubagents === "boolean"
         ? record.showSubagents
         : DEFAULT_SESSION_LIST_PREFERENCES.showSubagents,
+      showManagedSessions: typeof record.showManagedSessions === "boolean"
+        ? record.showManagedSessions
+        : DEFAULT_SESSION_LIST_PREFERENCES.showManagedSessions,
       showSessionIds: typeof record.showSessionIds === "boolean"
         ? record.showSessionIds
         : DEFAULT_SESSION_LIST_PREFERENCES.showSessionIds,

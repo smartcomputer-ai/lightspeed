@@ -1,9 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Share2 } from "lucide-react";
+import { LockKeyhole, Users } from "lucide-react";
 import type { ResourceAccessSummary } from "@lightspeed-ai/agent-client";
 import { api } from "@/api";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,17 +11,44 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePermissionIdentity, useUniverseRole } from "@/lib/permissions";
 
-/** Marks work only its creator and admins see. */
-export function UnsharedBadge({ access }: { access: ResourceAccessSummary | undefined }) {
-  if (access?.visibility !== "restricted") return null;
+/**
+ * Who sees a session. Work is private until shared: the header marks both
+ * (a lock, or people once shared); lists pass `quiet` to mark only shared
+ * work.
+ */
+export function SharingMark({
+  access,
+  quiet = false,
+}: {
+  access: ResourceAccessSummary | undefined;
+  quiet?: boolean;
+}) {
+  if (!access) return null;
+  const shared = access.visibility === "universe";
+  if (quiet && !shared) return null;
+  const Icon = shared ? Users : LockKeyhole;
   return (
-    <Badge variant="outline" className="shrink-0 text-muted-foreground" title="Only its creator and admins see this">
-      Unshared
-    </Badge>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className="flex shrink-0 text-muted-foreground"
+            aria-label={shared ? "Shared" : "Private"}
+          />
+        }
+      >
+        <Icon className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipContent>
+        {shared
+          ? "Shared — every member of the universe sees this"
+          : "Private — only its creator and admins see this"}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -39,41 +64,49 @@ export function useSessionOwner(universeId: string, access: ResourceAccessSummar
 }
 
 /**
- * The one sharing action: an unshared root session is shared with the
- * universe, once and for good. A sub-agent's session follows its root.
+ * Whether this session can be shared by the signed-in user: a private
+ * root session they own. A sub-agent's session follows its root.
  */
-export function ShareSessionButton({
+export function useCanShareSession(
+  universeId: string,
+  access: ResourceAccessSummary | undefined,
+  delegated: boolean,
+): boolean {
+  const owner = useSessionOwner(universeId, access);
+  return Boolean(access) && access?.visibility !== "universe" && !delegated && owner;
+}
+
+/** The one sharing action, confirmed: shared with the universe once and for good. */
+export function ShareSessionDialog({
   universeId,
   sessionId,
-  access,
-  delegated,
+  open,
+  onOpenChange,
 }: {
   universeId: string;
   sessionId: string;
-  access: ResourceAccessSummary | undefined;
-  delegated: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const owner = useSessionOwner(universeId, access);
   const share = useMutation({
     mutationFn: () => api<{ access: ResourceAccessSummary }>("POST", `/api/v1/universes/${universeId}/sessions/${sessionId}/share`),
     onSuccess: async () => {
+      onOpenChange(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["session", universeId, sessionId] }),
         queryClient.invalidateQueries({ queryKey: ["sessions", universeId] }),
       ]);
     },
   });
-  if (!access) return null;
-  if (access.visibility === "universe") {
-    return <span className="hidden shrink-0 text-xs text-muted-foreground lg:inline">Shared with universe</span>;
-  }
-  if (delegated || !owner) return null;
   return (
-    <AlertDialog>
-      <AlertDialogTrigger render={<Button variant="outline" size="xs" disabled={share.isPending} />}>
-        <Share2 data-icon="inline-start" /> Share with universe
-      </AlertDialogTrigger>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        onOpenChange(next);
+        if (next) share.reset();
+      }}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Share with the universe?</AlertDialogTitle>
@@ -85,7 +118,9 @@ export function ShareSessionButton({
         {share.error && <p className="text-sm text-destructive">{share.error.message}</p>}
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={() => share.mutate()}>Share</AlertDialogAction>
+          <AlertDialogAction disabled={share.isPending} onClick={() => share.mutate()}>
+            Share
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

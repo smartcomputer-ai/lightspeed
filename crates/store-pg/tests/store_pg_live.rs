@@ -269,12 +269,8 @@ async fn pg_live_session_list_pages_newest_first_and_rename_persists() {
 
     let first = store
         .list_sessions(ListSessions {
-            metadata: Default::default(),
-            cursor: None,
             limit: 2,
-            root_session_id: None,
-            parent_session_id: None,
-            exclude_closed: false,
+            ..Default::default()
         })
         .await
         .expect("first page");
@@ -294,12 +290,9 @@ async fn pg_live_session_list_pages_newest_first_and_rename_persists() {
 
     let second = store
         .list_sessions(ListSessions {
-            metadata: Default::default(),
             cursor: Some(cursor),
             limit: 2,
-            root_session_id: None,
-            parent_session_id: None,
-            exclude_closed: false,
+            ..Default::default()
         })
         .await
         .expect("second page");
@@ -453,12 +446,10 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
     );
     let listed = store
         .list_sessions(ListSessions {
-            metadata: Default::default(),
-            cursor: None,
             limit: 10,
-            root_session_id: Some(peer_id.clone()),
-            parent_session_id: None,
-            exclude_closed: false,
+            trees: vec![peer_id.clone()],
+            subagent: Some(true),
+            ..Default::default()
         })
         .await
         .expect("list by root");
@@ -2977,12 +2968,9 @@ async fn pg_live_session_metadata_filters_by_containment_and_put_replaces() {
             .expect("create session");
     }
     let list = |metadata: BTreeMap<String, String>| ListSessions {
-        cursor: None,
         limit: 10,
-        root_session_id: None,
-        parent_session_id: None,
-        exclude_closed: false,
         metadata,
+        ..Default::default()
     };
     let ids = |page: SessionListPage| {
         page.sessions

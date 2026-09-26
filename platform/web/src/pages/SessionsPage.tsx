@@ -1,4 +1,6 @@
-import { ShareSessionButton, UnsharedBadge, useSessionOwner } from "@/components/session/sharing";
+import { ShareSessionDialog, SharingMark, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
+import { ActivityDot, activityLabel } from "@/components/activity-dot";
+import { SessionActionsMenu } from "@/components/session/session-actions-menu";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   type InfiniteData,
@@ -8,7 +10,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { NavLink, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Archive, ArrowLeft, ChevronDown, ListChecks, ListFilter, LoaderCircle, MessagesSquare, Plus, ShieldCheck, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { Archive, ArrowLeft, ListChecks, ListFilter, LoaderCircle, MessagesSquare, Plus, ShieldCheck, Trash2, X } from "lucide-react";
 import {
   api,
   botLabel,
@@ -31,14 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { BotFaceIcon } from "@/components/icons/bot";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog,
@@ -52,8 +47,6 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
-import { SessionMenuIdentity, SessionMenuMetadata } from "@/components/session/session-menu-details";
-import { SessionMenuPreferences } from "@/components/session/session-menu-preferences";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { ProfileRetentionEditor } from "@/components/session/profile-retention-editor";
 import { SessionConfigEditor } from "@/components/session/session-config-editor";
@@ -128,7 +121,7 @@ import {
   parseMetadataPair,
   readSessionMetadataFilter,
   readSessionListPreferences,
-  sessionListActiveFilterCount,
+  hiddenSessionsNote,
   searchParamsWithMetadataFilter,
   writeSessionMetadataFilter,
   writeSessionListPreferences,
@@ -208,14 +201,16 @@ function SessionList({
   const [metadataKeyDraft, setMetadataKeyDraft] = useState("");
   const filterEntries = Object.entries(metadataFilter);
   const [preferences, setPreferences] = useState(() => readSessionListPreferences(universeId));
-  const { showClosed, showSubagents, showSessionIds, metadataKeys } = preferences;
+  const { showClosed, showSubagents, showManagedSessions, showSessionIds, metadataKeys } = preferences;
   const listQuery = new URLSearchParams({ limit: "50" });
-  if (!showClosed) listQuery.set("excludeClosed", "true");
+  if (!showClosed) listQuery.set("closed", "false");
+  if (!showManagedSessions) listQuery.set("managed", "false");
+  if (!showSubagents) listQuery.set("subagent", "false");
   for (const [key, value] of filterEntries) {
     listQuery.append("metadata", value ? `${key}=${value}` : key);
   }
   const pages = useInfiniteQuery({
-    queryKey: ["sessions", universeId, metadataFilter, { showClosed }],
+    queryKey: ["sessions", universeId, metadataFilter, { showClosed, showManagedSessions, showSubagents }],
     queryFn: ({ pageParam }) =>
       api<SessionListPage>(
         "GET",
@@ -236,8 +231,7 @@ function SessionList({
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
 
-  const allSessions = pages.data?.pages.flatMap((page) => page.sessions) ?? [];
-  const sessions = allSessions.filter((session) => showSubagents || !session.origin);
+  const sessions = pages.data?.pages.flatMap((page) => page.sessions) ?? [];
   const tree = buildSessionTree(sessions);
   const visibleIds = sessions.map((session) => session.id);
   const selectedSessions = sessions.filter((session) => selected.has(session.id));
@@ -247,7 +241,8 @@ function SessionList({
   const selectedOpen = selectedSessions.filter((session) => !session.managed && session.lifecycleStatus !== "closed" && permissions.can("stop_session"));
   const selectedClosed = selectedSessions.filter((session) => !session.managed && session.lifecycleStatus === "closed" && permissions.can("delete_session"));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
-  const activeFilterCount = sessionListActiveFilterCount(metadataFilter, preferences);
+  // Only metadata filters count; which sessions the list includes is its scope.
+  const activeFilterCount = filterEntries.length;
   const listSearch = searchParams.toString();
   const restoredFilterUniverse = useRef<string | null>(null);
 
@@ -400,25 +395,36 @@ function SessionList({
           <PopoverContent align="end" className="grid gap-4 p-4">
             <h2 className="text-sm font-semibold">Filter sessions</h2>
             <div className="grid gap-2">
+              <span className="text-xs font-medium">Include</span>
               <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <Checkbox
-                  checked={!showClosed}
+                  checked={showClosed}
                   onCheckedChange={(checked) => setPreferences((current) => ({
                     ...current,
-                    showClosed: checked !== true,
+                    showClosed: checked === true,
                   }))}
                 />
-                Hide closed sessions
+                Closed sessions
               </label>
               <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <Checkbox
-                  checked={!showSubagents}
+                  checked={showSubagents}
                   onCheckedChange={(checked) => setPreferences((current) => ({
                     ...current,
-                    showSubagents: checked !== true,
+                    showSubagents: checked === true,
                   }))}
                 />
-                Hide sub-agent sessions
+                Sub-agent sessions
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <Checkbox
+                  checked={showManagedSessions}
+                  onCheckedChange={(checked) => setPreferences((current) => ({
+                    ...current,
+                    showManagedSessions: checked === true,
+                  }))}
+                />
+                Managed sessions
               </label>
             </div>
             <div className="grid gap-2 border-t pt-3">
@@ -477,7 +483,7 @@ function SessionList({
               </p>
             </div>
             <div className="grid gap-2 border-t pt-3">
-              <h2 className="text-sm font-semibold">List Appearance</h2>
+              <h2 className="text-sm font-semibold">Display</h2>
               <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <Checkbox
                   checked={showSessionIds}
@@ -612,17 +618,14 @@ function SessionList({
         {pages.error && (
           <ReadError error={pages.error} loading={!pages.data} className="p-4" />
         )}
-        {pages.data && allSessions.length === 0 && (
+        {pages.data && sessions.length === 0 && (
           <ListNote>
             {filterEntries.length > 0
               ? "No sessions match this metadata filter."
-              : !showClosed
-                ? "No open sessions."
+              : hiddenSessionsNote(preferences)
+                ? `No sessions to show. ${hiddenSessionsNote(preferences)}`
                 : "No sessions yet."}
           </ListNote>
-        )}
-        {pages.data && !showSubagents && allSessions.length > 0 && sessions.length === 0 && (
-          <ListNote>No top-level sessions in the loaded results.</ListNote>
         )}
         <ul>
           {tree.map((node) => (
@@ -830,10 +833,12 @@ function SessionListItem({
     <>
       <span className="flex min-w-0 items-center gap-2">
         {depth > 0 && <span className="shrink-0 text-muted-foreground">↳</span>}
+        <ActivityDot activity={session.activity} quiet />
         <span className="min-w-0 flex-1 truncate font-medium" title={displayName ? undefined : session.id}>
           {displayName || session.id}
         </span>
-        <UnsharedBadge access={session.access} />
+        {/* Sub-agents follow their root; the root row carries the mark. */}
+        {!origin && <SharingMark access={session.access} quiet />}
         {origin && (
           <Badge
             variant="outline"
@@ -1074,7 +1079,7 @@ function NewSessionDialog({
                 {inlineProfile ? "Edit customized setup" : "Customize setup…"}
               </Button>
               <p className="text-xs text-muted-foreground">
-                A new session is unshared: you and the universe admins see it until you share it.
+                A new session is private: you and the universe admins see it until you share it.
               </p>
               {selectedProfile.error && (
                 <p className="text-sm text-destructive">{selectedProfile.error.message}</p>
@@ -1293,6 +1298,7 @@ export function SessionDetail({
   });
   // Deleting a session, like sharing it, is for its creator or an admin.
   const owner = useSessionOwner(universeId, session.data?.access);
+  const canShare = useCanShareSession(universeId, session.data?.access, Boolean(session.data?.origin));
   const [pending, setPending] = useState<PendingMessage[]>([]);
   // Retain only this view's local submission identities after pending cleanup.
   // Historical acknowledgements must never rekey a backend-loaded run. Scope
@@ -1307,6 +1313,7 @@ export function SessionDetail({
   const [sendError, setSendError] = useState<string | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closeOpen, setCloseOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteCascade, setDeleteCascade] = useState(false);
@@ -1551,6 +1558,7 @@ export function SessionDetail({
     retry: false,
   });
   const botRoster = botDirectory.data?.bots;
+  const owningBot = owningBotId ? botRoster?.find((bot) => bot.botId === owningBotId) : undefined;
   const loadMedia = useCallback(
     async (blobRef: string, mime: string) => {
       const result = await api<{ bytesBase64: string }>(
@@ -1808,63 +1816,22 @@ export function SessionDetail({
           <NavLink to={backTo} className="shrink-0 md:hidden">
             <ArrowLeft className="size-4" />
           </NavLink>
-          <div className="flex min-w-0 items-center gap-0.5">
+          {/* Left is state: what it is, who sees it, who drives it, what it is doing. */}
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <h1 className="min-w-0 truncate text-sm font-semibold">
               {session.data?.displayName ?? sessionId.slice(0, 24)}
             </h1>
-            <UnsharedBadge access={session.data?.access} />
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="shrink-0 text-muted-foreground"
-                    aria-label="Session details"
-                    title="Session details"
-                  />
-                }
+            <SharingMark access={session.data?.access} />
+            {managed && (owningBotHref ? (
+              <NavLink
+                to={owningBotHref}
+                className="hidden shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground sm:flex"
+                title="Open this conversation in its bot"
               >
-                <ChevronDown />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="start"
-                className="max-h-[min(28rem,calc(100vh-1rem))] w-80 max-w-[calc(100vw-1rem)]"
-              >
-                <SessionMenuIdentity sessionId={sessionId} />
-                <SessionMenuPreferences />
-                {owningBotHref && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuGroup>
-                    <DropdownMenuItem onClick={() => navigate(owningBotHref)}>
-                      <BotFaceIcon /> Open in bot
-                    </DropdownMenuItem>
-                    </DropdownMenuGroup>
-                  </>
-                )}
-                <SessionMenuMetadata metadata={session.data?.metadata} />
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
-            <ShareSessionButton
-              universeId={universeId}
-              sessionId={sessionId}
-              access={session.data?.access}
-              delegated={Boolean(session.data?.origin)}
-            />
-            {activeRun && (
-              <span className="hidden max-w-40 shrink truncate text-xs text-muted-foreground xl:inline">
-                {activeRun.label}…
-              </span>
-            )}
-            {closed && (
-              <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                Closed
-              </span>
-            )}
-            {managed && (
+                <BotFaceIcon className="size-3.5" />
+                via {owningBot ? botLabel(owningBot) : "a bot"}
+              </NavLink>
+            ) : (
               <Tooltip>
                 <TooltipTrigger render={<span className="shrink-0" />}>
                   <Badge variant="secondary" className="gap-1">
@@ -1876,51 +1843,62 @@ export function SessionDetail({
                   {`Lifecycle and chat input are controlled by ${managerLabel}.`}
                 </TooltipContent>
               </Tooltip>
+            ))}
+            {closed ? (
+              <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                Closed
+              </span>
+            ) : activityLabel(session.data?.activity) && (
+              <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                <ActivityDot activity={session.data?.activity} />
+                <span className="hidden sm:inline">{activityLabel(session.data?.activity)}</span>
+              </span>
             )}
-            {canStop && !closed && !managed && (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="text-destructive"
-                disabled={closeSession.isPending}
-                onClick={() => {
-                  setCloseError(null);
-                  setCloseOpen(true);
-                }}
-                aria-label={runActive ? "Force close session" : "Close session"}
-                title={runActive ? "Force close session" : "Close session"}
-              >
-                {closeSession.isPending ? <LoaderCircle className="animate-spin" /> : <Archive />}
-              </Button>
-            )}
-            {canDelete && closed && !managed && (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="text-destructive"
-                disabled={deleteSession.isPending}
-                onClick={() => {
-                  setDeleteError(null);
-                  setDeleteCascade(false);
-                  setDeleteOpen(true);
-                }}
-                aria-label="Delete session"
-                title="Delete session"
-              >
-                {deleteSession.isPending ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
-              </Button>
-            )}
-            {canControl && <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setSettingsOpen(true)}
-              aria-label="Session settings"
-              title="Session settings"
-            >
-              <SlidersHorizontal />
-            </Button>}
+          </div>
+          {/* Right is action, all of it behind ⋯. */}
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <SessionActionsMenu
+              variant="more"
+              sessionId={sessionId}
+              metadata={session.data?.metadata}
+              pending={closeSession.isPending || deleteSession.isPending}
+              open={owningBotHref ? { label: "Open in bot", href: owningBotHref, icon: <BotFaceIcon /> } : undefined}
+              onSettings={canControl ? () => setSettingsOpen(true) : undefined}
+              onShare={canShare ? () => setShareOpen(true) : undefined}
+              lifecycle={!managed && ((canStop && !closed) || (canDelete && closed)) ? (
+                closed ? (
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={() => {
+                      setDeleteError(null);
+                      setDeleteCascade(false);
+                      setDeleteOpen(true);
+                    }}
+                  >
+                    <Trash2 /> Delete session…
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={() => {
+                      setCloseError(null);
+                      setCloseOpen(true);
+                    }}
+                  >
+                    <Archive /> {runActive ? "Force close session…" : "Close session…"}
+                  </DropdownMenuItem>
+                )
+              ) : undefined}
+            />
           </div>
         </header>
+
+        <ShareSessionDialog
+          universeId={universeId}
+          sessionId={sessionId}
+          open={shareOpen && canShare}
+          onOpenChange={setShareOpen}
+        />
 
         <AlertDialog
           open={closeOpen && canStop}
@@ -2271,7 +2249,7 @@ export function SessionLineage({
   const children = useInfiniteQuery({
     queryKey: ["session-children", universeId, sessionId],
     queryFn: ({ pageParam }) => {
-      const params = new URLSearchParams({ limit: "50", parentSessionId: sessionId });
+      const params = new URLSearchParams({ limit: "50", parent: sessionId });
       if (pageParam) params.set("cursor", pageParam);
       return api<SessionListPage>(
         "GET",

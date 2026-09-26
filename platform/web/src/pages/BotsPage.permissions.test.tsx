@@ -15,6 +15,12 @@ vi.mock("@/pages/SessionsPage", () => ({ SessionDetail: () => <div>Readable tran
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 vi.mock("@/components/session/session-config-editor", () => ({ SessionConfigEditor: () => <div data-testid="config-editor">Model configuration editor</div> }));
 vi.mock("@/components/provider-readiness-banner", () => ({ ProviderReadinessBanner: () => null }));
+// The ⋯ menu's popup is slow in jsdom; what it is offered is what matters here.
+vi.mock("@/components/bot/bot-actions-menu", () => ({
+  BotActionsMenu: ({ pause }: { pause?: { enabled: boolean } }) => pause
+    ? <button type="button">{pause.enabled ? "Pause bot" : "Resume bot"}</button>
+    : null,
+}));
 let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
@@ -67,7 +73,7 @@ it("lets a contributor invoke without creating, managing or replaying bots", asy
   await show();
   expect(container.querySelector('[aria-label="New bot"]')).toBeNull();
   expect(button("Send a test event")).toBeDefined();
-  expect(button("Pause")).toBeUndefined();
+  expect(button("Pause bot")).toBeUndefined();
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("#1"))!.click());
   expect(button("Replay this event")).toBeUndefined();
   expect(container.textContent).toContain("Visible history");
@@ -76,7 +82,7 @@ it("offers bot creation and management to an operator", async () => {
   mocks.role = "operator";
   await show();
   expect(container.querySelector('[aria-label="New bot"]')).not.toBeNull();
-  expect(button("Pause")).toBeDefined();
+  expect(button("Pause bot")).toBeDefined();
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("#1"))!.click());
   expect(button("Replay this event")).toBeDefined();
 });
@@ -85,7 +91,7 @@ it("keeps activity readable without creation, invocation or management for viewe
   await show();
   expect(container.querySelector('[aria-label="New bot"]')).toBeNull();
   expect(button("Send a test event")).toBeUndefined();
-  expect(button("Pause")).toBeUndefined();
+  expect(button("Pause bot")).toBeUndefined();
   expect(container.textContent).toContain("Visible history");
 });
 it("sends the introduction from router state only with session control", async () => {

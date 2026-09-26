@@ -293,6 +293,7 @@ function lineageChild(session: SessionRecord): SessionSummaryView {
   const view = session.view;
   return {
     access: view.access,
+    activity: view.activity,
     id: view.id,
     displayName: view.displayName ?? null,
     createdAtMs: view.createdAtMs,

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
+use engine::storage::SessionActivity;
 use engine::{
     BlobRef,
     session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
@@ -46,6 +47,10 @@ const SESSION_COLUMNS: &str = r#"
     updated_at_ms
 "#;
 
+/// What session `sessions` is doing now, from its activity row; none reads
+/// as idle.
+const SESSION_ACTIVITY: &str = "(SELECT a.activity FROM session_activity a WHERE a.universe_id = sessions.universe_id AND a.session_id = sessions.session_id) AS activity";
+
 impl PgStore {
     async fn append_inner(
         &self,
@@ -58,7 +63,7 @@ impl PgStore {
             .map_err(|error| session_sql_error("begin append transaction", error))?;
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}
+            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
             WHERE universe_id = $1 AND session_id = $2
             FOR UPDATE
@@ -128,8 +133,19 @@ impl PgStore {
 
         if let Some(last) = committed.last() {
             record.updated_at_ms = last.observed_at_ms;
+            let activity_before = record.activity;
             for entry in &committed {
                 apply_lifecycle_projection(&mut record, entry);
+            }
+            if record.activity != activity_before {
+                write_activity(
+                    &mut tx,
+                    self.config.universe_id,
+                    &request.session_id,
+                    record.activity,
+                    last.observed_at_ms,
+                )
+                .await?;
             }
             sqlx::query(
                 r#"
@@ -422,17 +438,23 @@ impl PgStore {
             .then(|| metadata_json(&metadata_exact))
             .transpose()?;
         let metadata_predicate = match (metadata_filter.is_some(), metadata_keys.is_empty()) {
-            (true, false) => "AND s.metadata_json @> $12 AND s.metadata_json ?& $13",
-            (true, true) => "AND s.metadata_json @> $12",
-            (false, false) => "AND s.metadata_json ?& $12",
+            (true, false) => "AND s.metadata_json @> $11 AND s.metadata_json ?& $12",
+            (true, true) => "AND s.metadata_json @> $11",
+            (false, false) => "AND s.metadata_json ?& $11",
             (false, true) => "",
         };
-        let lifecycle_predicate = if request.exclude_closed {
-            "AND s.lifecycle_status <> 'closed'"
-        } else {
-            ""
+        // Yes/no filters are appended only when present, like metadata.
+        let closed_predicate = match request.closed {
+            Some(true) => "AND s.lifecycle_status = 'closed'",
+            Some(false) => "AND s.lifecycle_status <> 'closed'",
+            None => "",
         };
-        let (access_predicate, access_binds) = filter.session_clause(7);
+        let subagent_predicate = match request.subagent {
+            Some(true) => "AND s.origin_parent_session_id IS NOT NULL",
+            Some(false) => "AND s.origin_parent_session_id IS NULL",
+            None => "",
+        };
+        let (access_predicate, access_binds) = filter.session_clause(6);
         let summary_columns = crate::access::session_summary_columns();
         let root_join = crate::access::SESSION_ROOT_JOIN;
         // The root join brings columns of the same names; qualify ours.
@@ -445,38 +467,38 @@ impl PgStore {
             .join(", ");
         let query = format!(
             r#"
-            SELECT {session_columns}, {summary_columns}
+            SELECT {session_columns}, sa.activity, {summary_columns}
             FROM sessions s
+            LEFT JOIN session_activity sa
+                ON sa.universe_id = s.universe_id AND sa.session_id = s.session_id
             {root_join}
             WHERE s.universe_id = $1
               AND ($2::bigint IS NULL OR (s.updated_at_ms, s.session_id) < ($2, $3))
-              AND ($4::text IS NULL OR s.origin_root_session_id = $4)
-              AND ($5::text IS NULL OR s.origin_parent_session_id = $5)
-              {lifecycle_predicate}
+              AND ($4::text IS NULL OR s.origin_parent_session_id = $4)
+              {closed_predicate}
+              {subagent_predicate}
               {access_predicate}
+              AND ($9::boolean IS NULL OR COALESCE(r.managed, s.managed) = $9)
+              AND (cardinality($10::text[]) = 0
+                   OR COALESCE(s.origin_root_session_id, s.session_id) = ANY($10))
               {metadata_predicate}
             ORDER BY s.updated_at_ms DESC, s.session_id DESC
-            LIMIT $6
+            LIMIT $5
             "#,
         );
         let sql = sqlx::query(&query)
             .bind(self.config.universe_id)
             .bind(cursor_updated_at_ms)
             .bind(cursor_session_id)
-            .bind(
-                request
-                    .root_session_id
-                    .as_ref()
-                    .map(|id| id.as_str().to_owned()),
-            )
-            .bind(
-                request
-                    .parent_session_id
-                    .as_ref()
-                    .map(|id| id.as_str().to_owned()),
-            )
+            .bind(request.parent.as_ref().map(|id| id.as_str().to_owned()))
             .bind(fetch_limit);
-        let mut sql = access_binds.bind(sql);
+        let mut sql = access_binds.bind(sql).bind(request.managed).bind(
+            request
+                .trees
+                .iter()
+                .map(|id| id.as_str().to_owned())
+                .collect::<Vec<_>>(),
+        );
         if let Some(filter) = metadata_filter {
             sql = sql.bind(filter);
         }
@@ -610,7 +632,7 @@ impl SessionStore for PgStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)
             ON CONFLICT (universe_id, session_id) DO NOTHING
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -649,7 +671,7 @@ impl SessionStore for PgStore {
     ) -> Result<Option<SessionRecord>, SessionStoreError> {
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}
+            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
             WHERE universe_id = $1 AND session_id = $2
             "#,
@@ -691,7 +713,7 @@ impl SessionStore for PgStore {
             UPDATE sessions
             SET display_name = $3
             WHERE universe_id = $1 AND session_id = $2
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -720,7 +742,7 @@ impl SessionStore for PgStore {
             UPDATE sessions
             SET metadata_json = $3
             WHERE universe_id = $1 AND session_id = $2
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -772,7 +794,7 @@ impl SessionStore for PgStore {
             UPDATE sessions
             SET delete_after_close_ms = $3
             WHERE universe_id = $1 AND session_id = $2
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -802,7 +824,7 @@ impl SessionStore for PgStore {
         }
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}
+            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
             WHERE universe_id = $1
               AND retention_root_session_id = session_id
@@ -900,7 +922,7 @@ impl SessionStore for PgStore {
         };
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}
+            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
             WHERE universe_id = $1 AND session_id = ANY($2)
             ORDER BY session_id
@@ -999,7 +1021,7 @@ impl SessionStore for PgStore {
             )
             VALUES ($1, $2, $3, NULL, $2, $4, $4)
             ON CONFLICT (universe_id, session_id) DO NOTHING
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -1117,7 +1139,7 @@ impl SessionStore for PgStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
             ON CONFLICT (universe_id, session_id) DO NOTHING
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -1428,6 +1450,15 @@ fn session_record_from_row(
     let managed = row
         .try_get::<bool, _>("managed")
         .map_err(|error| session_sql_error("decode managed", error))?;
+    let activity = match row
+        .try_get::<Option<String>, _>("activity")
+        .map_err(|error| session_sql_error("decode session activity", error))?
+        .as_deref()
+    {
+        Some("working") => SessionActivity::Working,
+        Some("waiting") => SessionActivity::Waiting,
+        _ => SessionActivity::Idle,
+    };
     let head_seq = row
         .try_get::<Option<i64>, _>("head_seq")
         .map_err(|error| session_sql_error("decode session head", error))?;
@@ -1467,6 +1498,7 @@ fn session_record_from_row(
         lifecycle_status,
         closed_at_seq,
         closed_at_ms,
+        activity,
         retention_root_session_id,
         delete_after_close_ms,
         delete_at_ms,
@@ -1637,7 +1669,7 @@ async fn lock_session(
 ) -> Result<SessionRecord, SessionStoreError> {
     let query = format!(
         r#"
-        SELECT {SESSION_COLUMNS}
+        SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
         FROM sessions
         WHERE universe_id = $1 AND session_id = $2
         FOR UPDATE
@@ -1808,4 +1840,44 @@ impl EmbeddedBlobRefs {
                 })?,
         })
     }
+}
+
+/// Keeps a session's activity row in step with its projection: a row while
+/// it works or waits, none while idle.
+async fn write_activity(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    universe_id: uuid::Uuid,
+    session_id: &SessionId,
+    activity: SessionActivity,
+    at_ms: u64,
+) -> Result<(), SessionStoreError> {
+    let value = match activity {
+        SessionActivity::Idle => {
+            sqlx::query("DELETE FROM session_activity WHERE universe_id = $1 AND session_id = $2")
+                .bind(universe_id)
+                .bind(session_id.as_str())
+                .execute(&mut **tx)
+                .await
+                .map_err(|error| session_sql_error("clear session activity", error))?;
+            return Ok(());
+        }
+        SessionActivity::Working => "working",
+        SessionActivity::Waiting => "waiting",
+    };
+    sqlx::query(
+        r#"
+        INSERT INTO session_activity (universe_id, session_id, activity, since_ms)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (universe_id, session_id)
+        DO UPDATE SET activity = EXCLUDED.activity, since_ms = EXCLUDED.since_ms
+        "#,
+    )
+    .bind(universe_id)
+    .bind(session_id.as_str())
+    .bind(value)
+    .bind(u64_to_i64(at_ms, "activity since_ms")?)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| session_sql_error("write session activity", error))?;
+    Ok(())
 }

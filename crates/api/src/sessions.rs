@@ -923,27 +923,30 @@ pub struct SessionListParams {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
-    /// Only sub-agent sessions whose lineage root is this session.
+    /// Only closed sessions (`true`), or only new and open ones (`false`).
+    /// Absent lists both. Every filter here narrows the list, and an absent
+    /// one does not filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root_session_id: Option<SessionId>,
-    /// Only sub-agent sessions delegated directly by this session.
+    pub closed: Option<bool>,
+    /// Only work whose root a lifecycle controller manages (`true`), or
+    /// work nobody manages (`false`); sub-agents follow their root. Absent
+    /// lists both.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_session_id: Option<SessionId>,
-    /// Exclude closed sessions. New sessions that have not run yet remain in
-    /// the result alongside open sessions.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub exclude_closed: bool,
+    pub managed: Option<bool>,
+    /// Only sub-agent sessions (`true`), or only root sessions (`false`).
+    /// Absent lists both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<bool>,
+    /// Only sub-agent sessions this session delegated directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<SessionId>,
+    /// Only these root sessions and all their sub-agents.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trees: Vec<SessionId>,
     /// Only sessions matching every entry (AND semantics). A non-empty value
     /// requires an exact key/value pair; an empty value requires key presence.
-    /// Combines with the lineage filters.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
-    /// Only sessions whose root this actor created.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<String>,
-    /// Only sessions whose root has this visibility.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub visibility: Option<Visibility>,
     /// Only sessions whose root is shared with the universe or was created
     /// by this actor: what that actor sees as a non-administrator.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -971,6 +974,9 @@ pub struct SessionSummaryView {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
     pub lifecycle_status: SessionLifecycleStatus,
+    /// What the session is doing now: idle, working on a run, or waiting for
+    /// an approval.
+    pub activity: SessionActivity,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_at_ms: Option<u64>,
     pub retention: SessionRetentionView,
@@ -985,6 +991,19 @@ pub struct SessionSummaryView {
     pub access: ResourceAccessSummary,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+}
+
+/// What a session is doing now. A queued run counts as idle until it starts;
+/// a closed session is idle.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionActivity {
+    #[default]
+    Idle,
+    /// A run has started and not yet ended.
+    Working,
+    /// The active run is parked on approvals: it needs a person.
+    Waiting,
 }
 
 /// Effective tree-owned retention for a session. Forks and delegated children

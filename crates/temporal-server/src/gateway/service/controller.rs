@@ -105,23 +105,17 @@ mod tests {
         );
         let helper = bot("helper");
         for action in [ControlSession, StopSession, DeleteSession, Read] {
-            assert_eq!(authorize_controller(&helper, action, Some(&own)), true);
+            assert!(authorize_controller(&helper, action, Some(&own)));
         }
-        assert_eq!(authorize_controller(&helper, Read, Some(&other)), true);
+        assert!(authorize_controller(&helper, Read, Some(&other)));
         for action in [ControlSession, StopSession, DeleteSession, ShareSession] {
-            assert_eq!(authorize_controller(&helper, action, Some(&other)), false);
+            assert!(!authorize_controller(&helper, action, Some(&other)));
         }
         // A bot manages itself, never another bot.
         let helper_bot = ResourceAccess::shared(ResourceRef::Bot("helper".into()), None);
         let triage_bot = ResourceAccess::shared(ResourceRef::Bot("triage".into()), None);
-        assert_eq!(
-            authorize_controller(&helper, ManageBot, Some(&helper_bot)),
-            true
-        );
-        assert_eq!(
-            authorize_controller(&helper, ManageBot, Some(&triage_bot)),
-            false
-        );
+        assert!(authorize_controller(&helper, ManageBot, Some(&helper_bot)));
+        assert!(!authorize_controller(&helper, ManageBot, Some(&triage_bot)));
     }
 
     #[test]
@@ -134,10 +128,11 @@ mod tests {
             draft.clone(),
             Visibility::Restricted,
         );
-        assert_eq!(
-            authorize_controller(&bot("helper"), UniverseAction::Read, Some(&unshared)),
-            false
-        );
+        assert!(!authorize_controller(
+            &bot("helper"),
+            UniverseAction::Read,
+            Some(&unshared)
+        ));
         // A child of that session reads its own root.
         let child = ControllerContext {
             universe_id: Uuid::from_u128(1),
@@ -145,10 +140,11 @@ mod tests {
             root: draft.clone(),
             cause: "delegation".into(),
         };
-        assert_eq!(
-            authorize_controller(&child, UniverseAction::Read, Some(&unshared)),
-            true
-        );
+        assert!(authorize_controller(
+            &child,
+            UniverseAction::Read,
+            Some(&unshared)
+        ));
         // It controls itself, and neither its parent nor a sibling.
         let sibling = session(
             "agent_sibling",
@@ -157,22 +153,25 @@ mod tests {
             draft.clone(),
             Visibility::Restricted,
         );
-        assert_eq!(
-            authorize_controller(&child, UniverseAction::ControlSession, Some(&unshared)),
-            false
-        );
-        assert_eq!(
-            authorize_controller(&child, UniverseAction::ControlSession, Some(&sibling)),
-            false
-        );
+        assert!(!authorize_controller(
+            &child,
+            UniverseAction::ControlSession,
+            Some(&unshared)
+        ));
+        assert!(!authorize_controller(
+            &child,
+            UniverseAction::ControlSession,
+            Some(&sibling)
+        ));
         let parent = ControllerContext {
             actor: draft,
             ..child
         };
-        assert_eq!(
-            authorize_controller(&parent, UniverseAction::StopSession, Some(&sibling)),
-            true
-        );
+        assert!(authorize_controller(
+            &parent,
+            UniverseAction::StopSession,
+            Some(&sibling)
+        ));
     }
 
     #[test]

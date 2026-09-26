@@ -211,6 +211,7 @@ impl SessionStore for FsSessionStore {
             lifecycle_status: SessionLifecycleStatus::New,
             closed_at_seq: None,
             closed_at_ms: None,
+            activity: Default::default(),
             retention_root_session_id,
             delete_after_close_ms: request.delete_after_close_ms,
             delete_at_ms: None,

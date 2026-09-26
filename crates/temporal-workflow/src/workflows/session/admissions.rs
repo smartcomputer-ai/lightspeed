@@ -335,6 +335,8 @@ async fn preprocess_input_entries(
     }
 }
 
+// Held only while one admission is preprocessed.
+#[allow(clippy::large_enum_variant)]
 enum InputPreprocessRebuild {
     RequestRun {
         submission_id: Option<SubmissionId>,

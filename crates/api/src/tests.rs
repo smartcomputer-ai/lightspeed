@@ -1941,6 +1941,7 @@ impl AgentApiService for TestService {
         Ok(AgentApiOutcome::new(SessionListResponse {
             sessions: vec![SessionSummaryView {
                 access: test_access_summary(),
+                activity: SessionActivity::Idle,
                 metadata: Default::default(),
                 id: "session_test".to_owned(),
                 display_name: Some("Test session".to_owned()),
@@ -1963,6 +1964,7 @@ impl AgentApiService for TestService {
         Ok(AgentApiOutcome::new(SessionRenameResponse {
             session: SessionSummaryView {
                 access: test_access_summary(),
+                activity: SessionActivity::Idle,
                 metadata: Default::default(),
                 retention: test_session_retention(&params.session_id),
                 id: params.session_id,
@@ -1984,6 +1986,7 @@ impl AgentApiService for TestService {
         Ok(AgentApiOutcome::new(SessionMetadataPutResponse {
             session: SessionSummaryView {
                 access: test_access_summary(),
+                activity: SessionActivity::Idle,
                 retention: test_session_retention(&params.session_id),
                 id: params.session_id,
                 display_name: None,
@@ -2021,6 +2024,7 @@ impl AgentApiService for TestService {
         Ok(AgentApiOutcome::new(SessionDeleteResponse {
             session: SessionSummaryView {
                 access: test_access_summary(),
+                activity: SessionActivity::Idle,
                 metadata: Default::default(),
                 retention: test_session_retention(&params.session_id),
                 id: params.session_id,
@@ -3148,6 +3152,7 @@ fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
     let retention = test_session_retention(&id);
     SessionView {
         access: test_access_summary(),
+        activity: SessionActivity::Idle,
         metadata: Default::default(),
         id,
         display_name: Some("Test session".to_owned()),
