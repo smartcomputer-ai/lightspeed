@@ -4,8 +4,6 @@ Repository-specific guidance for coding agents. Keep this file short and
 durable: product behavior and feature-level design belong in the code and the
 linked documentation, not in an ever-growing list of historical decisions.
 
-`CLAUDE.md` is a symlink to this file.
-
 ## Start Here
 
 Read only the material relevant to the change:
@@ -99,9 +97,8 @@ Testing rules:
 
 ### Live tests
 
-Do not run live or credentialed tests unless the task requires them and the
-developer has confirmed the local `.env`/services are safe to use. Live suites
-are marked `#[ignore]` under the relevant crate's `tests/` directory.
+Do not run live or credentialed tests unless the task requires them.
+Live suites are marked `#[ignore]` under the relevant crate's `tests/` directory.
 
 Temporal live tests share local Temporal and PostgreSQL state. Source the local
 environment and always serialize them, including filtered runs:
@@ -111,8 +108,7 @@ source scripts/dev/env.sh
 cargo test -p temporal-server --test <suite> [test_name] -- --ignored --test-threads=1
 ```
 
-Run `runs_live_slow` by itself; it contains tests that wait out production
-activity budgets and can take roughly 30 minutes.
+Avoid running `runs_live_slow`, it contains tests that wait out production activity budgets and can take roughly 30 minutes. Ask for confirmation if you need to run them (because you made a change that affects these tests directly). 
 
 ## Generated Artifacts
 
@@ -163,13 +159,15 @@ release boundary with `scripts/release/verify-metadata.sh`.
 ## Maintenance
 
 - Keep changes focused and preserve unrelated work in a dirty worktree.
+- Edit the root `README.md` only with explicit user permission. General requests
+  to update documentation do not authorize changes to that file.
 - Never cite letter-P numeric roadmap identifiers in source comments, symbols,
   API documentation, test names/data, or durable documentation.
   Roadmap numbering is unstable; explain the current invariant or rationale in
   self-contained domain language instead. Roadmap files may reference one
   another inside `docs/roadmap/`.
-- Update `README.md` and the relevant design/spec/roadmap document when a
-  high-level architecture or public capability changes.
+- Update the relevant design/spec/roadmap document when a high-level architecture or public capability changes. 
+- However, check with the user first before you make changes to the documentation, because he needs to validate and quality check any documentation changes.
 - Record implementation progress in an active roadmap document, but do not
   promote completed roadmap detail into this file.
 - Add or update tests for behavioral changes. For deterministic engine changes,

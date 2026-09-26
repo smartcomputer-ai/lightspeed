@@ -35,7 +35,7 @@ useful in enterprises with more stringent supervision and scaling requirements.
 
 So, in Lightspeed, the harness (the agent loop, context, and session state) runs as a lightweight
 durable workflow. Shells, code execution, and full filesystems run on machines
-attached only when needed. Shared workers can process many sessions without dedicating a process to each one.
+attached only when needed. One worker can therefore manage hundreds of agents.
 
 <p align="center">
   <img src="docs/images/readme-why-overview.png" alt="Comparison: traditional infrastructure runs one agent per full VM, while Lightspeed packs many durable agents into one worker and attaches VMs or sandboxes only when needed" width="900">
@@ -122,10 +122,9 @@ The current implementation includes:
 
 - [x] **Long-running agents**: sessions last weeks to months and survive restarts
 - [x] **Active-run control**: cancel or steer a run, or queue the next message
-- [x] **Session fork & clone primitives**: available in the core and storage layers; public clients do not yet expose branch creation
+- [x] **Session fork & clone primitives**: share stored history for branches or start from copied configuration
 - [x] **Workflow-backed plugins**: external Temporal workflows can extend session with various tools and custom logic
-- [x] **One backend binary**: combine roles or scale session, bot, and channel
-  workers independently; the environment gateway currently runs as a singleton
+- [x] **One backend binary**: run every runtime role in one process or scale them independently across Temporal workers
 
 **Borrowed compute**
 
@@ -143,14 +142,9 @@ The current implementation includes:
 **Security & auth**
 
 - [x] **Encrypted secrets**: credentials are encrypted at rest, with automatic OAuth token refresh
-- [x] **Credential injection**: deliver secrets directly to environment processes
-  without putting their values in the prompt; commands can still read or reveal them
-- [x] **People and API access**: universe roles and private sessions in the
-  Platform; scoped API keys for integrations
-- [x] **Tenant isolation**: separate resources into universes on shared
-  infrastructure, or run dedicated deployments. See
-  [Access and security](docs/documentation/access-and-security/overview.md) for
-  the enforced boundaries and current limits
+- [x] **Credential injection**: environments and jobs receive secrets without exposing them to the model
+- [x] **Role based access**: give users different responsibilities in the same universe: admin, AI operator, contributor, and viewer
+- [x] **Multi-tenant by default**: isolate tenants in universes on one deployment or run dedicated per-tenant deployments
 
 ## Design
 
@@ -193,7 +187,7 @@ for focused checks, replay coverage, live-test prerequisites, and model evaluati
 - [JSON-RPC API reference](crates/api/contract/api-reference.md)
 - [Contributing and releasing](docs/documentation/development/contributing-and-releasing.md)
 
-Preview the Starlight manual with `npm run dev:docs`.
+Preview the Starlight manual with `./dev.sh docs`.
 
 ## Contributing
 
