@@ -19,7 +19,7 @@ export interface UserPreferences {
 }
 
 const DEFAULTS: UserPreferences = {
-  showRunStatistics: true,
+  showRunStatistics: false,
   collapseCompletedRuns: true,
   sidebarWidth: null,
   sidebarCollapsed: false,

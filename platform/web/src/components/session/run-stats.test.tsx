@@ -34,7 +34,7 @@ it("puts the outcome on one line and keeps failures and cancellations visible", 
   expect(text(outcome({ ...summary, status: "failed", error: "Provider unavailable" }))).toBe("Run failed: Provider unavailable1m 24sContext 78.5k·Usage 737.2k");
   expect(text(outcome({ ...summary, status: "cancelled" }))).toBe("Run cancelled1m 24sContext 78.5k·Usage 737.2k");
   expect(text(outcome())).toBe("1m 24sContext 78.5k·Usage 737.2k");
-  expect(text(renderToStaticMarkup(createElement(TranscriptEntryView, { entry: summary })))).toBe("1m 24sContext 78.5k·Usage 737.2k");
+  expect(text(renderToStaticMarkup(createElement(TranscriptEntryView, { entry: summary, showRunStatistics: true })))).toBe("1m 24sContext 78.5k·Usage 737.2k");
   expect(outcome({ ...summary, contextTokens: undefined, usage: undefined, durationMs: undefined })).toBe("");
 });
 

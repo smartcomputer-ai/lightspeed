@@ -33,33 +33,33 @@ afterEach(async () => {
 
 it("shares the choice across consumers, persists reloads, and scopes it to the user", async () => {
   await render();
-  expect(container.textContent).toBe("truetrue");
-  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="bot"]')!.click());
   expect(container.textContent).toBe("falsefalse");
-  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: false, collapseCompletedRuns: true, sidebarWidth: null, sidebarCollapsed: false, listWidth: null });
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="bot"]')!.click());
+  expect(container.textContent).toBe("truetrue");
+  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: true, collapseCompletedRuns: true, sidebarWidth: null, sidebarCollapsed: false, listWidth: null });
   await act(async () => root.render(null));
   await render();
-  expect(container.textContent).toBe("falsefalse");
-  await render("bob");
   expect(container.textContent).toBe("truetrue");
-  await render("alice");
+  await render("bob");
   expect(container.textContent).toBe("falsefalse");
+  await render("alice");
+  expect(container.textContent).toBe("truetrue");
 });
 
 it("updates from other tabs and resets to the default when storage is cleared", async () => {
   await render();
-  localStorage.setItem(key, '{"showRunStatistics":false}');
+  localStorage.setItem(key, '{"showRunStatistics":true}');
   await act(async () => window.dispatchEvent(new StorageEvent("storage", { key })));
-  expect(container.textContent).toBe("falsefalse");
+  expect(container.textContent).toBe("truetrue");
   localStorage.clear();
   await act(async () => window.dispatchEvent(new StorageEvent("storage", { key: null })));
-  expect(container.textContent).toBe("truetrue");
+  expect(container.textContent).toBe("falsefalse");
 });
 
-it.each(["broken JSON", '{"showRunStatistics":"false"}', "null"])("uses the default for invalid storage: %s", async (value) => {
+it.each(["broken JSON", '{"showRunStatistics":"true"}', "null"])("uses the default for invalid storage: %s", async (value) => {
   localStorage.setItem(key, value);
   await render();
-  expect(container.textContent).toBe("truetrue");
+  expect(container.textContent).toBe("falsefalse");
 });
 
 it("keeps the toggle working when browser storage is blocked", async () => {
@@ -67,7 +67,7 @@ it("keeps the toggle working when browser storage is blocked", async () => {
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
   await render();
   await act(async () => container.querySelector("button")!.click());
-  expect(container.textContent).toBe("falsefalse");
+  expect(container.textContent).toBe("truetrue");
 });
 
 it("stores the run collapse choice beside the statistics choice and reads it back", async () => {
@@ -76,11 +76,11 @@ it("stores the run collapse choice beside the statistics choice and reads it bac
     return <button aria-label="collapse" onClick={() => setCollapseCompletedRuns(!collapseCompletedRuns)}>{String(collapseCompletedRuns)}</button>;
   }
   await act(async () => root.render(<UserPreferencesProvider userId="alice"><Collapse /><Consumer label="stats" /></UserPreferencesProvider>));
-  expect(container.textContent).toBe("truetrue");
-  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="collapse"]')!.click());
-  expect(container.textContent).toBe("falsetrue");
-  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: true, collapseCompletedRuns: false, sidebarWidth: null, sidebarCollapsed: false, listWidth: null });
-  localStorage.setItem(key, '{"showRunStatistics":false}');
-  await act(async () => window.dispatchEvent(new StorageEvent("storage", { key })));
   expect(container.textContent).toBe("truefalse");
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="collapse"]')!.click());
+  expect(container.textContent).toBe("falsefalse");
+  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: false, collapseCompletedRuns: false, sidebarWidth: null, sidebarCollapsed: false, listWidth: null });
+  localStorage.setItem(key, '{"showRunStatistics":true}');
+  await act(async () => window.dispatchEvent(new StorageEvent("storage", { key })));
+  expect(container.textContent).toBe("truetrue");
 });
