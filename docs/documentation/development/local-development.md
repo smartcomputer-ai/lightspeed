@@ -32,8 +32,8 @@ its own database migrations during startup. Wait for the readiness checks,
 then open [http://localhost:5173/app/](http://localhost:5173/app/).
 
 A root `.env` is loaded automatically if present. You can start without a
-model API key and add a universe credential through **Settings →
-Integrations**. A provider-backed run still needs a valid credential for its
+model API key and add a universe credential through **Models → Add provider**.
+A provider-backed run still needs a valid credential for its
 selected model. The [quickstart](../getting-started/quickstart.md#configure-a-model)
 covers that first connection and the development account.
 
@@ -43,7 +43,33 @@ that directory is not a sandbox. Sessions must still have an environment
 configured before using it. Pass `--no-envd` when your work doesn't need a
 machine, or follow the
 [local attachment walkthrough](../environments/bring-your-own-compute.md#direct-attachment-for-local-development)
-to use it deliberately.
+to configure it.
+
+## Development logins
+
+The default authenticated `./dev.sh` (full profile) ensures a **Test** universe
+and these accounts on every startup:
+
+| Role in Test | Login |
+| --- | --- |
+| Admin | `admin@lightspeed.dev` (or `LIGHTSPEED_PLATFORM_ADMIN_EMAIL`) |
+| Operator | `operator@lightspeed.dev` |
+| Contributor | `contributor@lightspeed.dev` |
+| Viewer | `viewer@lightspeed.dev` |
+
+New accounts share `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`, defaulting to
+`lightspeed-dev-password`. Admin keeps its Platform administrator role; the
+other accounts receive only their listed universe role. Startup reuses existing
+accounts and the Test universe, restores the listed universe roles, and preserves
+existing passwords and content. Changing the password variable does not reset
+existing logins.
+
+Set `LIGHTSPEED_PLATFORM_DEV_SEED=false` to disable these fixtures. Ordinary
+Platform startup and other launcher profiles leave them disabled. Seeding creates
+the runtime universe through the Platform's deployment key, then records the
+accounts and memberships in the Platform database. A supplied key needs
+`deployment/universes` access for that step and the usual Platform permissions
+for interactive work.
 
 ## Choose the processes you need
 
@@ -56,6 +82,7 @@ profiles stored in a universe.
 | `./dev.sh runtime` | Rust runtime and daemon work against local infrastructure, without Platform or Configurator. |
 | `./dev.sh platform` | Platform API and UI work against the existing runtime named by `LIGHTSPEED_API_URL`. It starts local infrastructure but does not start that runtime. |
 | `./dev.sh demo` | UI work against the in-browser demo backend at `http://localhost:5175/demo/`. It needs neither Docker nor the Rust runtime. |
+| `./dev.sh docs` | Documentation with live reload at `http://127.0.0.1:4321/docs/`. Needs only Node and npm; `doc` and `documentation` are aliases. |
 | `./dev.sh infra` | Just PostgreSQL, pgAdmin, MinIO, and Temporal, for manual processes or live tests. |
 
 The supervisor tracks one application profile at a time. Use `full` for
@@ -75,12 +102,11 @@ daemon's working directory. It does not start the services. The complete
 override table is in the
 [environment-variable reference](../reference/environment-variables.md#local-development).
 
-The full profile uses `trusted-header` runtime authentication by default:
-Platform authenticates the user and supplies the universe on its internal
-requests. The focused runtime profile defaults to `single`, which is useful
-for direct CLI development. An explicit `LIGHTSPEED_AUTH_MODE` overrides those
-defaults. Account for that difference when moving a test or client between
-the two profiles; see [Authentication and access](../deployment/authentication-and-tenancy.md).
+The full profile uses authenticated runtime access and bootstraps a
+deployment key when no Platform key is configured. The runtime-only profile
+uses `single`: no key or actor, with ordinary requests pinned to the configured
+universe. Keep that listener private. See
+[API keys and service access](../access-and-security/api-keys-and-service-access.md).
 
 Telegram and WhatsApp connector processes are opt-in. For example,
 `LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh` enables Telegram account
@@ -88,7 +114,7 @@ discovery through the core API. Configure the corresponding account and
 credentials before expecting messages to flow. Bots and Channels core already
 run inside the Rust runtime; they don't require the connector host to exist.
 See [Channel connectors](../integrating-and-extending/channel-connectors.md)
-for that development boundary.
+for connector development and setup.
 
 ## Follow a change to its owner
 
@@ -106,7 +132,7 @@ those pieces have different responsibilities.
 | Machine execution or provisioning | The environment protocol, daemon, client, or provider; see [Environment providers](../integrating-and-extending/environment-providers.md). |
 
 Use [Architecture](../how-it-works/architecture.md) to understand those
-boundaries, then the nearest `Cargo.toml`, `package.json`, and module tests to
+responsibilities, then the nearest `Cargo.toml`, `package.json`, and module tests to
 find the actual implementation. The workspace manifests remain the current
 inventory. A domain crate can validate a record without owning the database
 or network operation that eventually uses it.
@@ -148,8 +174,8 @@ npm run test --workspace @lightspeed/platform-web
 
 The demo backend makes many visual and interaction changes easy to inspect
 without services. Validate against the full product when the change depends
-on real authorization, persistence, runtime progress, or errors from those
-boundaries. [Testing and evaluation](testing-and-evaluation.md) explains how
+on real authorization, persistence, runtime progress, or service errors.
+[Testing and evaluation](testing-and-evaluation.md) explains how
 to widen checks as a change reaches more of the system.
 
 For a manually launched Rust process or CLI, load the local connection
@@ -170,6 +196,12 @@ also shows split-role startup and a direct CLI conversation.
 
 The launcher prints readiness and process output in its terminal. Use
 `./dev.sh status` to inspect the tracked supervisor and Compose services.
+If startup fails, the final error names the failing step, shows recent command
+output or the last health-check result, and suggests what to check next. Add
+`--debug` to the same command for launcher stack traces. The launcher stops
+its host processes after a failure and reports whether Docker infrastructure
+was left in place.
+
 For durable work, the local Temporal UI is at `http://localhost:8233`;
 pgAdmin is at `http://localhost:15080`, and the MinIO Console is at
 `http://localhost:29001`. The

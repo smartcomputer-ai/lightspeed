@@ -50,6 +50,7 @@ import type {
 } from "@lightspeed-ai/agent-client";
 import { DEFAULT_MODEL, newSession } from "../engine";
 import type { DemoStore, DemoToolCall, SessionRecord, UniverseState } from "../store";
+import type { UniverseRole } from "@lightspeed/platform-shared";
 import { INCUS_PROVIDER_ID } from "./platform";
 
 // ---------------------------------------------------------------------------
@@ -358,7 +359,7 @@ export function member(
   store: DemoStore,
   universe: UniverseState,
   userId: string,
-  role: string,
+  role: UniverseRole,
   joinedAtMs: number,
 ): Member {
   const user = store.users.get(userId);
@@ -1067,10 +1068,15 @@ export function subagentSession(store: DemoStore, universe: UniverseState, init:
   });
 }
 
+/// The demo universe is one open workspace: every root is universe-visible
+/// and owned by the demo person.
+
 /// A session summary in the core wire shape (bot-state descendants).
 export function sessionSummaryOf(session: SessionRecord): SessionSummaryView {
   const view = session.view;
   return {
+    access: view.access,
+    activity: view.activity,
     id: view.id,
     displayName: view.displayName ?? null,
     createdAtMs: view.createdAtMs,

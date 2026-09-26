@@ -1,18 +1,20 @@
 //! HTTP/JSON-RPC gateway over the Temporal-backed agent workflow.
 
+pub mod authentication;
+pub mod deployment;
+mod enforcement;
 pub mod http;
-pub mod operator;
-pub mod principal;
 pub mod registration;
+pub mod request_context;
 pub(crate) mod service;
 
 pub use crate::config::{default_model_from_env, pg_store_from_env};
+pub use deployment::GatewayDeploymentApi;
 pub use http::{
-    DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayRoutes, GatewayServerConfig,
-    GatewayState, UNIVERSE_HEADER, gateway_router, prewarm_single_universe,
-    public_base_url_or_default, serve_gateway, serve_gateway_with_client_store,
+    ACTOR_HEADER, DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayRoutes,
+    GatewayServerConfig, GatewayState, UNIVERSE_HEADER, gateway_router, prewarm_single_universe,
+    public_base_url_or_default, serve_gateway,
 };
-pub use operator::GatewayOperatorApi;
 pub use service::{
     DEFAULT_PUBLIC_BASE_URL, GatewayAgentApi, GatewayAgentApiBuilder, OAuthCallbackOutcome,
     PowerReaperStats, ReconcileFailureLog,

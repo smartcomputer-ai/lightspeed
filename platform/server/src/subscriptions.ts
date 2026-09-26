@@ -8,7 +8,7 @@ export type SubscriptionProvider = "anthropic" | "openAi";
 export type SubscriptionCredentialShape = "token" | "codexTokenSet";
 
 /// Non-secret metadata written onto the grant. `subscription` is how the
-/// Integrations page (and any other client) recognises these grants.
+/// Models page (and any other client) recognises these grants.
 export interface SubscriptionMetadata extends Record<string, unknown> {
   subscription: "claudeCode" | "codex";
   credential: "token" | "tokenSet";

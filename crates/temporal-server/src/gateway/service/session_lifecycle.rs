@@ -147,15 +147,6 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
 }
 
 impl GatewayAgentApi {
-    pub async fn open_or_start_session(
-        &self,
-        params: SessionStartParams,
-    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        // `start_session` is idempotent on client-supplied session ids; this
-        // wrapper remains for callers predating that behavior.
-        self.start_session(params).await
-    }
-
     fn allocate_session_id(&self) -> SessionId {
         SessionId::new(format!("session_{}", uuid::Uuid::new_v4().simple()))
     }
@@ -208,6 +199,7 @@ impl GatewayAgentApi {
                 // Delegated children inherit their retention root and never
                 // apply a profile's root-session default.
                 delete_after_close_ms: Some(None),
+                access: None,
             },
             false,
             true,
@@ -234,6 +226,7 @@ impl GatewayAgentApi {
                 config: None,
                 profile,
                 delete_after_close_ms: None,
+                access: None,
             },
             close_on_terminal,
             false,
@@ -250,6 +243,7 @@ impl GatewayAgentApi {
         auto_reject_approvals: bool,
         trusted_workflow_tools: Option<ManagedSessionWorkflowTools>,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+        self.authorize_method(METHOD_SESSION_START, None).await?;
         let SessionStartParams {
             session_id,
             display_name,
@@ -257,6 +251,7 @@ impl GatewayAgentApi {
             config,
             profile,
             delete_after_close_ms,
+            access,
         } = params;
         validate_caller_metadata(&metadata)?;
         let workflow_tools = trusted_workflow_tools;
@@ -279,6 +274,24 @@ impl GatewayAgentApi {
             }
             None => self.allocate_session_id(),
         };
+        // Bot sessions and delegated children are the runtime's to create.
+        if self.current_controller().is_none()
+            && ["bot:v1:", "agent_"]
+                .iter()
+                .any(|prefix| session_id.as_str().starts_with(prefix))
+        {
+            return Err(AgentApiError::forbidden());
+        }
+        // Creating a new session uses CreateSession above. Retrying a named
+        // session also needs authority over the existing row.
+        if self.current_controller().is_some() {
+            let target = ResourceRef::Session(session_id.as_str().to_owned());
+            if self.target_access(&target).await?.is_some() {
+                self.authorize_method(METHOD_SESSION_CONFIG_PUT, Some(target))
+                    .await?;
+            }
+        }
+        let visibility = access.and_then(|access| access.visibility);
         let admitted = workflow_tools
             .as_ref()
             .map(|declaration| {
@@ -300,6 +313,7 @@ impl GatewayAgentApi {
                 .recover_existing(&session_id, admitted.as_ref())
                 .await?
         {
+            self.record_session_creator(&session_id, visibility).await?;
             return Ok(self.session_start_response(&loaded));
         }
         let resolved_profile = match profile {
@@ -376,12 +390,16 @@ impl GatewayAgentApi {
                 let loaded = lifecycle
                     .recover_conflict(&session_id, admitted.as_ref())
                     .await?;
+                self.record_session_creator(&session_id, visibility).await?;
                 return Ok(self.session_start_response(&loaded));
             }
             Err(error) => return Err(error),
         }
         let loaded = lifecycle.wait_for_open_session(&session_id).await?;
         validate_managed_session_retry(&loaded.state, admitted.as_ref())?;
+        // The workflow created the row; the stamp is first-wins, so a retry
+        // keeps the audience the session was created with.
+        self.record_session_creator(&session_id, visibility).await?;
         Ok(self.session_start_response(&loaded))
     }
 
@@ -682,6 +700,7 @@ mod tests {
                 lifecycle_status: Default::default(),
                 closed_at_seq: None,
                 closed_at_ms: None,
+                activity: Default::default(),
                 retention_root_session_id: session_id,
                 delete_after_close_ms: None,
                 delete_at_ms: None,

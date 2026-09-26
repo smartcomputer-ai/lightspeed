@@ -1,4 +1,4 @@
-import type { ChannelProvider, OperatorChannelAccountView } from "@lightspeed-ai/agent-client";
+import type { ChannelProvider, DeploymentChannelAccountView } from "@lightspeed-ai/agent-client";
 import { accountKey, type AccountSelector } from "../core/identity.js";
 
 export interface AccountFilter {
@@ -16,20 +16,20 @@ export interface RunningAccount {
 }
 
 export interface ReconciliationPlan {
-  start: OperatorChannelAccountView[];
+  start: DeploymentChannelAccountView[];
   /** Keys of runners whose account disappeared or was disabled. */
   stop: string[];
   /** Accounts whose document revision changed or whose runner failed. */
-  restart: OperatorChannelAccountView[];
+  restart: DeploymentChannelAccountView[];
   unchanged: string[];
 }
 
 /** The accounts this host serves out of a discovery result. */
 export function selectAccounts(
-  accounts: readonly OperatorChannelAccountView[],
+  accounts: readonly DeploymentChannelAccountView[],
   filter: AccountFilter,
-): OperatorChannelAccountView[] {
-  const selected = new Map<string, OperatorChannelAccountView>();
+): DeploymentChannelAccountView[] {
+  const selected = new Map<string, DeploymentChannelAccountView>();
   for (const account of accounts) {
     if (account.enabled === false) continue;
     if (!filter.providers.includes(account.provider)) continue;
@@ -52,7 +52,7 @@ export function selectAccounts(
  */
 export function planReconciliation(
   running: readonly RunningAccount[],
-  desired: readonly OperatorChannelAccountView[],
+  desired: readonly DeploymentChannelAccountView[],
 ): ReconciliationPlan {
   const plan: ReconciliationPlan = { start: [], stop: [], restart: [], unchanged: [] };
   const desiredByKey = new Map(

@@ -1,6 +1,59 @@
 {
   "components": {
     "schemas": {
+      "AccessInput": {
+        "additionalProperties": false,
+        "description": "The audience of a new session, requested at creation. Absent means\nunshared: visible to its creator until it is shared with the universe. A\nsession created under another root (a bot's session, a delegated child)\nfollows that root and refuses this.",
+        "properties": {
+          "visibility": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Visibility"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AccessScope": {
+        "description": "What a key reaches or a request addresses: one universe, or the\ndeployment.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "deployment",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "universe",
+                "type": "string"
+              },
+              "universeId": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "universeId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "ActiveToolsView": {
         "properties": {
           "revision": {
@@ -43,7 +96,6 @@
               "invalid_request",
               "not_found",
               "conflict",
-              "rejected",
               "unsupported_audio_mime",
               "audio_blob_too_large",
               "audio_duration_too_long",
@@ -52,6 +104,21 @@
               "transcription_failure",
               "internal"
             ],
+            "type": "string"
+          },
+          {
+            "const": "rejected",
+            "description": "The request was understood and the caller may make it, but current\nstate or policy refuses it. Never an authorization decision.",
+            "type": "string"
+          },
+          {
+            "const": "unauthenticated",
+            "description": "No valid credential was presented.",
+            "type": "string"
+          },
+          {
+            "const": "forbidden",
+            "description": "The authenticated caller lacks permission for this operation or target.",
             "type": "string"
           },
           {
@@ -904,6 +971,261 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfDeploymentApiKeyCreateResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentApiKeyCreateResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentApiKeyListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentApiKeyListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentApiKeyRevokeResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentApiKeyRevokeResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentChannelAccountListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentChannelAccountListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentEnvironmentAdoptResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderDeleteResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentProviderBindingDeleteResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentProviderBindingPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentProviderBindingPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentUniverseCreateResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentUniverseCreateResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentUniverseDeleteResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentUniverseDeleteResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentUniverseListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentUniverseListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfDeploymentUniverseReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentUniverseReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfEnvironmentCloseResponse": {
         "properties": {
           "notifications": {
@@ -1414,261 +1736,6 @@
         ],
         "type": "object"
       },
-      "AgentApiOutcomeOfOperatorApiKeyCreateResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorApiKeyCreateResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorApiKeyListResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorApiKeyListResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorApiKeyRevokeResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorApiKeyRevokeResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorChannelAccountListResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorChannelAccountListResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorEnvironmentAdoptResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorEnvironmentAdoptResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderDeleteResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorEnvironmentProviderListResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderListResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderPutResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderReadResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorProviderBindingDeleteResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorProviderBindingDeleteResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorProviderBindingPutResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorProviderBindingPutResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorUniverseCreateResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorUniverseCreateResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorUniverseDeleteResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorUniverseDeleteResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorUniverseListResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorUniverseListResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfOperatorUniverseReadResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperatorUniverseReadResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
       "AgentApiOutcomeOfProfileApplyResponse": {
         "properties": {
           "notifications": {
@@ -2053,6 +2120,23 @@
           },
           "result": {
             "$ref": "#/components/schemas/SessionRetentionPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfSessionShareResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionShareResponse"
           }
         },
         "required": [
@@ -2675,6 +2759,79 @@
           }
         ]
       },
+      "Attribution": {
+        "description": "Who created a resource or authored bytes. An actor is whatever a key\nallowed to assert one said; core compares it and never resolves it.",
+        "oneOf": [
+          {
+            "description": "The actor a key asserted for its request.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "actor",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A key acting for itself, named by its display prefix.",
+            "properties": {
+              "kind": {
+                "const": "key",
+                "type": "string"
+              },
+              "prefix": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "prefix"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An unauthenticated local development request, or an in-process call.",
+            "properties": {
+              "kind": {
+                "const": "local",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The runtime's own work: a bot, a delegated session, a registration,\nor host administration through the server CLI.",
+            "properties": {
+              "cause": {
+                "type": "string"
+              },
+              "component": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "internal",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "component",
+              "cause"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "AuthClientCreateParams": {
         "description": "Register an OAuth client configuration. `client_secret` is the second\ndeliberate inbound-plaintext path after `auth/grants/import`: it is\nencrypted on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
         "properties": {
@@ -3257,6 +3414,14 @@
             "format": "int64",
             "type": "integer"
           },
+          "createdBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Attribution"
+              }
+            ],
+            "description": "Who created the grant. Attribution only; it confers no access."
+          },
           "displayName": {
             "type": [
               "string",
@@ -3297,9 +3462,6 @@
           "metadata": {
             "description": "Non-secret provider-specific metadata (for GitHub App installation\ngrants: installation id, account, permissions, repository selection)."
           },
-          "principal": {
-            "$ref": "#/components/schemas/PrincipalRefView"
-          },
           "providerId": {
             "type": "string"
           },
@@ -3331,7 +3493,7 @@
           "providerId",
           "providerKind",
           "exposure",
-          "principal",
+          "createdBy",
           "hasAccessToken",
           "hasRefreshToken",
           "status",
@@ -4818,6 +4980,17 @@
       "BotListItem": {
         "description": "Roster row: the bot plus what the console needs at a glance.",
         "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ResourceAccessSummary"
+          },
+          "activity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SessionActivity"
+              }
+            ],
+            "description": "What the bot's sessions are doing now: waiting when one waits for an\napproval, else working when one is running, else idle."
+          },
           "botId": {
             "$ref": "#/components/schemas/BotId"
           },
@@ -4951,12 +5124,23 @@
           "eventSeq",
           "createdAtMs",
           "updatedAtMs",
+          "access",
           "triggerCount",
-          "pendingCount"
+          "pendingCount",
+          "activity"
         ],
         "type": "object"
       },
       "BotListParams": {
+        "properties": {
+          "createdBy": {
+            "description": "Only bots this actor created.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "BotListResponse": {
@@ -5015,12 +5199,21 @@
       },
       "BotReadResponse": {
         "properties": {
+          "access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ResourceAccessSummary"
+              }
+            ],
+            "description": "The bot's audience, always the universe, and who created it."
+          },
           "bot": {
             "$ref": "#/components/schemas/BotView"
           }
         },
         "required": [
-          "bot"
+          "bot",
+          "access"
         ],
         "type": "object"
       },
@@ -5210,9 +5403,9 @@
             ],
             "description": "Absent when the controller workflow is not running (a bot that never\nreceived an event, or a closed bot whose workflow completed)."
           },
-          "descendants": {
+          "sessions": {
             "default": [],
-            "description": "Sub-agent sessions delegated under the bot's sessions.",
+            "description": "The bot's sessions and their sub-agents, most recently updated\nfirst, each with what it is doing now. Bounded at 2,000 sessions;\nthe least recently updated fall off a larger tree.",
             "items": {
               "$ref": "#/components/schemas/SessionSummaryView"
             },
@@ -5500,7 +5693,7 @@
             ]
           },
           "pairingCode": {
-            "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nnon-managing principals.",
+            "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nchannel-facing views.",
             "type": [
               "string",
               "null"
@@ -5923,7 +6116,7 @@
             ]
           },
           "ingestPath": {
-            "description": "Webhook triggers: the ingest path including its URL token, for\nmanaging principals only.",
+            "description": "Webhook triggers: the ingest path including its URL token, for\nbot-management callers only.",
             "type": [
               "string",
               "null"
@@ -5944,7 +6137,7 @@
             ]
           },
           "pairingCode": {
-            "description": "Chat triggers with `pairing: code`: the code, for managing\nprincipals only.",
+            "description": "Chat triggers with `pairing: code`: the code, for bot-management\ncallers only.",
             "type": [
               "string",
               "null"
@@ -6142,6 +6335,29 @@
             "type": "string"
           }
         ]
+      },
+      "CallerAccess": {
+        "description": "What the calling credential may do, so a client can offer only the\nmethods it may call. Descriptive: core still checks every call.",
+        "properties": {
+          "groups": {
+            "description": "The method groups the caller may call. A request without a key holds\nevery group. `initialize` belongs to no group and is always allowed.",
+            "items": {
+              "$ref": "#/components/schemas/MethodGroup"
+            },
+            "type": "array"
+          },
+          "keyPrefix": {
+            "description": "Display prefix of the calling key; absent for a request without a\nkey, such as local development.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "groups"
+        ],
+        "type": "object"
       },
       "ChannelAccountCreateParams": {
         "properties": {
@@ -7733,6 +7949,770 @@
         },
         "required": [
           "revision"
+        ],
+        "type": "object"
+      },
+      "DeploymentApiKeyCreateParams": {
+        "additionalProperties": false,
+        "properties": {
+          "assertActor": {
+            "default": false,
+            "description": "Whether the key may name the actor a request acts for with the\n`x-lightspeed-actor` header. Give it only to a gate that authenticates\npeople, such as the Platform.",
+            "type": "boolean"
+          },
+          "displayName": {
+            "description": "Human-readable purpose shown in key-management interfaces.",
+            "type": "string"
+          },
+          "groups": {
+            "description": "The method groups the key may call; absent grants every group its\nscope allows. Keys never change: to change what a key may do, revoke\nit and mint another.",
+            "items": {
+              "$ref": "#/components/schemas/MethodGroup"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AccessScope"
+              }
+            ],
+            "description": "A universe, or the deployment. A deployment key addresses a universe\nwith the `x-lightspeed-universe` header and may hold deployment groups."
+          }
+        },
+        "required": [
+          "scope",
+          "displayName"
+        ],
+        "type": "object"
+      },
+      "DeploymentApiKeyCreateResponse": {
+        "description": "A newly minted key. `secret` is returned only by create and cannot be\nrecovered later. Its custom `Debug` implementation redacts the DTO before\nJSON-RPC serialization; the serialized response payload remains sensitive\nand must not be logged.",
+        "properties": {
+          "apiKey": {
+            "$ref": "#/components/schemas/DeploymentApiKeyView"
+          },
+          "secret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "apiKey",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "DeploymentApiKeyListParams": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessScope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only keys of this scope; absent lists every key."
+          }
+        },
+        "type": "object"
+      },
+      "DeploymentApiKeyListResponse": {
+        "properties": {
+          "apiKeys": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DeploymentApiKeyView"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "DeploymentApiKeyRevokeParams": {
+        "additionalProperties": false,
+        "properties": {
+          "keyPrefix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "keyPrefix"
+        ],
+        "type": "object"
+      },
+      "DeploymentApiKeyRevokeResponse": {
+        "properties": {
+          "apiKey": {
+            "$ref": "#/components/schemas/DeploymentApiKeyView"
+          }
+        },
+        "required": [
+          "apiKey"
+        ],
+        "type": "object"
+      },
+      "DeploymentApiKeyView": {
+        "description": "Non-secret key metadata: what the key reaches and may call, and who\nminted it.",
+        "properties": {
+          "assertActor": {
+            "type": "boolean"
+          },
+          "createdAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/Attribution"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/MethodGroup"
+            },
+            "type": "array"
+          },
+          "keyPrefix": {
+            "type": "string"
+          },
+          "lastUsedAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revokedAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/AccessScope"
+          }
+        },
+        "required": [
+          "keyPrefix",
+          "scope",
+          "groups",
+          "assertActor",
+          "createdBy",
+          "createdAtMs"
+        ],
+        "type": "object"
+      },
+      "DeploymentChannelAccountListParams": {
+        "properties": {
+          "includeDisabled": {
+            "default": false,
+            "description": "Include disabled accounts; by default only enabled ones are listed.",
+            "type": "boolean"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChannelProvider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "DeploymentChannelAccountListResponse": {
+        "properties": {
+          "accounts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DeploymentChannelAccountView"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "DeploymentChannelAccountView": {
+        "description": "One channel account of any universe, for the connector host's discovery\npass.",
+        "properties": {
+          "accountId": {
+            "$ref": "#/components/schemas/ChannelAccountId"
+          },
+          "createdAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "credentialGrantId": {
+            "description": "Retrievable auth grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ChannelProvider"
+          },
+          "providerAccountId": {
+            "description": "Provider-native account identity: the Telegram bot username or\nnumeric id, the WhatsApp phone number. Unique per universe and\nprovider.",
+            "type": "string"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "settings": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ChannelAccountSettings"
+              }
+            ],
+            "default": {}
+          },
+          "universeId": {
+            "type": "string"
+          },
+          "updatedAtMs": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "universeId",
+          "accountId",
+          "revision",
+          "provider",
+          "providerAccountId",
+          "displayName",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "type": "object"
+      },
+      "DeploymentEnvironmentAdoptParams": {
+        "properties": {
+          "bindingId": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "requestId": {
+            "description": "Stable caller-generated retry identity inside the destination universe.",
+            "type": "string"
+          },
+          "sourceTarget": {
+            "description": "Provider-native source reference. The Incus provider accepts\n`<project>/<instance>` or an instance name in the `default` project.",
+            "type": "string"
+          },
+          "takeOwnership": {
+            "description": "Required acknowledgement that Lightspeed will move, reconfigure, and\ndelete the target as part of its ordinary managed lifecycle.",
+            "type": "boolean"
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId",
+          "requestId",
+          "bindingId",
+          "sourceTarget",
+          "takeOwnership"
+        ],
+        "type": "object"
+      },
+      "DeploymentEnvironmentAdoptResponse": {
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentView"
+          }
+        },
+        "required": [
+          "environment"
+        ],
+        "type": "object"
+      },
+      "DeploymentEnvironmentProviderConnection": {
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderTransport"
+          }
+        },
+        "required": [
+          "endpoint",
+          "transport"
+        ],
+        "type": "object"
+      },
+      "DeploymentEnvironmentProviderDeleteParams": {
+        "properties": {
+          "providerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId"
+        ],
+        "type": "object"
+      },
+      "DeploymentEnvironmentProviderDeleteResponse": {
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderView"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "DeploymentEnvironmentProviderListParams": {
+        "type": "object"
+      },
+      "DeploymentEnvironmentProviderListResponse": {
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/DeploymentEnvironmentProviderView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers"
+        ],
+        "type": "object"
+      },
+      "DeploymentEnvironmentProviderPutParams": {
+        "properties": {
+          "controllerConnection": {
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderConnection"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "providerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "controllerConnection"
+        ],
+        "type": "object"
+      },
+      "DeploymentEnvironmentProviderPutResponse": {
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderView"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "DeploymentEnvironmentProviderReadParams": {
+        "properties": {
+          "providerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId"
+        ],
+        "type": "object"
+      },
+      "DeploymentEnvironmentProviderReadResponse": {
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderView"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "DeploymentEnvironmentProviderTransport": {
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "const": "webSocket",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "http",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "stdio",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "ssh",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "providerType": {
+                "type": "string"
+              },
+              "type": {
+                "const": "provider",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "providerType"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "DeploymentEnvironmentProviderView": {
+        "properties": {
+          "controllerConnection": {
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderConnection"
+          },
+          "createdAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "updatedAtMs": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "providerId",
+          "controllerConnection",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "type": "object"
+      },
+      "DeploymentProviderBindingDeleteParams": {
+        "properties": {
+          "bindingId": {
+            "type": "string"
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId",
+          "bindingId"
+        ],
+        "type": "object"
+      },
+      "DeploymentProviderBindingDeleteResponse": {
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/EnvironmentProviderBindingView"
+          }
+        },
+        "required": [
+          "binding"
+        ],
+        "type": "object"
+      },
+      "DeploymentProviderBindingPutParams": {
+        "properties": {
+          "bindingId": {
+            "type": "string"
+          },
+          "expectedRevision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EnvironmentProviderBindingStatusView"
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId",
+          "bindingId",
+          "providerId",
+          "status"
+        ],
+        "type": "object"
+      },
+      "DeploymentProviderBindingPutResponse": {
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/EnvironmentProviderBindingView"
+          }
+        },
+        "required": [
+          "binding"
+        ],
+        "type": "object"
+      },
+      "DeploymentUniverseCreateParams": {
+        "properties": {
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId"
+        ],
+        "type": "object"
+      },
+      "DeploymentUniverseCreateResponse": {
+        "properties": {
+          "created": {
+            "description": "False when the universe already existed (create is idempotent).",
+            "type": "boolean"
+          },
+          "universe": {
+            "$ref": "#/components/schemas/DeploymentUniverseView"
+          }
+        },
+        "required": [
+          "universe",
+          "created"
+        ],
+        "type": "object"
+      },
+      "DeploymentUniverseDeleteParams": {
+        "properties": {
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId"
+        ],
+        "type": "object"
+      },
+      "DeploymentUniverseDeleteResponse": {
+        "description": "Purge report. The purge is idempotent: rerunning after a partial failure\nresumes where it stopped, and the universe row is deleted last so a\nhalf-purged universe is still visible to `deployment/universes/read`.",
+        "properties": {
+          "blobObjectsDeleted": {
+            "description": "External object-store blobs deleted during the purge.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "universeId": {
+            "type": "string"
+          },
+          "workflowsTerminated": {
+            "description": "Live session workflows terminated during the purge.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "universeId",
+          "workflowsTerminated",
+          "blobObjectsDeleted"
+        ],
+        "type": "object"
+      },
+      "DeploymentUniverseListParams": {
+        "type": "object"
+      },
+      "DeploymentUniverseListResponse": {
+        "properties": {
+          "universes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DeploymentUniverseView"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "DeploymentUniverseReadParams": {
+        "properties": {
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId"
+        ],
+        "type": "object"
+      },
+      "DeploymentUniverseReadResponse": {
+        "properties": {
+          "universe": {
+            "$ref": "#/components/schemas/DeploymentUniverseView"
+          }
+        },
+        "required": [
+          "universe"
+        ],
+        "type": "object"
+      },
+      "DeploymentUniverseView": {
+        "description": "Per-universe stats view. Counts are cheap aggregates computed at read\ntime, not maintained counters — approximate under concurrent writes.",
+        "properties": {
+          "blobBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "createdAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "lastActivityAtMs": {
+            "description": "Most recent session activity (`max(sessions.updated_at_ms)`); absent\nwhen the universe has no sessions.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "profiles": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sessions": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "universeId": {
+            "type": "string"
+          },
+          "workspaces": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "universeId",
+          "createdAtMs",
+          "sessions",
+          "workspaces",
+          "profiles",
+          "blobBytes"
         ],
         "type": "object"
       },
@@ -9490,6 +10470,9 @@
       },
       "InitializeResponse": {
         "properties": {
+          "caller": {
+            "$ref": "#/components/schemas/CallerAccess"
+          },
           "capabilities": {
             "$ref": "#/components/schemas/ServerCapabilities"
           },
@@ -9503,7 +10486,8 @@
         "required": [
           "protocolVersion",
           "serverInfo",
-          "capabilities"
+          "capabilities",
+          "caller"
         ],
         "type": "object"
       },
@@ -9810,6 +10794,17 @@
         "additionalProperties": false,
         "description": "Creation request for a session with immutable workflow ownership and\nworkflow-backed tools.",
         "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Audience of the new session, as for `session/start`."
+          },
           "config": {
             "anyOf": [
               {
@@ -10596,6 +11591,125 @@
         ],
         "type": "string"
       },
+      "MethodAccess": {
+        "oneOf": [
+          {
+            "description": "A universe method, and the action internal work is held to when it\ncalls it.",
+            "properties": {
+              "action": {
+                "$ref": "#/components/schemas/UniverseAction"
+              },
+              "kind": {
+                "const": "universe",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A universe method for machines only, such as connectors delivering\nmessages or triggers leasing a credential. No person calls it.",
+            "properties": {
+              "kind": {
+                "const": "service",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A deployment method: it addresses the deployment and needs a\ndeployment key.",
+            "properties": {
+              "kind": {
+                "const": "deployment",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "MethodGroup": {
+        "description": "The methods a key may call, by group. Every public method but\n`initialize` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
+        "oneOf": [
+          {
+            "enum": [
+              "vfs",
+              "profiles",
+              "models",
+              "mcp",
+              "bots",
+              "deployment/universes",
+              "deployment/api-keys"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "session",
+            "description": "`session/*`, `blobs/read` and `blobs/has`.",
+            "type": "string"
+          },
+          {
+            "const": "blobs/put",
+            "description": "`blobs/put` alone, so connectors can upload attachments without\nreading sessions.",
+            "type": "string"
+          },
+          {
+            "const": "environments",
+            "description": "`environments/*`, including jobs and registration keys.",
+            "type": "string"
+          },
+          {
+            "const": "channels",
+            "description": "Channel accounts, pairings and conversations.",
+            "type": "string"
+          },
+          {
+            "const": "channels/inbound",
+            "description": "`channels/inbound/admit`: what a connector delivers.",
+            "type": "string"
+          },
+          {
+            "const": "auth",
+            "description": "`auth/*` except leasing.",
+            "type": "string"
+          },
+          {
+            "const": "auth/lease",
+            "description": "`auth/grants/lease`: resolving a brokered credential for delivery.",
+            "type": "string"
+          },
+          {
+            "const": "deployment/environment-providers",
+            "description": "Environment providers, their bindings and adoption.",
+            "type": "string"
+          },
+          {
+            "const": "deployment/channels",
+            "description": "`deployment/channels/accounts/list`: a connector host's discovery.",
+            "type": "string"
+          }
+        ]
+      },
+      "MethodTarget": {
+        "description": "Where a method names the session it acts on, so a gate can decide per\nsession without a hand-written table. A creation method may name one that\ndoes not exist yet.",
+        "oneOf": [
+          {
+            "const": "sessionId",
+            "description": "`params.sessionId`.",
+            "type": "string"
+          }
+        ]
+      },
       "ModelCapabilitiesView": {
         "properties": {
           "maxInputTokens": {
@@ -10950,736 +12064,6 @@
         ],
         "type": "object"
       },
-      "OperatorApiKeyCreateParams": {
-        "properties": {
-          "displayName": {
-            "description": "Human-readable purpose shown in key-management interfaces.",
-            "type": "string"
-          },
-          "principal": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/PrincipalRefView"
-              }
-            ],
-            "description": "Audit principal applied to grants and flows created through this key.\nThis does not grant platform/operator authority."
-          },
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "universeId",
-          "displayName",
-          "principal"
-        ],
-        "type": "object"
-      },
-      "OperatorApiKeyCreateResponse": {
-        "description": "A newly minted key. `secret` is returned only by create and cannot be\nrecovered later. Its custom `Debug` implementation redacts the DTO before\nJSON-RPC serialization; the serialized response payload remains sensitive\nand must not be logged.",
-        "properties": {
-          "apiKey": {
-            "$ref": "#/components/schemas/OperatorApiKeyView"
-          },
-          "secret": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "apiKey",
-          "secret"
-        ],
-        "type": "object"
-      },
-      "OperatorApiKeyListParams": {
-        "properties": {
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "universeId"
-        ],
-        "type": "object"
-      },
-      "OperatorApiKeyListResponse": {
-        "properties": {
-          "apiKeys": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/OperatorApiKeyView"
-            },
-            "type": "array"
-          }
-        },
-        "type": "object"
-      },
-      "OperatorApiKeyRevokeParams": {
-        "properties": {
-          "keyPrefix": {
-            "type": "string"
-          },
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "universeId",
-          "keyPrefix"
-        ],
-        "type": "object"
-      },
-      "OperatorApiKeyRevokeResponse": {
-        "properties": {
-          "apiKey": {
-            "$ref": "#/components/schemas/OperatorApiKeyView"
-          }
-        },
-        "required": [
-          "apiKey"
-        ],
-        "type": "object"
-      },
-      "OperatorApiKeyView": {
-        "description": "Non-secret API-key metadata. The owning universe is supplied by every\nrequest and intentionally omitted from entries so list responses cannot\nbecome a deployment-wide tenant catalog by accident.",
-        "properties": {
-          "createdAtMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "displayName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "keyPrefix": {
-            "type": "string"
-          },
-          "lastUsedAtMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "revokedAtMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "keyPrefix",
-          "createdAtMs"
-        ],
-        "type": "object"
-      },
-      "OperatorChannelAccountListParams": {
-        "properties": {
-          "includeDisabled": {
-            "default": false,
-            "description": "Include disabled accounts; by default only enabled ones are listed.",
-            "type": "boolean"
-          },
-          "provider": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ChannelProvider"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "OperatorChannelAccountListResponse": {
-        "properties": {
-          "accounts": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/OperatorChannelAccountView"
-            },
-            "type": "array"
-          }
-        },
-        "type": "object"
-      },
-      "OperatorChannelAccountView": {
-        "description": "One channel account of any universe, for the connector host's discovery\npass.",
-        "properties": {
-          "accountId": {
-            "$ref": "#/components/schemas/ChannelAccountId"
-          },
-          "createdAtMs": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "credentialGrantId": {
-            "description": "Retrievable auth grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "enabled": {
-            "default": true,
-            "type": "boolean"
-          },
-          "provider": {
-            "$ref": "#/components/schemas/ChannelProvider"
-          },
-          "providerAccountId": {
-            "description": "Provider-native account identity: the Telegram bot username or\nnumeric id, the WhatsApp phone number. Unique per universe and\nprovider.",
-            "type": "string"
-          },
-          "revision": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "settings": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ChannelAccountSettings"
-              }
-            ],
-            "default": {}
-          },
-          "universeId": {
-            "type": "string"
-          },
-          "updatedAtMs": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "universeId",
-          "accountId",
-          "revision",
-          "provider",
-          "providerAccountId",
-          "displayName",
-          "createdAtMs",
-          "updatedAtMs"
-        ],
-        "type": "object"
-      },
-      "OperatorEnvironmentAdoptParams": {
-        "properties": {
-          "bindingId": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "metadata": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object"
-          },
-          "requestId": {
-            "description": "Stable caller-generated retry identity inside the destination universe.",
-            "type": "string"
-          },
-          "sourceTarget": {
-            "description": "Provider-native source reference. The Incus provider accepts\n`<project>/<instance>` or an instance name in the `default` project.",
-            "type": "string"
-          },
-          "takeOwnership": {
-            "description": "Required acknowledgement that Lightspeed will move, reconfigure, and\ndelete the target as part of its ordinary managed lifecycle.",
-            "type": "boolean"
-          },
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "universeId",
-          "requestId",
-          "bindingId",
-          "sourceTarget",
-          "takeOwnership"
-        ],
-        "type": "object"
-      },
-      "OperatorEnvironmentAdoptResponse": {
-        "properties": {
-          "environment": {
-            "$ref": "#/components/schemas/EnvironmentView"
-          }
-        },
-        "required": [
-          "environment"
-        ],
-        "type": "object"
-      },
-      "OperatorEnvironmentProviderConnection": {
-        "properties": {
-          "endpoint": {
-            "type": "string"
-          },
-          "transport": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderTransport"
-          }
-        },
-        "required": [
-          "endpoint",
-          "transport"
-        ],
-        "type": "object"
-      },
-      "OperatorEnvironmentProviderDeleteParams": {
-        "properties": {
-          "providerId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "providerId"
-        ],
-        "type": "object"
-      },
-      "OperatorEnvironmentProviderDeleteResponse": {
-        "properties": {
-          "provider": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderView"
-          }
-        },
-        "required": [
-          "provider"
-        ],
-        "type": "object"
-      },
-      "OperatorEnvironmentProviderListParams": {
-        "type": "object"
-      },
-      "OperatorEnvironmentProviderListResponse": {
-        "properties": {
-          "providers": {
-            "items": {
-              "$ref": "#/components/schemas/OperatorEnvironmentProviderView"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "providers"
-        ],
-        "type": "object"
-      },
-      "OperatorEnvironmentProviderPutParams": {
-        "properties": {
-          "controllerConnection": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderConnection"
-          },
-          "displayName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "metadata": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object"
-          },
-          "providerId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "providerId",
-          "controllerConnection"
-        ],
-        "type": "object"
-      },
-      "OperatorEnvironmentProviderPutResponse": {
-        "properties": {
-          "provider": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderView"
-          }
-        },
-        "required": [
-          "provider"
-        ],
-        "type": "object"
-      },
-      "OperatorEnvironmentProviderReadParams": {
-        "properties": {
-          "providerId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "providerId"
-        ],
-        "type": "object"
-      },
-      "OperatorEnvironmentProviderReadResponse": {
-        "properties": {
-          "provider": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderView"
-          }
-        },
-        "required": [
-          "provider"
-        ],
-        "type": "object"
-      },
-      "OperatorEnvironmentProviderTransport": {
-        "oneOf": [
-          {
-            "properties": {
-              "type": {
-                "const": "webSocket",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "type": {
-                "const": "http",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "type": {
-                "const": "stdio",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "type": {
-                "const": "ssh",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "providerType": {
-                "type": "string"
-              },
-              "type": {
-                "const": "provider",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "providerType"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "OperatorEnvironmentProviderView": {
-        "properties": {
-          "controllerConnection": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderConnection"
-          },
-          "createdAtMs": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "displayName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "metadata": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object"
-          },
-          "providerId": {
-            "type": "string"
-          },
-          "updatedAtMs": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "providerId",
-          "controllerConnection",
-          "createdAtMs",
-          "updatedAtMs"
-        ],
-        "type": "object"
-      },
-      "OperatorProviderBindingDeleteParams": {
-        "properties": {
-          "bindingId": {
-            "type": "string"
-          },
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "universeId",
-          "bindingId"
-        ],
-        "type": "object"
-      },
-      "OperatorProviderBindingDeleteResponse": {
-        "properties": {
-          "binding": {
-            "$ref": "#/components/schemas/EnvironmentProviderBindingView"
-          }
-        },
-        "required": [
-          "binding"
-        ],
-        "type": "object"
-      },
-      "OperatorProviderBindingPutParams": {
-        "properties": {
-          "bindingId": {
-            "type": "string"
-          },
-          "expectedRevision": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "metadata": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object"
-          },
-          "providerId": {
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/EnvironmentProviderBindingStatusView"
-          },
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "universeId",
-          "bindingId",
-          "providerId",
-          "status"
-        ],
-        "type": "object"
-      },
-      "OperatorProviderBindingPutResponse": {
-        "properties": {
-          "binding": {
-            "$ref": "#/components/schemas/EnvironmentProviderBindingView"
-          }
-        },
-        "required": [
-          "binding"
-        ],
-        "type": "object"
-      },
-      "OperatorUniverseCreateParams": {
-        "properties": {
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "universeId"
-        ],
-        "type": "object"
-      },
-      "OperatorUniverseCreateResponse": {
-        "properties": {
-          "created": {
-            "description": "False when the universe already existed (create is idempotent).",
-            "type": "boolean"
-          },
-          "universe": {
-            "$ref": "#/components/schemas/OperatorUniverseView"
-          }
-        },
-        "required": [
-          "universe",
-          "created"
-        ],
-        "type": "object"
-      },
-      "OperatorUniverseDeleteParams": {
-        "properties": {
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "universeId"
-        ],
-        "type": "object"
-      },
-      "OperatorUniverseDeleteResponse": {
-        "description": "Purge report. The purge is idempotent: rerunning after a partial failure\nresumes where it stopped, and the universe row is deleted last so a\nhalf-purged universe is still visible to `operator/universes/read`.",
-        "properties": {
-          "blobObjectsDeleted": {
-            "description": "External object-store blobs deleted during the purge.",
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "universeId": {
-            "type": "string"
-          },
-          "workflowsTerminated": {
-            "description": "Live session workflows terminated during the purge.",
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "universeId",
-          "workflowsTerminated",
-          "blobObjectsDeleted"
-        ],
-        "type": "object"
-      },
-      "OperatorUniverseListParams": {
-        "type": "object"
-      },
-      "OperatorUniverseListResponse": {
-        "properties": {
-          "universes": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/OperatorUniverseView"
-            },
-            "type": "array"
-          }
-        },
-        "type": "object"
-      },
-      "OperatorUniverseReadParams": {
-        "properties": {
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "universeId"
-        ],
-        "type": "object"
-      },
-      "OperatorUniverseReadResponse": {
-        "properties": {
-          "universe": {
-            "$ref": "#/components/schemas/OperatorUniverseView"
-          }
-        },
-        "required": [
-          "universe"
-        ],
-        "type": "object"
-      },
-      "OperatorUniverseView": {
-        "description": "Per-universe stats view. Counts are cheap aggregates computed at read\ntime, not maintained counters — approximate under concurrent writes.",
-        "properties": {
-          "blobBytes": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "createdAtMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "lastActivityAtMs": {
-            "description": "Most recent session activity (`max(sessions.updated_at_ms)`); absent\nwhen the universe has no sessions.",
-            "format": "uint64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "profiles": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "sessions": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "slug": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "universeId": {
-            "type": "string"
-          },
-          "workspaces": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "universeId",
-          "createdAtMs",
-          "sessions",
-          "workspaces",
-          "profiles",
-          "blobBytes"
-        ],
-        "type": "object"
-      },
       "PendingApprovalView": {
         "properties": {
           "approvalId": {
@@ -11904,33 +12288,6 @@
             "type": "object"
           }
         ]
-      },
-      "PrincipalKind": {
-        "enum": [
-          "user",
-          "serviceAccount",
-          "universeDefault"
-        ],
-        "type": "string"
-      },
-      "PrincipalRefView": {
-        "properties": {
-          "id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "kind": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/PrincipalKind"
-              }
-            ],
-            "default": "universeDefault"
-          }
-        },
-        "type": "object"
       },
       "ProfileApplyParams": {
         "properties": {
@@ -12258,6 +12615,16 @@
         ],
         "type": "string"
       },
+      "RecommendedRole": {
+        "description": "Universe roles as gates built on this contract name them. Core holds no\nroles; this is metadata only.",
+        "enum": [
+          "viewer",
+          "contributor",
+          "operator",
+          "admin"
+        ],
+        "type": "string"
+      },
       "RemoteMcpApprovalPolicy": {
         "enum": [
           "never",
@@ -12278,6 +12645,29 @@
           "search"
         ],
         "type": "string"
+      },
+      "ResourceAccessSummary": {
+        "description": "The audience of a session's or bot's root as views show it: whether it is\nshared with the universe, and who created it. A bot's session and a\ndelegated child show their root's.",
+        "properties": {
+          "createdBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Attribution"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent for work whose creator was not recorded."
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility"
+          }
+        },
+        "required": [
+          "visibility"
+        ],
+        "type": "object"
       },
       "RunAcceptedSourceView": {
         "oneOf": [
@@ -12904,6 +13294,27 @@
         ],
         "type": "object"
       },
+      "SessionActivity": {
+        "description": "What a session is doing now. A queued run counts as idle until it starts;\na closed session is idle.",
+        "oneOf": [
+          {
+            "enum": [
+              "idle"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "working",
+            "description": "A run has started and not yet ended.",
+            "type": "string"
+          },
+          {
+            "const": "waiting",
+            "description": "The active run is parked on approvals: it needs a person.",
+            "type": "string"
+          }
+        ]
+      },
       "SessionCloseParams": {
         "properties": {
           "force": {
@@ -13400,6 +13811,17 @@
           },
           {
             "properties": {
+              "requestedBy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Attribution"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who asked, as the API boundary attributed the request."
+              },
               "runId": {
                 "type": "string"
               },
@@ -13448,6 +13870,17 @@
                 },
                 "type": "array"
               },
+              "requestedBy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Attribution"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who asked, as the API boundary attributed the request."
+              },
               "runId": {
                 "type": "string"
               },
@@ -13469,6 +13902,17 @@
           },
           {
             "properties": {
+              "requestedBy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Attribution"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who asked, as the API boundary attributed the request."
+              },
               "runId": {
                 "type": "string"
               },
@@ -13531,7 +13975,7 @@
               "decidedBy": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/PrincipalRefView"
+                    "$ref": "#/components/schemas/Attribution"
                   },
                   {
                     "type": "null"
@@ -13636,6 +14080,17 @@
           },
           {
             "properties": {
+              "requestedBy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Attribution"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who cancelled a run that had not started; a started run records\nits requester on the cancellation request."
+              },
               "runId": {
                 "type": "string"
               },
@@ -14946,16 +15401,19 @@
       },
       "SessionListParams": {
         "properties": {
+          "closed": {
+            "description": "Only closed sessions (`true`), or only new and open ones (`false`).\nAbsent lists both. Every filter here narrows the list, and an absent\none does not filter.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "cursor": {
             "description": "Opaque cursor from the previous page's `nextCursor`.",
             "type": [
               "string",
               "null"
             ]
-          },
-          "excludeClosed": {
-            "description": "Exclude closed sessions. New sessions that have not run yet remain in\nthe result alongside open sessions.",
-            "type": "boolean"
           },
           "limit": {
             "format": "uint32",
@@ -14965,22 +15423,43 @@
               "null"
             ]
           },
+          "managed": {
+            "description": "Only work whose root a lifecycle controller manages (`true`), or\nwork nobody manages (`false`); sub-agents follow their root. Absent\nlists both.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "metadata": {
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Only sessions matching every entry (AND semantics). A non-empty value\nrequires an exact key/value pair; an empty value requires key presence.\nCombines with the lineage filters.",
+            "description": "Only sessions matching every entry (AND semantics). A non-empty value\nrequires an exact key/value pair; an empty value requires key presence.",
             "type": "object"
           },
-          "parentSessionId": {
-            "description": "Only sub-agent sessions delegated directly by this session.",
+          "parent": {
+            "description": "Only sub-agent sessions this session delegated directly.",
             "type": [
               "string",
               "null"
             ]
           },
-          "rootSessionId": {
-            "description": "Only sub-agent sessions whose lineage root is this session.",
+          "subagent": {
+            "description": "Only sub-agent sessions (`true`), or only root sessions (`false`).\nAbsent lists both.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "trees": {
+            "description": "Only these root sessions and all their sub-agents.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "visibleTo": {
+            "description": "Only sessions whose root is shared with the universe or was created\nby this actor: what that actor sees as a non-administrator.",
             "type": [
               "string",
               "null"
@@ -15259,9 +15738,43 @@
         ],
         "type": "object"
       },
+      "SessionShareParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "SessionShareResponse": {
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ResourceAccessSummary"
+          }
+        },
+        "required": [
+          "access"
+        ],
+        "type": "object"
+      },
       "SessionStartParams": {
         "additionalProperties": false,
         "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Audience of the new session, set atomically with its creation. Absent\nmeans unshared until `session/share`; a retry keeps the original."
+          },
           "config": {
             "anyOf": [
               {
@@ -15337,6 +15850,22 @@
       },
       "SessionSummaryView": {
         "properties": {
+          "access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ResourceAccessSummary"
+              }
+            ],
+            "description": "The audience of the session's root: whether it is shared with the\nuniverse, and who created it."
+          },
+          "activity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SessionActivity"
+              }
+            ],
+            "description": "What the session is doing now: idle, working on a run, or waiting for\nan approval."
+          },
           "closedAtMs": {
             "format": "uint64",
             "minimum": 0,
@@ -15396,8 +15925,10 @@
         "required": [
           "id",
           "lifecycleStatus",
+          "activity",
           "retention",
           "managed",
+          "access",
           "createdAtMs",
           "updatedAtMs"
         ],
@@ -15405,6 +15936,14 @@
       },
       "SessionView": {
         "properties": {
+          "access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ResourceAccessSummary"
+              }
+            ],
+            "description": "The audience of the session's root: whether it is shared with the\nuniverse, and who created it."
+          },
           "activeContext": {
             "$ref": "#/components/schemas/ContextView"
           },
@@ -15436,6 +15975,14 @@
               "revision": 0,
               "tools": []
             }
+          },
+          "activity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SessionActivity"
+              }
+            ],
+            "description": "What the session is doing now: idle, working on a run, or waiting for\nan approval. Lists carry the same value."
           },
           "closedAtMs": {
             "format": "uint64",
@@ -15530,7 +16077,9 @@
         "required": [
           "id",
           "status",
+          "activity",
           "retention",
+          "access",
           "managed",
           "configRevision",
           "createdAtMs",
@@ -16374,6 +16923,42 @@
         ],
         "type": "object"
       },
+      "UniverseAction": {
+        "description": "What a public method does, independent of its RPC spelling. Requests are\ngated by their key's groups; this classifies what the runtime's own work\nmay do and which role a gate built on the contract should require.",
+        "oneOf": [
+          {
+            "enum": [
+              "read",
+              "create_session",
+              "control_session",
+              "stop_session",
+              "delete_session",
+              "create_profile",
+              "manage_profile",
+              "create_bot",
+              "manage_bot",
+              "invoke_bot",
+              "create_workspace"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "share_session",
+            "description": "Share an unshared session with the universe.",
+            "type": "string"
+          },
+          {
+            "const": "use_resource",
+            "description": "Use a workspace, environment or MCP server, or store bytes.",
+            "type": "string"
+          },
+          {
+            "const": "configure_resource",
+            "description": "Configure a workspace, environment, MCP server or shared\nconfiguration such as credentials and channels.",
+            "type": "string"
+          }
+        ]
+      },
       "VfsFeature": {
         "additionalProperties": false,
         "description": "Grants the session virtual filesystem. Workspace attachments declare the\nsession-visible namespace and the VFS catalog is surfaced. The file tool\nsurface is derived from the attachments: any attachment installs the read\ntools, any `edit` attachment adds the write tools, and with the\nenvironments feature granted the matching transfer tools appear. `{}`\ngrants a VFS with no attachments, no tools, and no sourcing.",
@@ -16581,6 +17166,23 @@
         ],
         "type": "object"
       },
+      "VfsWorkspaceFileReadParams": {
+        "additionalProperties": false,
+        "description": "Read a file from a workspace's current head, by path.",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspaceId",
+          "path"
+        ],
+        "type": "object"
+      },
       "VfsWorkspaceListParams": {
         "type": "object"
       },
@@ -16714,6 +17316,14 @@
           "updatedAtMs"
         ],
         "type": "object"
+      },
+      "Visibility": {
+        "description": "Who sees a root's tree. Sessions start unshared (`restricted`) and are\nshared with the universe once, one way; everything else is shared.",
+        "enum": [
+          "universe",
+          "restricted"
+        ],
+        "type": "string"
       },
       "WebFeature": {
         "additionalProperties": false,
@@ -17240,7 +17850,35 @@
   },
   "methods": [
     {
-      "description": "Returns protocol version, server identity, and supported capabilities without changing universe state.",
+      "description": "Reads bytes at a path in the current workspace head.",
+      "name": "vfs/workspaces/files/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/VfsWorkspaceFileReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfBlobReadResponse"
+        }
+      },
+      "summary": "Read a workspace file",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it.",
       "name": "initialize",
       "paramStructure": "by-name",
       "params": [
@@ -17258,10 +17896,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfInitializeResponse"
         }
       },
-      "summary": "Inspect the Lightspeed protocol"
+      "summary": "Inspect the Lightspeed protocol",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": null,
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.",
+      "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.",
       "name": "session/start",
       "paramStructure": "by-name",
       "params": [
@@ -17279,7 +17924,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionStartResponse"
         }
       },
-      "summary": "Create or reopen a session"
+      "summary": "Create or reopen a session",
+      "x-lightspeed-access": {
+        "action": "create_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.",
@@ -17300,7 +17952,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionStartResponse"
         }
       },
-      "summary": "Create or reopen a managed session"
+      "summary": "Create or reopen a managed session",
+      "x-lightspeed-access": {
+        "action": "create_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
@@ -17321,10 +17980,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionReadResponse"
         }
       },
-      "summary": "Read a session"
+      "summary": "Read a session",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.",
+      "description": "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.",
       "name": "session/list",
       "paramStructure": "by-name",
       "params": [
@@ -17342,7 +18008,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionListResponse"
         }
       },
-      "summary": "List sessions"
+      "summary": "List sessions",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
@@ -17363,7 +18036,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionConfigPutResponse"
         }
       },
-      "summary": "Replace session configuration"
+      "summary": "Replace session configuration",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Sets the display name, or clears it when displayName is omitted.",
@@ -17384,7 +18064,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionRenameResponse"
         }
       },
-      "summary": "Rename a session"
+      "summary": "Rename a session",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.",
@@ -17405,7 +18092,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionMetadataPutResponse"
         }
       },
-      "summary": "Replace session metadata"
+      "summary": "Replace session metadata",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.",
@@ -17426,7 +18120,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionRetentionPutResponse"
         }
       },
-      "summary": "Replace session retention"
+      "summary": "Replace session retention",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
@@ -17447,7 +18148,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionCloseResponse"
         }
       },
-      "summary": "Close a session"
+      "summary": "Close a session",
+      "x-lightspeed-access": {
+        "action": "stop_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.",
@@ -17468,7 +18176,42 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionDeleteResponse"
         }
       },
-      "summary": "Delete closed sessions"
+      "summary": "Delete closed sessions",
+      "x-lightspeed-access": {
+        "action": "delete_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
+    },
+    {
+      "description": "Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.",
+      "name": "session/share",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionShareParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionShareResponse"
+        }
+      },
+      "summary": "Share a session with the universe",
+      "x-lightspeed-access": {
+        "action": "share_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls.",
@@ -17489,7 +18232,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEventsReadResponse"
         }
       },
-      "summary": "Read the session event stream"
+      "summary": "Read the session event stream",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.",
@@ -17510,7 +18260,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfContextAppendResponse"
         }
       },
-      "summary": "Append keyed session context"
+      "summary": "Append keyed session context",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
@@ -17531,7 +18288,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfContextRemoveResponse"
         }
       },
-      "summary": "Remove keyed session context"
+      "summary": "Remove keyed session context",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
@@ -17552,7 +18316,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfContextCompactResponse"
         }
       },
-      "summary": "Compact session context"
+      "summary": "Compact session context",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
@@ -17573,7 +18344,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfRunStartResponse"
         }
       },
-      "summary": "Start an agent run"
+      "summary": "Start an agent run",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Returns a newest-first keyset page of bounded run summaries projected from current reducer state.",
@@ -17594,7 +18372,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfRunListResponse"
         }
       },
-      "summary": "List session runs"
+      "summary": "List session runs",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Reads and projects one run from its bounded event interval, paged by event sequence.",
@@ -17615,7 +18400,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfRunReadResponse"
         }
       },
-      "summary": "Read one session run"
+      "summary": "Read one session run",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
@@ -17636,7 +18428,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfRunCancelResponse"
         }
       },
-      "summary": "Cancel a run"
+      "summary": "Cancel a run",
+      "x-lightspeed-access": {
+        "action": "stop_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.",
@@ -17657,7 +18456,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfRunApprovalsDecideResponse"
         }
       },
-      "summary": "Decide pending run approvals"
+      "summary": "Decide pending run approvals",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.",
@@ -17678,7 +18484,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfRunSteerResponse"
         }
       },
-      "summary": "Steer the active run"
+      "summary": "Steer the active run",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted.",
@@ -17699,7 +18512,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSkillListResponse"
         }
       },
-      "summary": "List available session skills"
+      "summary": "List available session skills",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
@@ -17720,10 +18540,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfileApplyResponse"
         }
       },
-      "summary": "Apply a profile to a session"
+      "summary": "Apply a profile to a session",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Selects an allowed, live universe environment for environment-targeted tools while the session is idle.",
+      "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
       "name": "session/environments/activate",
       "paramStructure": "by-name",
       "params": [
@@ -17741,7 +18568,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentActivateResponse"
         }
       },
-      "summary": "Activate a session environment"
+      "summary": "Activate a session environment",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
       "description": "Clears active environment selection without changing or closing the universe environment.",
@@ -17762,10 +18596,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentDeactivateResponse"
         }
       },
-      "summary": "Deactivate the session environment"
+      "summary": "Deactivate the session environment",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. The response exposes only the source handle, never secret material.",
+      "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
       "name": "environments/credentials/bind",
       "paramStructure": "by-name",
       "params": [
@@ -17783,7 +18624,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentCredentialBindResponse"
         }
       },
-      "summary": "Bind a credential into an environment"
+      "summary": "Bind a credential into an environment",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.",
@@ -17804,7 +18652,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentCredentialListResponse"
         }
       },
-      "summary": "List environment credential bindings"
+      "summary": "List environment credential bindings",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
@@ -17825,10 +18680,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentCredentialUnbindResponse"
         }
       },
-      "summary": "Unbind an environment credential"
+      "summary": "Unbind an environment credential",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.",
+      "description": "Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.",
       "name": "environments/create",
       "paramStructure": "by-name",
       "params": [
@@ -17846,7 +18708,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentCreateResponse"
         }
       },
-      "summary": "Create an environment"
+      "summary": "Create an environment",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.",
@@ -17867,10 +18736,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentReadResponse"
         }
       },
-      "summary": "Read an environment"
+      "summary": "Read an environment",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.",
+      "description": "Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.",
       "name": "environments/list",
       "paramStructure": "by-name",
       "params": [
@@ -17888,7 +18764,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentListResponse"
         }
       },
-      "summary": "List environments"
+      "summary": "List environments",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.",
@@ -17909,10 +18792,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentCloseResponse"
         }
       },
-      "summary": "Close an environment"
+      "summary": "Close an environment",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.",
+      "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.",
       "name": "environments/external/create",
       "paramStructure": "by-name",
       "params": [
@@ -17930,7 +18820,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentExternalCreateResponse"
         }
       },
-      "summary": "Register an external environment"
+      "summary": "Register an external environment",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
@@ -17951,7 +18848,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentIngressPutResponse"
         }
       },
-      "summary": "Configure environment public ingress"
+      "summary": "Configure environment public ingress",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Records the desired power state (running, paused, suspended, or stopped) of a provisioned environment; the lifecycle reconciler converges the provider target asynchronously. Powered-down environments wake transparently on their next use. Rejected when the provider does not support the state.",
@@ -17972,7 +18876,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentPowerPutResponse"
         }
       },
-      "summary": "Set environment power intent"
+      "summary": "Set environment power intent",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Replaces or clears the staged idle policy of a provisioned environment. The power reaper measures the daemon's idle duration against the pause/suspend/stop/close thresholds and escalates through the stages the provider supports.",
@@ -17993,7 +18904,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentIdlePolicyPutResponse"
         }
       },
-      "summary": "Set environment idle policy"
+      "summary": "Set environment idle policy",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",
@@ -18014,7 +18932,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderBindingListResponse"
         }
       },
-      "summary": "List environment provider bindings"
+      "summary": "List environment provider bindings",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.",
@@ -18035,7 +18960,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderBindingReadResponse"
         }
       },
-      "summary": "Read an environment provider binding"
+      "summary": "Read an environment provider binding",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Reads immutable templates directly from the selected bound provider controller.",
@@ -18056,7 +18988,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentTemplateListResponse"
         }
       },
-      "summary": "List environment templates"
+      "summary": "List environment templates",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns one immutable template version from the selected bound provider controller.",
@@ -18077,7 +19016,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentTemplateReadResponse"
         }
       },
-      "summary": "Read an environment template"
+      "summary": "Read an environment template",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Starts a dependency-aware job group on one environment instance, injecting the environment's configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance rather than a session. A powered-down environment is woken on use: the call fails with environment_not_ready while the wake is in progress; retry with backoff.",
@@ -18098,7 +19044,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentJobCreateResponse"
         }
       },
-      "summary": "Create environment jobs"
+      "summary": "Create environment jobs",
+      "x-lightspeed-access": {
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
       "description": "Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.",
@@ -18119,7 +19072,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentJobReadResponse"
         }
       },
-      "summary": "Read environment jobs"
+      "summary": "Read environment jobs",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.",
@@ -18140,7 +19100,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentJobCancelResponse"
         }
       },
-      "summary": "Cancel environment jobs"
+      "summary": "Cancel environment jobs",
+      "x-lightspeed-access": {
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode, active limit, disconnect grace, and expiry are the key's policy. Treat the secret like a cluster-join credential.",
@@ -18161,7 +19128,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse"
         }
       },
-      "summary": "Mint an environment registration key"
+      "summary": "Mint an environment registration key",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.",
@@ -18182,7 +19156,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse"
         }
       },
-      "summary": "Read an environment registration key"
+      "summary": "Read an environment registration key",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.",
@@ -18203,7 +19184,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse"
         }
       },
-      "summary": "List environment registration keys"
+      "summary": "List environment registration keys",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.",
@@ -18224,7 +19212,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse"
         }
       },
-      "summary": "Revoke an environment registration key"
+      "summary": "Revoke an environment registration key",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others.",
@@ -18245,7 +19240,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfModelListResponse"
         }
       },
-      "summary": "Discover available models"
+      "summary": "Discover available models",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "models",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
@@ -18266,7 +19268,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfileCreateResponse"
         }
       },
-      "summary": "Create an agent profile"
+      "summary": "Create an agent profile",
+      "x-lightspeed-access": {
+        "action": "create_profile",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "profiles",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the complete profile document and current revision.",
@@ -18287,7 +19296,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfileReadResponse"
         }
       },
-      "summary": "Read an agent profile"
+      "summary": "Read an agent profile",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "profiles",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns lightweight summaries of universe-scoped reusable profiles.",
@@ -18308,7 +19324,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfileListResponse"
         }
       },
-      "summary": "List agent profiles"
+      "summary": "List agent profiles",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "profiles",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
@@ -18329,7 +19352,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfilePutResponse"
         }
       },
-      "summary": "Create or replace an agent profile"
+      "summary": "Create or replace an agent profile",
+      "x-lightspeed-access": {
+        "action": "manage_profile",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "profiles",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
@@ -18350,7 +19380,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfileDeleteResponse"
         }
       },
-      "summary": "Delete an agent profile"
+      "summary": "Delete an agent profile",
+      "x-lightspeed-access": {
+        "action": "manage_profile",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "profiles",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
@@ -18371,10 +19408,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBlobPutResponse"
         }
       },
-      "summary": "Store content-addressed blobs"
+      "summary": "Store content-addressed blobs",
+      "x-lightspeed-access": {
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "blobs/put",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.",
+      "description": "Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.",
       "name": "blobs/read",
       "paramStructure": "by-name",
       "params": [
@@ -18392,7 +19436,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBlobReadResponse"
         }
       },
-      "summary": "Read a content-addressed blob"
+      "summary": "Read a content-addressed blob",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Checks a batch of content references without returning blob bodies, preserving request order.",
@@ -18413,7 +19464,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBlobHasResponse"
         }
       },
-      "summary": "Check blob availability"
+      "summary": "Check blob availability",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
@@ -18434,7 +19492,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsSnapshotCommitResponse"
         }
       },
-      "summary": "Commit a VFS snapshot"
+      "summary": "Commit a VFS snapshot",
+      "x-lightspeed-access": {
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
@@ -18455,10 +19520,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsSnapshotReadResponse"
         }
       },
-      "summary": "Read a VFS snapshot"
+      "summary": "Read a VFS snapshot",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.",
+      "description": "Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.",
       "name": "vfs/workspaces/create",
       "paramStructure": "by-name",
       "params": [
@@ -18476,7 +19548,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceCreateResponse"
         }
       },
-      "summary": "Create a mutable VFS workspace"
+      "summary": "Create a mutable VFS workspace",
+      "x-lightspeed-access": {
+        "action": "create_workspace",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns workspace metadata, current head snapshot, and revision for safe updates.",
@@ -18497,10 +19576,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceReadResponse"
         }
       },
-      "summary": "Read a VFS workspace"
+      "summary": "Read a VFS workspace",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Lists mutable universe workspaces with head snapshots, sizes, and revisions.",
+      "description": "Lists the mutable universe workspaces with head snapshots, sizes, and revisions.",
       "name": "vfs/workspaces/list",
       "paramStructure": "by-name",
       "params": [
@@ -18518,10 +19604,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceListResponse"
         }
       },
-      "summary": "List VFS workspaces"
+      "summary": "List VFS workspaces",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.",
+      "description": "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
       "name": "vfs/workspaces/update",
       "paramStructure": "by-name",
       "params": [
@@ -18539,7 +19632,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceUpdateResponse"
         }
       },
-      "summary": "Update a VFS workspace"
+      "summary": "Update a VFS workspace",
+      "x-lightspeed-access": {
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
@@ -18560,10 +19660,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceDeleteResponse"
         }
       },
-      "summary": "Delete a VFS workspace"
+      "summary": "Delete a VFS workspace",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "vfs",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Stores the complete universe catalog document, including its optional universe auth-grant credential. Use expectedRevision when replacing; token material is never accepted or returned.",
+      "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.",
       "name": "mcp/servers/put",
       "paramStructure": "by-name",
       "params": [
@@ -18581,7 +19688,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerPutResponse"
         }
       },
-      "summary": "Create or replace an MCP server record"
+      "summary": "Create or replace an MCP server record",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.",
@@ -18602,7 +19716,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerAuthDiscoverResponse"
         }
       },
-      "summary": "Discover MCP server authentication"
+      "summary": "Discover MCP server authentication",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.",
@@ -18623,7 +19744,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerToolsDiscoverResponse"
         }
       },
-      "summary": "Discover MCP server tools"
+      "summary": "Discover MCP server tools",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.",
@@ -18644,10 +19772,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerReadResponse"
         }
       },
-      "summary": "Read an MCP server record"
+      "summary": "Read an MCP server record",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Lists universe catalog entries, optionally filtered by lifecycle/configuration status.",
+      "description": "Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.",
       "name": "mcp/servers/list",
       "paramStructure": "by-name",
       "params": [
@@ -18665,7 +19800,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerListResponse"
         }
       },
-      "summary": "List MCP server records"
+      "summary": "List MCP server records",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
@@ -18686,7 +19828,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerDeleteResponse"
         }
       },
-      "summary": "Delete an MCP server record"
+      "summary": "Delete an MCP server record",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "mcp",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
@@ -18707,7 +19856,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantImportResponse"
         }
       },
-      "summary": "Import a static bearer grant"
+      "summary": "Import a static bearer grant",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.",
@@ -18728,10 +19884,16 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantLeaseResponse"
         }
       },
-      "summary": "Lease a retrievable authentication grant"
+      "summary": "Lease a retrievable authentication grant",
+      "x-lightspeed-access": {
+        "kind": "service"
+      },
+      "x-lightspeed-group": "auth/lease",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
+      "description": "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
       "name": "auth/grants/read",
       "paramStructure": "by-name",
       "params": [
@@ -18749,7 +19911,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantReadResponse"
         }
       },
-      "summary": "Read authentication grant metadata"
+      "summary": "Read authentication grant metadata",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists non-secret grant metadata for the universe, optionally filtered by status.",
@@ -18770,7 +19939,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantListResponse"
         }
       },
-      "summary": "List authentication grants"
+      "summary": "List authentication grants",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
@@ -18791,7 +19967,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantRevokeResponse"
         }
       },
-      "summary": "Revoke an authentication grant"
+      "summary": "Revoke an authentication grant",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
@@ -18812,7 +19995,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthClientCreateResponse"
         }
       },
-      "summary": "Register an OAuth client"
+      "summary": "Register an OAuth client",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
@@ -18833,7 +20023,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthClientReadResponse"
         }
       },
-      "summary": "Read OAuth client metadata"
+      "summary": "Read OAuth client metadata",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists non-secret OAuth client registrations in the universe.",
@@ -18854,7 +20051,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthClientListResponse"
         }
       },
-      "summary": "List OAuth clients"
+      "summary": "List OAuth clients",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
@@ -18875,7 +20079,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthClientDeleteResponse"
         }
       },
-      "summary": "Delete an OAuth client"
+      "summary": "Delete an OAuth client",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
@@ -18896,7 +20107,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthFlowStartResponse"
         }
       },
-      "summary": "Start an OAuth authorization flow"
+      "summary": "Start an OAuth authorization flow",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
@@ -18917,7 +20135,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthFlowStatusResponse"
         }
       },
-      "summary": "Read OAuth flow status"
+      "summary": "Read OAuth flow status",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
@@ -18938,7 +20163,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderCreateResponse"
         }
       },
-      "summary": "Register an authentication provider"
+      "summary": "Register an authentication provider",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
@@ -18959,7 +20191,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderReadResponse"
         }
       },
-      "summary": "Read authentication provider metadata"
+      "summary": "Read authentication provider metadata",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists non-secret model/GitHub provider registrations for the universe.",
@@ -18980,7 +20219,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderListResponse"
         }
       },
-      "summary": "List authentication providers"
+      "summary": "List authentication providers",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
@@ -19001,7 +20247,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderDeleteResponse"
         }
       },
-      "summary": "Delete an authentication provider"
+      "summary": "Delete an authentication provider",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
@@ -19022,7 +20275,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGitHubInstallationListResponse"
         }
       },
-      "summary": "List GitHub App installations"
+      "summary": "List GitHub App installations",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
@@ -19043,7 +20303,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGitHubInstallationGrantResponse"
         }
       },
-      "summary": "Grant access to a GitHub App installation"
+      "summary": "Grant access to a GitHub App installation",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
@@ -19064,7 +20331,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotCreateResponse"
         }
       },
-      "summary": "Create a bot"
+      "summary": "Create a bot",
+      "x-lightspeed-access": {
+        "action": "create_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.",
@@ -19085,7 +20359,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotPutResponse"
         }
       },
-      "summary": "Create or replace a bot document"
+      "summary": "Create or replace a bot document",
+      "x-lightspeed-access": {
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the bot record, its current revision, and lifecycle columns.",
@@ -19106,10 +20387,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotReadResponse"
         }
       },
-      "summary": "Read a bot"
+      "summary": "Read a bot",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event.",
+      "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.",
       "name": "bots/list",
       "paramStructure": "by-name",
       "params": [
@@ -19127,7 +20415,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotListResponse"
         }
       },
-      "summary": "List bots"
+      "summary": "List bots",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.",
@@ -19148,7 +20443,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotCloseResponse"
         }
       },
-      "summary": "Close a bot"
+      "summary": "Close a bot",
+      "x-lightspeed-access": {
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.",
@@ -19169,7 +20471,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotDeleteResponse"
         }
       },
-      "summary": "Delete a bot"
+      "summary": "Delete a bot",
+      "x-lightspeed-access": {
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.",
@@ -19190,7 +20499,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotStateReadResponse"
         }
       },
-      "summary": "Read bot controller state"
+      "summary": "Read bot controller state",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.",
@@ -19211,7 +20527,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotSessionRotateResponse"
         }
       },
-      "summary": "Rotate a bot session"
+      "summary": "Rotate a bot session",
+      "x-lightspeed-access": {
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
@@ -19232,10 +20555,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotTriggerPutResponse"
         }
       },
-      "summary": "Create or replace a trigger"
+      "summary": "Create or replace a trigger",
+      "x-lightspeed-access": {
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are shown only to managing principals.",
+      "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.",
       "name": "bots/triggers/read",
       "paramStructure": "by-name",
       "params": [
@@ -19253,10 +20583,17 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotTriggerReadResponse"
         }
       },
-      "summary": "Read a trigger"
+      "summary": "Read a trigger",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns every trigger of the bot ordered by id, secrets redacted for non-managing principals.",
+      "description": "Returns every trigger of the bot ordered by id, secrets included for bot-management callers.",
       "name": "bots/triggers/list",
       "paramStructure": "by-name",
       "params": [
@@ -19274,7 +20611,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotTriggerListResponse"
         }
       },
-      "summary": "List a bot's triggers"
+      "summary": "List a bot's triggers",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.",
@@ -19295,7 +20639,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotTriggerDeleteResponse"
         }
       },
-      "summary": "Delete a trigger"
+      "summary": "Delete a trigger",
+      "x-lightspeed-access": {
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.",
@@ -19316,7 +20667,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotEventAdmitResponse"
         }
       },
-      "summary": "Admit an event manually"
+      "summary": "Admit an event manually",
+      "x-lightspeed-access": {
+        "action": "invoke_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": null
     },
     {
       "description": "Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.",
@@ -19337,7 +20695,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotEventReplayResponse"
         }
       },
-      "summary": "Replay a stored event"
+      "summary": "Replay a stored event",
+      "x-lightspeed-access": {
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.",
@@ -19358,7 +20723,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotEventListResponse"
         }
       },
-      "summary": "List a bot's events"
+      "summary": "List a bot's events",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the event row and its full stored envelope document.",
@@ -19379,7 +20751,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotEventReadResponse"
         }
       },
-      "summary": "Read an event by number"
+      "summary": "Read an event by number",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.",
@@ -19400,7 +20779,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfBotFilterTestResponse"
         }
       },
-      "summary": "Test a CEL filter"
+      "summary": "Test a CEL filter",
+      "x-lightspeed-access": {
+        "action": "manage_bot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.",
@@ -19421,7 +20807,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfChannelAccountCreateResponse"
         }
       },
-      "summary": "Create a channel account"
+      "summary": "Create a channel account",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.",
@@ -19442,7 +20835,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfChannelAccountPutResponse"
         }
       },
-      "summary": "Create or replace a channel account"
+      "summary": "Create or replace a channel account",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns the account document and revision.",
@@ -19463,7 +20863,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfChannelAccountReadResponse"
         }
       },
-      "summary": "Read a channel account"
+      "summary": "Read a channel account",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists this universe's provider accounts, optionally by provider.",
@@ -19484,7 +20891,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfChannelAccountListResponse"
         }
       },
-      "summary": "List channel accounts"
+      "summary": "List channel accounts",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Removes the account and its pairings; chat triggers that reference it stop serving conversations.",
@@ -19505,7 +20919,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfChannelAccountDeleteResponse"
         }
       },
-      "summary": "Delete a channel account"
+      "summary": "Delete a channel account",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.",
@@ -19526,7 +20947,13 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfChannelInboundAdmitResponse"
         }
       },
-      "summary": "Admit a provider message"
+      "summary": "Admit a provider message",
+      "x-lightspeed-access": {
+        "kind": "service"
+      },
+      "x-lightspeed-group": "channels/inbound",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Lists conversations paired to chat triggers, optionally by account or bot.",
@@ -19547,7 +20974,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfChannelPairingListResponse"
         }
       },
-      "summary": "List chat pairings"
+      "summary": "List chat pairings",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
     },
     {
       "description": "Removes one pairing; the conversation must present the pairing code again to reconnect.",
@@ -19568,7 +21002,14 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfChannelPairingDeleteResponse"
         }
       },
-      "summary": "Unpair a conversation"
+      "summary": "Unpair a conversation",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
     },
     {
       "description": "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
@@ -19589,322 +21030,446 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfChannelConversationReadResponse"
         }
       },
-      "summary": "Read a conversation snapshot"
+      "summary": "Read a conversation snapshot",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "channels",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Deployment configuration inventory of one universe's provider bindings.",
+      "name": "deployment/environment-provider-bindings/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/DeploymentUniverseReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderBindingListResponse"
+        }
+      },
+      "summary": "List a universe's deployment provider bindings",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
-      "name": "operator/universes/create",
+      "name": "deployment/universes/create",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorUniverseCreateParams"
+            "$ref": "#/components/schemas/DeploymentUniverseCreateParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseCreateResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentUniverseCreateResponse"
         }
       },
-      "summary": "Create a universe"
+      "summary": "Create a universe",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/universes",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.",
-      "name": "operator/universes/list",
+      "name": "deployment/universes/list",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorUniverseListParams"
+            "$ref": "#/components/schemas/DeploymentUniverseListParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseListResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentUniverseListResponse"
         }
       },
-      "summary": "List universes"
+      "summary": "List universes",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/universes",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
-      "name": "operator/universes/read",
+      "name": "deployment/universes/read",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorUniverseReadParams"
+            "$ref": "#/components/schemas/DeploymentUniverseReadParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseReadResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentUniverseReadResponse"
         }
       },
-      "summary": "Read a universe"
+      "summary": "Read a universe",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/universes",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
-      "name": "operator/universes/delete",
+      "name": "deployment/universes/delete",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorUniverseDeleteParams"
+            "$ref": "#/components/schemas/DeploymentUniverseDeleteParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseDeleteResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentUniverseDeleteResponse"
         }
       },
-      "summary": "Purge a universe"
+      "summary": "Purge a universe",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/universes",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
-      "description": "Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
-      "name": "operator/api-keys/create",
+      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do.",
+      "name": "deployment/api-keys/create",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorApiKeyCreateParams"
+            "$ref": "#/components/schemas/DeploymentApiKeyCreateParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorApiKeyCreateResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentApiKeyCreateResponse"
         }
       },
-      "summary": "Create a universe API key"
+      "summary": "Create a scoped API key",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/api-keys",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
-      "name": "operator/api-keys/list",
+      "description": "Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
+      "name": "deployment/api-keys/list",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorApiKeyListParams"
+            "$ref": "#/components/schemas/DeploymentApiKeyListParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorApiKeyListResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentApiKeyListResponse"
         }
       },
-      "summary": "List universe API keys"
+      "summary": "List scoped API keys",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/api-keys",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
-      "description": "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.",
-      "name": "operator/api-keys/revoke",
+      "description": "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.",
+      "name": "deployment/api-keys/revoke",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorApiKeyRevokeParams"
+            "$ref": "#/components/schemas/DeploymentApiKeyRevokeParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorApiKeyRevokeResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentApiKeyRevokeResponse"
         }
       },
-      "summary": "Revoke a universe API key"
+      "summary": "Revoke a scoped API key",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/api-keys",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
-      "name": "operator/environment-providers/put",
+      "name": "deployment/environment-providers/put",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderPutParams"
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderPutParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorEnvironmentProviderPutResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse"
         }
       },
-      "summary": "Put an environment provider"
+      "summary": "Put an environment provider",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns every operator-registered deployment provider and its controller connection.",
-      "name": "operator/environment-providers/list",
+      "description": "Returns every deployment-registered deployment provider and its controller connection.",
+      "name": "deployment/environment-providers/list",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderListParams"
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderListParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorEnvironmentProviderListResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse"
         }
       },
-      "summary": "List environment providers"
+      "summary": "List environment providers",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
-      "description": "Returns one operator-registered deployment provider and its controller connection.",
-      "name": "operator/environment-providers/read",
+      "description": "Returns one deployment-registered deployment provider and its controller connection.",
+      "name": "deployment/environment-providers/read",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderReadParams"
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderReadParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorEnvironmentProviderReadResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse"
         }
       },
-      "summary": "Read an environment provider"
+      "summary": "Read an environment provider",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes a deployment provider only when no universe binding references it.",
-      "name": "operator/environment-providers/delete",
+      "name": "deployment/environment-providers/delete",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorEnvironmentProviderDeleteParams"
+            "$ref": "#/components/schemas/DeploymentEnvironmentProviderDeleteParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorEnvironmentProviderDeleteResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse"
         }
       },
-      "summary": "Delete an environment provider"
+      "summary": "Delete an environment provider",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.",
-      "name": "operator/environment-providers/bindings/put",
+      "name": "deployment/environment-providers/bindings/put",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorProviderBindingPutParams"
+            "$ref": "#/components/schemas/DeploymentProviderBindingPutParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorProviderBindingPutResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentProviderBindingPutResponse"
         }
       },
-      "summary": "Put an environment provider binding"
+      "summary": "Put an environment provider binding",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Deletes a universe provider binding only after every referencing environment has reached Closed.",
-      "name": "operator/environment-providers/bindings/delete",
+      "name": "deployment/environment-providers/bindings/delete",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorProviderBindingDeleteParams"
+            "$ref": "#/components/schemas/DeploymentProviderBindingDeleteParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorProviderBindingDeleteResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse"
         }
       },
-      "summary": "Delete an environment provider binding"
+      "summary": "Delete an environment provider binding",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.",
-      "name": "operator/environments/adopt",
+      "name": "deployment/environments/adopt",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorEnvironmentAdoptParams"
+            "$ref": "#/components/schemas/DeploymentEnvironmentAdoptParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorEnvironmentAdoptResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse"
         }
       },
-      "summary": "Adopt a provider environment"
+      "summary": "Adopt a provider environment",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/environment-providers",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     },
     {
       "description": "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.",
-      "name": "operator/channels/accounts/list",
+      "name": "deployment/channels/accounts/list",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OperatorChannelAccountListParams"
+            "$ref": "#/components/schemas/DeploymentChannelAccountListParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorChannelAccountListResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentChannelAccountListResponse"
         }
       },
-      "summary": "List channel accounts across universes"
+      "summary": "List channel accounts across universes",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/channels",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
     }
   ],
   "openrpc": "1.3.2"

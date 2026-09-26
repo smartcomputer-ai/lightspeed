@@ -6,7 +6,6 @@
 
 use std::collections::BTreeMap;
 
-use api::AgentApiService as _;
 use api::{
     AuthGrantLeaseParams, BotEventDocument, BotId, BotTriggerId, BotTriggerSpec,
     WebhookVerification,
@@ -95,8 +94,9 @@ impl GatewayAgentApi {
         let signing_secret = match &verification {
             WebhookVerification::HmacSha256 {
                 grant_id, audience, ..
+            // Ingest has no caller: the stored trigger names its signing secret.
             } => match self
-                .lease_auth_grant(AuthGrantLeaseParams {
+                .lease_grant_token(AuthGrantLeaseParams {
                     grant_id: grant_id.clone(),
                     audience: audience.clone(),
                 })

@@ -10,6 +10,8 @@ import { emptyTranscript } from "@/lib/sessions/transcript";
 import { SessionDetail } from "./SessionsPage";
 
 const mocks = vi.hoisted(() => ({
+  permissions: new Set<string>(),
+  permissionLoading: false,
   api: vi.fn(),
   tail: vi.fn(),
   scrollable: { start: true, end: true },
@@ -21,6 +23,11 @@ vi.mock("@/api", async (original) => ({
   api: mocks.api,
 }));
 vi.mock("@/lib/sessions/tail", () => ({ useSessionTail: mocks.tail }));
+vi.mock("@/lib/permissions", () => ({
+  useActionPermissions: () => ({ can: (action: string) => mocks.permissions.has(action), isLoading: mocks.permissionLoading }),
+  usePermissionIdentity: () => "user",
+  useUniverseRole: () => "contributor",
+}));
 // Keep queries and unrelated settings out of these composer/transcript tests.
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({}),
@@ -57,6 +64,8 @@ let transcript = emptyTranscript();
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   window.localStorage.clear();
+  mocks.permissions = new Set(["read", "control_session", "stop_session", "delete_session", "invoke_bot", "manage_bot"]);
+  mocks.permissionLoading = false;
   transcript = emptyTranscript();
   mocks.tail.mockReturnValue({
     transcript, phase: "live", error: null, reconcileRuns: vi.fn(),
@@ -347,4 +356,64 @@ it.each([false, true])("keeps a backend-loaded run mounted through history prepe
   expect(strip.getAttribute("aria-expanded")).toBe("true");
   expect(container.textContent).toContain("Inspect the workspace");
   expect(container.textContent).toContain("Current request");
+});
+
+
+describe("session action permissions", () => {
+  it("invites whoever can write to an empty session, and tells a reader it is empty", async () => {
+    await show("session");
+    expect(container.textContent).toContain("What should we work on?");
+    mocks.permissions = new Set(["read"]);
+    await show("session");
+    expect(container.textContent).toContain("Nothing here yet");
+    expect(container.textContent).not.toContain("What should we work on?");
+  });
+
+  it("keeps a reader's transcript visible without input or queue controls", async () => {
+    mocks.permissions = new Set(["read"]);
+    transcript.entries = [{ kind: "message", key: "reply", role: "assistant", text: "Visible result" }];
+    transcript.activeRun = { runId: "active-run", label: "running", cancelling: false };
+    transcript.queuedRuns = [{ runId: "queued" }];
+    await show("session");
+    expect(container.textContent).toContain("Visible result");
+    expect(input().disabled).toBe(true);
+    expect(container.textContent).toContain("read-only access");
+    for (const label of ["Stop run", "Cancel queued message", "Session settings", "Force close session", "Delete session"]) {
+      expect(container.querySelector(`[aria-label="${label}"]`)).toBeNull();
+    }
+    await enter();
+    expect(mocks.api).not.toHaveBeenCalled();
+  });
+
+  it("lets an operator stop another user's run without enabling steering or settings", async () => {
+    mocks.permissions = new Set(["read", "stop_session"]);
+    transcript.activeRun = { runId: "active-run", label: "running", cancelling: false };
+    mocks.api.mockResolvedValue({ run: { id: "active-run", status: "cancelled" } });
+    await show("session");
+    expect(input().disabled).toBe(true);
+    expect(container.querySelector('[aria-label="Session settings"]')).toBeNull();
+    const stop = container.querySelector<HTMLButtonElement>('[aria-label="Stop run"]');
+    expect(stop).not.toBeNull();
+    await act(async () => stop!.click());
+    expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/universe/sessions/session/runs/active-run/cancel", {});
+  });
+
+  it("fails closed while the member's role is loading", async () => {
+    mocks.permissions.clear();
+    mocks.permissionLoading = true;
+    await show("session");
+    expect(input().disabled).toBe(true);
+    expect(container.querySelector('[aria-label="Session settings"]')).toBeNull();
+    expect(mocks.api).not.toHaveBeenCalled();
+  });
+
+  it("removes controls when the member's role no longer permits them", async () => {
+    transcript.activeRun = { runId: "active-run", label: "running", cancelling: false };
+    await show("session");
+    expect(input().disabled).toBe(false);
+    mocks.permissions = new Set(["read"]);
+    await show("session");
+    expect(input().disabled).toBe(true);
+    expect(container.querySelector('[aria-label="Stop run"]')).toBeNull();
+  });
 });

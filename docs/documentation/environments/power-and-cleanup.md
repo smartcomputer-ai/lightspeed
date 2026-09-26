@@ -6,9 +6,10 @@ between sessions, or close a disposable machine when its task ends. The
 environment's source and cleanup policy determine which operations are
 available and what they remove.
 
-Start by inspecting **Environments → Details** for the machine. Check its
-source and whether it was **Provisioned for session**. Selecting an existing
-environment does not change an earlier ownership or retention policy.
+Use an Operator or Admin account, then inspect the machine under
+**Environments → Details**. Its **Source** determines whether Lightspeed manages
+the VM or only its connection. Check its power state and idle policy before
+changing a machine that other sessions may also use.
 
 ## Distinguish power from closure
 
@@ -35,9 +36,9 @@ to become paused. **Resume** requests running again.
 
 You can also leave it paused and ask a session using it to run `pwd`. Using
 a sleeping provisioned environment with power support requests a wake-up;
-selecting it leaves its power state unchanged. The environment-dependent tool waits for readiness before
-executing. Ordinary model conversation and VFS work do not need that machine
-to wake.
+selecting it leaves its power state unchanged. The tool waits for readiness
+before executing. Ordinary model conversation and VFS work do not need that
+machine to wake.
 
 **Stop** retains the disk but ends execution. On the next use, the VM boots
 again and starts its daemon. Job records can survive on the disk, but unfinished
@@ -176,8 +177,7 @@ closing while reconciliation retries, so inspect the final status and provider
 diagnostics when cleanup does not finish.
 
 For an individual registered or external environment, use the CLI or
-`environments/close` API; the current web app does not expose the individual
-close button for those source types. Closing their records removes access
+`environments/close` API. Closing their records removes access
 through Lightspeed while leaving the computer and files under your control.
 An outbound registered daemon exits when it receives the terminal rejection
 for its closed identity; an external passive daemon is not terminated by the
@@ -185,7 +185,7 @@ logical close. Neither path is a comprehensive cleanup of programs started
 on the machine. Inspect and manage those processes and files explicitly.
 
 Environment closure does not delete the independent VFS workspace or revoke
-the universe integrations used by its credentials. It also does not retain
+the universe credentials assigned to the machine. It also does not retain
 machine files just because a session's transcript still describes them.
 
 ## Handle borrowed-machine disconnects

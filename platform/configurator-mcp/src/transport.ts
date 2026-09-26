@@ -15,7 +15,7 @@ import { authenticateHeaders, HttpAuthError } from "./request-auth.js";
 import {
   createUpstreamClientFactory,
   type UpstreamClientFactory,
-  validateUpstreamIdentity,
+  identifyCaller,
 } from "./upstream-client.js";
 
 export interface ConfiguratorAppOptions {
@@ -117,14 +117,14 @@ async function handleMcpPost(
 
   try {
     const auth = authenticateHeaders(config.authMode, req.headers);
-    await validateUpstreamIdentity(
+    const caller = await identifyCaller(
       upstreamFactory,
       auth,
       abort.signal,
       config.upstreamTimeoutMs,
     );
 
-    const handler = createMcpHandler(() => registry.createServer(auth));
+    const handler = createMcpHandler(() => registry.createServer(auth, caller));
     const nodeHandler = toNodeHandler(handler);
     res.once("close", () => {
       void handler.close();
@@ -198,8 +198,12 @@ function httpStatus(error: unknown): number {
   }
   if (error instanceof LightspeedRpcError) {
     switch (error.data?.kind) {
-      case "rejected":
+      case "unauthenticated":
         return 401;
+      case "forbidden":
+        return 403;
+      case "rejected":
+        return 409;
       case "not_found":
         return 404;
       case "invalid_request":

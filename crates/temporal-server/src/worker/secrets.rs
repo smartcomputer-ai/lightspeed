@@ -284,9 +284,8 @@ mod tests {
 
     use auth::{
         AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthProviderKind, CreateAuthGrantRecord,
-        InMemoryAuthGrantStore, InMemoryGrantLocks, InMemorySecretStore, PrincipalRef,
-        PutSecretRecord, RegistryTokenBroker, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore,
-        SecretValue,
+        InMemoryAuthGrantStore, InMemoryGrantLocks, InMemorySecretStore, PutSecretRecord,
+        RegistryTokenBroker, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore, SecretValue,
     };
     use mcp::{
         InMemoryMcpRegistryStore, McpApprovalPolicy, McpRegistryStore, McpServerAuthPolicy,
@@ -311,7 +310,7 @@ mod tests {
                 provider_id: "static".to_owned(),
                 provider_kind: AuthProviderKind::StaticBearer,
                 exposure: auth::AuthGrantExposure::Brokered,
-                principal: PrincipalRef::universe_default(),
+                created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
                 scopes: Vec::new(),
@@ -467,7 +466,7 @@ mod tests {
                 provider_id: "static".to_owned(),
                 provider_kind: AuthProviderKind::StaticBearer,
                 exposure: auth::AuthGrantExposure::Brokered,
-                principal: PrincipalRef::universe_default(),
+                created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
                 scopes: Vec::new(),
@@ -711,7 +710,7 @@ mod tests {
                 provider_id: "custom".to_owned(),
                 provider_kind: AuthProviderKind::CustomOAuth,
                 exposure: auth::AuthGrantExposure::Brokered,
-                principal: PrincipalRef::universe_default(),
+                created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
                 scopes: Vec::new(),

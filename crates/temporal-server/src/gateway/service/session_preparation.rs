@@ -345,6 +345,13 @@ impl SessionPreparationService {
         config
             .validate()
             .map_err(|e| AgentApiError::invalid_request(e.to_string()))?;
+        // Everything attached must exist before anything resolves it.
+        authorization::require_resources(
+            &store_pg::PgAccessStore::new(self.store.pool().clone()),
+            self.store.config().universe_id,
+            &temporal_workflow::attached_resources(&config.features),
+        )
+        .await?;
         self.validate_workspace_attachment_targets(&config.features)
             .await?;
         if let Some(subagents) = &config.features.subagents {

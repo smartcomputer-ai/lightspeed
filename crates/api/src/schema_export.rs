@@ -13,16 +13,16 @@ use serde_json::{Value, json};
 
 use crate::{
     AgentNotification, JsonRpcError, MethodSpec, NOTIFICATION_METHODS, PROTOCOL_VERSION,
-    method_manifest, operator_method_manifest,
+    deployment_method_manifest, method_manifest,
 };
 
 /// Every dispatchable method across both scope classes: the universe-scoped
-/// manifest followed by the operator-scoped one. The wire contract is one
+/// manifest followed by the deployment-scoped one. The wire contract is one
 /// document; `scope` on each entry tells clients which authorization class a
-/// method belongs to (operator methods never carry the universe header).
+/// method belongs to (deployment methods never carry the universe header).
 pub fn full_method_manifest() -> Vec<MethodSpec> {
     let mut methods = method_manifest();
-    methods.extend(operator_method_manifest());
+    methods.extend(deployment_method_manifest());
     methods
 }
 
@@ -42,12 +42,21 @@ pub struct ExportedSchemas {
 pub fn export_schemas() -> ExportedSchemas {
     let mut generator = SchemaSettings::draft07().into_generator();
 
+    // The access vocabulary of the manifest, so gates generated from it
+    // share the canonical spelling.
+    generator.subschema_for::<crate::MethodAccess>();
+    generator.subschema_for::<crate::MethodGroup>();
+    generator.subschema_for::<crate::RecommendedRole>();
+    generator.subschema_for::<crate::MethodTarget>();
+
     let mut methods = Vec::new();
     let mut openrpc_methods = Vec::new();
     let mut api_reference = String::from(
         "# Lightspeed JSON-RPC API Reference\n\n\
          Generated from the Rust API method manifest. Parameter and result field details live in \
-         `api.schema.json` and `openrpc.json`; this reference focuses on operation semantics.\n",
+         `api.schema.json` and `openrpc.json`; this reference focuses on operation semantics.\n\n\
+         A key calls a method when it holds the method's group. Role and target are metadata \
+         for gates that decide for people, such as the Platform; core does not evaluate them.\n",
     );
     let mut reference_scope = None;
     for spec in full_method_manifest() {
@@ -56,14 +65,25 @@ pub fn export_schemas() -> ExportedSchemas {
             let title = match spec.scope {
                 crate::MethodScope::Universe => "Universe methods",
                 crate::MethodScope::Service => "Service methods",
-                crate::MethodScope::Operator => "Operator methods",
+                crate::MethodScope::Deployment => "Deployment methods",
             };
             write!(api_reference, "\n## {title}\n\n").expect("write string");
         }
+        let group = crate::MethodGroup::of(spec.method);
+        let role = spec.access.recommended_role();
+        let target = crate::method_target(spec.method);
         write!(
             api_reference,
-            "### `{}`\n\n**{}**\n\n{}\n\n- Params: `{}`\n- Result: `{}`\n\n",
-            spec.method, spec.summary, spec.description, spec.params_type, spec.result_type
+            "### `{}`\n\n**{}**\n\n{}\n\n- Access: `{}`\n- Group: `{}`\n- Role: `{}`\n- Target: `{}`\n- Params: `{}`\n- Result: `{}`\n\n",
+            spec.method,
+            spec.summary,
+            spec.description,
+            serde_json::to_string(&spec.access).expect("access serializes"),
+            group.map_or("none", |group| group.as_str()),
+            serde_json::to_value(role).expect("role serializes").as_str().unwrap_or("none"),
+            serde_json::to_value(target).expect("target serializes").as_str().unwrap_or("none"),
+            spec.params_type,
+            spec.result_type
         )
         .expect("write string");
         let schemas = (spec.register_schemas)(&mut generator);
@@ -72,6 +92,10 @@ pub fn export_schemas() -> ExportedSchemas {
         methods.push(json!({
             "method": spec.method,
             "scope": spec.scope.as_str(),
+            "access": spec.access,
+            "group": group,
+            "role": role,
+            "target": target,
             "summary": spec.summary,
             "description": spec.description,
             "params": { "type": spec.params_type, "schema": params_schema },
@@ -79,6 +103,10 @@ pub fn export_schemas() -> ExportedSchemas {
         }));
         openrpc_methods.push(json!({
             "name": spec.method,
+            "x-lightspeed-access": spec.access,
+            "x-lightspeed-group": group,
+            "x-lightspeed-role": role,
+            "x-lightspeed-target": target,
             "paramStructure": "by-name",
             "summary": spec.summary,
             "description": spec.description,
@@ -176,13 +204,13 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 127);
+        assert_eq!(total, 130);
         assert_eq!(
             manifest
                 .iter()
-                .filter(|spec| spec.scope == crate::MethodScope::Operator)
+                .filter(|spec| spec.scope == crate::MethodScope::Deployment)
                 .count(),
-            15
+            16
         );
     }
 
@@ -229,6 +257,8 @@ mod tests {
             assert_eq!(method["method"], openrpc["name"]);
             assert_eq!(method["summary"], openrpc["summary"]);
             assert_eq!(method["description"], openrpc["description"]);
+            assert_eq!(method["access"], openrpc["x-lightspeed-access"]);
+            assert!(method["access"].is_object());
         }
     }
 
@@ -236,10 +266,10 @@ mod tests {
     fn method_names_carry_their_scope_prefix() {
         for spec in full_method_manifest()
             .into_iter()
-            .filter(|spec| spec.scope == crate::MethodScope::Operator)
+            .filter(|spec| spec.scope == crate::MethodScope::Deployment)
         {
             assert!(
-                crate::is_operator_method(spec.method),
+                crate::is_deployment_method(spec.method),
                 "scope of {} must match its method-name prefix",
                 spec.method
             );

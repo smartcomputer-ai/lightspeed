@@ -2,6 +2,14 @@ use super::*;
 
 #[async_trait]
 pub trait AgentApiService: Send + Sync {
+    async fn read_vfs_workspace_file(
+        &self,
+        _params: VfsWorkspaceFileReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "workspace file reads are unavailable",
+        ))
+    }
     async fn initialize(
         &self,
         params: InitializeParams,
@@ -93,6 +101,13 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionCloseParams,
     ) -> Result<AgentApiOutcome<SessionCloseResponse>, AgentApiError>;
+
+    async fn share_session(
+        &self,
+        _params: SessionShareParams,
+    ) -> Result<AgentApiOutcome<SessionShareResponse>, AgentApiError> {
+        Err(AgentApiError::internal("session sharing is unavailable"))
+    }
 
     async fn delete_session(
         &self,

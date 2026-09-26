@@ -11,6 +11,14 @@ impl GatewayAgentApi {
         temporal_workflow::compose_workflow_id(self.universe_id(), session_id)
     }
 
+    pub(super) fn require_universe_workflow_reference(
+        &self,
+        label: &str,
+        workflow_id: &str,
+    ) -> Result<(), AgentApiError> {
+        require_universe_workflow_reference(self.universe_id(), label, workflow_id)
+    }
+
     pub(super) fn workflow_handle(
         &self,
         session_id: &SessionId,
@@ -105,6 +113,8 @@ impl GatewayAgentApi {
 
     /// Refresh externally admitted refs in one database statement before the
     /// workflow can queue them. Reads alone do not renew an upload's grace.
+    /// Authorization of caller-supplied references happens where the caller's
+    /// own document is parsed, before the runtime derives the admission.
     pub(super) async fn refresh_input_blob_grace(
         &self,
         input: &impl serde::Serialize,
@@ -690,9 +700,44 @@ fn matching_current_context_entry<'a>(
         .filter(|entry| active_context_entry_matches_input(entry, input))
 }
 
+/// A caller-supplied workflow id that the runtime will signal. Ids in the
+/// runtime's own `{universe}/…` namespace name sessions, bots and jobs, so
+/// one from another universe is refused; ids outside it belong to plugins.
+fn require_universe_workflow_reference(
+    universe_id: uuid::Uuid,
+    label: &str,
+    workflow_id: &str,
+) -> Result<(), AgentApiError> {
+    let Some((namespace, _)) = workflow_id.split_once('/') else {
+        return Ok(());
+    };
+    match uuid::Uuid::parse_str(namespace) {
+        Ok(universe) if universe != universe_id => Err(AgentApiError::invalid_request(format!(
+            "{label} names a workflow of another universe"
+        ))),
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workflow_references_stay_inside_the_callers_universe() {
+        let mine = uuid::Uuid::from_u128(1);
+        let theirs = uuid::Uuid::from_u128(2);
+        let check = |id: &str| require_universe_workflow_reference(mine, "receiver", id);
+        check("plugin/approvals-1").expect("plugin namespace");
+        check("acorn-review-coordinator").expect("no namespace");
+        check(&format!("{mine}/bot-reviewer")).expect("own universe");
+        assert_eq!(
+            check(&format!("{theirs}/bot-reviewer"))
+                .expect_err("other universe")
+                .kind,
+            AgentApiErrorKind::InvalidRequest
+        );
+    }
 
     #[test]
     fn context_update_acknowledges_current_catalog_with_retained_history() {

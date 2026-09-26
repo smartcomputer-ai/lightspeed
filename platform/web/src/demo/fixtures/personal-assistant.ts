@@ -9,7 +9,7 @@
 import type { Environment, SecretGrant, UniverseSetup } from "@/api";
 import type { SessionSummaryView } from "@lightspeed-ai/agent-client";
 import { appendExchange, appendScriptedRun, closeSession, newSession } from "../engine";
-import type { DemoResponder, DemoStore, DemoToolCall, DemoTurn, SessionRecord, UniverseState } from "../store";
+import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
 import {
   BOT_TOOLS,
   DAY_MS,
@@ -818,15 +818,24 @@ const WRITER_PROFILE: ProfileInit = {
 function seedMembers(store: DemoStore, universe: UniverseState): void {
   universe.members.push(
     member(store, universe, "user-marco", "admin", ago(38 * DAY_MS)),
-    member(store, universe, "user-priya", "member", ago(22 * DAY_MS)),
+    member(store, universe, "user-priya", "contributor", ago(22 * DAY_MS)),
   );
-  universe.apiKeys.push({
+  universe.apiKeys.push(universeApiKey(universe, {
+    keyPrefix: "lsk_pa_cfg_5a19",
+    displayName: "Lightspeed Configurator service credential",
+    groups: ["auth", "bots", "channels", "environments", "mcp", "models", "profiles"],
+    createdAtMs: ago(21 * DAY_MS),
+    createdBy: "user-marco",
+    lastUsedAtMs: ago(3 * DAY_MS),
+  }));
+  universe.apiKeys.push(universeApiKey(universe, {
     keyPrefix: "lsk_pa_2f8d",
     displayName: "iPhone Shortcuts (voice notes → session)",
+    groups: ["session", "blobs/put"],
     createdAtMs: ago(19 * DAY_MS),
+    createdBy: "user-marco",
     lastUsedAtMs: ago(HOUR_MS + 12 * MINUTE_MS),
-    revokedAtMs: null,
-  });
+  }));
 }
 
 function seedProfiles(universe: UniverseState): void {
@@ -1049,7 +1058,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "ada@lumen.example",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "user", id: "user-ada" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["gmail.modify", "calendar.events"],
       audience: null,
       hasAccessToken: true,
@@ -1068,7 +1077,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "@ada-assistant",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "serviceAccount", id: BOT.assistant },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["search:read", "channels:history", "users:read"],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1086,7 +1095,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "rk_live_…7Qx2",
       status: "active",
       exposure: "retrievable",
-      principal: { kind: "serviceAccount", id: BOT.metrics },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["subscriptions:read", "invoices:read", "customers:read"],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1104,7 +1113,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "metrics · stripe-webhook",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "serviceAccount", id: BOT.metrics },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: [],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1122,7 +1131,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "marco@lumen.example",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "user", id: "user-marco" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["crm.objects.deals.read"],
       hasAccessToken: true,
       hasRefreshToken: true,
@@ -1140,14 +1149,14 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "ada@lumen.example",
       status: "needsReauth",
       exposure: "brokered",
-      principal: { kind: "user", id: "user-ada" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["read_content"],
       hasAccessToken: true,
       hasRefreshToken: true,
       expiresAtMs: ago(5 * DAY_MS),
       lastLeasedAtMs: ago(50 * MINUTE_MS),
       leaseCount: 233,
-      metadata: { note: "Refresh rejected since the workspace admin changed 5 days ago; reconnect Notion on the Integrations page." },
+      metadata: { note: "Refresh rejected since the workspace admin changed 5 days ago; reconnect Notion on the MCP servers page." },
       createdAtMs: ago(33 * DAY_MS),
       updatedAtMs: ago(5 * DAY_MS),
     },
@@ -1159,7 +1168,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "sk-ant-…9mA1",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "universeDefault" },
+      createdBy: { kind: "actor", id: "user-ada" },
       hasAccessToken: true,
       hasRefreshToken: false,
       expiresAtMs: null,
@@ -1200,7 +1209,11 @@ function seedIntegrations(universe: UniverseState): void {
     available: true,
     status: "ready",
     installedVersion: 4,
-    resources: { keyPrefix: "lsk_pa_cfg_5a19", serverId: "configurator" },
+    resources: {
+      keyPrefix: "lsk_pa_cfg_5a19",
+      keyGroups: ["auth", "bots", "channels", "environments", "mcp", "models", "profiles"],
+      serverId: "configurator",
+    },
   };
   universe.setups.push(configurator);
 }
@@ -2342,7 +2355,7 @@ const MARCO_AGENDA = `## 1:1 with Marco — ${MONDAY} 11:00
 
 Not on the list: the Q3 date for the board deck template (he sends it this week); the Kestrel nudge (yours, not his).`;
 
-const HIRING_TABLE = `Hiring pipeline this week (Notion is not reachable — its connection needs re-auth on the Integrations page — so this is from mail, calendar, and HubSpot):
+const HIRING_TABLE = `Hiring pipeline this week (Notion is not reachable — its connection needs re-auth on the MCP servers page — so this is from mail, calendar, and HubSpot):
 
 | Role | Stage | Candidate | Next step | When | Owner |
 | --- | --- | --- | --- | --- | --- |
@@ -2430,7 +2443,7 @@ function seedInteractiveSessions(store: DemoStore, universe: UniverseState): voi
       {
         thinking: "The hiring board is in Notion. Try it; if the connection is still broken, mail and calendar have the interviews and HubSpot has Marco's AE pipeline.",
         tools: [
-          mcpFailure("notion.search", { query: "Hiring pipeline", filter: { property: "object", value: "database" } }, "401 Unauthorized: the Notion workspace token was rejected (refresh failed 5 days ago). Reconnect the notion server on the Integrations page."),
+          mcpFailure("notion.search", { query: "Hiring pipeline", filter: { property: "object", value: "database" } }, "401 Unauthorized: the Notion workspace token was rejected (refresh failed 5 days ago). Reconnect the notion server on the MCP servers page."),
         ],
       },
       {
@@ -2678,7 +2691,7 @@ export function seedPersonalAssistant(store: DemoStore): void {
     slug: PERSONAL_ASSISTANT_SLUG,
     name: "Personal Assistant",
     lightspeedUniverseId: LIGHTSPEED_UNIVERSE_ID,
-    role: "owner",
+    role: "admin",
     createdAt: agoIso(5 * 7 * DAY_MS),
     responder,
   });

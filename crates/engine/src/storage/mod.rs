@@ -19,7 +19,7 @@ pub use blobs::{
 pub use session::{
     AdvanceSessionCheckpoint, AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession,
     CreateForkedSession, CreateSession, DeleteClosedSessions, DeleteClosedSessionsResult,
-    InMemorySessionStore, ListSessions, ReadSessionEventRange, ReadSessionEvents,
+    InMemorySessionStore, ListSessions, ReadSessionEventRange, ReadSessionEvents, SessionActivity,
     SessionCheckpoint, SessionLifecycleStatus, SessionListCursor, SessionListPage, SessionOrigin,
     SessionOriginCounts, SessionOriginKind, SessionOriginLimit, SessionPage, SessionRecord,
     SessionStore, SessionStoreError, apply_lifecycle_projection, check_origin_limits,

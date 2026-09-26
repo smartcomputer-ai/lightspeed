@@ -1,11 +1,12 @@
 # Self-host Lightspeed
 
 This guide installs the Lightspeed runtime and Platform web app on one Linux
-x86_64 host, using existing PostgreSQL and Temporal services. It installs the
-published images from one release, keeps the runtime API
-private, and exposes the web app through your HTTPS reverse proxy.
+x86_64 host, using existing PostgreSQL and Temporal services. It keeps the
+runtime API private and exposes the web app through your HTTPS reverse proxy.
+Use images from one release, or build the current source when you need work
+that has not yet been released.
 
-The [deployment overview](overview.md) explains the component boundaries.
+The [deployment overview](overview.md) explains how the components fit together.
 This recipe initially stores small blobs in PostgreSQL. The current inline
 limit is 64 KiB per blob; larger writes require S3-compatible object storage.
 Use the small-text verification below, then configure object storage before
@@ -44,13 +45,16 @@ installation.
 
 ## Download one release
 
-Choose a tag from [GitHub Releases](https://github.com/smartcomputer-ai/lightspeed/releases).
-The example below uses `v0.2.0`; replace it with the release you intend to
-install. Download its manifest into a directory you will keep with the
-deployment record:
+Choose a tag from [GitHub Releases](https://github.com/smartcomputer-ai/lightspeed/releases)
+and read its release notes. This manual describes current development; for an
+older release, use its matching documentation and configuration. To install the
+current code before a matching release exists, use [Build one release instead](#build-one-release-instead).
+
+Replace `vX.Y.Z` below with the selected tag. Download its manifest into a
+directory you will keep with the deployment record:
 
 ```bash
-LIGHTSPEED_RELEASE_TAG=v0.2.0
+LIGHTSPEED_RELEASE_TAG=vX.Y.Z
 mkdir -p "$HOME/lightspeed-releases/$LIGHTSPEED_RELEASE_TAG"
 cd "$HOME/lightspeed-releases/$LIGHTSPEED_RELEASE_TAG"
 curl --fail --location --output release-manifest.json \
@@ -150,7 +154,7 @@ no `export` prefix and no shell quotes around values.
 
 ```dotenv
 LIGHTSPEED_POSTGRES_URL=<runtime-postgres-connection-url>
-LIGHTSPEED_AUTH_MODE=trusted-header
+LIGHTSPEED_AUTH_MODE=authenticated
 LIGHTSPEED_GATEWAY_BIND=0.0.0.0:18080
 LIGHTSPEED_PUBLIC_BASE_URL=https://lightspeed.example.com
 LIGHTSPEED_ENVIRONMENT_GATEWAY_URL=http://lightspeed-runtime:18080
@@ -180,13 +184,16 @@ configuration and require a bucket. Follow
 [Choose the blob backend](configuration.md#choose-the-blob-backend) to add the
 complete S3-compatible configuration.
 
-Edit `platform.env`:
+The Platform needs a deployment-scoped runtime key with every method group and
+permission to assert actors. The migration procedure below creates it. Prepare
+`platform.env` now, then replace the key placeholder before starting Platform:
 
 ```dotenv
 LIGHTSPEED_PLATFORM_DATABASE_URL=<platform-postgres-connection-url>
 LIGHTSPEED_PLATFORM_AUTH_SECRET=<platform-auth-secret>
 LIGHTSPEED_PLATFORM_BASE_URL=https://lightspeed.example.com
 LIGHTSPEED_API_URL=http://lightspeed-runtime:18080/rpc
+LIGHTSPEED_PLATFORM_API_KEY=<platform-deployment-key>
 LIGHTSPEED_PLATFORM_ADMIN_EMAIL=<administrator-email>
 LIGHTSPEED_PLATFORM_ADMIN_PASSWORD=<strong-initial-password>
 PORT=3000
@@ -213,7 +220,7 @@ Create a Docker network for the application containers:
 docker network create lightspeed
 ```
 
-Run the runtime migration explicitly before starting the service:
+Run the runtime migration before starting the service:
 
 ```bash
 docker run --rm --network lightspeed --env-file runtime.env \
@@ -227,6 +234,22 @@ The migration command applies the release's embedded migrations and records
 their checksums. The diagnostic command reports the schema revision. Normal
 runtime startup verifies the ledger and refuses a schema that requires
 migration; it does not apply migrations implicitly.
+
+Create the Platform's key against the migrated database:
+
+```bash
+docker run --rm --network lightspeed --env-file runtime.env \
+  "lightspeed-runtime:$LIGHTSPEED_RELEASE_ID" api-key create \
+  --deployment --assert-actor --name Platform
+```
+
+Copy the printed `secret` into `LIGHTSPEED_PLATFORM_API_KEY` in `platform.env`
+and store it securely; the command prints it only once. Omitting `--group`
+grants every group allowed by the deployment scope. This key authorizes the
+Platform's runtime calls; the first Platform administrator is a separate login
+created from the email and password above. See
+[API keys and service access](../access-and-security/api-keys-and-service-access.md)
+for key issuance and revocation.
 
 Start all runtime roles in one container:
 
@@ -296,10 +319,12 @@ routes. Forward the original host and scheme through the proxy's forwarded
 headers. Match those two routes exactly; forwarding the entire
 `/environment-gateway/` prefix would also expose internal worker routes.
 
-The Platform performs authentication and supplies trusted universe headers
-on its calls to the runtime. An internet client must not be able to call the
-runtime's `trusted-header` RPC listener directly. Keep port `18080` private
-even if your reverse proxy has its own authentication rules.
+The Platform checks login, membership, role, and session visibility before
+calling the runtime with its deployment key, universe selector, and actor ID.
+This recipe keeps the RPC listener private so browser access goes through those
+checks. Keep port `18080` private even if your reverse proxy has its own
+authentication rules. Direct API integrations use their own
+[scoped keys](../access-and-security/api-keys-and-service-access.md).
 
 If the proxy runs in another container, put it on the application network and
 use the service names as upstreams. Its own loopback address does not reach
@@ -312,7 +337,7 @@ the host mappings above.
 2. Choose **New universe** and create one for your team. The Platform creates
    the corresponding runtime universe as part of that operation.
 3. Follow [Configure a model](../getting-started/quickstart.md#configure-a-model)
-   to add a provider key and explicitly select a model for a new session.
+   to add a provider key and select a model for a new session.
 4. Send a message and wait for the assistant's completed response.
 5. Reload the session and confirm the conversation remains visible.
 
@@ -337,12 +362,12 @@ docker logs --tail 100 lightspeed-runtime
 docker logs --tail 100 lightspeed-platform
 ```
 
-| Symptom | Likely boundary to inspect |
+| Symptom | What to inspect |
 | --- | --- |
 | Runtime exits before serving health | Database connectivity, migration ledger, required settings, or Temporal address/namespace |
 | Platform health never succeeds | Platform database permissions/migrations and required authentication settings |
 | Sign-in redirects or origin checks fail | Public base URL, HTTPS, and proxy host/scheme forwarding |
-| A universe cannot be created | Platform-to-runtime connectivity and `trusted-header` runtime configuration |
+| A universe cannot be created | Platform administrator role, runtime connectivity, and a Platform deployment key with `deployment/universes` access |
 | A run is accepted but makes no progress | Temporal namespace, session workers, and matching task queues |
 | Model calls fail | The universe's provider credential and the session's selected model |
 | A daemon connects but process calls cannot route | The two public WebSocket paths, internal environment gateway URL/token, and the single environment-gateway process |
@@ -353,10 +378,10 @@ and [Troubleshooting](troubleshooting.md) for a failing request path.
 procedure and the complete recovery inventory, including optional connector
 and machine state.
 
-[Authentication and access](authentication-and-tenancy.md) covers accounts and
-client keys; [Multitenancy](multi-tenancy.md) explains universe isolation and
-retirement. [Configuration](configuration.md) explains deployment choices,
-with exact settings in the
+[Access and security](../access-and-security/overview.md) covers accounts, roles,
+client keys, and isolation; [Managing universes](multi-tenancy.md) explains
+universe reconciliation and retirement. [Configuration](configuration.md)
+explains deployment choices, with exact settings in the
 [environment-variable reference](../reference/environment-variables.md).
 
 ## Download standalone binaries

@@ -22,7 +22,7 @@ import { TranscriptEntrance } from "./transcript-motion";
 export function TranscriptEntryView({
   entry,
   loadFullText,
-  showRunStatistics = true,
+  showRunStatistics = false,
 }: {
   entry: TranscriptEntry;
   loadFullText?: FullTextLoader;
@@ -285,7 +285,7 @@ export function QueuedRunsBar({
   onCancel,
 }: {
   items: QueuedRunItem[];
-  onCancel: (runId: string) => void;
+  onCancel?: (runId: string) => void;
 }) {
   if (items.length === 0) {
     return null;
@@ -313,7 +313,7 @@ export function QueuedRunsBar({
             </span>
             {item.cancelling ? (
               <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-            ) : (
+            ) : onCancel ? (
               <Button
                 variant="ghost"
                 size="icon-xs"
@@ -324,7 +324,7 @@ export function QueuedRunsBar({
               >
                 <X />
               </Button>
-            )}
+            ) : null}
           </li>
         ))}
         </ul>
@@ -342,7 +342,7 @@ export function ApprovalCards({
   approvals: PendingApprovalView[];
   deciding: { approvalId: string; decision: "approve" | "reject" } | null;
   error: { approvalId: string; message: string } | null;
-  onDecide: (approvalId: string, decision: "approve" | "reject") => void;
+  onDecide?: (approvalId: string, decision: "approve" | "reject") => void;
 }) {
   if (approvals.length === 0) return null;
   return (
@@ -366,7 +366,7 @@ export function ApprovalCards({
                 <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/70 p-3 font-mono text-xs">
                   {subject.argumentsPreview}
                 </pre>
-                <div className="mt-3 flex items-center gap-2">
+                {onDecide ? <div className="mt-3 flex items-center gap-2">
                   <Button
                     size="sm"
                     disabled={deciding !== null}
@@ -395,7 +395,7 @@ export function ApprovalCards({
                   <span className="ml-auto font-mono text-[10px] text-muted-foreground">
                     {approval.approvalId}
                   </span>
-                </div>
+                </div> : <p className="mt-3 text-xs text-muted-foreground">Waiting for the session controller to decide.</p>}
                 {error?.approvalId === approval.approvalId && (
                   <p className="mt-2 text-xs text-destructive">{error.message}</p>
                 )}

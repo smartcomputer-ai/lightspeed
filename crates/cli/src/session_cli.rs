@@ -95,12 +95,12 @@ struct ListArgs {
     common: CommonArgs,
     #[command(flatten)]
     metadata: MetadataPairs,
-    /// Only sub-agent sessions whose lineage root is this session.
-    #[arg(long = "root")]
-    root_session_id: Option<String>,
+    /// Only this root session and all its sub-agents; repeat for more roots.
+    #[arg(long = "tree", value_name = "ROOT_SESSION_ID")]
+    trees: Vec<String>,
     /// Only sub-agent sessions delegated directly by this session.
-    #[arg(long = "parent")]
-    parent_session_id: Option<String>,
+    #[arg(long = "parent", value_name = "SESSION_ID")]
+    parent: Option<String>,
     /// Page size; pages are followed until the list is exhausted.
     #[arg(long, default_value_t = 100)]
     limit: u32,
@@ -198,6 +198,7 @@ async fn start(args: StartArgs) -> Result<()> {
             config: None,
             profile,
             delete_after_close_ms: args.delete_after_close_ms.map(Some),
+            access: None,
         })
         .await
         .map_err(api_error)?
@@ -213,8 +214,8 @@ async fn list(args: ListArgs) -> Result<()> {
         &client,
         Selection {
             metadata: args.metadata.map(),
-            root_session_id: args.root_session_id,
-            parent_session_id: args.parent_session_id,
+            trees: args.trees,
+            parent: args.parent,
             limit: args.limit,
         },
     )
@@ -349,8 +350,8 @@ fn parse_duration_ms(raw: &str) -> Result<u64, String> {
 
 struct Selection {
     metadata: BTreeMap<String, String>,
-    root_session_id: Option<String>,
-    parent_session_id: Option<String>,
+    trees: Vec<String>,
+    parent: Option<String>,
     limit: u32,
 }
 
@@ -366,10 +367,10 @@ async fn collect_sessions(
             .list_sessions(api::SessionListParams {
                 cursor,
                 limit: Some(selection.limit),
-                root_session_id: selection.root_session_id.clone(),
-                parent_session_id: selection.parent_session_id.clone(),
-                exclude_closed: false,
+                trees: selection.trees.clone(),
+                parent: selection.parent.clone(),
                 metadata: selection.metadata.clone(),
+                ..Default::default()
             })
             .await
             .map_err(api_error)?
@@ -416,8 +417,8 @@ async fn select_targets(
         client,
         Selection {
             metadata: filter,
-            root_session_id: None,
-            parent_session_id: None,
+            trees: Vec::new(),
+            parent: None,
             limit: 100,
         },
     )
@@ -522,6 +523,7 @@ mod tests {
             display_name: None,
             metadata: BTreeMap::new(),
             lifecycle_status: api::SessionLifecycleStatus::Open,
+            activity: api::SessionActivity::Idle,
             closed_at_ms: None,
             retention: api::SessionRetentionView {
                 root_session_id: "s1".to_owned(),
@@ -530,6 +532,10 @@ mod tests {
             },
             managed: false,
             origin: None,
+            access: api::ResourceAccessSummary {
+                visibility: api::Visibility::Universe,
+                created_by: None,
+            },
             created_at_ms: 0,
             updated_at_ms: 0,
         };

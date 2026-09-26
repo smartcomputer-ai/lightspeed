@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
@@ -62,13 +63,14 @@ import {
   TableRow,
   TableTitleCell,
 } from "@/components/ui/table";
-import { CenteredNote, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { EmptyState, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
+import { useActiveUniverse } from "@/lib/universes";
 
-export function ChannelsPage({ admin }: { admin: boolean }) {
+export function ChannelsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
+  const permissions = useActionPermissions(universe?.id);
   if (isLoading) return <LoadingNote />;
-  if (!universe || !canManage(universe, admin)) return <UniverseNotFound slug={slug} />;
+  if (!universe || !permissions.can("configure_resource")) return <UniverseNotFound slug={slug} />;
   return <Channels universeId={universe.id} slug={universe.slug} />;
 }
 
@@ -152,14 +154,10 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
       {toggle.error && <p className="mb-4 text-sm text-destructive">{toggle.error.message}</p>}
 
       {accounts.data && accountRows.length === 0 ? (
-        <CenteredNote>
-          <RadioTower className="mx-auto size-6" />
-          <span className="font-medium text-foreground">No messaging accounts connected</span>
-          <span>Connect a Telegram bot or WhatsApp number without managing credentials separately.</span>
-          <Button className="mx-auto mt-2" onClick={() => setConnectOpen(true)}>
-            Connect channel
-          </Button>
-        </CenteredNote>
+        <EmptyState icon={RadioTower} title="No messaging accounts yet">
+          Telegram bots and WhatsApp numbers that bots talk through; their credentials are kept for
+          you.
+        </EmptyState>
       ) : (
         <div className="grid gap-6">
           <Card>
@@ -233,7 +231,7 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
                 size="sm"
                 nativeButton={false} render={<Link to={`/u/${slug}/bots`} />}
               >
-                Configure bots
+                View bots
               </Button>
             </CardHeader>
             <CardContent>

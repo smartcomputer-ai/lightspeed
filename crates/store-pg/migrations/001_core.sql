@@ -45,6 +45,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- declarations without a lifecycle controller do not make a session
     -- managed; controller/tool details remain in the log.
     managed boolean NOT NULL DEFAULT false,
+    -- Who started it: the attribution of the request or bot worker, stamped
+    -- once by the gateway right after the start. Null on delegated children,
+    -- which read their root's, and on a root until the stamp.
+    created_by jsonb,
+    -- Who sees a root's tree: `restricted` (unshared) until it is shared with
+    -- the universe, one way. Set on request-started roots only: a bot's
+    -- session follows its bot, which is shared, a delegated child its root,
+    -- and a root without one reads as unshared.
+    visibility text CHECK (visibility IN ('universe', 'restricted')),
+    -- The bot whose worker controls it, if any.
+    bot_id text,
     head_seq bigint,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
@@ -171,6 +182,19 @@ CREATE INDEX IF NOT EXISTS sessions_retention_due_idx
 
 CREATE INDEX IF NOT EXISTS sessions_metadata_idx
     ON sessions USING gin (metadata_json jsonb_path_ops);
+
+-- What a session is doing now, for lists: a row only while a run is working
+-- or waiting for approvals, written with the events that change it. Idle
+-- sessions have no row; the event log remains authoritative.
+CREATE TABLE IF NOT EXISTS session_activity (
+    universe_id uuid NOT NULL,
+    session_id text NOT NULL,
+    activity text NOT NULL CHECK (activity IN ('working', 'waiting')),
+    since_ms bigint NOT NULL CHECK (since_ms >= 0),
+    PRIMARY KEY (universe_id, session_id),
+    FOREIGN KEY (universe_id, session_id)
+        REFERENCES sessions (universe_id, session_id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS session_events (
     universe_id uuid NOT NULL,

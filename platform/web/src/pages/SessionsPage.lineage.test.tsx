@@ -22,7 +22,7 @@ const origin: SessionOrigin = {
 function child(id = "child", lifecycleStatus: SessionSummary["lifecycleStatus"] = "open"): SessionSummary {
   return {
     id, displayName: `Reviewer ${id}`, lifecycleStatus, createdAtMs: 1, updatedAtMs: 1,
-    managed: false, retention: { rootSessionId: id },
+    managed: false, retention: { rootSessionId: id }, access: { visibility: "universe" }, activity: "idle",
   };
 }
 

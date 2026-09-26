@@ -15,7 +15,8 @@ import type {
   SecretProvider,
   UniverseSetup,
 } from "@/api";
-import { base64ToText, type DemoStore, type UniverseState } from "../store";
+import type { MethodGroup } from "@lightspeed-ai/agent-client";
+import { base64ToText, universeApiKey, type DemoStore, type UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
 
 const MODEL_PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -98,7 +99,7 @@ interface GrantInit {
   displayName?: string | null;
   subjectHint?: string | null;
   exposure?: SecretGrant["exposure"];
-  principal?: SecretGrant["principal"];
+  createdBy?: SecretGrant["createdBy"];
   scopes?: string[];
   audience?: string | null;
   expiresAtMs?: number | null;
@@ -118,7 +119,7 @@ function mintGrant(store: DemoStore, universe: UniverseState, init: GrantInit): 
     subjectHint: init.subjectHint ?? null,
     status: "active",
     exposure: init.exposure ?? "brokered",
-    principal: init.principal ?? { kind: "universeDefault" },
+    createdBy: init.createdBy ?? { kind: "actor", id: store.currentUser.id },
     scopes: init.scopes ?? [],
     audience: init.audience ?? null,
     hasAccessToken: true,
@@ -290,7 +291,7 @@ function modelDiscovery(universe: UniverseState): ModelListResponse {
     known.add(provider.providerId);
     return { ...provider, ...credentialStatus(universe, provider) };
   });
-  // Providers added through Integrations that the fixture never listed
+  // Providers added on Models that the fixture never listed
   // show up configured, with nothing discovered from them yet.
   for (const secret of universe.secrets.providers) {
     if (known.has(secret.providerId) || !secret.usableForModels || secret.status !== "active") continue;
@@ -322,7 +323,8 @@ function configuratorSetup(universe: UniverseState): UniverseSetup {
       id: "configurator",
       name: "Configurator",
       description:
-        "Creates a dedicated credential, registers the Configurator MCP server, and adds a ready-to-use profile for managing this universe.",
+        "Creates a dedicated credential, registers the Configurator MCP server, and adds a ready-to-use profile for managing this universe. " +
+        "The server offers only the tools its key may call, and anyone who can attach it acts with that key.",
       version: CONFIGURATOR_VERSION,
       available: true,
       status: "available",
@@ -332,25 +334,58 @@ function configuratorSetup(universe: UniverseState): UniverseSetup {
   return setup;
 }
 
-/// What the real install leaves behind — an API key, its bearer grant, the
-/// MCP server, and the profile — so the other pages show the result.
-function finishConfiguratorInstall(store: DemoStore, universe: UniverseState, setup: UniverseSetup): void {
+type KeyChoice =
+  | { kind: "new"; groups: MethodGroup[] }
+  | { kind: "existing"; keyPrefix: string; secret: string }
+  | { kind: "current" };
+
+/// What the real install leaves behind — the chosen key's bearer grant, the
+/// MCP server, and the profile — so the other pages show the result. A new
+/// key replaces (and revokes) only a key the setup minted; an existing key
+/// is taken on the admin's word, since the demo keeps no secrets.
+function finishConfiguratorInstall(
+  store: DemoStore,
+  universe: UniverseState,
+  setup: UniverseSetup,
+  choice: Exclude<KeyChoice, { kind: "current" }> | null,
+): void {
   const now = Date.now();
-  const keyPrefix = `lsk_${hex().slice(0, 8)}`;
-  universe.apiKeys.push({
-    keyPrefix,
-    displayName: "Lightspeed Configurator setup",
-    createdAtMs: now,
-    revokedAtMs: null,
-    lastUsedAtMs: null,
-  });
-  const grant = mintGrant(store, universe, {
+  const previousKey = universe.apiKeys.find((key) =>
+    key.keyPrefix === setup.resources?.keyPrefix && key.revokedAtMs == null);
+  const previousGrant = universe.secrets.grants.find((grant) =>
+    grant.grantId === setup.resources?.grantId && grant.status !== "revoked");
+  let key = previousKey;
+  let grant = previousGrant;
+  let keySource = setup.resources?.keySource;
+  if (choice) {
+    if (previousKey && keySource !== "existing" && previousKey.keyPrefix !== (choice.kind === "existing" ? choice.keyPrefix : "")) {
+      previousKey.revokedAtMs = now;
+    }
+    if (previousGrant) revokeGrant(previousGrant);
+    if (choice.kind === "new") {
+      key = universeApiKey(universe, {
+        keyPrefix: `lsk_${hex().slice(0, 8)}`,
+        displayName: "Lightspeed Configurator service credential",
+        groups: choice.groups,
+        createdAtMs: now,
+        createdBy: store.currentUser.id,
+      });
+      universe.apiKeys.push(key);
+      keySource = "minted";
+    } else {
+      key = universe.apiKeys.find((candidate) => candidate.keyPrefix === choice.keyPrefix);
+      keySource = "existing";
+    }
+    grant = undefined;
+  }
+  if (!key) return;
+  // Seeded installations predate their grant; a repair gives them one.
+  grant ??= mintGrant(store, universe, {
     grantId: `authgrant_lightspeed_configurator_${hex()}`,
     providerId: "lightspeed-configurator",
     providerKind: "staticBearer",
     displayName: "Lightspeed Configurator setup",
     audience: CONFIGURATOR_MCP_URL,
-    principal: { kind: "user", id: store.currentUser.id },
   });
   const existingServer = universe.mcpServers.get(CONFIGURATOR_SERVER_ID);
   const server: McpServer = {
@@ -392,7 +427,9 @@ function finishConfiguratorInstall(store: DemoStore, universe: UniverseState, se
   setup.status = "ready";
   setup.installedVersion = CONFIGURATOR_VERSION;
   setup.resources = {
-    keyPrefix,
+    keyPrefix: key.keyPrefix,
+    keyGroups: key.groups,
+    keySource: keySource ?? "minted",
     grantId: grant.grantId,
     serverId: CONFIGURATOR_SERVER_ID,
     profileId: CONFIGURATOR_PROFILE_ID,
@@ -701,25 +738,40 @@ export function secretRoutes(store: DemoStore): Hono {
     return c.json(modelDiscovery(universe));
   });
 
+  /// Operators see the templates; installing stays with Admins.
   app.get("/:id/setups", (c) => {
     const universe = universeFor(store, c);
-    if (!universe) return notFound(c);
+    const role = universe?.universe.role;
+    if (!universe || (role !== "admin" && role !== "operator")) return notFound(c);
     configuratorSetup(universe);
     return c.json(universe.setups);
   });
 
   /// Accepted as `installing`; the page polls until the resources land.
-  app.post("/:id/setups/configurator/install", (c) => {
+  app.post("/:id/setups/configurator/install", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
+    if (universe.universe.role !== "admin") return c.json({ error: "universe admin required" }, 403);
     const setup = configuratorSetup(universe);
+    const choice = (await readBody<{ key?: KeyChoice }>(c)).key;
+    if (!choice) return badRequest(c, "validation failed — key: required");
+    if (choice.kind === "new" && !choice.groups?.length) return badRequest(c, "validation failed — groups: required");
+    if (choice.kind === "existing") {
+      const chosen = universe.apiKeys.find((key) => key.keyPrefix === choice.keyPrefix && key.revokedAtMs == null);
+      if (!chosen) return badRequest(c, "That key is not an active key of this universe");
+      if (!choice.secret?.startsWith("lsk_")) return badRequest(c, "The secret does not belong to the chosen key");
+    }
+    if (choice.kind === "current") {
+      const live = universe.apiKeys.some((key) => key.keyPrefix === setup.resources?.keyPrefix && key.revokedAtMs == null);
+      if (!live) return conflict(c, "The Configurator's key or credential is no longer active; choose a key");
+    }
     if (!setup.available) return c.json({ error: "Configurator MCP URL is not configured" }, 501);
     if (setup.status === "installing") {
       return conflict(c, "Configurator setup installation is already running");
     }
     setup.status = "installing";
     delete setup.error;
-    setTimeout(() => finishConfiguratorInstall(store, universe, setup), INSTALL_DELAY_MS);
+    setTimeout(() => finishConfiguratorInstall(store, universe, setup, choice.kind === "current" ? null : choice), INSTALL_DELAY_MS);
     return c.json(setup);
   });
 

@@ -201,7 +201,7 @@ impl NativeMcpInventoryResolver {
             secrets: Arc::new(llm_runtime::secrets::AbsentSecretResolver),
             private_networks: McpPrivateNetworkPolicy::parse(Some("127.0.0.1"))
                 .expect("test private policy"),
-            trusted_header: ConfiguratorTrustedHeaderPolicy::default(),
+            trusted_header: ConfiguratorTrustedHeaderPolicy,
             universe_id: uuid::Uuid::nil(),
             cache: Arc::new(Mutex::new(HashMap::new())),
             locks: Arc::new(Mutex::new(HashMap::new())),

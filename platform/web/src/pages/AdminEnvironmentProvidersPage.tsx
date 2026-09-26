@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import type {
   EnvironmentProviderBindingView,
-  OperatorEnvironmentProviderView,
+  DeploymentEnvironmentProviderView,
 } from "@lightspeed-ai/agent-client";
 import { api } from "@/api";
 import {
@@ -51,7 +51,7 @@ import {
 } from "@/components/ui/table";
 import { LoadingNote, PageHeader } from "@/components/page";
 
-type Provider = OperatorEnvironmentProviderView;
+type Provider = DeploymentEnvironmentProviderView;
 
 /// One platform universe with the provider bindings the engine reports for
 /// it (see `GET /api/v1/admin/environment-provider-bindings`).

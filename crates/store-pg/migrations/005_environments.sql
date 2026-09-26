@@ -121,11 +121,6 @@ CREATE TABLE IF NOT EXISTS environments (
     desired_power text NOT NULL DEFAULT 'running',
     idle_policy_json jsonb,
     current_incarnation_id text NOT NULL,
-    -- Profile-provisioning provenance and optional close trigger. No session
-    -- FK: the environment must be able to outlive deletion of its origin.
-    origin_session_id text,
-    origin_profile_id text,
-    origin_close_with_session boolean NOT NULL DEFAULT false,
     public_ingress_enabled boolean NOT NULL DEFAULT false,
     public_endpoint text,
     metadata_json jsonb NOT NULL DEFAULT '{}',
@@ -184,10 +179,6 @@ CREATE TABLE IF NOT EXISTS environments (
         source_kind = 'provisioned'
         OR (desired_power = 'running' AND idle_policy_json IS NULL)
     ),
-    CONSTRAINT environments_origin_session_shape CHECK (
-        (origin_session_id IS NULL AND origin_profile_id IS NULL AND origin_close_with_session = false)
-        OR (origin_session_id IS NOT NULL AND origin_session_id <> '')
-    ),
     CONSTRAINT environments_metadata_object
         CHECK (jsonb_typeof(metadata_json) = 'object'),
     CONSTRAINT environments_public_ingress_fields CHECK (
@@ -201,14 +192,6 @@ CREATE TABLE IF NOT EXISTS environments (
 
 CREATE INDEX IF NOT EXISTS environments_binding_status_idx
     ON environments (universe_id, binding_id, status, environment_id);
-
-CREATE INDEX IF NOT EXISTS environments_origin_session_idx
-    ON environments (universe_id, origin_session_id)
-    WHERE origin_session_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS environments_close_with_session_idx
-    ON environments (universe_id)
-    WHERE origin_close_with_session = true AND status NOT IN ('closing', 'closed');
 
 CREATE INDEX IF NOT EXISTS environments_idle_policy_idx
     ON environments (universe_id)

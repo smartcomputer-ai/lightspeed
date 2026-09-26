@@ -1,7 +1,7 @@
 # Implement a channel connector
 
-A channel connector translates between a chat provider and Lightspeed's
-channel boundary. It receives provider messages, normalizes their identity and
+A channel connector translates between a chat provider and Lightspeed. It
+receives provider messages, normalizes their identity and
 content, and delivers runtime-requested responses. The core owns pairing,
 sender policy, bot routing, sessions, and durable conversation state.
 
@@ -14,7 +14,7 @@ own bot-routing decisions.
 ## Follow the message path
 
 The host discovers channel accounts with
-`operator/channels/accounts/list`. For each selected account it creates a
+`deployment/channels/accounts/list`. For each selected account it creates a
 universe-scoped API client, starts provider ingress, and runs a Temporal
 activity worker on that account's queue.
 
@@ -23,16 +23,15 @@ An incoming message becomes a `ChannelInbound` request to
 routable. If a bot processes it, the conversation workflow later schedules
 connector activities to prepare media, show typing, or deliver a response.
 
-The shipped host requires a private `trusted-header` runtime endpoint. Its
-account calls include the universe UUID and
-`service_account:lightspeed-connectors` principal. It also uses operator
-discovery, which is unavailable on API-key gateways. Single mode rejects the
-tenant headers the host sends, so it is not an alternative configuration for
-this host.
+The shipped host authenticates with `LIGHTSPEED_CONNECTOR_API_KEY` against an
+`authenticated` runtime. It needs a deployment-scoped key with the
+`deployment/channels`, `auth/lease`, `channels/inbound`, and `blobs/put` method
+groups. Account calls select their universe with `x-lightspeed-universe`;
+deployment-wide account discovery omits that header.
 
-Keep that endpoint and Temporal access inside the deployment's trusted service
-boundary. The [access guide](../deployment/authentication-and-tenancy.md)
-explains operator and service-method authority; [Chat channels](../using-lightspeed/chat-channels.md)
+Keep that endpoint and Temporal access on the deployment's private service
+network. [API keys and service access](../access-and-security/api-keys-and-service-access.md)
+explains scope and method groups; [Chat channels](../using-lightspeed/chat-channels.md)
 explains the user-facing account and pairing flows.
 
 ## Add a provider implementation
@@ -66,7 +65,7 @@ If the Platform should offer a first-class connection form, extend its
 [account setup route](../../../platform/server/src/routes/channel-accounts.ts)
 and [Channels page](../../../platform/web/src/pages/ChannelsPage.tsx) as well.
 That flow should validate the provider account identity and store credentials
-through the auth boundary. A new core wire field or operation requires contract
+through the credential API. A new core wire field or operation requires contract
 regeneration; a new provider name using existing fields does not by itself
 require changing generated clients.
 
@@ -94,7 +93,7 @@ acknowledging a webhook.
 Attachments enter as metadata and provider locators: file ID, kind, MIME type,
 name, and declared size. Do not download all media before admission or insert
 provider tokens and binary payloads into `ChannelInbound`. The core can request
-media preparation later through the activity boundary.
+media preparation later through a connector activity.
 
 Test direct messages, groups, threads, mentions, replies, captions, attachments,
 duplicate deliveries, and self messages. The existing
@@ -102,16 +101,18 @@ duplicate deliveries, and self messages. The existing
 and [WhatsApp normalizer](../../../platform/connectors/src/providers/whatsapp/ingress.ts)
 show how different provider payloads map into the common contract.
 
-## Resolve credentials at the service boundary
+<a id="resolve-credentials-at-the-service-boundary"></a>
+
+## Resolve credentials in the connector
 
 An account's `credentialGrantId` points to a stored retrievable grant. The
-service client leases it through `auth/grants/lease` under its service-account
-principal. Provider tokens are not ordinary account settings or workflow
-arguments.
+service client leases it through `auth/grants/lease` using its key's `auth/lease`
+permission in the account's universe. Provider tokens are not ordinary account
+settings or workflow arguments.
 
 The existing grant lease cache retains a credential for at most five minutes,
 or less when expiry is near, and can be invalidated after provider authentication
-failure. Follow that boundary when a connector needs token renewal. A stale
+failure. Reuse that cache when a connector needs token renewal. A stale
 provider session should not keep using a cached token indefinitely after a
 credential change.
 
@@ -149,15 +150,17 @@ provider, and account values in the actual worker. All participants must use
 the same Temporal namespace and derived queue. Keep custom connector activities
 on that queue, not the runtime's session or core-channel queue.
 
-### Deliver replies with explicit retry semantics
+<a id="deliver-replies-with-explicit-retry-semantics"></a>
+
+### Deliver replies safely under retries
 
 `ChannelDeliveryCommand` carries a contract version, invocation ID, idempotency
 key, route, and operation. Verify the version and route's provider/account
 against the worker and preserve invocation/idempotency identity. The account's
 queue and worker context establish the universe; this command does not carry
 a separate universe field. The command uses actual provider message IDs;
-the core resolves model-visible handles such as `#N` before crossing this
-boundary.
+the core resolves model-visible handles such as `#N` before invoking the
+connector.
 
 The core schedules split message chunks durably, and a connector may need
 additional splitting for provider limits. Preserve the invocation/chunk
@@ -210,7 +213,7 @@ and later discovery failure does not necessarily make existing accounts unready.
 
 ## Verify before enabling real traffic
 
-Use provider fixtures and fake API/activity boundaries to test normalization,
+Use provider fixtures and fake API clients and activities to test normalization,
 route rejection, credential refresh, duplicate delivery, media limits, typing
 cancellation, reconnects, and account revision changes. The existing suite
 runs without real chat credentials:
@@ -228,7 +231,7 @@ intended lifecycle.
 | Symptom | What to inspect |
 | --- | --- |
 | The new provider never starts | Host allowlist, factory, configured selection, and discovered account record. |
-| Ingress connects but admission fails | Trusted-header API endpoint, service principal, universe mapping, and normalized IDs. |
+| Ingress connects but admission fails | Authenticated endpoint, key scope and `channels/inbound` group, universe mapping, and normalized IDs. |
 | Inbound works but no replies arrive | Derived activity queue, registered contract names, worker readiness, and provider delivery errors. |
 | Reconnect repeats messages | Provider acknowledgment/cursor handling and stable message IDs. |
 | Removed accounts keep receiving work | Runner shutdown, subscriptions/timers, and duplicate host ownership. |

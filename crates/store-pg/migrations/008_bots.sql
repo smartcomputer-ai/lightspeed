@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS bots (
     -- breaker {fires, windowMs}, routedSessionTtlMs, the capability grants
     -- selfConfig and emit, enabled.
     document_json jsonb NOT NULL,
+    -- Who created it, stamped once by the gateway right after creation.
+    -- Bots are always shared with the universe.
+    created_by jsonb,
 
     -- ── Runtime-owned ──────────────────────────────────────────────────────
     -- The #N counter: the highest event seq allocated so far, advanced

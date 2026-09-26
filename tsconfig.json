@@ -21,6 +21,7 @@
     "platform/db/drizzle.config.ts",
     "platform/shared/src/**/*.ts",
     "platform/server/src/**/*.ts",
+    "platform/server/test/**/*.ts",
     "platform/cli/src/**/*.ts"
   ]
 }

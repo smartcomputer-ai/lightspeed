@@ -2,6 +2,7 @@ import { request as httpRequest } from "node:http";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ConfiguratorConfig } from "../src/config.js";
+import type { MethodGroup } from "@lightspeed-ai/agent-client";
 import { GENERATED_TOOLS } from "../src/generated/tools.js";
 import { startConfigurator, type RunningConfigurator } from "../src/transport.js";
 
@@ -20,18 +21,18 @@ afterEach(async () => {
 describe("Streamable HTTP configurator", () => {
   it("initializes, lists all tools, and forwards a universe call in api-key mode", async () => {
     const upstream: UpstreamRequest[] = [];
-    const server = await start("api-key", fakeUpstream(upstream));
+    const server = await start("authenticated", fakeUpstream(upstream));
     const { client, transport } = mcpClient(server, { authorization: "Bearer lsk_alpha" });
 
     await client.connect(transport as Parameters<typeof client.connect>[0]);
     expect(client.getProtocolEra()).toBe("modern");
     const listed = await client.listTools();
     expect(listed.tools).toHaveLength(GENERATED_TOOLS.length);
-    expect(listed.tools.some((tool) => tool.name.startsWith("lightspeed_operator_"))).toBe(false);
+    expect(listed.tools.some((tool) => tool.name.startsWith("lightspeed_deployment_"))).toBe(false);
     expect(listed.tools.find((tool) => tool.name === "lightspeed_session_config_put")?.description)
       .toContain("omitted features are revoked");
     await expect(
-      client.callTool({ name: "lightspeed_operator_universes_list", arguments: {} }),
+      client.callTool({ name: "lightspeed_deployment_universes_list", arguments: {} }),
     ).rejects.toThrow(/unknown tool/);
 
     const result = await client.callTool({
@@ -55,16 +56,41 @@ describe("Streamable HTTP configurator", () => {
     await client.close();
   });
 
-  it("keeps concurrent trusted-header universes isolated", async () => {
+  it("offers only the tools whose group the caller's key holds", async () => {
     const upstream: UpstreamRequest[] = [];
-    const server = await start("trusted-header", fakeUpstream(upstream, 5));
+    const groups: MethodGroup[] = ["profiles", "models"];
+    const server = await start("authenticated", fakeUpstream(upstream, 0, groups));
+    const { client, transport } = mcpClient(server, { authorization: "Bearer lsk_config" });
+
+    await client.connect(transport as Parameters<typeof client.connect>[0]);
+    const listed = await client.listTools();
+    const expected = GENERATED_TOOLS.filter((tool) => groups.includes(tool.group)).map((tool) => tool.name);
+    expect(listed.tools.map((tool) => tool.name)).toEqual(expected);
+    expect(expected).toContain("lightspeed_profiles_list");
+    expect(expected).not.toContain("lightspeed_session_list");
+
+    // A tool outside the key's groups is unknown and never reaches core.
+    await expect(
+      client.callTool({ name: "lightspeed_session_list", arguments: {} }),
+    ).rejects.toThrow(/unknown tool/);
+    expect(upstream.some((request) => request.method === "session/list")).toBe(false);
+    await client.callTool({ name: "lightspeed_models_list", arguments: {} });
+    expect(upstream.some((request) => request.method === "models/list")).toBe(true);
+    await client.close();
+  });
+
+  it("keeps concurrent authenticated universes isolated", async () => {
+    const upstream: UpstreamRequest[] = [];
+    const server = await start("authenticated", fakeUpstream(upstream, 5));
     const a = mcpClient(server, {
       "x-lightspeed-universe": universeA,
-      "x-lightspeed-principal": "user:alice",
+      authorization: "Bearer lsk_service",
+      "x-lightspeed-actor": "platform:user:00000000-0000-4000-8000-000000000003",
     });
     const b = mcpClient(server, {
       "x-lightspeed-universe": universeB,
-      "x-lightspeed-principal": "service_account:bridge",
+      authorization: "Bearer lsk_service",
+      "x-lightspeed-actor": "platform:user:00000000-0000-4000-8000-000000000004",
     });
 
     await Promise.all([
@@ -87,20 +113,20 @@ describe("Streamable HTTP configurator", () => {
     const callB = calls.find(
       (call) => call.headers.get("x-lightspeed-universe") === universeB,
     );
-    expect(callA?.headers.get("x-lightspeed-principal")).toBe("user:alice");
-    expect(callB?.headers.get("x-lightspeed-principal")).toBe("service_account:bridge");
+    expect(callA?.headers.get("x-lightspeed-actor")).toBe("platform:user:00000000-0000-4000-8000-000000000003");
+    expect(callB?.headers.get("x-lightspeed-actor")).toBe("platform:user:00000000-0000-4000-8000-000000000004");
     await Promise.all([a.client.close(), b.client.close()]);
   });
 
   it("authenticates protocol-only requests upstream and rejects invalid credentials", async () => {
-    const server = await start("api-key", async (_input, init) => {
+    const server = await start("authenticated", async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as { id: number | string };
       return jsonResponse({
         id: body.id,
         error: {
-          code: -32010,
+          code: -32001,
           message: "invalid api key",
-          data: { kind: "rejected", message: "invalid api key" },
+          data: { kind: "unauthenticated", message: "request is not authenticated" },
         },
       });
     });
@@ -242,7 +268,10 @@ function mcpClient(server: RunningConfigurator, headers: Record<string, string>)
   return { client, transport };
 }
 
-function fakeUpstream(requests: UpstreamRequest[], delayMs = 0): typeof fetch {
+const ALL_GROUPS = [...new Set(GENERATED_TOOLS.map((tool) => tool.group))];
+
+/// A core that answers `initialize` with `groups` as the caller's.
+function fakeUpstream(requests: UpstreamRequest[], delayMs = 0, groups: MethodGroup[] = ALL_GROUPS): typeof fetch {
   return async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as {
       id: number | string;
@@ -264,6 +293,7 @@ function fakeUpstream(requests: UpstreamRequest[], delayMs = 0): typeof fetch {
               eventLog: true,
               localExecution: false,
             },
+            caller: { keyPrefix: "lsk_test", groups },
           }
         : body.method === "models/list"
           ? { models: [], providers: [] }

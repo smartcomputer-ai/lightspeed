@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
+import type { SessionActivity } from "@lightspeed-ai/agent-client";
 import type { BotControllerSnapshot, BotControllerStatus, BotView } from "@/api";
 import { cn } from "@/lib/utils";
 
-export type BotTone = "live" | "idle" | "paused" | "attention" | "closed";
+export type BotTone = "live" | "waiting" | "idle" | "paused" | "attention" | "closed";
 
 /**
  * One status word for the header and the roster, in the person's language:
@@ -14,11 +15,15 @@ export function botStatus(
   bot: Pick<BotView, "enabled" | "closedAtMs">,
   controller: BotControllerSnapshot | undefined,
   stateError?: string,
+  activity: SessionActivity = "idle",
 ): { label: string; tone: BotTone } {
   if (bot.closedAtMs != null) return { label: "Closed", tone: "closed" };
   if (bot.enabled === false) return { label: "Paused", tone: "paused" };
   if (stateError) return { label: "Needs attention", tone: "attention" };
-  if (!controller) return { label: "Starting", tone: "idle" };
+  // What its sessions are doing wins over the controller's own state: a run
+  // someone started by chatting is work too.
+  if (activity === "waiting") return { label: "Waiting for approval", tone: "waiting" };
+  if (!controller) return { label: activity === "working" ? "Working" : "Starting", tone: activity === "working" ? "live" : "idle" };
   switch (controller.controllerStatus) {
     case "initializing":
       return { label: "Starting", tone: "idle" };
@@ -38,7 +43,7 @@ export function botStatus(
     case "closed":
       return { label: "Closed", tone: "closed" };
     default:
-      return { label: "Idle", tone: "idle" };
+      return activity === "working" ? { label: "Working", tone: "live" } : { label: "Idle", tone: "idle" };
   }
 }
 
@@ -53,9 +58,10 @@ export function StatusDot({ tone, className }: { tone: BotTone; className?: stri
     <span
       className={cn(
         "inline-block size-2 shrink-0 rounded-full",
-        tone === "live" && "bg-emerald-500",
+        tone === "live" && "animate-pulse bg-emerald-500 motion-reduce:animate-none",
+        tone === "waiting" && "bg-amber-500",
         tone === "idle" && "bg-muted-foreground/50",
-        tone === "paused" && "bg-amber-500",
+        tone === "paused" && "border border-amber-500 bg-transparent",
         tone === "attention" && "bg-destructive",
         tone === "closed" && "bg-muted-foreground/30",
         className,

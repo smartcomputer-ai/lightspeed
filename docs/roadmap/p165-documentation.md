@@ -55,11 +55,18 @@ docs/documentation/
 │   ├── power-and-cleanup.md             # Readiness, pause/stop/wake, idle policies, closing, retention and ownership
 │   └── networking-and-ingress.md        # Connectivity requirements; provider-supported application endpoints
 │
+├── access-and-security/
+│   ├── overview.md                      # Universes, people, keys and actors; Platform and core checks; current evidence
+│   ├── people-and-roles.md              # Sign-in, accounts, memberships, four roles, removing access
+│   ├── private-and-shared-work.md       # Private sessions, one-way sharing, admin reads, bots and inherited visibility
+│   ├── api-keys-and-service-access.md   # Gateway modes, key scope/groups/actors, bootstrap and integration credentials
+│   ├── agent-and-tool-access.md         # Tool configuration, internal controller rules, external credentials and stopping
+│   └── tenant-isolation-and-data-protection.md # Storage boundaries, shared infrastructure, encryption, compute and data
+│
 ├── deployment/
 │   ├── overview.md                      # Components, dependencies, full product vs runtime-only, deployment topology
 │   ├── self-hosting.md                   # Install a coherent release; configure dependencies; migrate; start and verify
-│   ├── authentication-and-tenancy.md    # Gateway modes, Platform users/memberships, client keys, service/operator access
-│   ├── multi-tenancy.md                 # Universe isolation, shared infrastructure, access limits, archive and deletion
+│   ├── multi-tenancy.md                 # Managing universes: creation/adoption, record reconciliation, archive and deletion
 │   ├── configuration.md                 # Configure runtime, Platform, storage, connectors, Configurator; secrets and URLs
 │   ├── operations.md                    # Health, logs, metrics, Temporal inspection, worker roles/scaling, storage retention
 │   ├── upgrades-and-recovery.md          # Release compatibility, database migrations, backup/restore, recovery constraints
@@ -150,6 +157,17 @@ supported behavior.
 | Development and reference | [Repository contribution guidance](../../AGENTS.md), [contribution policy](../../CONTRIBUTING.md), [development guide](../../scripts/dev/README.md), [evaluation harness](../../crates/eval/README.md), [API exporter](../../crates/api/src/bin/export-schema.rs), [workflow exporter](../../crates/temporal-workflow/src/bin/export-workflow-contract.rs), and [profile configuration reference generator](../../platform/scripts/generate-config-reference.mjs). |
 
 ## Implementation progress
+
+The root launcher serves the manual with `./dev.sh docs`, also accepted as
+`doc` or `documentation`. It bootstraps npm dependencies without Docker or Rust,
+watches documentation edits, and stops the server through the usual supervisor
+lifecycle. Standalone `npm run dev:docs` remains available.
+
+Launcher failures now identify the failed step, retain recent command output,
+and give a next diagnostic step. Readiness failures preserve the last HTTP or
+connection result. Stack traces are opt-in with `--debug`; shutdown stops host
+processes and reports infrastructure left in place. Isolated launcher fixtures
+cover port conflicts, migration and runtime failures, and supervisor cleanup.
 
 The initial writing batch is complete:
 
@@ -385,6 +403,75 @@ current public clients. The environment specification and overview now explain
 the current idle-policy staging limit, and the borrowed-compute walkthrough
 uses the supported CLI/API close path. Remaining reference work follows the
 target index above.
+
+### Access and security documentation
+
+The access model now has a dedicated six-page section between Environments and
+Deployment. Its overview follows a Platform request and a direct API-key
+request through their different gates. The focused pages cover people and
+roles, private/shared sessions, keys and service access, agent/tool authority,
+and tenant isolation/data protection. They describe the current implementation:
+people and roles in Platform; scope, key groups, attribution and internal
+controller guards in core.
+
+The old authentication and identity pages become short pointers with their
+existing route and anchor targets preserved. The deployment multitenancy page
+retains universe management and retirement; its isolation explanation moves
+into the new section. Surrounding usage, architecture, deployment, integration,
+and configuration-reference prose is reconciled in the same pass, including
+role prerequisites and removed execution-identity and sharing UI.
+
+The new pages distinguish retained session attribution from the deferred
+Platform audit trail, and keep SSO, SCIM and invitations out of present-tense
+capability claims. No unfinished feature pages are added to navigation.
+
+Validation: the nine site adapter tests and Astro diagnostics passed. The
+production build verified 53 HTML/Markdown pages, 15 diagrams, links, anchors,
+assets, search, the sitemap, and `llms.txt`. Twenty shell/JSON examples in the
+new section and affected setup/session procedures parsed without execution.
+Documentation diffs pass whitespace checks. Interactive browser review was
+unavailable; no live services, credentials, or agent operations were exercised.
+
+### Manual drift and readability review
+
+Reviewed the authored manual against current UI, runtime behavior, contracts,
+and release metadata. Setup now follows Models and Access navigation, current
+session filters, attachment access labels, and the simpler creation dialogs.
+Environment guides distinguish provisioning from profile attachments and explain
+prompt/skill discovery on either filesystem. Deployment instructions separate
+the current consolidated schema from historical tagged-release upgrades;
+contract-authoring guidance includes generated Platform method roles.
+
+Shortened the home page into reading paths and reduced repeated policy,
+transport, rendering, and storage detail across the guides. Architecture pages
+build from the main concepts to a concrete operation; task guides keep setup,
+verification, and failure recovery. Exact protocol and implementation details
+remain in their contracts and source links. The review preserves operational
+limits, examples, diagrams, and existing inbound anchors.
+
+Validation: `npm run check:docs` passed the nine adapter tests, Astro
+diagnostics, and production-build checks. After the final guide edits,
+`npm run build:docs` again verified 53 published pages, 15 diagrams, links,
+anchors, assets, search, sitemap, and Markdown exports. Syntax checks passed
+for 93 shell and 23 JSON examples without executing their operations.
+Documentation whitespace checks passed. No live service or credentialed tests
+were run.
+
+### Screenshot refresh after the manual review
+
+Refreshed all seven existing screenshots with Playwright against the current
+Software Factory demo. Added four focused captures for universe members,
+session sharing, API-key groups, and model-provider selection. The images show
+the current navigation and controls, with captions identifying demo data.
+The key and sharing dialogs were captured before confirmation. The workspace
+skill was entered and saved through the demo UI from the guide's example.
+
+All eleven assets were visually reviewed. The production docs build verified
+their paths and exports; Playwright checked every illustrated page at 1440px
+and 390px widths, with all images loaded and no horizontal page overflow.
+Desktop and mobile article layouts were also inspected visually. Capture
+recipes are maintained in `docs/site/README.md`. No live runtime, provider
+credentials, or model calls were needed.
 
 ## First writing pass
 
@@ -629,6 +716,14 @@ mandatory template for every page.
   is useful. Remove generic announcements that add no information. Address
   likely objections in the prose without turning each paragraph into a
   rhetorical question and answer.
+- Keep a page focused on its reader's task. An overview should establish the
+  model before introducing exceptions; a task guide should get the reader to
+  a working result. Link to the contract for exhaustive fields and to the
+  implementation for algorithms, rendering details, or internal bookkeeping.
+- When a feature changes, revise the explanation where it belongs. Avoid
+  accumulating implementation notes at the end of a paragraph or adding the
+  same qualification to every related page. Keep a material limit beside the
+  claim it qualifies and link to its fuller explanation.
 - Use familiar systems as analogies, then identify where the analogy stops
   helping. Follow with the actual data flow, code, or behavior. An analogy
   should make the implementation easier to understand.

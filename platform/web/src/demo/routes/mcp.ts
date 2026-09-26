@@ -118,7 +118,7 @@ function mintOAuthGrant(
     subjectHint: store.currentUser.email,
     status: "active",
     exposure: "brokered",
-    principal: { kind: "user", id: store.currentUser.id },
+    createdBy: { kind: "actor", id: store.currentUser.id },
     scopes,
     audience,
     hasAccessToken: true,

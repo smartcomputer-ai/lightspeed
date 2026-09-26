@@ -15,27 +15,16 @@ its model context changes over time.
 
 ## Give content an identity independent of its current use
 
-A context entry combines a content descriptor with facts about its use. The
-descriptor, `ContentRef`, contains a SHA-256 content reference, a media type,
-and an optional provider kind describing the encoding. The surrounding entry
-adds its semantic kind, insertion source, immutable session-local entry ID,
-accounting, and a bounded preview where useful.
+A content descriptor, `ContentRef`, identifies immutable bytes by their
+SHA-256 hash, media type, and optional provider encoding. The same bytes can
+serve as a context input, a historical message, or a run's final output without
+being copied or converted into display text.
 
-The distinction is concrete: the same immutable bytes can be a context input,
-a committed message, or a terminal run output. Those uses do not require
-another copy of the payload or a conversion into display text. The preview
-helps inspect an entry; it is not the authoritative input sent to the model.
-
-Two optional fields describe provenance. `origin` is a display string such as
-`user:<id>` or `event`, independent of message role. It does not authorize a
-request. `provenance_ref` can point to a construction artifact, such as the
-source audio for a transcript or the report explaining how instructions were
-assembled.
-
-Audio preprocessing uses this pattern directly: it stores transcript text and
-filename in a structured payload and retains the original audio as provenance.
-The adapter renders the transcript label for the model, while display
-projections consume the text field.
+A context entry adds how that content is used: its role, source, position, and
+an optional preview. The preview helps people inspect an entry; the model
+receives the referenced content. Provenance can link to source material, such
+as the original audio behind a transcript or a report of how instructions
+were assembled. These source labels describe content; they grant no access.
 
 Active context has a revision and ordered entries. Adding, removing, or
 rewriting entries happens through events. An entry removed from the active
@@ -68,20 +57,9 @@ not replace the native payload with a second authoritative text copy. Opaque
 reasoning data can therefore remain intact while the UI shows only the visible
 reasoning text the provider exposed.
 
-Chat Completions reconstruction groups assistant content, reasoning, and tool
-calls by their shared run and turn, despite their distinct provenance labels.
-It retains native reasoning fields and tool-call arguments while lowering
-visible message content to the established text/refusal input shape; response
-annotations and other message metadata remain stored for projection rather than
-being sent as request fields. Replay fidelity tests cover these intentional
-transformations separately from request-prefix stability. Transcript display
-order is independent of this reconstruction, and final replies use the run's
-recorded output reference.
-
-The runtime performs explicit provider-specific lowering, including tool definitions,
-content formats, and allowed request fields. Keeping native material does
-not make arbitrary histories interchangeable across API kinds. A session's
-API kind is fixed; use a new session when that boundary changes.
+Each adapter rebuilds requests according to its provider's format and allowed
+fields. Keeping native material does not make histories interchangeable across
+API kinds. A session's API kind is fixed; start a new session to change it.
 
 Durable model selection contains the provider ID, API kind, and model name.
 The endpoint, authentication, and transport headers are resolved outside the
@@ -101,21 +79,16 @@ configuration changes, and explicit skill reads retain their own refresh paths.
 The admission refresh occurs when no run is active or already queued; it is not
 an unconditional refresh before each previously queued task.
 
-Prompt discovery reads conventional locations such as `.lightspeed/prompts`
-and `.agents/prompts` in linked VFS workspaces. It assembles direct `.md` and
-`.txt` files in filename order, without recursion, with source information and warnings recorded in an assembly report. A source exceeding
-its limit is omitted whole rather than silently turned into truncated
-instructions.
+Prompt discovery reads configured sources in VFS workspaces and the selected
+environment. It records an assembly report so readers can see where the
+instructions came from and which sources were omitted. An oversized source
+is omitted whole instead of becoming truncated instructions.
 
-Skills use a related separation. Discovery supplies a sorted metadata catalog
-so the model can find and read an appropriate `SKILL.md` through the VFS.
-Selecting a skill submits ordinary run input or steering that asks the model
-to read its document. Skill reads and inserted skill text use ordinary
-conversation retention and compaction. The current catalog remains retained,
-but skill bodies have no dedicated scope, expiry, or protected context state.
-When environment prompt or skill discovery is enabled, the runtime also reads
-its configured sources from the selected environment. Environment and VFS
-sources retain separate ownership.
+Skill discovery supplies a catalog of available skills. The model reads the
+chosen skill's document when it needs the procedure. Its body then follows
+ordinary conversation retention and compaction; the current catalog remains
+available. [Workspaces and skills](../using-lightspeed/workspaces-and-skills.md)
+explains the source locations and how to configure discovery.
 
 Once the refreshed inputs are admitted, the turn freezes the context revision
 it uses. Instructions are ordered first by key; other entries follow their
@@ -124,50 +97,36 @@ request, and sends it with the effective model and tool catalog. New steering
 can be admitted while that call is in flight, but it applies at a later turn
 boundary rather than changing a request already sent.
 
-For the release editor, this means a workspace head is resolved into explicit
-instruction and catalog inputs at the refresh boundary. The model's subsequent
-file read returns another explicit result. There is no hidden live mount that
-changes the old model request when someone edits the workspace.
+For the release editor, editing workspace instructions can change a later
+request. It cannot change the request already sent to the model. Reading a
+workspace file produces a tool result that records what the agent saw at that
+point in time.
 
 ## Preserve useful request prefixes
 
-Prompt caching rewards repeated request material, but an agent's context also
-needs to evolve. Lightspeed makes ordering and updates deliberate so changes
-need not disturb more of the request than necessary.
+Providers can reuse a cached request prefix when the same material appears at
+the start of later requests. Lightspeed keeps ordering stable and appends
+catalog updates so they do not rewrite an otherwise reusable prefix.
 
-VFS, skill, environment, sub-agent, and client catalogs share one
-`Catalog { title }` context kind. Each runtime publisher stores the rendered text in CAS and keeps
-its structured snapshot in `provenance_ref` for API reads and source retention.
-Provider adapters read that stored text and add only the title and, for a
-successor, an update header. Replaying an old entry does not rerender its source
-with newer publisher code.
-
-Catalog identity comes from its key. The runtime owns `runtime.catalog.vfs`,
-`runtime.catalog.skills.vfs`, `runtime.catalog.environments`, and
-`runtime.catalog.subagents`. The environment catalog lists every attached
-environment with its id, display name, status, access, working directory,
-default marker, and which one is active; it is built from configuration and
-display names without discovery. Public context
-append and remove reject `runtime` and `runtime.*`, as well as `run` and `run.*`.
-Client catalogs use other keys. Source discovery and refresh policy remain
-specific to each publisher; publishing compares both text and provenance.
-The executable tool registry remains separate from catalog context documents.
+A catalog tells the model what is available: workspaces, skills, environments,
+or sub-agents. Its rendered text is stored in CAS along with a structured
+source snapshot. Replaying an old catalog uses the stored text, so a change
+to the renderer cannot change an earlier request. Runtime catalogs are managed
+by the session workflow; clients can publish their own catalogs under separate
+keys through the [context API](../../../crates/api/contract/api-reference.md).
 
 A changed keyed catalog is appended as the current version at the context
 tail. Earlier versions remain in their original positions, with their bytes
 unchanged. The new entry identifies which catalog it supersedes. This lets a
 skill or sub-agent catalog change while preserving an earlier cached prefix.
 
-The catalog history retained in active context is bounded: a key can keep up to five
-superseded versions alongside the current one. Older versions are removed when
-that cap is exceeded, and compaction clears superseded catalogs. Ordinary
-keyed entries, including instructions, still replace their earlier active
-version. Editing those entries can change the beginning of the next request.
+Active context retains at most five superseded versions per catalog;
+compaction clears them. Instructions and other ordinary keyed entries replace
+their earlier version, so editing those can change the beginning of the next
+request.
 
-Tool presentation also has stable ordering. Built-in expansion preserves the
-advertised order, and externally supplied definition lists keep their supplied
-order. These details belong to request construction because a logically
-equivalent set of tools in a different order can produce a different prefix.
+Tool definitions also keep a stable order. Reordering an otherwise identical
+set of tools can change the prefix the provider sees.
 
 The adapters then use each provider's cache controls. OpenAI Responses and
 Chat Completions generation supply a stable session-derived `prompt_cache_key`.
@@ -175,10 +134,8 @@ Anthropic generation places ephemeral cache markers on the assembled system
 prompt, the last eligible non-deferred tool, and the last eligible message
 block. Supported provider parameters can configure the marker TTL.
 
-These are request choices, not a local cache containing model answers. Actual
-hits depend on the provider and the material it receives. Stable ordering
-improves the opportunity for reuse; it does not guarantee that every turn is
-served from cache.
+The provider decides whether a request hits its cache. Stable ordering and
+cache controls improve the opportunity for reuse without guaranteeing a hit.
 
 ## Compact the active conversation
 
@@ -196,10 +153,8 @@ pending; the hosted workflow holds their admissions until the operation finishes
 
 Standalone compaction can be requested manually or through an optional
 threshold. It starts only with no active or queued run. The threshold sums
-token estimates for compactable entries; if any required estimate is missing
-or the sum overflows, there is no usable aggregate and that automatic trigger
-does not fire. Provider usage totals are not silently substituted for this
-context estimate.
+token estimates for compactable entries. It needs a valid estimate to fire;
+provider usage totals are not a substitute for the current context size.
 
 The adapter mechanism depends on the API kind:
 
@@ -210,10 +165,9 @@ The adapter mechanism depends on the API kind:
 | Anthropic Messages, `provider_standalone` | A summarization request with Lightspeed-authored instructions produces a plain-text replacement summary. |
 | Chat Completions, `provider_standalone` | A summarization request produces a plain-text replacement summary. |
 
-Other API kinds reject `provider_triggered` configuration. The two summary
-adapters use `targetTokens` as summary guidance and an output budget; the
-OpenAI Responses compact adapter does not send that setting to its compact
-endpoint. Understand the configured mode together with the session's API kind.
+Only OpenAI Responses supports `provider_triggered` compaction. The summary
+adapters use `targetTokens` as guidance and an output budget; the Responses
+compact endpoint does not receive that setting.
 
 Instructions and current catalogs survive compaction. Skill reads and inserted
 skill text follow ordinary conversation retention. Eligible conversation and
@@ -253,11 +207,9 @@ above that limit fail. PostgreSQL continues to hold their catalog entries and
 physical object keys. [Deployment configuration](../deployment/configuration.md#choose-the-blob-backend)
 explains this operational choice.
 
-Logical identity and physical address are different. External object keys
-include a unique upload incarnation as well as the universe and content
-digest. If an old unreferenced blob is deleted and the same bytes are uploaded
-again, the new upload gets a different physical key. Delayed cleanup of the
-old object therefore cannot delete the new copy.
+Each external upload has its own physical object key. If content is collected
+and later uploaded again, delayed cleanup of the old object cannot delete the
+new copy.
 
 ## Build persistent files from immutable content
 
@@ -272,13 +224,6 @@ A workspace adds a named, mutable head over those snapshots. Updating that
 head uses a revision check so a writer does not silently overwrite another
 writer's move. A snapshot attachment pins a particular version; a workspace attachment
 resolves its current head at the relevant operation boundary.
-
-Session history has related fork primitives at the core/storage layer. A
-history fork references a source session position and combines that inherited
-prefix with its own later events. A configuration-only clone has no inherited
-history position. The current public clients do not expose fork/clone creation
-as ordinary RPC operations, so these are storage capabilities rather than a
-second session-creation walkthrough.
 
 None of this overlays a machine filesystem. VFS file edits and environment
 process files remain distinct. [Workspaces and skills](../using-lightspeed/workspaces-and-skills.md)
@@ -296,18 +241,13 @@ append, and constraints protect references attached concurrently with cleanup.
 Bot events, reducer checkpoints, and VFS records also retain the content they
 own.
 
-Nested formats record edges. A snapshot manifest retains its file blobs; a
-snapshot-backed skill catalog retains its source snapshots. Its published text
-and structured catalog are both retained by the context event, through content
-and provenance references. An instruction
-assembly report retains its sources. Merely placing a hash-shaped string inside arbitrary payload
-bytes does not create a retention relationship. The writer of a format must
-declare the edges that make its embedded references meaningful to collection.
+A container also records which content it retains: a snapshot keeps its file
+blobs, and an instruction assembly report keeps its sources. Formats must
+declare these relationships. A hash-shaped string in arbitrary payload bytes
+is not enough to keep the referenced content alive.
 
 The collector can remove an old blob only when no durable holder or incoming
-edge protects it. Removing a parent can release its children for a later page
-or pass. Unique physical keys allow catalog deletion to commit before external
-object cleanup without confusing an old upload with a later one.
+edge protects it. Removing a parent can release its children for a later pass.
 
 An elected collector runs hourly with bounded scanning. The default grace is
 seven days since the last put or API admission of an existing reference;
@@ -324,12 +264,9 @@ documents the collection bounds and diagnostics.
 
 ## Read the view that answers the question
 
-The transcript asks what happened. It reads a bounded event range and projects
-its content for display, without reconstructing the full reducer state. A
-backward read captures a session head and returns the selected events in
-chronological order. Earlier pages use an exclusive cursor; forward updates
-start after the captured head. Loading old history must not move that live
-cursor or overwrite current run controls.
+The transcript shows what happened by reading and projecting a range of
+historical events. It can page through old work while live updates continue
+from the current session head.
 
 `session/read` asks for current execution state. It uses a reducer checkpoint
 and the authoritative event tail, falling back to full replay when a checkpoint
@@ -342,19 +279,10 @@ reasoning and message text are projected in full; tool and catalog previews
 remain bounded, and the original bytes remain available through blob reads.
 An output can describe media without inventing a text representation for it.
 
-Media the model sees lives in context as user-role message entries whose
-content descriptor carries an image or PDF media type; run input and tool
-results produce the same shape, so provider lowering, compaction, and
-projection treat them alike. A tool appends its admitted media right after its
-result entry, and a sub-agent's or awaited promise's media rides on the resume
-output as descriptors the reducer copies into entries without reading bytes.
-Every such entry is named by a handle derived from its content reference,
-`media:` plus the first twelve hex characters of the SHA-256, which the model
-sees in the announcement before each provider block and writes back as a URL
-to refer to media. Views expose the handle on the content descriptor and list
-a tool call's media beside it; clients resolve `media:` links against those.
+Images and PDFs use content descriptors too, whether they arrive as user
+input, a tool result, or a sub-agent result. The model sees a stable `media:`
+handle it can use to refer to the attachment; clients resolve that handle
+against the descriptors exposed by the API.
 
-These views are derived from the same retained facts and content. Keeping their
-jobs separate lets the model work with a manageable context, the user inspect
-the full retained history, and the runtime reconstruct the state needed to
-continue execution.
+Together, these views let the model work with a manageable context while
+people inspect retained history and the runtime reconstructs execution state.

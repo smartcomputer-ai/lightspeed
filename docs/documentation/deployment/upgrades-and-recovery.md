@@ -1,16 +1,14 @@
 # Upgrades and recovery
 
-A Lightspeed release includes code and contracts that operate on durable
-state. Updating an image changes only the code; the deployment still contains
-database schemas, Temporal histories, encrypted credentials, stored content,
-and machines created by earlier work. Plan an upgrade around the compatibility
-of that whole set.
+A Lightspeed upgrade has to preserve work already in progress. That includes
+database records, Temporal histories, encrypted credentials, stored content,
+and machines created by earlier runs. Keep a recovery copy of that state and
+check whether the new release can read it before replacing the running code.
 
 The procedure below continues the [single-host installation](self-hosting.md)
 and uses a planned maintenance window. The current runtime does not configure
-Temporal worker version routing or promise arbitrary rolling upgrades between
-releases. Use release-specific compatibility instructions when they provide a
-more precise supported path.
+Temporal worker version routing, so use a coordinated rollout unless the target
+release documents another supported procedure.
 
 ## Retain a coherent release
 
@@ -28,54 +26,35 @@ the manifest's immutable image references.
 
 The [build and release guide](../../releasing.md) describes artifact
 construction. The target release's metadata and migration instructions decide
-compatibility with the state you actually have. Current Platform migration
-checks validate a fresh baseline installation; they do not establish an
-upgrade path from every historical Platform schema. A database with a legacy
-migration history needs a validated release-specific migration before it can
-be treated as a current installation.
+compatibility with the state you actually have. Platform migration checks cover
+a fresh installation and an upgrade from the baseline named in
+`LIGHTSPEED_PLATFORM_UPGRADE_FROM`. They do not test every historical schema.
+A database from another baseline needs its own validated migration.
 
-## Upgrade from v0.2 to v0.3
+<a id="upgrade-from-v02-to-v03"></a>
 
-v0.3.0 changes session configuration, stored `ConfigChanged` events, and
-session workflow payloads without compatibility aliases. Use a coordinated
-maintenance window and fresh sessions and session workflow histories. Restarting
-workers does not convert old histories, and migration 10 does not rewrite
-stored configuration. The generic procedure below must include these additional
-steps:
+## Check compatibility before reusing state
 
-1. While the old release still runs, quiesce ingress and scheduled work, finish
-   or cancel active runs, and close sessions being retired. Retain the complete
-   recovery set, including the old release needed to access incompatible stored
-   sessions. Historical reads through the new runtime are not guaranteed.
-2. Convert saved profiles, bot configuration overrides, and external API
-   callers to the new generated configuration contract before resuming them.
-   Replace `vfs.workspaceLinks` with `vfs.workspaces` and `read`/`edit` access;
-   replace environment filters and session-wide tool settings with explicit
-   `environments.environments` attachments and per-machine access. Replace
-   profile-level environment provisioning/selection and session creation's
-   environment override with independently provisioned environments and
-   attachments, optionally marking one as the default. Update MCP and sub-agent
-   attachments as defined by the current contract. No automated conversion of
-   saved configuration is provided.
-3. Stop old application workers and writers. Apply runtime migration 10 with
-   the new `lightspeed-server migrate`. It removes environment session-origin
-   columns while preserving the environment resources; it does not migrate
-   session histories. Platform remains at schema revision 1. Reuse retained
-   workspaces and environments only through valid new attachments.
-4. Deploy the runtime and its consumers from one v0.3 release manifest. Create
-   fresh sessions, including replacements for bot sessions, and verify useful
-   work before reopening ingress. Do not resume old session continuations on
-   the new workers.
-5. Update environment daemons explicitly for the new transfer and filesystem
-   scan capabilities. The environment protocol remains 2, so automatic upgrade
-   on protocol mismatch will not detect the product-version change alone.
+The current development code uses a consolidated runtime schema and the
+Platform-owned access model. It has no automatic conversion from the former
+core identity directory, resource grants, or execution identities. A migration
+number or product version alone cannot identify a compatible database: the
+runtime also compares applied migration names and checksums.
 
-The API protocol identifier remains `lightspeed.agent.api.v1`; its equality
-does not make v0.2 configuration shapes compatible with v0.3. Use the matching
-client and generated contracts. A database wipe is not required by schema
-migration 10, but preserving database rows alone does not make their old
-session payloads readable. Rehearse conversion and recovery against a copy
-before upgrading an installation with valuable state.
+For disposable development state, stop the launcher and use `./dev.sh reset`
+to recreate the local databases and clear the development object-store prefix.
+Retained Temporal histories may still contain old payloads; create fresh work
+with the new code. For an installation whose data must survive, preserve the
+old executable and recovery set and validate a conversion against copies before
+starting new workers. The maintenance procedure below assumes the target
+release supports the retained state; it does not supply that conversion.
+
+When installing a tagged release, use the upgrade notes shipped with that tag.
+Instructions for an older release's migrations do not apply to this development
+baseline. Likewise, an unchanged API or environment protocol identifier does
+not guarantee compatibility with saved session configuration or workflow
+histories. Use matching clients and review daemon changes even when protocol
+mismatch would not trigger an automatic daemon update.
 
 ## Preserve a complete recovery set
 
@@ -86,10 +65,10 @@ record how their recovery points fit together.
 | Material | Why recovery needs it |
 | --- | --- |
 | Runtime PostgreSQL database and migration ledger | Universe records, sessions/events, checkpoints, profiles, workspace references, blob catalog and inline content, credentials, keys, bots, channels, and environment state. |
-| Platform PostgreSQL database and migration ledger | People, authentication, organizations, memberships, and mappings to runtime universe UUIDs. |
+| Platform PostgreSQL database and migration ledger | Login accounts and sessions, external login records, universe memberships and roles, and universe display/routing metadata. |
 | Temporal persistence and namespace configuration | Workflow histories, timers, schedules, and in-flight orchestration. Runtime PostgreSQL records are not a documented replacement for lost Temporal state. |
 | Configured object-store content | The bytes referenced by object-backed blobs. Restoring their database catalog does not reconstruct missing objects. |
-| Runtime master key | Existing encrypted grants and secrets need the same `LIGHTSPEED_SECRETS_MASTER_KEY`. |
+| Runtime master key | Existing encrypted secret values and grant tokens need the same `LIGHTSPEED_SECRETS_MASTER_KEY`. |
 | Deployment configuration and other stable secrets | Platform authentication secret, environment routing token, service addresses, task queues, provider configuration, and credentials. |
 | WhatsApp connector state, when used | The complete authentication directory and unchanged media-locator key preserve linked-device state and the ability to resolve sealed media locators. |
 | Machine/VM storage and daemon state | Real environment files, daemon identity, and persisted job records/output live outside the VFS and application databases. |
@@ -138,7 +117,7 @@ and configuration in the deployment record.
    other clients that submit work. Remember that runtime timers and schedules
    can produce work independently of the public HTTP listener.
 2. Inspect active runs, environment jobs, bot activity, and channel deliveries.
-   Let important work finish, or cancel it deliberately and inspect effects
+   Let important work finish, or cancel it and inspect effects
    already performed. Closing a session is a permanent lifecycle operation,
    so do not use it as a temporary maintenance pause.
 3. Stop all application writers and workers, including separately deployed
@@ -202,7 +181,9 @@ complete a small run. Verify resumed workflow processing, machine access, and
 connector account readiness where used. Reopen ingress after those checks and
 observe the deferred work that follows.
 
-## Upgrade environment daemons deliberately
+<a id="upgrade-environment-daemons-deliberately"></a>
+
+## Upgrade environment daemons
 
 An outbound daemon and its gateway must agree on the environment protocol.
 The release metadata records that protocol, and the gateway reports a mismatch
@@ -265,7 +246,7 @@ If restoration is required, restore the compatible databases, Temporal state,
 objects, configuration, keys, and relevant machine/connector state together,
 using the release recorded with that recovery point. Rehearse the restoration
 in isolation first. Changing one store while leaving the others at a different
-point can leave missing blobs, mismatched workflow state, or invalid identity
+point can leave missing blobs, mismatched workflow state, or broken universe
 mappings.
 
 A restored database does not undo messages already sent, remote API changes,

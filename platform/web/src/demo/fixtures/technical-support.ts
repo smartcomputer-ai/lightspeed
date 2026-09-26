@@ -7,7 +7,7 @@
 /// end to end, plus the profiles, KB, environment, and integrations behind it.
 import type { Environment, GitHubApp, SecretGrant } from "@/api";
 import { appendScriptedRun, newSession } from "../engine";
-import type { DemoResponder, DemoStore, DemoToolCall, DemoTurn, UniverseState } from "../store";
+import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type UniverseState } from "../store";
 import {
   BOT_TOOLS,
   DAY_MS,
@@ -673,15 +673,16 @@ function seedChannels(universe: UniverseState): void {
 function seedMembers(store: DemoStore, universe: UniverseState): void {
   universe.members.push(
     member(store, universe, "user-jonas", "admin", ago(47 * DAY_MS)),
-    member(store, universe, "user-priya", "member", ago(32 * DAY_MS)),
+    member(store, universe, "user-priya", "contributor", ago(32 * DAY_MS)),
   );
-  universe.apiKeys.push({
+  universe.apiKeys.push(universeApiKey(universe, {
     keyPrefix: "lsk_ts_4c9e",
     displayName: "Developer dashboard support widget",
+    groups: ["session", "blobs/put", "models"],
     createdAtMs: ago(26 * DAY_MS),
+    createdBy: "user-jonas",
     lastUsedAtMs: ago(9 * MINUTE_MS),
-    revokedAtMs: null,
-  });
+  }));
 }
 
 function seedProfiles(universe: UniverseState): void {
@@ -855,7 +856,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "devsupport@northwind.dev",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "universeDefault" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["tickets:read", "tickets:write", "users:read"],
       audience: null,
       hasAccessToken: true,
@@ -874,7 +875,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "northwind",
       status: "active",
       exposure: "retrievable",
-      principal: { kind: "serviceAccount", id: BOT.statusWatch },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["incidents:read"],
       audience: STATUS_PAGE_URL,
       hasAccessToken: true,
@@ -893,7 +894,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "sk-ant-…c4Q2",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "universeDefault" },
+      createdBy: { kind: "actor", id: "user-ada" },
       hasAccessToken: true,
       hasRefreshToken: false,
       expiresAtMs: null,
@@ -910,7 +911,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "northwind",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "universeDefault" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: [],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -934,7 +935,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "northwind-api",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "serviceAccount", id: BOT.oncall },
+      createdBy: { kind: "actor", id: "user-ada" },
       hasAccessToken: true,
       hasRefreshToken: false,
       expiresAtMs: null,
@@ -951,7 +952,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "oncall-bot@northwind.dev",
       status: "needsReauth",
       exposure: "brokered",
-      principal: { kind: "serviceAccount", id: BOT.oncall },
+      createdBy: { kind: "actor", id: "user-ada" },
       audience: "https://api.pagerduty.com",
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -2329,7 +2330,7 @@ export function seedTechnicalSupport(store: DemoStore): void {
     slug: TECHNICAL_SUPPORT_SLUG,
     name: "Technical Support",
     lightspeedUniverseId: LIGHTSPEED_UNIVERSE_ID,
-    role: "owner",
+    role: "admin",
     createdAt: agoIso(49 * DAY_MS),
     responder,
   });

@@ -44,7 +44,7 @@ run TypeScript, it installs the root npm workspace when dependencies are
 missing or `package-lock.json` changed. A root `.env` is loaded automatically.
 The `full` and `runtime` profiles can start without `OPENAI_API_KEY` or
 `ANTHROPIC_API_KEY`. The launcher warns when neither deployment key is set;
-in the full product, add a universe-scoped key under **Settings → Integrations**.
+in the full product, add a universe-scoped key under **Models → Add provider**.
 Provider-backed runs still need a valid credential for the selected model.
 
 To require a deployment key before startup, for example in CI:
@@ -65,15 +65,19 @@ npm run dev -- platform
 ```
 
 The supervisor keeps stateful dependencies in Docker and runs editable Rust
-and TypeScript processes on the host. It supports five profiles:
+and TypeScript processes on the host. It supports six profiles:
 
 ```bash
 ./dev.sh full       # default: complete product, without credentialed connectors
 ./dev.sh platform   # Platform API/UI against the runtime at LIGHTSPEED_API_URL
 ./dev.sh runtime    # migrated Rust runtime only
 ./dev.sh demo       # web UI only, over the in-browser demo backend (no Docker)
+./dev.sh docs       # documentation with live reload (aliases: doc, documentation)
 ./dev.sh infra      # Postgres, pgAdmin, MinIO, and Temporal only
 ```
+
+The docs profile opens the manual at `http://127.0.0.1:4321/docs/` and needs only
+Node and npm. Ctrl-C or `./dev.sh stop` stops its server.
 
 The `full` and `runtime` profiles also start a local `lightspeed-envd` by
 default, listening on `127.0.0.1:19091` with its working directory under
@@ -89,11 +93,26 @@ trusts both `http://127.0.0.1:5173` and `http://localhost:5173` for Better Auth;
 additional browser origins must be listed explicitly in
 `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`.
 
-The `full` profile defaults the runtime to `trusted-header` authentication
-because Platform authenticates users and routes every engine request to an
-explicit universe. The focused `runtime` profile defaults to `single` for
-direct CLI development. An explicit `LIGHTSPEED_AUTH_MODE` overrides either
-profile default.
+The authenticated full profile also ensures a **Test** universe and Admin,
+Operator, Contributor, and Viewer logins on each startup. The three additional
+emails are `operator@lightspeed.dev`, `contributor@lightspeed.dev`, and
+`viewer@lightspeed.dev`; new accounts use the configured Admin password.
+Existing passwords and universe content are preserved. Set
+`LIGHTSPEED_PLATFORM_DEV_SEED=false` to opt out; see
+[development logins](../../docs/documentation/development/local-development.md#development-logins).
+
+The `full` profile defaults to authenticated runtime access. Without a configured
+`LIGHTSPEED_PLATFORM_API_KEY`, the launcher bootstraps the configured universe
+and mints a deployment key with every method group and actor assertion, passing
+the secret to child processes in memory.
+The `runtime` profile defaults to `single` for direct CLI development.
+
+Platform waits for the configured runtime's HTTP health endpoint before starting,
+including in the `platform` profile. Its universe operations need that runtime,
+so Rust compilation must finish first. Platform creates its first local admin
+from the configured email and password when its own user table is empty. The
+supervisor logs this dependency wait and fails startup after 60 seconds if the
+runtime never becomes ready. `--plan` also shows startup dependencies.
 
 The full profile also runs Configurator MCP; Bots and Channels core run inside
 the Rust runtime. The connector host is opt-in: naming providers starts one
@@ -106,11 +125,12 @@ LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh
 LIGHTSPEED_CHANNELS_CONNECTORS=telegram,whatsapp ./dev.sh
 ```
 
-The supervisor's local Configurator uses a default-off internal authentication
-path: the Runtime sends `x-lightspeed-universe` only to the exact loopback MCP
-URL it started, and the setup does not create a bearer credential. Supplying an
-external Configurator URL disables that path unless both development variables
-are explicitly enabled; the Runtime rejects non-loopback trusted-header URLs.
+Configurator setup provisions a universe key with configuration method groups
+and stores it in a credential grant. Enabled connectors require their own
+`LIGHTSPEED_CONNECTOR_API_KEY` with the groups needed for account discovery,
+inbound admission, credential leasing, and media upload. See
+[API keys and service access](../../docs/documentation/access-and-security/api-keys-and-service-access.md)
+for the exact groups and request headers.
 
 Use `./dev.sh --plan full` to inspect a profile without starting services.
 Planning an enabled local daemon can create its working directory.
@@ -131,6 +151,30 @@ processes first, then infrastructure.
 stores its local process metadata under the ignored `.lightspeed/` directory.
 `reset` refuses to recreate databases while the supervisor is running; stop it
 first.
+
+## Startup errors
+
+Failures identify the step and service, explain what was observed, and suggest
+the next check. Failed commands include their working directory, exit status,
+and recent output. A readiness timeout includes the endpoint and last HTTP or
+connection error. Port conflicts are checked before infrastructure or migrations
+start.
+
+The launcher stops its host processes after a startup failure and reports any
+forced termination. Docker infrastructure stays in place; use `./dev.sh status`
+to inspect it and `./dev.sh down` to stop it. Fix the reported problem before
+retrying; a migration failure is not a reason to reset your database.
+
+For launcher stack traces, add `--debug` to the same command:
+
+```bash
+./dev.sh docs --debug
+./dev.sh runtime --debug
+```
+
+Service output still streams normally, including any diagnostics printed by
+the service itself. Recent output is held in memory for the failure summary,
+not written to an additional log file.
 
 ## Infrastructure primitives
 
@@ -161,9 +205,11 @@ scripts/dev/infra/minio-reset.sh
 clears the Lightspeed MinIO prefix. Platform applies its independently owned
 database migrations when the Platform server starts.
 
-The runtime's fresh PostgreSQL baseline is organized into nine domain migrations
-in `crates/store-pg/migrations/`. Databases created before that consolidation
-require a reset of the schema and migration ledger; deleting rows alone is not
+The runtime's fresh PostgreSQL baseline is organized into eleven domain migrations
+in `crates/store-pg/migrations/`: identity and scoped API keys share a definition;
+resource ownership and access audit remain separate. Auth and environment
+alterations are folded into their owning definitions. Databases from earlier
+baselines require a reset of the schema and migration ledger; deleting rows alone is not
 enough. The migrator keeps rejecting changed checksums and never resets data
 automatically. Use `./dev.sh reset` for disposable local development state.
 
@@ -304,3 +350,12 @@ network. From the host machine, use `localhost:15432` instead:
 ```text
 postgres://lightspeed:lightspeed@localhost:15432/lightspeed
 ```
+
+The full authenticated development profile runs `server api-key bootstrap` for
+the development universe: it creates the universe if needed, revokes the
+previous launcher key, and mints a deployment key with every method group that
+may assert actors. The launcher passes its secret to the Platform as
+`LIGHTSPEED_PLATFORM_API_KEY`; the Platform asserts the signed-in user as the
+actor on interactive requests.
+The greenfield identity migration refuses a populated old Platform schema;
+reset disposable Platform state explicitly instead of importing old permissions.

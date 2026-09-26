@@ -2,8 +2,8 @@
 
 A Lightspeed change can affect the decisions an agent makes, the way those
 decisions survive a restart, or how successfully a model uses a tool. Each
-needs different evidence. Start with a test at the boundary you changed, then
-widen the check as the behavior crosses other boundaries.
+needs different evidence. Start with the smallest test that exercises the
+changed behavior, then check the components that call it.
 
 | Check | What it establishes |
 | --- | --- |
@@ -47,7 +47,9 @@ Read the nearest `package.json` before choosing a script. A package may use
 Vitest, Node's test runner, or a focused compiler check; the workspace name
 selects which command npm executes.
 
-## Write a test at the decision boundary
+<a id="write-a-test-at-the-decision-boundary"></a>
+
+## Test the rule and its consequences
 
 Unit tests live beside their implementation in `mod tests`. Integration tests
 belong under `tests/` when they exercise a crate boundary or I/O. Keep test
@@ -80,9 +82,8 @@ in [Agent loop and durability](../how-it-works/agent-loop-and-durability.md).
 When the behavior needs an execution loop, use the
 [test-support runner](../../../crates/test-support/src/lib.rs). Its fake
 adapters and in-memory stores let tests exercise failures such as an LLM I/O
-error being recorded before the drive continues. It is a test harness; a
-passing runner test still leaves the hosted transport and workflow boundary
-to be checked separately.
+error being recorded before the drive continues. Hosted transport and workflow
+behavior need their own tests.
 
 ## Check contracts and the wider build
 
@@ -140,7 +141,9 @@ broader gate when checking the corresponding contribution.
 The docs gate is separate from the root consumer check. A documentation change
 needs `npm run check:docs` even if `npm run check` has already passed.
 
-## Run live tests deliberately
+<a id="run-live-tests-deliberately"></a>
+
+## Run live tests
 
 Live suites are marked `#[ignore]` and name their prerequisites. Before
 running one, establish that the selected local services and credentials are

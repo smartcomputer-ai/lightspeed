@@ -15,9 +15,16 @@ export function createAuth(db: Db, env: ServerEnv) {
     database: drizzleAdapter(db, { provider: "pg", schema }),
     emailAndPassword: {
       enabled: true,
-      // Invite-only platform: accounts are created by an admin (or, later,
-      // through organization invitations); public signup stays closed.
+      // Invite-only platform: accounts are created by a platform admin (or,
+      // later, through organization invitations); public signup stays closed.
       disableSignUp: true,
+    },
+    account: {
+      // An external login never attaches to an existing user by e-mail: a
+      // provider account is a distinct identity until an administrator says
+      // otherwise. Local users are inserted with a verified e-mail, which
+      // would otherwise make them link targets.
+      accountLinking: { enabled: false },
     },
     ...(env.github
       ? {
@@ -29,7 +36,10 @@ export function createAuth(db: Db, env: ServerEnv) {
           },
         }
       : {}),
-    plugins: [organization(), admin(), bearer()],
+    // Organizations are universes. Their tables are the membership record;
+    // the plugin's own endpoints are not served (see `buildApp`): members and
+    // roles change only through the universe routes.
+    plugins: [organization({ allowUserToCreateOrganization: false }), admin(), bearer()],
   });
 }
 

@@ -22,7 +22,8 @@ Resources in one universe cannot resolve resources from another. Within a
 universe, the Platform handles user membership and access. The runtime's
 universe boundary does not itself provide permissions between individual users
 in that universe. This distinction matters when deciding which teams or
-customers should share resources.
+customers should share resources. [Access and security](../access-and-security/overview.md)
+follows a person's request through both layers.
 
 ## A session continues across runs
 
@@ -48,9 +49,6 @@ flowchart TB
   Observation["You send another observation"] --> Second
 ```
 
-Each task starts a run. The session connects those runs through the conversation
-and setup it retains between them.
-
 Lightspeed records the events that make up the session in persistent storage.
 The runtime can reconstruct its state after a worker restart, and Temporal
 coordinates the outstanding work. The browser is a client of that process:
@@ -70,8 +68,9 @@ the agent to distinguish evidence from speculation and gives it access to a
 workspace for notes.
 
 Starting two sessions from that profile gives them the same setup and separate
-conversations. The profile is not a running agent, and editing it does not
-automatically reconfigure sessions already created from it.
+conversations. Editing the profile leaves those sessions' setup in place until
+you apply it again. A bot's managed Main session is an exception: it picks up
+profile changes when idle. See [Profiles and instructions](../using-lightspeed/profiles-and-instructions.md).
 
 Capabilities determine which tools a session can use. Giving an agent
 instructions to search the web or run a command does not grant the corresponding
@@ -115,9 +114,9 @@ flowchart TB
   Notes -.->|Explicit file transfer when needed| Copy
 ```
 
-The two paths give the session different operations. A workspace is enough
-to read and write notes; running a script also needs a machine. The dotted
-arrow is a deliberate copy, not a shared mount or automatic synchronization.
+A workspace is enough to read and write notes; running a script also needs a
+machine. The dotted arrow shows the transfer needed to make the notes
+available to that script.
 
 ## Bots react to events
 
@@ -176,6 +175,6 @@ flowchart LR
 ```
 
 You can begin with a session and add these pieces as the work calls for them.
-The [quickstart](quickstart.md) gets a local installation running; the
+The [quickstart](quickstart.md) gets an installation running; the
 [first-agent walkthrough](first-agent.md) then builds a reusable agent that
 works with persistent files.

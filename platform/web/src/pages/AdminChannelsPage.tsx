@@ -6,7 +6,7 @@ import {
   type ChannelConnectorHealth,
   type ChannelConnectorStatus,
   type ChannelsStatus,
-  type OperatorChannelAccountListResponse,
+  type DeploymentChannelAccountListResponse,
 } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -33,7 +33,7 @@ import { useUniverses } from "@/lib/universes";
 export function AdminChannelsPage() {
   const accounts = useQuery({
     queryKey: ["admin-channel-accounts"],
-    queryFn: () => api<OperatorChannelAccountListResponse>("GET", "/api/v1/channel-accounts"),
+    queryFn: () => api<DeploymentChannelAccountListResponse>("GET", "/api/v1/channel-accounts"),
   });
   const universes = useUniverses();
   const status = useQuery({

@@ -636,6 +636,7 @@ impl EvalRuntime {
             .drive(
                 session_id.clone(),
                 CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                    requested_by: None,
                     notify_on_terminal: Vec::new(),
                     submission_id: None,
                     source: engine::RunRequestSource::Input {

@@ -31,37 +31,18 @@ another task can use the same configuration, workspace attachments, and accumula
 context. A **profile** supplies reusable setup when creating or configuring a
 session. It is resolved by the hosted runtime, outside the deterministic core.
 
-The session workflow owns setup, profile/configuration application, and runtime
-context refresh. It observes the desired toolset for every new run submission,
-including internal followups, through activities that read current records and
-grants. The gateway submits intent and waits for a correlated outcome. Tools
-publish at safe turn boundaries; cancellation and existing effects continue
-while a new submission's policy read is pending. Duplicate submissions resolve
-before fresh policy reads. Initial setup must finish before a session can run.
+The session workflow prepares configuration, profiles, and instructions before
+work begins. A configuration change is committed as one operation after all
+its parts validate; failed preparation leaves the previous setup in place.
+When a new run is submitted, the workflow also reads the current tool
+configuration and grants. Changes take effect at safe turn boundaries.
 
-Configuration, profile, and explicit refresh operations retain up to 256 compact
-result receipts across workflow rollover. Retained retries return their original
-result. Once a receipt expires, the workflow rejects the old request; callers
-must reload session state before submitting a new operation.
-
-These operations build a private candidate through ordinary engine command
-admission. Activities prepare context against the proposed configuration,
-instructions, and environment. After every command validates, the workflow
-publishes the complete event batch in one database transaction against the
-original session head. Failed preparation leaves the proposed changes
-unpublished; a concurrent session change rejects the candidate. Source
-invalidation is included in the batch. Storage confirms retries of an already
-committed batch, so a lost append response cannot apply the change twice.
-
-Environments have independent lifecycles. Their service owns provisioning,
-registration, credentials, power, and cleanup; environment runtime roles run
-reconciliation. Session configuration attaches the environments a session may
-use, each with its own access level; setup only activates one of them, filling
-an empty active pointer from a profile's default attachment or, for
-sub-agents, from the parent's active machine resolved at spawn. Session
-closure and deletion never close environments. Selection validates attachment
-membership and a nonterminal registry record without waking or probing the
-machine. Readiness checks and wake-on-use happen during actual use.
+Environments have independent lifecycles. A session's configuration lists
+which machines it may use and what it may do on each. Selecting a machine
+makes it active for subsequent tool calls. Use checks readiness and requests
+wake-up where the provider supports it; an offline registered machine must
+reconnect. Closing or deleting the session leaves the environment available
+for other work.
 
 The core represents a session as events reduced into state. Admission checks
 whether a command is valid against that state. Planning decides which fact or
@@ -75,11 +56,9 @@ result reconstructs the state from which the next decision was made. This also m
 possible to test the agent loop with controlled effect results, independently
 of a provider or workflow service.
 
-The boundary is explicit in [the core drive machine](../../../crates/engine/src/core/drive.rs):
-it asks for event appends or effect execution and resumes when the hosting
-code supplies committed entries or results. Storage interfaces and serializable
-request types can belong to this boundary without giving the core authority
-to perform the corresponding I/O.
+The [core drive machine](../../../crates/engine/src/core/drive.rs) expresses
+this separation in code: it asks the host to append events or execute effects,
+then resumes from the committed entries or results.
 
 ## Give payloads a home outside the workflow
 
@@ -142,18 +121,14 @@ that delivered work and results. They solve different recovery problems and
 both matter to a running deployment. A PostgreSQL session backup is not, by
 itself, a replacement for lost Temporal state.
 
-An idle or waiting session does not require a dedicated worker process or VM.
-Temporal retains the work needed to resume it, and shared workers process the
-next available tasks. There are still costs for durable state, workflow
-history, caches, and any compute deliberately kept alive. The design removes
-the requirement to keep an operating system running for each conversation;
-it does not make all idle resources free.
+An idle or waiting session needs no dedicated worker process or VM. Temporal
+retains the work needed to resume it, and shared workers process the next
+available tasks. Durable storage, workflow history, and any machines kept
+running still have a cost.
 
-The core and its drive interface are independent of Temporal. Local execution
-and tests can fulfill the same actions through other adapters, including the
-filesystem store. The supported hosted implementation uses Temporal and
-PostgreSQL today; that abstraction does not imply a second production workflow
-backend is already available.
+The supported hosted runtime uses Temporal and PostgreSQL. Local execution
+and tests can drive the same core through other adapters, including the
+filesystem store.
 
 ## Build product behavior around sessions
 
@@ -174,11 +149,16 @@ channels, and integrations evolve. The
 [controller page](tools-and-controller-workflows.md) explains the bindings,
 promises, and ownership that make these relationships durable.
 
-The Platform sits at another boundary. It owns people, login, organizations,
-memberships, and the browser application. Its PostgreSQL database is separate
-from the runtime database. The runtime remains usable through its public API
-without the Platform, and the Platform uses that API rather than importing
-reducer internals into browser clients.
+The Platform owns login, user accounts, universe membership, and the browser
+application. It checks each person's role and session visibility before
+calling the runtime with a service key and actor ID. The runtime checks the
+key's scope and method groups and records the actor for attribution.
+
+This separates a person's web access from a program's API access. A direct
+runtime key with the `session` group can reach private sessions in its
+universe. Once work is admitted, it runs for the universe; removing the
+requester's membership does not stop it. [Access and security](../access-and-security/overview.md)
+explains these policies and the separate checks on internal controllers.
 
 ## Attach compute when the task needs it
 
@@ -206,7 +186,9 @@ still running. Machine storage, daemon identity, and job state have their own
 lifecycle. [Environments](../environments/overview.md) explains how to choose
 and operate those resources.
 
-## Share infrastructure through explicit roles
+<a id="share-infrastructure-through-explicit-roles"></a>
+
+## Share infrastructure through runtime roles
 
 The hosted runtime remains one executable, `lightspeed-server`, with selectable
 roles. Combining roles in one process is convenient for a first installation;
@@ -235,7 +217,7 @@ A deployment can serve several universes over shared processes, database
 connections, and provider clients. Universe-bound queries, object references,
 and workflow identities keep tenant resources distinct. This is logical data
 isolation over shared infrastructure, with the limits described in
-[Multitenancy](../deployment/multi-tenancy.md).
+[Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md).
 
 ## Read the implementation by responsibility
 
@@ -253,4 +235,4 @@ The important source boundaries follow the same model:
 
 Use the root [workspace manifest](../../../Cargo.toml) for the complete current
 crate list. Follow [The agent loop and durability](agent-loop-and-durability.md)
-next to see exactly when a decision becomes a durable fact.
+next to see how a decision is recorded and recovered.

@@ -11,17 +11,16 @@ use api::{
     BoundWorkflowToolDispatchInput, ContextEntryInputView, ContextEntryKindView,
     ContextEntrySourceView, ContextEntryView, ContextMessageRoleView, ContextView, EventCursor,
     EventJoinsView, InputItem, LlmUsageView, ManagedSessionWorkflowToolsInput, MediaKind,
-    ModelConfig, PendingApprovalView, PrincipalKind, PrincipalRefView, ProviderContextDisplayView,
-    ProviderNativeToolExecutionView, RunAcceptedSourceView, RunFailureKindView,
-    RunStatus as ApiRunStatus, RunSummarySourceView, RunSummaryView, RunView, RunViewSource,
-    SessionEventKindView, SessionEventView, SessionManagementView, SessionRetentionView,
-    SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView, TokenEstimateView,
-    ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView, ToolCallMediaView,
-    ToolCallView, ToolEffectView, ToolItemStatus, ToolKindView, ToolParallelismView, ToolView,
-    WorkflowEndpointInput, WorkflowStartRefInput, WorkflowToolCompletionInput,
-    WorkflowToolCompletionKeySourceInput, WorkflowToolDeclarationInput,
-    WorkflowToolDefinitionInput, WorkflowToolKindInput, WorkflowToolSpecInput,
-    WorkflowToolTargetInput,
+    ModelConfig, PendingApprovalView, ProviderContextDisplayView, ProviderNativeToolExecutionView,
+    RunAcceptedSourceView, RunFailureKindView, RunStatus as ApiRunStatus, RunSummarySourceView,
+    RunSummaryView, RunView, RunViewSource, SessionEventKindView, SessionEventView,
+    SessionManagementView, SessionRetentionView, SessionStatus as ApiSessionStatus, SessionView,
+    TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
+    ToolCallDisplayView, ToolCallEventView, ToolCallMediaView, ToolCallView, ToolEffectView,
+    ToolItemStatus, ToolKindView, ToolParallelismView, ToolView, WorkflowEndpointInput,
+    WorkflowStartRefInput, WorkflowToolCompletionInput, WorkflowToolCompletionKeySourceInput,
+    WorkflowToolDeclarationInput, WorkflowToolDefinitionInput, WorkflowToolKindInput,
+    WorkflowToolSpecInput, WorkflowToolTargetInput,
 };
 use engine::{
     ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
@@ -55,6 +54,7 @@ pub struct ProjectSession<'a> {
     pub state: &'a CoreAgentState,
     pub record: &'a SessionRecord,
     pub retention: &'a SessionRetentionView,
+    pub access: &'a api::ResourceAccessSummary,
     pub run_limit: usize,
     pub run_cursor: Option<RunId>,
 }
@@ -112,10 +112,12 @@ impl<'a> CoreAgentProjector<'a> {
         };
 
         let session = SessionView {
+            access: params.access.clone(),
             id: params.session_id.as_str().to_owned(),
             display_name: params.record.display_name.clone(),
             metadata: params.record.metadata.clone(),
             status: session_status(params.state),
+            activity: session_activity(params.state),
             closed_at_ms: params.record.closed_at_ms,
             retention: params.retention.clone(),
             managed: params.record.managed,
@@ -777,6 +779,7 @@ impl<'a> CoreAgentProjector<'a> {
                             entries: project_context_entry_inputs(input),
                         },
                     },
+                    requested_by: attribution(accepted.requested_by.as_ref()),
                 }),
                 RunEvent::Started { run_id } => Ok(SessionEventKindView::RunStarted {
                     run_id: api_run_id(*run_id),
@@ -785,16 +788,20 @@ impl<'a> CoreAgentProjector<'a> {
                     run_id,
                     steering_id,
                     input,
+                    requested_by,
                 } => Ok(SessionEventKindView::RunSteeringAccepted {
                     run_id: api_run_id(*run_id),
                     steering_id: api_steering_id(*steering_id),
                     input: project_context_entry_inputs(input),
+                    requested_by: attribution(requested_by.as_ref()),
                 }),
-                RunEvent::CancellationRequested { run_id } => {
-                    Ok(SessionEventKindView::RunCancellationRequested {
-                        run_id: api_run_id(*run_id),
-                    })
-                }
+                RunEvent::CancellationRequested {
+                    run_id,
+                    requested_by,
+                } => Ok(SessionEventKindView::RunCancellationRequested {
+                    run_id: api_run_id(*run_id),
+                    requested_by: attribution(requested_by.as_ref()),
+                }),
                 RunEvent::Completed { run_id, output } => Ok(SessionEventKindView::RunCompleted {
                     run_id: api_run_id(*run_id),
                     output: output.as_ref().map(content_ref_to_api),
@@ -804,10 +811,18 @@ impl<'a> CoreAgentProjector<'a> {
                     kind: run_failure_kind_to_api(failure.kind.clone()),
                     message: self.run_failure_message(failure).await,
                 }),
-                RunEvent::Cancelled { run_id }
-                | RunEvent::ForceCancelled { run_id }
-                | RunEvent::QueuedCancelled { run_id } => Ok(SessionEventKindView::RunCancelled {
+                RunEvent::Cancelled { run_id } | RunEvent::ForceCancelled { run_id } => {
+                    Ok(SessionEventKindView::RunCancelled {
+                        run_id: api_run_id(*run_id),
+                        requested_by: None,
+                    })
+                }
+                RunEvent::QueuedCancelled {
+                    run_id,
+                    requested_by,
+                } => Ok(SessionEventKindView::RunCancelled {
                     run_id: api_run_id(*run_id),
+                    requested_by: attribution(requested_by.as_ref()),
                 }),
             },
             CoreAgentEvent::Approval(event) => match event {
@@ -837,7 +852,7 @@ impl<'a> CoreAgentProjector<'a> {
                         engine::ApprovalDecision::Rejected => ApprovalDecisionKind::Reject,
                     },
                     note: note.clone(),
-                    decided_by: decided_by.as_ref().map(approval_principal_to_api),
+                    decided_by: attribution(decided_by.as_ref()),
                 }),
                 engine::ApprovalEvent::Cancelled {
                     approval_id,
@@ -1864,15 +1879,15 @@ fn promise_source_name(source: &engine::PromiseSource) -> &'static str {
     }
 }
 
-fn approval_principal_to_api(principal: &engine::ApprovalPrincipal) -> PrincipalRefView {
-    PrincipalRefView {
-        kind: match principal.kind.as_str() {
-            "user" => PrincipalKind::User,
-            "service_account" => PrincipalKind::ServiceAccount,
-            _ => PrincipalKind::UniverseDefault,
-        },
-        id: principal.id.clone(),
-    }
+fn attribution(value: Option<&engine::Attribution>) -> Option<api::Attribution> {
+    Some(match value?.clone() {
+        engine::Attribution::Actor { id } => api::Attribution::Actor { id },
+        engine::Attribution::Key { prefix } => api::Attribution::Key { prefix },
+        engine::Attribution::Local => api::Attribution::Local,
+        engine::Attribution::Internal { component, cause } => {
+            api::Attribution::Internal { component, cause }
+        }
+    })
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {
@@ -1996,6 +2011,27 @@ pub fn session_status(state: &CoreAgentState) -> ApiSessionStatus {
         CoreAgentStatus::Closed => ApiSessionStatus::Closed,
         CoreAgentStatus::Open if state.runs.active.is_some() => ApiSessionStatus::Active,
         CoreAgentStatus::Open => ApiSessionStatus::Idle,
+    }
+}
+
+/// What the session is doing now, from its state: the same value lists read
+/// from the stored projection.
+pub fn session_activity(state: &CoreAgentState) -> api::SessionActivity {
+    match (&state.lifecycle.status, state.runs.active.as_ref()) {
+        (CoreAgentStatus::Open, Some(run)) if run.pending_approvals().next().is_some() => {
+            api::SessionActivity::Waiting
+        }
+        (CoreAgentStatus::Open, Some(_)) => api::SessionActivity::Working,
+        _ => api::SessionActivity::Idle,
+    }
+}
+
+/// The stored list projection of a session's activity.
+pub fn record_activity(record: &engine::storage::SessionRecord) -> api::SessionActivity {
+    match record.activity {
+        engine::storage::SessionActivity::Idle => api::SessionActivity::Idle,
+        engine::storage::SessionActivity::Working => api::SessionActivity::Working,
+        engine::storage::SessionActivity::Waiting => api::SessionActivity::Waiting,
     }
 }
 
@@ -3554,6 +3590,7 @@ mod tests {
             lifecycle_status: engine::storage::SessionLifecycleStatus::New,
             closed_at_seq: None,
             closed_at_ms: None,
+            activity: Default::default(),
             retention_root_session_id: session_id.clone(),
             delete_after_close_ms: None,
             delete_at_ms: None,
@@ -3573,6 +3610,10 @@ mod tests {
 
         let session = projector
             .project_session(ProjectSession {
+                access: &api::ResourceAccessSummary {
+                    visibility: api::Visibility::Universe,
+                    created_by: Some(api::Attribution::Local),
+                },
                 session_id: &session_id,
                 state: &state,
                 record: &record,

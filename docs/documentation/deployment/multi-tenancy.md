@@ -1,154 +1,21 @@
-# Multitenancy
+# Managing universes
 
-One Lightspeed deployment can serve many universes. Each universe contains
-its own sessions, profiles, workspaces, bots, credentials, channels, and
-environment records, while the deployment supplies shared runtime processes
-and infrastructure. This allows several teams or customers to use the same
-installation without placing their agent data in the same logical space.
+A universe has a runtime UUID and a Platform organization linked to it. The
+runtime owns the team's sessions and resources; the Platform owns its members,
+roles, and display information. Preserve that association when adopting,
+recovering, or retiring a universe.
 
-A universe is the tenant boundary. It is separate from a person signing into
-the Platform, a VFS workspace containing files, or an execution environment
-providing a machine. One person can belong to several universes, and one
-universe can contain many workspaces and machines.
+For the isolation model and shared infrastructure, see
+[Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md).
+For sign-in and membership, see [People and roles](../access-and-security/people-and-roles.md).
 
-This page describes the current isolation model and its limits. Follow
-[Authentication and access](authentication-and-tenancy.md) to configure the
-gateway, create accounts, and issue keys.
+## Create a universe
 
-## Follow a request into its universe
-
-Consider two teams, Acorn and Cedar. Both can have a profile called
-`release-editor`, a workspace called `release-notes`, and a session with the
-same session ID. Those identifiers are resolved within the selected universe,
-so the records remain distinct.
-
-When someone opens Acorn in the Platform, the Platform checks their access
-and looks up Acorn's runtime UUID. It sends that UUID on its private request
-to the runtime. The gateway resolves a universe-bound service before
-dispatching the operation. A workspace read through that service therefore
-looks for Acorn's workspace, even if Cedar has an identically named one.
-
-An API-key gateway reaches the same boundary differently: it resolves the
-key to its stored universe and principal. Ordinary resource methods do not
-accept a caller-selected universe field that can override that resolution.
-Operator methods sit outside this rule because they manage deployment
-resources and may explicitly address a universe UUID.
-
-In the multitenant modes, unknown universes are rejected. A misspelled UUID
-does not create a new tenant. `single` mode has a different purpose: it pins
-ordinary requests to `LIGHTSPEED_PG_UNIVERSE_ID` and ensures that universe
-exists.
-
-## How the boundary is represented
-
-Isolation follows the universe through storage and execution:
-
-| Layer | Current mechanism |
-| --- | --- |
-| Runtime API | Request authentication resolves a universe-bound service before ordinary method dispatch. |
-| PostgreSQL | Universe-bound queries and composite keys/foreign keys associate tenant records with `universe_id`. |
-| Content-addressed storage | The blob catalog includes the universe in its key. External objects live under `<prefix>/universes/<uuid>/cas/…`. |
-| Blob cache | Shared process caches include both universe UUID and blob reference in their lookup key. |
-| Temporal | Workflow identities include the universe, and workers resolve the corresponding universe service. |
-| Encrypted secrets | Authenticated encryption binds ciphertext to the universe UUID, secret ID, and secret kind. |
-
-For a session, the Temporal workflow ID is `<universe-uuid>/<session-id>`.
-Bot controllers and channel conversations use their own universe-prefixed
-workflow identities. Sub-agents retain the parent's universe; delegation
-does not create an escape into another tenant.
-
-Identical content in two universes is stored separately. A digest identifying
-Acorn's blob does not by itself make that content readable through Cedar's
-service. There is no cross-universe physical blob deduplication.
-
-The PostgreSQL boundary is implemented by application queries and schema
-constraints. The migrations do not define PostgreSQL row-level security
-policies. A database administrator, storage administrator, or operator with
-deployment access therefore remains outside the tenant boundary. Tenant
-isolation does not limit the authority of the installation's own operators.
-
-## What the deployment shares
-
-The gateway and workers share a PostgreSQL pool, optional object-store
-connection, provider clients, process memory, and other runtime resources.
-Universe services are created as needed over those shared resources; they do
-not allocate a separate database or worker fleet for every tenant.
-
-Several records also have deployment-wide meaning. The universe registry and
-runtime API-key registry support request routing. Environment providers are
-registered at deployment scope, then bound to individual universes. Daemon
-identities and provider-native channel account identities have deployment-wide
-uniqueness so the same external identity cannot be assigned independently to
-two tenants.
-
-Within a deployment, universes share the session, bot, and channel task queues.
-This supplies common execution capacity, but it does not reserve CPU, memory,
-queue throughput, or provider quota for each universe. Feature-specific
-limits, such as a bot's admission policy, do not establish tenant-wide fairness
-or resource quotas.
-
-If two deployments use one Temporal namespace, give all three runtime queues
-distinct names: `LIGHTSPEED_TASK_QUEUE`, `LIGHTSPEED_TASK_QUEUE_BOTS`, and
-`LIGHTSPEED_TASK_QUEUE_CHANNELS`. Changing the session queue does not rename
-the others. Separate namespaces also separate workflow identity space and
-namespace settings. A universe does not automatically get its own namespace.
-
-### Credentials and billing
-
-A universe can configure its own model providers and credentials. Those
-records take precedence over deployment fallbacks. When a built-in provider
-record is absent, a deployment-level key can supply the request, so several
-universes may consume the same provider account and quota. A disabled or
-unusable universe record blocks fallback instead of silently using the shared
-key. [Models and credentials](../using-lightspeed/models-and-credentials.md)
-explains that distinction.
-
-Encrypted grants and secrets use one `LIGHTSPEED_SECRETS_MASTER_KEY` for the
-deployment. The universe binding prevents ciphertext from being moved to
-another universe and decrypted there, but there is no separately managed
-encryption key per tenant. This setting encrypts secret material; it does not
-encrypt every database row or every CAS object. Storage encryption and access
-to deployment keys belong to the infrastructure configuration.
-
-### Machines and networks
-
-An environment record belongs to a universe. Its machine has the filesystem,
-network access, and operating-system permissions provided by the operator or
-environment provider. Registering a machine in a universe does not establish
-a new operating-system sandbox around it.
-
-Choose provider templates, host permissions, network policy, and credential
-bindings to match the work the tenant should perform. The
-[environment overview](../environments/overview.md),
-[Incus guide](../environments/incus-vms.md), and
-[networking guide](../environments/networking-and-ingress.md) explain these
-boundaries. Files in a universe's VFS and files on a machine remain separate.
-
-## Access inside a universe
-
-The Platform maintains people, organizations, memberships, and roles. It can
-give one user access to Acorn and Cedar while allowing another into only
-Acorn. Platform administrators can manage all universes. Its authenticated
-user directory exposes names, email addresses, and user IDs across the
-installation for account selection; each universe does not have an isolated
-identity directory.
-
-The runtime does not reproduce the Platform membership checks. A request
-already admitted to ordinary universe methods is not further restricted by
-per-user resource ACLs. A principal attached to a credential or request does
-not make its sessions, files, or grants private from other callers authorized
-for those methods in the same universe.
-
-There are additional checks for service-scoped methods, which require a
-service-account principal in multitenant modes. This is a distinction between
-ordinary and trusted service access, rather than a general permissions system
-for individual resources.
-
-Do not assume every Platform request carries the signed-in user's principal
-through to the runtime. Some paths record user identity explicitly, including
-API-key creation and authored message origins; ordinary Platform proxy calls
-can use the default runtime principal. The current behavior does not provide
-a complete user-attributed audit trail for all runtime operations.
+A Platform administrator creates universes under **Platform admin → Universes**.
+Creation adds a runtime universe and a Platform organization, with the creator as an
+Admin member. Universe admins then add existing accounts under **Members**.
+Creating a runtime universe directly through the API or server CLI creates
+only the runtime record; use **Adopt** to connect it to the Platform.
 
 ## Keep Platform and runtime records aligned
 
@@ -157,7 +24,7 @@ records the association in the Platform database. Because these are separate
 systems, an interrupted operation or a partial restore can leave one side
 without the other.
 
-**Admin → Universes** reconciles the configured default runtime inventory.
+**Platform admin → Universes** reconciles the configured default runtime inventory.
 **Adopt** connects an existing runtime universe to the Platform without
 replacing its contents. **Create in engine** creates an empty missing runtime
 universe. It cannot restore deleted sessions or files. Universes using custom
@@ -176,13 +43,13 @@ runtime has no corresponding archived state. Bots, schedules, channels, and
 previously admitted work can continue. Archiving is therefore an organization
 step, not an access-revocation or shutdown mechanism.
 
-Retiring a tenant requires deliberate cleanup before permanent deletion:
+Retire the tenant's running work before permanently deleting its records:
 
 1. Stop new submissions, disable or remove triggers, and stop external clients
    and connector ingress for the universe. Revoke runtime keys and remove
    unwanted Platform access.
 2. Inspect active sessions, bot activity, channel deliveries, and environment
-   jobs. Let required work finish or cancel it deliberately, accounting for
+   jobs. Let required work finish or cancel it, accounting for
    effects it already performed. Close retired bots to disable their triggers,
    remove their schedules, and request controller teardown.
 3. Close the universe's environments and confirm the intended machine cleanup.
@@ -202,22 +69,22 @@ organization and associated records.
 That purge does not enumerate every bot, channel, or environment-job workflow
 or every schedule; it does not destroy provider VMs, erase retained Temporal
 histories, remove connector-local authentication files, or broadcast cache
-eviction to other runtime replicas. Do not treat the delete button as a
-complete infrastructure erasure operation. Use the cleanup and verification
-steps above, and retain the operator records needed to investigate partial
-failure.
+eviction to other runtime replicas. Use the cleanup and verification steps
+above to remove those remaining resources, and retain the records needed to
+investigate a partial failure.
 
-## Evaluate the boundary for your deployment
 
-Universes provide logical separation of agent data and execution identity
-within one installation. Separate deployments are the appropriate unit when
-tenants require independent operator access, database credentials, encryption
-keys, infrastructure capacity, or failure domains. Within either arrangement,
-review machine permissions and shared provider credentials separately.
+<a id="follow-a-request-into-its-universe"></a>
+<a id="how-the-boundary-is-represented"></a>
+<a id="what-the-deployment-shares"></a>
+<a id="credentials-and-billing"></a>
+<a id="machines-and-networks"></a>
+<a id="access-inside-a-universe"></a>
+<a id="evaluate-the-boundary-for-your-deployment"></a>
 
-To check an installation, create two disposable universes with different
-content under the same workspace name. Read each through its own authorized
-client, and verify that missing or invalid tenant credentials fail. Inspect
-the corresponding universe-prefixed workflow identities. These checks
-exercise the configured routing; they complement the underlying storage and
-authorization design rather than establishing every isolation property.
+## Access and isolation
+
+The explanation of universe boundaries now lives in
+[Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md).
+[Private and shared work](../access-and-security/private-and-shared-work.md)
+explains who can read and control sessions inside a universe.

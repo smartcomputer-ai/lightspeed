@@ -1,6 +1,7 @@
 import {
   LightspeedClient,
   LightspeedTransportError,
+  type CallerAccess,
   type LightspeedClientOptions,
 } from "@lightspeed-ai/agent-client";
 import type { RequestAuthContext } from "./request-auth.js";
@@ -35,13 +36,15 @@ export function createUpstreamClientFactory(
   };
 }
 
-export async function validateUpstreamIdentity(
+/// Authenticates the request's credential upstream and returns what it may
+/// call, which decides the tools this request sees.
+export async function identifyCaller(
   factory: UpstreamClientFactory,
   auth: RequestAuthContext,
   signal: AbortSignal,
   timeoutMs: number,
-): Promise<void> {
-  await factory(auth).call(
+): Promise<CallerAccess> {
+  const response = await factory(auth).call(
     "initialize",
     {
       clientInfo: { name: "lightspeed-configurator-mcp", version: "0.0.0" },
@@ -49,6 +52,7 @@ export async function validateUpstreamIdentity(
     },
     { signal: requestSignal(signal, timeoutMs) },
   );
+  return response.result.caller;
 }
 
 export function requestSignal(signal: AbortSignal, timeoutMs: number): AbortSignal {

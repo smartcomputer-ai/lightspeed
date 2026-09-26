@@ -60,7 +60,7 @@ export function UniverseSwitcher({
               />
             }
           >
-            <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
               <Orbit className="size-4" />
             </div>
             <div className="grid flex-1 text-left leading-tight">
@@ -84,7 +84,7 @@ export function UniverseSwitcher({
             {mine.map((universe) => (
               <DropdownMenuItem
                 key={universe.id}
-                onClick={() => navigate(universeHome(universe.slug))}
+                onClick={() => navigate(universeHome(universe))}
               >
                 <span className="truncate">{universe.name}</span>
                 {universe.id === active?.id && <Check className="ml-auto size-4" />}
@@ -128,7 +128,7 @@ export function NewUniverseDialog({
       await queryClient.invalidateQueries({ queryKey: ["universes"] });
       onOpenChange(false);
       setName("");
-      navigate(universeHome(created.slug));
+      navigate(universeHome(created));
     },
   });
 

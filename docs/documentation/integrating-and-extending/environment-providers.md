@@ -5,7 +5,7 @@ environment protocol. It translates requests such as creating, waking, or
 closing an environment into the infrastructure it controls, then makes that
 environment's filesystem and process service reachable.
 
-The provider depends on the protocol boundary. It does not need Lightspeed's
+The provider implements the environment protocol. It does not need Lightspeed's
 database, API implementation, engine, or Temporal runtime. The included Incus
 provider demonstrates that separation. If you only need to connect an existing
 machine, [outbound daemon registration](../environments/bring-your-own-compute.md)
@@ -42,20 +42,18 @@ Your provider must serve that route and reach the appropriate target's data
 endpoint. This is distinct from the public outbound registration routes used
 by bring-your-own daemons.
 
-The current connection configuration does not supply an application bearer
-token or arbitrary authentication headers to provider controllers. The Incus
-implementation relies on its protected deployment network and transport
-boundary. Plan that boundary explicitly; a provider URL field alone is not
-an authorization mechanism for a publicly exposed controller.
+The current connection configuration does not supply a bearer token or
+authentication headers to provider controllers. Keep that connection on a
+protected network, as the Incus deployment does; the configured URL does not
+authenticate callers to a publicly exposed controller.
 
 ## Start with the protocol types
 
 The [environment protocol crate](../../../crates/environment-protocol/src/lib.rs)
-defines transport-independent controller and data messages. The current
-protocol version is 2. Messages use their defined camelCase fields and standard
-base64 for byte payloads. The initialization handshake establishes protocol
-compatibility and advertised capabilities; implementation/build information
-helps diagnostics but does not authenticate a peer.
+defines controller and data messages, wire encoding, and the current handshake
+version. Start from those types and their serialization fixtures. The handshake
+checks protocol compatibility and advertises capabilities; build information
+helps diagnose a mismatch but does not authenticate a peer.
 
 The [typed client](../../../crates/environment-client/src/lib.rs) and
 [Incus provider](../../../crates/environment-provider-incus/README.md) are useful
@@ -118,7 +116,7 @@ native resources. This allows the provider process to restart and reconcile
 without a private database. Another provider can use different persistence,
 but must preserve the same ownership and retry properties.
 
-Adoption transfers ownership deliberately. In the Incus implementation, it
+Adoption transfers ownership. In the Incus implementation, it
 replaces the source VM's networking/profiles with the managed binding policy,
 and a later close destroys the adopted VM. Document your provider's adoption
 effects as part of its contract rather than presenting adoption as a harmless
@@ -151,12 +149,10 @@ surface again. The daemon already provides filesystem confinement, process
 groups, output cursors, PTYs, background jobs, credential transfer, and idle
 observation. Your provider still owns routing and target lifecycle.
 
-A custom data server must accept `initialize`, return a compatible version,
-connection ID, capabilities, and implementation information, then accept the
-`initialized` notification. A default working directory is optional in the
-response. Its real capabilities must agree with the
-controller's target summary. Declaring support for an operation creates an
-expectation that the operation behaves as the protocol specifies.
+A custom data server must implement the `initialize`/`initialized` handshake
+and the operations it advertises. Its capabilities must agree with the
+controller's target summary. Use the protocol types for the exact handshake
+fields and response shape.
 
 Pay attention to the state that survives an individual socket:
 
@@ -195,7 +191,9 @@ Return the protocol's string-coded errors, such as `notFound`, `forbidden`,
 `conflict`, `unsupported`, or `capabilityUnavailable`. These are distinct from
 the public Lightspeed API's numeric JSON-RPC error mapping.
 
-## Test the provider boundary
+<a id="test-the-provider-boundary"></a>
+
+## Test the provider
 
 Start with serialization fixtures and the typed client's expectations. The
 protocol and client unit suites can run without provisioning infrastructure:
@@ -216,12 +214,12 @@ This is a useful compatibility check, not a complete controller/process/job
 test suite. Also exercise ambiguous create retries, conflicting request
 identity, cross-binding access, stale incarnations, daemon startup lag,
 disconnect/reconnect, duplicate process/job submissions, advertised power
-transitions, and ingress teardown. Infrastructure-backed tests need a
-deliberately configured disposable account or project.
+transitions, and ingress teardown. Use a disposable account or project for
+infrastructure-backed tests.
 
 ## Register and verify it in Lightspeed
 
-Register the provider through `operator/environment-providers/put`, create an
+Register the provider through `deployment/environment-providers/put`, create an
 enabled universe binding, and inspect the returned templates. The
 [Incus setup guide](../environments/incus-vms.md) shows the current registration
 and binding procedure; use your provider's controller URL and templates.
@@ -232,7 +230,7 @@ wake it, and close it. Confirm the infrastructure target and any ingress are
 actually removed. Verify that retrying the same create does not allocate a
 second machine and that stale identity cannot access a replacement.
 
-| Symptom | Likely boundary |
+| Symptom | What to inspect |
 | --- | --- |
 | Provider registration succeeds but calls fail | Supported WebSocket transport, `/control` URL shape, and private reachability. |
 | VM runs but environment never becomes ready | Guest daemon startup and data handshake, including the derived route. |

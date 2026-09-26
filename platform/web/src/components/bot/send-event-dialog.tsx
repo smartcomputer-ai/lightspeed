@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useActionPermissions } from "@/lib/permissions";
 import { api } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +26,8 @@ export function SendEventDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const permissions = useActionPermissions(universeId);
+  const invoke = permissions.can("invoke_bot");
   const queryClient = useQueryClient();
   const [kind, setKind] = useState("operator.requested");
   const [summary, setSummary] = useState("");
@@ -32,6 +35,7 @@ export function SendEventDialog({
   const [error, setError] = useState<string | null>(null);
   const send = useMutation({
     mutationFn: () => {
+      if (!invoke) throw new Error("You do not have permission to invoke this bot.");
       let parsed: unknown = undefined;
       if (data.trim()) parsed = JSON.parse(data);
       return api("POST", `/api/v1/universes/${universeId}/bots/${botId}/events`, {
@@ -58,7 +62,7 @@ export function SendEventDialog({
     send.mutate();
   };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open && invoke} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Send event</DialogTitle>
@@ -97,7 +101,7 @@ export function SendEventDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={send.isPending || !kind.trim() || !summary.trim()}>
+            <Button type="submit" disabled={!invoke || send.isPending || !kind.trim() || !summary.trim()}>
               {send.isPending ? "Sending…" : "Send event"}
             </Button>
           </DialogFooter>

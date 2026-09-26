@@ -134,7 +134,7 @@ the checkout, replaces `dist/`, and runs dependency installs there. A dirty
 checkout can otherwise package local edits while reporting the current HEAD
 as its source identity.
 
-The Makefile provides three entry points:
+The Makefile separates artifact packaging from image assembly:
 
 ```bash
 make release-dist
@@ -202,7 +202,7 @@ PostgreSQL. It checks `main` again before exposing the public snapshot alias:
 The bundle's manifest supplies the component digests. Pin that coherent set
 instead of choosing independently moving component references. A superseded
 run can leave staged objects without a completed public snapshot; the
-finished bundle is the publication boundary a consumer should use.
+finished bundle is the source to use for a deployment.
 
 ## Tagged releases
 

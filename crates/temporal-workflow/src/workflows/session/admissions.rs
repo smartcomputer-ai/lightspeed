@@ -293,6 +293,7 @@ async fn preprocess_input_entries(
                     submission_id: request.submission_id,
                     run_config: request.run_config,
                     notify_on_terminal: request.notify_on_terminal,
+                    requested_by: request.requested_by,
                 },
             )
         }
@@ -334,11 +335,14 @@ async fn preprocess_input_entries(
     }
 }
 
+// Held only while one admission is preprocessed.
+#[allow(clippy::large_enum_variant)]
 enum InputPreprocessRebuild {
     RequestRun {
         submission_id: Option<SubmissionId>,
         run_config: RunConfig,
         notify_on_terminal: Vec<engine::RunTerminalNotifyIntent>,
+        requested_by: Option<engine::Attribution>,
     },
     UpsertContext {
         expected_revision: Option<u64>,
@@ -353,8 +357,10 @@ impl InputPreprocessRebuild {
                 submission_id,
                 run_config,
                 notify_on_terminal,
+                requested_by,
             } => Ok(CoreAgentCommand::RequestRun(engine::RunRequestCommand {
                 notify_on_terminal,
+                requested_by,
                 submission_id,
                 source: engine::RunRequestSource::Input { input },
                 run_config,

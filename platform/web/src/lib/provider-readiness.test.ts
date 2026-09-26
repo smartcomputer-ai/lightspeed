@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addIntegrationHref, summarizeProviderReadiness } from "./provider-readiness";
+import { addModelProviderHref, summarizeProviderReadiness } from "./provider-readiness";
 
 const provider = (providerId: string, credential: "configured" | "missing" | "invalid") => ({
   providerId,
@@ -31,16 +31,16 @@ describe("provider readiness", () => {
     expect(summarizeProviderReadiness(undefined).ready).toBe(true);
   });
 
-  it("encodes reserved characters in add-integration kinds", () => {
-    const href = addIntegrationHref("acme", "custom provider/alpha?x=1&y=2#fragment");
+  it("encodes reserved characters in add-provider kinds", () => {
+    const href = addModelProviderHref("acme", "custom provider/alpha?x=1&y=2#fragment");
     expect(href).toBe(
-      "/u/acme/settings/integrations?add=custom%20provider%2Falpha%3Fx%3D1%26y%3D2%23fragment",
+      "/u/acme/models?add=custom%20provider%2Falpha%3Fx%3D1%26y%3D2%23fragment",
     );
   });
 
-  it("builds the add-integration deep link", () => {
-    expect(addIntegrationHref("acme", "openAiApiKey")).toBe(
-      "/u/acme/settings/integrations?add=openAiApiKey",
+  it("builds the add-provider deep link", () => {
+    expect(addModelProviderHref("acme", "openAiApiKey")).toBe(
+      "/u/acme/models?add=openAiApiKey",
     );
   });
 });

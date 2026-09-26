@@ -117,7 +117,8 @@ export function modelProviderName(provider: SecretProvider): string {
 }
 
 
-/// The universe secrets inventory (shared query key with the Secrets page).
+/// The universe secrets inventory (shared query key with the Models and
+/// Credentials pages).
 export function useSecretsInventory(universeId: string, enabled = true) {
   return useQuery({
     queryKey: ["secrets", universeId],

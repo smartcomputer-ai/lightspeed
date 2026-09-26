@@ -6,15 +6,15 @@ editor: an agent that reads a short change list and writes release notes you
 can inspect and revise.
 
 Start with a running installation, a universe, and a connected model from the
-[quickstart](quickstart.md). Use a universe owner/admin or platform administrator
-account to manage profiles, workspaces, and sessions. The agent will use VFS
-file tools, so it needs no execution environment.
+[quickstart](quickstart.md). Use an Operator or Admin account to create the
+profile and workspace. The agent will use VFS file tools, so it needs no
+execution environment.
 
 ## Give the agent source material
 
 Open **Workspaces** and choose the plus button labeled **New workspace**.
-Enter `Release notes` as the **Display name** and `release-notes` as the
-**Workspace id**, then choose **Create**.
+Enter `Release notes` as the **Display name**. The derived ID is
+`release-notes`; keep it and choose **Create**.
 
 In that workspace, choose **New file**, enter `changes.md` as the **Path**,
 and choose **Create**. Paste this fictional product change list into the file
@@ -35,8 +35,8 @@ at a particular path.
 ## Create a reusable profile
 
 Open **Profiles** and choose the plus button labeled **New profile**. Set
-**Display name** to `Release editor`, **Profile id** to `release-editor`,
-and **Start from** to **Empty profile**. Choose **Create**.
+**Display name** to `Release editor`. Keep the derived ID `release-editor`
+and the **Starts empty** default, then choose **Create**.
 
 In the profile editor, enter these **Instructions**:
 
@@ -49,25 +49,23 @@ After saving, report the file path and any uncertainty that needs review.
 ```
 
 Under **Model configuration → Model**, select a model from your connected
-provider that supports tool calls. Select it explicitly so the profile does
-not depend on a different deployment default.
+provider that supports tool calls.
 
 Instructions describe the work, but they do not grant access to files. Enable
 **Virtual File System: Files, Instructions, Skills**.
 
-Under **Workspace attachments**, choose **Add link** and configure:
+Under **Workspace attachments**, choose **Add workspace** and configure:
 
 | Field | Value |
 | --- | --- |
-| Target type | Workspace |
 | Workspace | Release notes (`release-notes`) |
 | Session path | `/workspace` |
-| Access | Edit |
+| Access | Read and write |
 
-Leave the other capabilities and prompt/skill roots unset, then choose
-**Save**. The profile now links an editable workspace, and the link is what
-installs the file tools: any attachment grants reading, and an **Edit** link adds
-writing. A **Read** link could not accept the release notes.
+Keep the other settings at their defaults, then choose **Save**. The workspace
+attachment gives the agent file tools. **Read and write** access lets it save
+the release notes; **Read only** would let it inspect the source but not save
+the result.
 
 The session path is how this agent sees the workspace. Its source file will
 be `/workspace/changes.md`. In the workspace browser, the same file is simply
@@ -105,10 +103,6 @@ that it describes the export button, corrected overdue status, renamed page,
 and compatibility statement. The page should not add claims that were absent
 from `changes.md`.
 
-This is the first useful result: the agent produced a persistent artifact
-from explicit source material, and you can inspect the operations that created
-it.
-
 ## Continue the same session
 
 Return to **First release notes** and send:
@@ -135,9 +129,9 @@ Existing sessions keep their setup until you explicitly change or reapply it.
 
 | Symptom | What to check |
 | --- | --- |
-| The agent prints release notes in chat but never saves a file | Confirm that the task asks for a saved file and the workspace attachment has **Edit** access. Inspect the transcript for an actual write operation. |
+| The agent prints release notes in chat but never saves a file | Confirm that the task asks for a saved file and the workspace attachment has **Read and write** access. Inspect the transcript for a write operation. |
 | The agent cannot find `changes.md` | Check the workspace attachment and session path. The agent needs `/workspace/changes.md`; the workspace browser shows `changes.md`. |
-| The write is refused | The workspace attachment must use **Edit** access; a **Read** link or a snapshot never accepts writes. |
+| The write is refused | The workspace attachment must use **Read and write** access; a **Read only** attachment or a snapshot never accepts writes. |
 | Fixing the profile does not fix the session | Create a fresh session from the corrected profile, or explicitly update the existing session's setup. |
 | The file contains unsupported claims | Revise the instructions or ask for a correction against the source. Tool success verifies that a file was written, not that its contents are correct. |
 

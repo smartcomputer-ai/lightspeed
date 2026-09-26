@@ -232,7 +232,7 @@ pub(super) async fn failed_tool_call_result(
     })
 }
 
-async fn write_error_blob(
+pub(super) async fn write_error_blob(
     blobs: &dyn BlobStore,
     message: impl Into<String>,
 ) -> Result<BlobRef, BlobStoreError> {

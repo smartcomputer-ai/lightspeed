@@ -10,13 +10,13 @@ mod support;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use api::{
-    AgentApiService, EnvironmentCloseParams, EnvironmentCreateParams, EnvironmentIngressPutParams,
-    EnvironmentLifecycleStatusView, EnvironmentListParams, EnvironmentProviderBindingStatusView,
-    EnvironmentTemplateListParams, OperatorApiService, OperatorEnvironmentAdoptParams,
-    OperatorEnvironmentProviderConnection, OperatorEnvironmentProviderDeleteParams,
-    OperatorEnvironmentProviderPutParams, OperatorEnvironmentProviderTransport,
-    OperatorProviderBindingPutParams, OperatorUniverseCreateParams, SessionConfig,
-    SessionStartParams,
+    AgentApiService, DeploymentApiService, DeploymentEnvironmentAdoptParams,
+    DeploymentEnvironmentProviderConnection, DeploymentEnvironmentProviderDeleteParams,
+    DeploymentEnvironmentProviderPutParams, DeploymentEnvironmentProviderTransport,
+    DeploymentProviderBindingPutParams, DeploymentUniverseCreateParams, EnvironmentCloseParams,
+    EnvironmentCreateParams, EnvironmentIngressPutParams, EnvironmentLifecycleStatusView,
+    EnvironmentListParams, EnvironmentProviderBindingStatusView, EnvironmentTemplateListParams,
+    SessionConfig, SessionStartParams,
 };
 use api_projection::model_to_api;
 use engine::SessionId;
@@ -26,7 +26,7 @@ use support::live::{
 };
 use temporal_server::{
     DeploymentStores, UniverseRuntime, default_model_from_env,
-    gateway::{GatewayAgentApi, GatewayOperatorApi},
+    gateway::{GatewayAgentApi, GatewayDeploymentApi},
     pg_store_from_env,
 };
 use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
@@ -56,84 +56,107 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
         Some("http://127.0.0.1:18080".to_owned()),
         stores,
     )?);
-    let operator = GatewayOperatorApi::new(runtime.clone());
+    let operator = GatewayDeploymentApi::new(runtime.clone());
     let reconciler = tokio::spawn(runtime.clone().run_environment_reconciler());
+    // Direct service calls carry an explicit local request context.
+    use temporal_server::gateway::request_context::{
+        RequestContext, with_request_context as calling,
+    };
+    let deployment_caller = RequestContext::local(api::AccessScope::Deployment);
 
     let result = async {
         for universe_id in [universe_a, universe_b] {
-            operator
-                .create_universe(OperatorUniverseCreateParams {
+            calling(
+                deployment_caller.clone(),
+                operator.create_universe(DeploymentUniverseCreateParams {
                     universe_id: universe_id.to_string(),
-                })
-                .await?;
+                }),
+            )
+            .await?;
         }
-        operator
-            .put_environment_provider(OperatorEnvironmentProviderPutParams {
+        calling(
+            deployment_caller.clone(),
+            operator.put_environment_provider(DeploymentEnvironmentProviderPutParams {
                 provider_id: provider_id.clone(),
                 display_name: Some("Live fake provider".to_owned()),
-                controller_connection: OperatorEnvironmentProviderConnection {
+                controller_connection: DeploymentEnvironmentProviderConnection {
                     endpoint: "in-process".to_owned(),
-                    transport: OperatorEnvironmentProviderTransport::Provider {
+                    transport: DeploymentEnvironmentProviderTransport::Provider {
                         provider_type: "fake".to_owned(),
                     },
                 },
                 metadata: BTreeMap::new(),
-            })
-            .await?;
+            }),
+        )
+        .await?;
         for (universe_id, binding_id) in [(universe_a, "primary-a"), (universe_b, "primary-b")] {
-            operator
-                .put_environment_provider_binding(OperatorProviderBindingPutParams {
+            calling(
+                deployment_caller.clone(),
+                operator.put_environment_provider_binding(DeploymentProviderBindingPutParams {
                     universe_id: universe_id.to_string(),
                     binding_id: binding_id.to_owned(),
                     provider_id: provider_id.clone(),
                     status: EnvironmentProviderBindingStatusView::Enabled,
                     metadata: BTreeMap::new(),
                     expected_revision: None,
-                })
-                .await?;
+                }),
+            )
+            .await?;
         }
 
         let state_a = runtime.state_for(universe_a, false).await?;
         let state_b = runtime.state_for(universe_b, false).await?;
-        let templates = state_a
-            .api
-            .list_environment_templates(EnvironmentTemplateListParams {
-                binding_id: Some("primary-a".to_owned()),
-            })
-            .await?;
+        let caller_a = RequestContext::local(api::AccessScope::Universe {
+            universe_id: universe_a,
+        });
+        let caller_b = RequestContext::local(api::AccessScope::Universe {
+            universe_id: universe_b,
+        });
+        let templates = calling(
+            caller_a.clone(),
+            state_a
+                .api
+                .list_environment_templates(EnvironmentTemplateListParams {
+                    binding_id: Some("primary-a".to_owned()),
+                }),
+        )
+        .await?;
         assert_eq!(templates.result.templates.len(), 1);
         assert_eq!(templates.result.templates[0].template_id, "rust-v1");
 
-        let created = state_a
-            .api
-            .create_environment(EnvironmentCreateParams {
+        let created = calling(
+            caller_a.clone(),
+            state_a.api.create_environment(EnvironmentCreateParams {
                 request_id: format!("create-{suffix}"),
                 binding_id: "primary-a".to_owned(),
                 template_id: "rust-v1".to_owned(),
                 display_name: Some("Provisioned live VM".to_owned()),
                 metadata: BTreeMap::new(),
                 idle_policy: None,
-            })
-            .await?
-            .result
-            .environment;
-        let create_retry = state_a
-            .api
-            .create_environment(EnvironmentCreateParams {
+            }),
+        )
+        .await?
+        .result
+        .environment;
+        let create_retry = calling(
+            caller_a.clone(),
+            state_a.api.create_environment(EnvironmentCreateParams {
                 request_id: format!("create-{suffix}"),
                 binding_id: "primary-a".to_owned(),
                 template_id: "rust-v1".to_owned(),
                 display_name: None,
                 metadata: BTreeMap::new(),
                 idle_policy: None,
-            })
-            .await?
-            .result
-            .environment;
+            }),
+        )
+        .await?
+        .result
+        .environment;
         assert_eq!(create_retry.environment_id, created.environment_id);
 
-        let adopted = operator
-            .adopt_environment(OperatorEnvironmentAdoptParams {
+        let adopted = calling(
+            deployment_caller.clone(),
+            operator.adopt_environment(DeploymentEnvironmentAdoptParams {
                 universe_id: universe_b.to_string(),
                 request_id: format!("adopt-{suffix}"),
                 binding_id: "primary-b".to_owned(),
@@ -141,13 +164,15 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
                 take_ownership: true,
                 display_name: Some("Adopted live VM".to_owned()),
                 metadata: BTreeMap::new(),
-            })
-            .await?
-            .result
-            .environment;
+            }),
+        )
+        .await?
+        .result
+        .environment;
         assert_eq!(adopted.incarnation.template_id, None);
-        let adopt_retry = operator
-            .adopt_environment(OperatorEnvironmentAdoptParams {
+        let adopt_retry = calling(
+            deployment_caller.clone(),
+            operator.adopt_environment(DeploymentEnvironmentAdoptParams {
                 universe_id: universe_b.to_string(),
                 request_id: format!("adopt-{suffix}"),
                 binding_id: "primary-b".to_owned(),
@@ -155,66 +180,96 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
                 take_ownership: true,
                 display_name: None,
                 metadata: BTreeMap::new(),
-            })
-            .await?
-            .result
-            .environment;
+            }),
+        )
+        .await?
+        .result
+        .environment;
         assert_eq!(adopt_retry.environment_id, adopted.environment_id);
 
-        let created_ready = wait_for_status(
-            state_a.api.as_ref(),
-            &created.environment_id,
-            EnvironmentLifecycleStatusView::Ready,
+        let created_ready = calling(
+            caller_a.clone(),
+            wait_for_status(
+                state_a.api.as_ref(),
+                &created.environment_id,
+                EnvironmentLifecycleStatusView::Ready,
+            ),
         )
         .await?;
-        let adopted_ready = wait_for_status(
-            state_b.api.as_ref(),
-            &adopted.environment_id,
-            EnvironmentLifecycleStatusView::Ready,
+        let adopted_ready = calling(
+            caller_b.clone(),
+            wait_for_status(
+                state_b.api.as_ref(),
+                &adopted.environment_id,
+                EnvironmentLifecycleStatusView::Ready,
+            ),
         )
         .await?;
         assert!(created_ready.incarnation.provider_target_id.is_some());
         assert!(adopted_ready.incarnation.provider_target_id.is_some());
 
-        let listed_a = state_a
-            .api
-            .list_environments(EnvironmentListParams::default())
-            .await?;
-        let listed_b = state_b
-            .api
-            .list_environments(EnvironmentListParams::default())
-            .await?;
+        let listed_a = calling(
+            caller_a.clone(),
+            state_a
+                .api
+                .list_environments(EnvironmentListParams::default()),
+        )
+        .await?;
+        let listed_b = calling(
+            caller_b.clone(),
+            state_b
+                .api
+                .list_environments(EnvironmentListParams::default()),
+        )
+        .await?;
         assert_eq!(listed_a.result.environments.len(), 1);
         assert_eq!(listed_b.result.environments.len(), 1);
 
-        let ingress = state_a
-            .api
-            .put_environment_ingress(EnvironmentIngressPutParams {
-                environment_id: created.environment_id.clone(),
-                enabled: true,
-            })
-            .await?;
+        let ingress = calling(
+            caller_a.clone(),
+            state_a
+                .api
+                .put_environment_ingress(EnvironmentIngressPutParams {
+                    environment_id: created.environment_id.clone(),
+                    enabled: true,
+                }),
+        )
+        .await?;
         assert_eq!(
             ingress.result.environment.public_endpoint.as_deref(),
             Some("https://fake.env.test")
         );
-        state_a
-            .api
-            .put_environment_ingress(EnvironmentIngressPutParams {
-                environment_id: created.environment_id.clone(),
-                enabled: false,
-            })
-            .await?;
+        calling(
+            caller_a.clone(),
+            state_a
+                .api
+                .put_environment_ingress(EnvironmentIngressPutParams {
+                    environment_id: created.environment_id.clone(),
+                    enabled: false,
+                }),
+        )
+        .await?;
 
-        for (api, environment_id) in [
-            (state_a.api.as_ref(), created.environment_id.as_str()),
-            (state_b.api.as_ref(), adopted.environment_id.as_str()),
+        for (api, caller, environment_id) in [
+            (
+                state_a.api.as_ref(),
+                &caller_a,
+                created.environment_id.as_str(),
+            ),
+            (
+                state_b.api.as_ref(),
+                &caller_b,
+                adopted.environment_id.as_str(),
+            ),
         ] {
-            api.close_environment(EnvironmentCloseParams {
-                environment_id: environment_id.to_owned(),
+            calling(caller.clone(), async {
+                api.close_environment(EnvironmentCloseParams {
+                    environment_id: environment_id.to_owned(),
+                })
+                .await?;
+                wait_for_status(api, environment_id, EnvironmentLifecycleStatusView::Closed).await
             })
             .await?;
-            wait_for_status(api, environment_id, EnvironmentLifecycleStatusView::Closed).await?;
         }
         anyhow::Ok(())
     }
@@ -224,11 +279,15 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
     let _ = reconciler.await;
     runtime.evict(universe_a).await;
     runtime.evict(universe_b).await;
-    let _ = store_pg::delete_universe(&pool, universe_a).await;
-    let _ = store_pg::delete_universe(&pool, universe_b).await;
-    let _ = operator
-        .delete_environment_provider(OperatorEnvironmentProviderDeleteParams { provider_id })
-        .await;
+    for universe_id in [universe_a, universe_b] {
+        let _ = store_pg::delete_universe(&pool, universe_id).await;
+    }
+    let _ = calling(
+        deployment_caller.clone(),
+        operator
+            .delete_environment_provider(DeploymentEnvironmentProviderDeleteParams { provider_id }),
+    )
+    .await;
     result
 }
 
@@ -469,6 +528,7 @@ async fn run_environment_power_live_client(
     // Selection only records the environment. A paused machine stays paused
     // until an operation actually needs to use it.
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,

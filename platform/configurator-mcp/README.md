@@ -2,7 +2,7 @@
 
 Streamable HTTP MCP facade over a configurable generated subset of the
 universe-scoped Lightspeed JSON-RPC contract. Tools are generated from
-`crates/api/contract`; deployment-level `operator/*` methods can never be
+`crates/api/contract`; deployment-level `deployment/*` methods can never be
 exposed.
 
 The product guide, [Configurator MCP](../../docs/documentation/integrating-and-extending/configurator-mcp.md),
@@ -12,6 +12,9 @@ covers client setup, deployment authentication, and the management workflow.
 The default surface excludes managed-session creation, environment jobs,
 environment registration keys, and the redundant Lightspeed handshake.
 Edit that file and run `npm run generate` to tune the advertised surface.
+Each request then lists only the tools whose method group the caller's key
+holds, as reported by the runtime's `initialize` response; other tools are
+unknown to that caller.
 Tool descriptions come from the canonical Rust method manifest and focus on
 operational semantics such as revision guards, lifecycle prerequisites,
 idempotency, and secret handling.
@@ -40,7 +43,7 @@ is kept here for service-local convenience.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_AUTH_MODE` | `single` | `single`, `trusted-header`, or `api-key`; must match the upstream gateway |
+| `LIGHTSPEED_AUTH_MODE` | `single` | `single` or `authenticated`; must match the upstream gateway |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_HOST` | `127.0.0.1` | HTTP bind host |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | HTTP bind port |
 | `LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL` | `http://127.0.0.1:18080/rpc` | Lightspeed JSON-RPC endpoint |
@@ -50,16 +53,11 @@ is kept here for service-local convenience.
 | `LIGHTSPEED_CONFIGURATOR_MCP_UPSTREAM_TIMEOUT_MS` | `60000` | Per-probe and per-tool upstream timeout |
 | `LIGHTSPEED_CONFIGURATOR_MCP_SHUTDOWN_TIMEOUT_MS` | `10000` | Grace period before open HTTP connections are closed |
 
-In `trusted-header` mode, an authenticating reverse proxy must inject
-`x-lightspeed-universe` and may inject `x-lightspeed-principal`. Direct client
-access to that listener is unsafe. In `api-key` mode, clients send their
-Lightspeed key as `Authorization: Bearer lsk_...`; the Configurator does not
-store or resolve it locally.
-
-For local development and tests, `dev.sh full` configures the Runtime itself as
-that trusted caller for the exact loopback Configurator URL. This route is
-disabled by default, cannot target a non-loopback URL, and is not a deployment
-authentication mode.
+Authenticated clients send `Authorization: Bearer lsk_...`. Configurator forwards
+the credential and optional universe/actor headers to the runtime, which
+validates scope and assertion authority. Headers alone never authenticate callers.
+The Platform setup creates a dedicated universe service credential. The former
+loopback trusted-header route is retired.
 
 The server uses the current per-request, sessionless Streamable HTTP lifecycle
 and negotiates the 2026 protocol through `server/discover`. It retains the

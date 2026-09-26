@@ -3,7 +3,7 @@ import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionEvent } from "@/api";
 import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
-import { TranscriptEntryView } from "./transcript-view";
+import { ApprovalCards, QueuedRunsBar, TranscriptEntryView } from "./transcript-view";
 
 describe("TranscriptEntryView", () => {
   it("renders native compaction as a marker without exposing or loading encrypted contents", () => {
@@ -46,4 +46,24 @@ describe("TranscriptEntryView", () => {
     expect(html).not.toContain("Expand full entry");
     expect(loadFullText).not.toHaveBeenCalled();
   });
+});
+
+
+it("preserves pending approval details without offering decisions to readers", () => {
+  const html = renderToString(createElement(ApprovalCards, {
+    approvals: [{ approvalId: "approval", requestedAtMs: 0, subject: {
+      kind: "mcpToolCall", argumentsPreview: '{"query":"report"}', argumentsRef: "blob",
+      serverId: "server", serverLabel: "Finance", toolName: "read_report",
+    } }], deciding: null, error: null,
+  }));
+  expect(html).toContain("read_report");
+  expect(html).toContain("Waiting for the session controller to decide.");
+  expect(html).not.toContain("<button");
+});
+it("preserves the queued message list without cancellation controls for readers", () => {
+  const html = renderToString(createElement(QueuedRunsBar, {
+    items: [{ key: "queued", runId: "run", text: "Queued work", cancelling: false }],
+  }));
+  expect(html).toContain("Queued work");
+  expect(html).not.toContain("Cancel queued message");
 });

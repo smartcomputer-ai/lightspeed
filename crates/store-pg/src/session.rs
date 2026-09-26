@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
+use engine::storage::SessionActivity;
 use engine::{
     BlobRef,
     session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
@@ -46,6 +47,10 @@ const SESSION_COLUMNS: &str = r#"
     updated_at_ms
 "#;
 
+/// What session `sessions` is doing now, from its activity row; none reads
+/// as idle.
+const SESSION_ACTIVITY: &str = "(SELECT a.activity FROM session_activity a WHERE a.universe_id = sessions.universe_id AND a.session_id = sessions.session_id) AS activity";
+
 impl PgStore {
     async fn append_inner(
         &self,
@@ -58,7 +63,7 @@ impl PgStore {
             .map_err(|error| session_sql_error("begin append transaction", error))?;
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}
+            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
             WHERE universe_id = $1 AND session_id = $2
             FOR UPDATE
@@ -128,8 +133,19 @@ impl PgStore {
 
         if let Some(last) = committed.last() {
             record.updated_at_ms = last.observed_at_ms;
+            let activity_before = record.activity;
             for entry in &committed {
                 apply_lifecycle_projection(&mut record, entry);
+            }
+            if record.activity != activity_before {
+                write_activity(
+                    &mut tx,
+                    self.config.universe_id,
+                    &request.session_id,
+                    record.activity,
+                    last.observed_at_ms,
+                )
+                .await?;
             }
             sqlx::query(
                 r#"
@@ -383,6 +399,145 @@ struct SessionSegment {
     through: u64,
 }
 
+impl PgStore {
+    /// `list_sessions` narrowed by the audience of each session's root, with
+    /// the access summary each view carries.
+    pub async fn list_sessions_for(
+        &self,
+        request: ListSessions,
+        filter: &crate::AccessFilter,
+    ) -> Result<crate::SessionListPageWithAccess, SessionStoreError> {
+        if request.limit == 0 {
+            return Err(SessionStoreError::InvalidLimit { limit: 0 });
+        }
+        let fetch_limit = usize_to_session_i64(request.limit.saturating_add(1), "limit")?;
+        let (cursor_updated_at_ms, cursor_session_id) = match &request.cursor {
+            Some(cursor) => (
+                Some(u64_to_i64(cursor.updated_at_ms, "cursor updated_at_ms")?),
+                Some(cursor.session_id.as_str().to_owned()),
+            ),
+            None => (None, None),
+        };
+        // Metadata predicates are appended only when their filter form is
+        // present. Exact containment can use the GIN index; presence matching
+        // uses PostgreSQL's native all-keys operator. A `$n IS NULL OR` form
+        // would force weaker generic plans.
+        let metadata_exact = request
+            .metadata
+            .iter()
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let metadata_keys = request
+            .metadata
+            .iter()
+            .filter(|(_, value)| value.is_empty())
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        let metadata_filter = (!metadata_exact.is_empty())
+            .then(|| metadata_json(&metadata_exact))
+            .transpose()?;
+        let metadata_predicate = match (metadata_filter.is_some(), metadata_keys.is_empty()) {
+            (true, false) => "AND s.metadata_json @> $11 AND s.metadata_json ?& $12",
+            (true, true) => "AND s.metadata_json @> $11",
+            (false, false) => "AND s.metadata_json ?& $11",
+            (false, true) => "",
+        };
+        // Yes/no filters are appended only when present, like metadata.
+        let closed_predicate = match request.closed {
+            Some(true) => "AND s.lifecycle_status = 'closed'",
+            Some(false) => "AND s.lifecycle_status <> 'closed'",
+            None => "",
+        };
+        let subagent_predicate = match request.subagent {
+            Some(true) => "AND s.origin_parent_session_id IS NOT NULL",
+            Some(false) => "AND s.origin_parent_session_id IS NULL",
+            None => "",
+        };
+        let (access_predicate, access_binds) = filter.session_clause(6);
+        let summary_columns = crate::access::session_summary_columns();
+        let root_join = crate::access::SESSION_ROOT_JOIN;
+        // The root join brings columns of the same names; qualify ours.
+        let session_columns = SESSION_COLUMNS
+            .split(',')
+            .map(str::trim)
+            .filter(|column| !column.is_empty())
+            .map(|column| format!("s.{column}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query = format!(
+            r#"
+            SELECT {session_columns}, sa.activity, {summary_columns}
+            FROM sessions s
+            LEFT JOIN session_activity sa
+                ON sa.universe_id = s.universe_id AND sa.session_id = s.session_id
+            {root_join}
+            WHERE s.universe_id = $1
+              AND ($2::bigint IS NULL OR (s.updated_at_ms, s.session_id) < ($2, $3))
+              AND ($4::text IS NULL OR s.origin_parent_session_id = $4)
+              {closed_predicate}
+              {subagent_predicate}
+              {access_predicate}
+              AND ($9::boolean IS NULL OR COALESCE(r.managed, s.managed) = $9)
+              AND (cardinality($10::text[]) = 0
+                   OR COALESCE(s.origin_root_session_id, s.session_id) = ANY($10))
+              {metadata_predicate}
+            ORDER BY s.updated_at_ms DESC, s.session_id DESC
+            LIMIT $5
+            "#,
+        );
+        let sql = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(cursor_updated_at_ms)
+            .bind(cursor_session_id)
+            .bind(request.parent.as_ref().map(|id| id.as_str().to_owned()))
+            .bind(fetch_limit);
+        let mut sql = access_binds.bind(sql).bind(request.managed).bind(
+            request
+                .trees
+                .iter()
+                .map(|id| id.as_str().to_owned())
+                .collect::<Vec<_>>(),
+        );
+        if let Some(filter) = metadata_filter {
+            sql = sql.bind(filter);
+        }
+        if !metadata_keys.is_empty() {
+            sql = sql.bind(metadata_keys);
+        }
+        let rows = sql
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| session_sql_error("list sessions", error))?;
+
+        let mut sessions = rows
+            .iter()
+            .map(|row| {
+                Ok((
+                    session_record_from_row(row)?,
+                    crate::access::summary_from_row(row).map_err(|error| {
+                        SessionStoreError::Store {
+                            message: error.to_string(),
+                        }
+                    })?,
+                ))
+            })
+            .collect::<Result<Vec<_>, SessionStoreError>>()?;
+        let next_cursor = (sessions.len() > request.limit).then(|| {
+            sessions.truncate(request.limit);
+            let (last, _) = sessions.last().expect("non-empty page");
+            SessionListCursor {
+                updated_at_ms: last.updated_at_ms,
+                session_id: last.session_id.clone(),
+            }
+        });
+        Ok(crate::SessionListPageWithAccess {
+            sessions,
+            next_cursor,
+        })
+    }
+}
+
 #[async_trait]
 impl SessionStore for PgStore {
     async fn create_session(
@@ -477,7 +632,7 @@ impl SessionStore for PgStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)
             ON CONFLICT (universe_id, session_id) DO NOTHING
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -516,7 +671,7 @@ impl SessionStore for PgStore {
     ) -> Result<Option<SessionRecord>, SessionStoreError> {
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}
+            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
             WHERE universe_id = $1 AND session_id = $2
             "#,
@@ -535,104 +690,16 @@ impl SessionStore for PgStore {
         &self,
         request: ListSessions,
     ) -> Result<SessionListPage, SessionStoreError> {
-        if request.limit == 0 {
-            return Err(SessionStoreError::InvalidLimit { limit: 0 });
-        }
-        let fetch_limit = usize_to_session_i64(request.limit.saturating_add(1), "limit")?;
-        let (cursor_updated_at_ms, cursor_session_id) = match &request.cursor {
-            Some(cursor) => (
-                Some(u64_to_i64(cursor.updated_at_ms, "cursor updated_at_ms")?),
-                Some(cursor.session_id.as_str().to_owned()),
-            ),
-            None => (None, None),
-        };
-        // Metadata predicates are appended only when their filter form is
-        // present. Exact containment can use the GIN index; presence matching
-        // uses PostgreSQL's native all-keys operator. A `$n IS NULL OR` form
-        // would force weaker generic plans.
-        let metadata_exact = request
-            .metadata
-            .iter()
-            .filter(|(_, value)| !value.is_empty())
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let metadata_keys = request
-            .metadata
-            .iter()
-            .filter(|(_, value)| value.is_empty())
-            .map(|(key, _)| key.clone())
-            .collect::<Vec<_>>();
-        let metadata_filter = (!metadata_exact.is_empty())
-            .then(|| metadata_json(&metadata_exact))
-            .transpose()?;
-        let metadata_predicate = match (metadata_filter.is_some(), metadata_keys.is_empty()) {
-            (true, false) => "AND metadata_json @> $7 AND metadata_json ?& $8",
-            (true, true) => "AND metadata_json @> $7",
-            (false, false) => "AND metadata_json ?& $7",
-            (false, true) => "",
-        };
-        let lifecycle_predicate = if request.exclude_closed {
-            "AND lifecycle_status <> 'closed'"
-        } else {
-            ""
-        };
-        let query = format!(
-            r#"
-            SELECT {SESSION_COLUMNS}
-            FROM sessions
-            WHERE universe_id = $1
-              AND ($2::bigint IS NULL OR (updated_at_ms, session_id) < ($2, $3))
-              AND ($4::text IS NULL OR origin_root_session_id = $4)
-              AND ($5::text IS NULL OR origin_parent_session_id = $5)
-              {lifecycle_predicate}
-              {metadata_predicate}
-            ORDER BY updated_at_ms DESC, session_id DESC
-            LIMIT $6
-            "#,
-        );
-        let mut sql = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(cursor_updated_at_ms)
-            .bind(cursor_session_id)
-            .bind(
-                request
-                    .root_session_id
-                    .as_ref()
-                    .map(|id| id.as_str().to_owned()),
-            )
-            .bind(
-                request
-                    .parent_session_id
-                    .as_ref()
-                    .map(|id| id.as_str().to_owned()),
-            )
-            .bind(fetch_limit);
-        if let Some(filter) = metadata_filter {
-            sql = sql.bind(filter);
-        }
-        if !metadata_keys.is_empty() {
-            sql = sql.bind(metadata_keys);
-        }
-        let rows = sql
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| session_sql_error("list sessions", error))?;
-
-        let mut sessions = rows
-            .iter()
-            .map(session_record_from_row)
-            .collect::<Result<Vec<_>, _>>()?;
-        let next_cursor = (sessions.len() > request.limit).then(|| {
-            sessions.truncate(request.limit);
-            let last = sessions.last().expect("non-empty page");
-            SessionListCursor {
-                updated_at_ms: last.updated_at_ms,
-                session_id: last.session_id.clone(),
-            }
-        });
+        let page = self
+            .list_sessions_for(request, &crate::AccessFilter::default())
+            .await?;
         Ok(SessionListPage {
-            sessions,
-            next_cursor,
+            sessions: page
+                .sessions
+                .into_iter()
+                .map(|(record, _)| record)
+                .collect(),
+            next_cursor: page.next_cursor,
         })
     }
 
@@ -646,7 +713,7 @@ impl SessionStore for PgStore {
             UPDATE sessions
             SET display_name = $3
             WHERE universe_id = $1 AND session_id = $2
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -675,7 +742,7 @@ impl SessionStore for PgStore {
             UPDATE sessions
             SET metadata_json = $3
             WHERE universe_id = $1 AND session_id = $2
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -727,7 +794,7 @@ impl SessionStore for PgStore {
             UPDATE sessions
             SET delete_after_close_ms = $3
             WHERE universe_id = $1 AND session_id = $2
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -757,7 +824,7 @@ impl SessionStore for PgStore {
         }
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}
+            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
             WHERE universe_id = $1
               AND retention_root_session_id = session_id
@@ -855,7 +922,7 @@ impl SessionStore for PgStore {
         };
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}
+            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
             WHERE universe_id = $1 AND session_id = ANY($2)
             ORDER BY session_id
@@ -954,7 +1021,7 @@ impl SessionStore for PgStore {
             )
             VALUES ($1, $2, $3, NULL, $2, $4, $4)
             ON CONFLICT (universe_id, session_id) DO NOTHING
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -1072,7 +1139,7 @@ impl SessionStore for PgStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
             ON CONFLICT (universe_id, session_id) DO NOTHING
-            RETURNING {SESSION_COLUMNS}
+            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
         let row = sqlx::query(&query)
@@ -1383,6 +1450,15 @@ fn session_record_from_row(
     let managed = row
         .try_get::<bool, _>("managed")
         .map_err(|error| session_sql_error("decode managed", error))?;
+    let activity = match row
+        .try_get::<Option<String>, _>("activity")
+        .map_err(|error| session_sql_error("decode session activity", error))?
+        .as_deref()
+    {
+        Some("working") => SessionActivity::Working,
+        Some("waiting") => SessionActivity::Waiting,
+        _ => SessionActivity::Idle,
+    };
     let head_seq = row
         .try_get::<Option<i64>, _>("head_seq")
         .map_err(|error| session_sql_error("decode session head", error))?;
@@ -1422,6 +1498,7 @@ fn session_record_from_row(
         lifecycle_status,
         closed_at_seq,
         closed_at_ms,
+        activity,
         retention_root_session_id,
         delete_after_close_ms,
         delete_at_ms,
@@ -1592,7 +1669,7 @@ async fn lock_session(
 ) -> Result<SessionRecord, SessionStoreError> {
     let query = format!(
         r#"
-        SELECT {SESSION_COLUMNS}
+        SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
         FROM sessions
         WHERE universe_id = $1 AND session_id = $2
         FOR UPDATE
@@ -1763,4 +1840,44 @@ impl EmbeddedBlobRefs {
                 })?,
         })
     }
+}
+
+/// Keeps a session's activity row in step with its projection: a row while
+/// it works or waits, none while idle.
+async fn write_activity(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    universe_id: uuid::Uuid,
+    session_id: &SessionId,
+    activity: SessionActivity,
+    at_ms: u64,
+) -> Result<(), SessionStoreError> {
+    let value = match activity {
+        SessionActivity::Idle => {
+            sqlx::query("DELETE FROM session_activity WHERE universe_id = $1 AND session_id = $2")
+                .bind(universe_id)
+                .bind(session_id.as_str())
+                .execute(&mut **tx)
+                .await
+                .map_err(|error| session_sql_error("clear session activity", error))?;
+            return Ok(());
+        }
+        SessionActivity::Working => "working",
+        SessionActivity::Waiting => "waiting",
+    };
+    sqlx::query(
+        r#"
+        INSERT INTO session_activity (universe_id, session_id, activity, since_ms)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (universe_id, session_id)
+        DO UPDATE SET activity = EXCLUDED.activity, since_ms = EXCLUDED.since_ms
+        "#,
+    )
+    .bind(universe_id)
+    .bind(session_id.as_str())
+    .bind(value)
+    .bind(u64_to_i64(at_ms, "activity since_ms")?)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| session_sql_error("write session activity", error))?;
+    Ok(())
 }

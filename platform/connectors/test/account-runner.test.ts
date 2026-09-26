@@ -56,7 +56,7 @@ function fakeConnector(options: { failAfterStart?: Error } = {}) {
 }
 
 const deps = () => ({
-  core: new CoreClient({ endpoint: "http://core.test/rpc", fetch: fakeRpc(() => ({})).fetch }),
+  core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: fakeRpc(() => ({})).fetch }),
   temporal: { connection: {} as NativeConnection, namespace: "default" },
   whatsapp: null,
   ingressMaxPerMinute: 120,

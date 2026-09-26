@@ -3,6 +3,7 @@ import { createDb, migrateDb } from "@lightspeed/platform-db";
 import { buildApp } from "./api.js";
 import { createAuth } from "./auth.js";
 import { bootstrapAdmin } from "./bootstrap.js";
+import { seedDevelopment } from "./development-seed.js";
 import { loadEnv } from "./env.js";
 
 const env = loadEnv();
@@ -11,6 +12,7 @@ const { db, pool } = createDb(env.databaseUrl);
 console.log("[main] applying migrations…");
 await migrateDb({ db, pool });
 await bootstrapAdmin(db, env);
+await seedDevelopment(db, env);
 
 const auth = createAuth(db, env);
 const app = buildApp({ db, pool, auth, env });

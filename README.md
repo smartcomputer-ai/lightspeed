@@ -56,19 +56,12 @@ attached only when needed. One worker can therefore manage hundreds of agents.
 
 ## Quick start
 
-You need Rust with edition 2024 support, Node.js 24 or newer, and Docker with
-Compose. Then start the complete
-local product:
+To run from source, install the Rust toolchain selected by `rust-toolchain.toml`,
+Node.js 24 or newer, Docker with Compose, and a native build toolchain with
+`protoc`. Then start the local product:
 
 ```bash
 ./dev.sh
-```
-
-You can set the LLM API keys directly in the UI. But you can also set them via environment variable:
-```bash
-cp .env.example .env
-# Set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env
-# Then restart ./dev.sh
 ```
 
 When the readiness checks pass in the CLI, open
@@ -76,21 +69,26 @@ When the readiness checks pass in the CLI, open
 development account printed by the launcher. The defaults are
 `admin@lightspeed.dev` and `lightspeed-dev-password`.
 
+Select the **Test** universe, open **Models → Add provider**, and connect an
+API key. Follow the [quickstart](docs/documentation/getting-started/quickstart.md)
+to choose a model and start your first session. You can also set
+`OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in a root `.env` as deployment defaults.
+
 The launcher installs dependencies, starts local infrastructure and application
 processes, applies migrations, and waits until the product is ready.
 
 For other development profiles, service addresses, resets, and live tests, see
 the [local development guide](docs/documentation/development/local-development.md). See
-[Environment variables](docs/documentation/reference/environment-variables.md) for environment variables.
+[Environment variables](docs/documentation/reference/environment-variables.md) for exact settings and defaults.
 
 ## Features
 
-Lightspeed covers the table stakes of a modern agent harness. Everything below works today.
+The current implementation includes:
 
 **Models & providers**
 
 - [x] **OpenAI and Anthropic**: support for reasoning, compaction, tools,
-  files, images, OAuth, and multiple credentials
+  files, images, and per-universe API credentials
 - [x] **Media from tools**: images and PDFs returned by MCP servers, read from
   files, or handed up by sub-agents reach the model natively
 - [x] **OpenAI-compatible providers**: OpenRouter, DeepSeek, vLLM, Ollama, and
@@ -126,8 +124,7 @@ Lightspeed covers the table stakes of a modern agent harness. Everything below w
 - [x] **Active-run control**: cancel or steer a run, or queue the next message
 - [x] **Session fork & clone primitives**: share stored history for branches or start from copied configuration
 - [x] **Workflow-backed plugins**: external Temporal workflows can extend session with various tools and custom logic
-- [x] **One backend binary**: run every role in one process or scale them
-  independently across Temporal workers
+- [x] **One backend binary**: run every runtime role in one process or scale them independently across Temporal workers
 
 **Borrowed compute**
 
@@ -146,6 +143,7 @@ Lightspeed covers the table stakes of a modern agent harness. Everything below w
 
 - [x] **Encrypted secrets**: credentials are encrypted at rest, with automatic OAuth token refresh
 - [x] **Credential injection**: environments and jobs receive secrets without exposing them to the model
+- [x] **Role based access**: give users different responsibilities in the same universe: admin, AI operator, contributor, and viewer
 - [x] **Multi-tenant by default**: isolate tenants in universes on one deployment or run dedicated per-tenant deployments
 
 ## Design
@@ -185,11 +183,11 @@ for focused checks, replay coverage, live-test prerequisites, and model evaluati
 - [Architecture and design](docs/documentation/how-it-works/architecture.md)
 - [Local development](docs/documentation/development/local-development.md)
 - [Environment variables](docs/documentation/reference/environment-variables.md)
-- [Universes, tenant isolation, and gateway authentication](docs/documentation/deployment/multi-tenancy.md)
+- [Access and security](docs/documentation/access-and-security/overview.md)
 - [JSON-RPC API reference](crates/api/contract/api-reference.md)
 - [Contributing and releasing](docs/documentation/development/contributing-and-releasing.md)
 
-Preview the Starlight manual with `npm run dev:docs`.
+Preview the Starlight manual with `./dev.sh docs`.
 
 ## Contributing
 

@@ -20,6 +20,8 @@ function event(partial: Partial<BotEventView>): BotEventView {
 
 function bot(partial: Partial<BotListItem>): BotListItem {
   return {
+    access: { visibility: "universe" },
+    activity: "idle",
     botId: "triage",
     displayName: "Triage",
     profileId: "triage",
@@ -38,6 +40,10 @@ function bot(partial: Partial<BotListItem>): BotListItem {
 }
 
 describe("rosterLine", () => {
+  it("shows a run someone started by chatting as work, and an approval as waiting", () => {
+    expect(rosterLine(bot({ activity: "working" }))).toEqual({ text: "Working", tone: "live" });
+    expect(rosterLine(bot({ activity: "waiting", pendingCount: 2 }))).toEqual({ text: "Waiting for approval", tone: "waiting" });
+  });
   it("says what the bot is doing from the event log alone", () => {
     expect(rosterLine(bot({}))).toEqual({ text: "Waiting for its first event", tone: "idle" });
     expect(

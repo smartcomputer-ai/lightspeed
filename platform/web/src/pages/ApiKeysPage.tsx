@@ -1,12 +1,11 @@
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, KeyRound, Plus, ShieldOff } from "lucide-react";
-import {
-  api,
-  type UniverseApiKey,
-  type UniverseApiKeyCreated,
-} from "@/api";
+import { KeyRound, Plus, ShieldOff } from "lucide-react";
+import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/agent-client";
+import { GroupSummary, KeyPresetField, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
+import { ApiKeySecret } from "@/components/api-keys/secret-once";
+import { api } from "@/api";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,16 +40,19 @@ import {
   TableRow,
   TableTitleCell,
 } from "@/components/ui/table";
-import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { EmptyState, LoadingNote, PageHeader, UniverseNotFound, ShowHiddenToggle } from "@/components/page";
+import { useActiveUniverse } from "@/lib/universes";
+import { useActionPermissions } from "@/lib/permissions";
+import { DEFAULT_UNIVERSE_KEY_GROUPS, groupSummary, groupsFor } from "@/lib/method-groups";
 
-export function ApiKeysPage({ admin }: { admin: boolean }) {
+export function ApiKeysPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
+  const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !canManage(universe, admin)) {
+  if (!universe || !permissions.can("manage_access")) {
     return <UniverseNotFound slug={slug} />;
   }
 
@@ -63,21 +65,25 @@ function ApiKeyList({ universeId }: { universeId: string }) {
   const keys = useQuery({
     queryKey: ["api-keys", universeId],
     queryFn: () =>
-      api<UniverseApiKey[]>("GET", `/api/v1/universes/${universeId}/api-keys`),
+      api<DeploymentApiKeyView[]>("GET", `/api/v1/universes/${universeId}/api-keys`),
   });
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["api-keys", universeId] });
 
   const revoke = useMutation({
     mutationFn: (keyPrefix: string) =>
-      api<UniverseApiKey>(
+      api<DeploymentApiKeyView>(
         "DELETE",
         `/api/v1/universes/${universeId}/api-keys/${encodeURIComponent(keyPrefix)}`,
       ),
     onSuccess: () => void invalidate(),
   });
 
-  const rows = (keys.data ?? []).slice().sort((a, b) => b.createdAtMs - a.createdAtMs);
+  const [showRevoked, setShowRevoked] = useState(false);
+  const allRows = [...(keys.data ?? [])].sort((a, b) =>
+    Number(a.revokedAtMs != null) - Number(b.revokedAtMs != null) || b.createdAtMs - a.createdAtMs);
+  const revokedCount = allRows.filter((key) => key.revokedAtMs != null).length;
+  const rows = showRevoked ? allRows : allRows.filter((key) => key.revokedAtMs == null);
 
   return (
     <>
@@ -96,15 +102,11 @@ function ApiKeyList({ universeId }: { universeId: string }) {
       {revoke.error && (
         <p className="mb-3 text-sm text-destructive">{revoke.error.message}</p>
       )}
-      {keys.data && rows.length === 0 && (
-        <div className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-8 text-center">
-          <KeyRound className="size-7 text-muted-foreground" />
-          <p className="text-sm font-medium">No API keys</p>
-          <p className="max-w-md text-sm text-muted-foreground">
-            Create one when an external agent needs access to this universe. The secret is
-            shown only once.
-          </p>
-        </div>
+      {keys.data && allRows.length === 0 && (
+        <EmptyState icon={KeyRound} title="No API keys yet">
+          Keys let external agents and clients reach this universe and call the method groups
+          they were minted with. A key's secret is shown only once.
+        </EmptyState>
       )}
       {rows.length > 0 && (
         <TableCard>
@@ -112,6 +114,7 @@ function ApiKeyList({ universeId }: { universeId: string }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Key</TableHead>
+                <TableHead>May call</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead>Last used</TableHead>
                 <TableHead>Status</TableHead>
@@ -127,6 +130,12 @@ function ApiKeyList({ universeId }: { universeId: string }) {
                       title={key.displayName ?? "Unnamed key"}
                       subtitle={key.keyPrefix}
                     />
+                    <TableCell className="text-xs text-muted-foreground">
+                      <GroupSummary summary={groupSummary("universe", key.groups)} />
+                      {key.assertActor && (
+                        <span className="mt-1 block">Speaks for people</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {formatTimestamp(key.createdAtMs)}
                     </TableCell>
@@ -183,9 +192,21 @@ function ApiKeyList({ universeId }: { universeId: string }) {
           </Table>
         </TableCard>
       )}
+      {keys.data && allRows.length > 0 && rows.length === 0 && (
+        <p className="text-sm text-muted-foreground">Every key here is revoked.</p>
+      )}
+      <div className="mt-3">
+        <ShowHiddenToggle
+          label="Show revoked keys"
+          count={revokedCount}
+          checked={showRevoked}
+          onCheckedChange={setShowRevoked}
+        />
+      </div>
       <p className="mt-4 text-sm text-muted-foreground">
         Use a key as <code className="font-mono text-xs">Authorization: Bearer lsk_…</code>.
-        Keys grant access to this universe only and can be revoked at any time.
+        Keys reach this universe only. A key never changes; revoke it and create another to
+        change what it may call.
       </p>
       <CreateApiKeyDialog
         universeId={universeId}
@@ -209,13 +230,15 @@ function CreateApiKeyDialog({
   onCreated: () => void;
 }) {
   const [displayName, setDisplayName] = useState("");
-  const [created, setCreated] = useState<UniverseApiKeyCreated | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [groups, setGroups] = useState<Set<MethodGroup>>(() => new Set(DEFAULT_UNIVERSE_KEY_GROUPS));
+  const [created, setCreated] = useState<DeploymentApiKeyCreateResponse | null>(null);
+  const allowed = groupsFor("universe");
 
   const create = useMutation({
     mutationFn: () =>
-      api<UniverseApiKeyCreated>("POST", `/api/v1/universes/${universeId}/api-keys`, {
-        displayName,
+      api<DeploymentApiKeyCreateResponse>("POST", `/api/v1/universes/${universeId}/api-keys`, {
+        displayName: displayName.trim(),
+        groups: allowed.filter((group) => groups.has(group)),
       }),
     onSuccess: (result) => {
       setCreated(result);
@@ -226,24 +249,16 @@ function CreateApiKeyDialog({
   const close = () => {
     onOpenChange(false);
     setDisplayName("");
+    setGroups(new Set(DEFAULT_UNIVERSE_KEY_GROUPS));
     setCreated(null);
-    setCopied(false);
     create.reset();
   };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (displayName.trim()) {
+    if (displayName.trim() && groups.size > 0) {
       create.mutate();
     }
-  };
-
-  const copySecret = async () => {
-    if (!created) {
-      return;
-    }
-    await navigator.clipboard.writeText(created.secret);
-    setCopied(true);
   };
 
   return (
@@ -255,45 +270,16 @@ function CreateApiKeyDialog({
         }
       }}
     >
-      <DialogContent showCloseButton={!created}>
+      <DialogContent showCloseButton={!created} className="sm:max-w-lg">
         {created ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>Copy your API key</DialogTitle>
-              <DialogDescription>
-                This secret is shown once. Store it in the agent's secret manager before
-                closing this dialog.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-2">
-              <FieldLabel htmlFor="api-key-secret">API key</FieldLabel>
-              <div className="flex gap-2">
-                <Input
-                  id="api-key-secret"
-                  value={created.secret}
-                  readOnly
-                  className="font-mono text-xs"
-                  onFocus={(event) => event.currentTarget.select()}
-                />
-                <Button type="button" variant="outline" onClick={() => void copySecret()}>
-                  {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
-                  {copied ? "Copied" : "Copy"}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Identifier: <span className="font-mono">{created.apiKey.keyPrefix}</span>
-              </p>
-            </div>
-            <DialogFooter>
-              <Button type="button" onClick={close}>I saved the key</Button>
-            </DialogFooter>
-          </>
+          <ApiKeySecret secret={created.secret} keyPrefix={created.apiKey.keyPrefix} onDone={close} />
         ) : (
           <>
             <DialogHeader>
               <DialogTitle>Create API key</DialogTitle>
               <DialogDescription>
-                Name the client or agent that will use this universe credential.
+                Name the client or agent that will use this key and choose what it may call. A key
+                never changes; revoke it and create another to change it.
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={submit} className="grid gap-4">
@@ -310,12 +296,14 @@ function CreateApiKeyDialog({
                 />
                 <FieldDescription>Shown in this list; it is not part of the secret.</FieldDescription>
               </Field>
+              <KeyPresetField groups={groups} onChange={setGroups} />
+              <MethodGroupPicker idPrefix="api-key" allowed={allowed} chosen={groups} onChange={setGroups} />
               {create.error && (
                 <p className="text-sm text-destructive">{create.error.message}</p>
               )}
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={close}>Cancel</Button>
-                <Button type="submit" disabled={create.isPending || !displayName.trim()}>
+                <Button type="submit" disabled={create.isPending || !displayName.trim() || groups.size === 0}>
                   {create.isPending ? "Creating…" : "Create key"}
                 </Button>
               </DialogFooter>

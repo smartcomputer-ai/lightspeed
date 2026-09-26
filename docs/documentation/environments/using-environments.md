@@ -5,11 +5,10 @@ The session selects one environment at a time, while the environment remains
 a resource in the universe. Several sessions can select the same machine;
 selection does not reserve it or create a private copy.
 
-Selection checks that the environment is attached in the session's
-configuration and is not failed, closing, or closed. It does not connect to the machine or change
-its power state. Sleeping, offline, and starting environments can be selected;
-tools check readiness and request wake-up where supported when they use it.
-Selecting the same environment again rechecks its current registry state.
+You can select a starting, sleeping, or offline machine. The selection records
+where work should run; a tool call then waits for readiness and requests a
+wake-up where supported. Failed, closing, or closed environments cannot be
+selected.
 
 This guide starts with a machine that already appears under **Environments**.
 Use [Bring your own compute](bring-your-own-compute.md) to connect one you
@@ -17,8 +16,9 @@ control, or [Incus VMs](incus-vms.md) to configure provider-managed machines.
 The [environment overview](overview.md) explains the available sources and
 the separate VFS and machine filesystems.
 
-Use a universe owner/admin or platform administrator account for these web
-procedures. You also need a session with a working model.
+A Contributor can attach an existing environment to a session they can
+control. Creating environments or changing profiles requires an Operator or
+Admin account. You also need a session with a working model.
 
 ## Select a machine for a task
 
@@ -36,17 +36,18 @@ Open the session you want to use. With no active or queued runs, choose
 **Environments**, and select it under **Active environment**. Choose **Apply
 setup**.
 
-Each attached environment carries its own **Access**: **Read**, **Edit**,
-**Exec**, or **Jobs**, each including the levels before it. Enabling
+Each attached environment carries its own **Access**: **Read files**, **Edit
+files**, **Run commands**, or **Run durable jobs**, each including the levels
+before it. Enabling
 **Environments** in the profile or session editor also turns on **Prompt
 loading** and **Skill discovery**; adjust each independently. Existing
 configurations keep their saved settings; a machine that is not attached
 cannot be selected.
 
-**Environment selection tools**, below **Skill discovery**, remains off by
-default. For this first check, give the attachment **Exec** access; that is
-sufficient to run a simple command on the machine you selected without
-granting durable jobs.
+For this first check, choose **Run commands**. You can leave **Environment
+selection tools** off because you selected the machine yourself. The editor
+turns this switch on when you add a second attachment so the agent can switch
+between them; turn it off again if selection should stay under your control.
 
 Send:
 
@@ -67,27 +68,32 @@ of the daemon user.
 
 ## Choose the access level
 
-A session can attach several environments, each with its own **Access**. The
-levels form a ladder: `read` exposes reading, listing, search, and glob tools;
-`edit` adds write, edit, and patch tools; `exec` adds starting and continuing
-processes; `jobs` adds workflow-backed durable jobs. Each level includes the
-ones before it. Read-only files with command execution is deliberately not
-expressible, because a process can write files regardless of the file tools.
-Attach with the lowest level that covers the task.
+A session can attach several environments, each with its own **Access**.
+Choose the lowest level that covers the task:
+
+| Access | API value | Adds |
+| --- | --- | --- |
+| Read files | `read` | Reading, listing, search, and glob tools. |
+| Edit files | `edit` | Write, edit, and patch tools. |
+| Run commands | `exec` | Starting and continuing processes. |
+| Run durable jobs | `jobs` | Jobs with persisted records and workflow supervision. |
+
+Each level includes those before it. Command execution includes file editing
+because a process can write files using the daemon user's permissions.
 
 ```json
 {"features":{"environments":{"environments":[{"environmentId":"<environment-id>","default":true,"access":"read"}]}}}
 ```
 
-The list is the allowed set: the session can select, read, and run only on a
-listed machine. The tools the agent sees are the union of every attachment's
-access, installed once; a call that the active machine's access does not
-cover is refused when it executes, with that machine's access named.
-Switching machines therefore never changes the toolset. Access is a tool
-grant, subject to the endpoint's capabilities and operating-system
-permissions. Prompt loading and skill discovery are authorized separately by
-their own blocks, and any attachment lets the agent read discovered skills.
-Selection and environment status remain separate.
+Only attached machines are available to the session. Its tools cover the
+combined access levels of those attachments, while each call checks the
+active machine's access. Switching to a read-only attachment therefore leaves
+command tools visible but refuses their execution there. The daemon must also
+support the operation, and its operating-system permissions still apply.
+
+**Prompt loading** and **Skill discovery** have their own settings. They can
+read instructions from an attached environment independently of whether it
+permits commands.
 
 The session's context includes an **Environment catalog** listing every
 attachment with its display name, status, access, working directory, and
@@ -105,7 +111,7 @@ To check VFS content with a command, use `vfs_materialize` to copy the selected
 file or tree to an exact environment destination. Use `vfs_capture` to save
 machine outputs into a writable VFS workspace. Both replace the complete
 selected destination by default, preserving siblings. See
-[VFS transfer](vfs-transfer.md) for partial copies, content reuse, large files,
+[VFS transfer](vfs-transfer.md) for selected paths, content reuse, large files,
 and workspace revision conflicts.
 
 After transfer, the copies can diverge. Editing the machine's copy does not
@@ -116,17 +122,14 @@ Use explicit source and destination paths in tasks that cross this boundary.
 
 In **Profiles**, open the profile and enable **Environments**. Add the
 machine under **Environments** with the access the job needs and mark it as
-the **Default** attachment. Save the profile and start a new session from it.
+the **Default environment**. Save the profile and start a new session from it.
 
-Every session created from this setup activates that machine. The default
-fills an empty active pointer whenever the profile is applied, creation
-included, and never overrides a live selection: applying the profile to an
-existing session first clears an active environment the profile no longer
-lists, then activates the default only if nothing is active. At most one
-attachment can be the default. This is useful for a shared repository
-checkout, a long-lived service, or several bot conversations working with the
-same operating-system state. The profile does not close the environment when
-one of those sessions ends.
+New sessions activate that default machine. Applying the profile to an
+existing session keeps its current selection if the machine is still attached;
+otherwise it uses the default. At most one attachment can be the default.
+This is useful for a shared repository checkout, a long-lived service, or
+several bot conversations working with the same operating-system state. The
+machine remains available when any one session ends.
 
 Sharing also means sharing file changes, processes, installed tools, and
 environment-bound credentials. Lightspeed does not coordinate edits between
@@ -158,7 +161,7 @@ cleanup through explicit environment operations and idle policies; see
 ## Use environments with bots and sub-agents
 
 For a bot whose Main conversation, routed threads, and chat conversations
-should use one machine, attach the same environment as the **Default** in its
+should use one machine, attach the same **Default environment** in its
 profile. Resetting a conversation leaves that environment intact for the
 successor and other sessions using it. Execution polls that name no
 environment run on the profile's default attachment; because a live selection
@@ -166,8 +169,8 @@ is never overridden, a bot conversation that switched to another attached
 machine can diverge from its polls. Name the environment on the poll when
 they must match.
 
-A child profile can attach **Inherit the parent's active environment
-(sub-agents only)** (`"inherit": true`) with its own access level. The
+A child profile can select **Inherit parent environment** (`"inherit": true`)
+with its own access level. The
 attachment resolves to the parent's active machine when the child is spawned;
 the child shares that machine without copying it and does not close it as its
 own resource. If the parent has no active environment, the inherit attachment
@@ -176,7 +179,8 @@ explicit attachment wins. An `inherit` attachment in a standalone session or
 a plain session configuration is rejected.
 
 The child can also attach a different existing machine. Create any new machine
-through the environment API first. Its VFS attachments remain independent of these choices. See
+through the Environments page or API first. Its VFS attachments remain
+independent of these choices. See
 [Sub-agents and federation](../using-lightspeed/subagents-and-federation.md)
 for the rest of the child-profile boundary.
 
@@ -190,10 +194,6 @@ The switch does not grant environment provisioning and does not widen the
 allowed set: `environment_list` lists the attachments, and `environment_read`
 and `environment_activate` accept only attached ids. Their results carry the
 attachment's access line.
-
-Session configuration has no provider or registration-key filters. Which
-machines a session may use is exactly its attachment list; registration keys
-remain an operator concept for enrolling machines.
 
 The runtime also rejects an ambiguous tool batch that changes selection and
 uses the selected environment in the same batch. The agent must select first,
@@ -234,7 +234,7 @@ accepts only an environment attached in the session's configuration.
 
 | Symptom | What to check |
 | --- | --- |
-| **New environment** is missing | Check the universe binding, provider templates, and whether the template is deprecated. Borrowed machines use registration or attachment instead. |
+| **New environment** is missing | Check that you are an Operator or Admin, then check the universe binding and available, non-deprecated templates. Borrowed machines use registration or attachment instead. |
 | Selection succeeds but the first tool waits | A provisioned machine may still be booting or waking. Inspect its status and provider health. |
 | A registered machine is offline | Restart or reconnect its daemon using the retained identity. Lightspeed cannot power on that borrowed machine. |
 | A visible environment is rejected by the session | Check that it is attached in the session's configuration, plus the machine's capabilities and lifecycle status. |

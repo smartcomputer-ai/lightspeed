@@ -3,26 +3,27 @@
 An application submits work to a Lightspeed session and observes it until the
 run finishes. The session owns the durable conversation and configuration;
 the application owns its business operation, the identifiers used to retry
-it, and what to do with the result. Keeping those responsibilities explicit
-makes a lost HTTP response recoverable without creating duplicate work.
+it, and what to do with the result. Stable identifiers let the application
+recover from a lost HTTP response without creating duplicate work.
 
 The TypeScript client supplies typed JSON-RPC calls and helpers for starting
 runs and following events. Its public types come from the Rust API contract.
-Use that boundary when building a client; reducer and worker implementation
-types are not the public API.
+Build against this client and the public contract so runtime implementation
+changes do not become dependencies of your application.
 
 ## Prepare an endpoint and a profile
 
-For this example, provide an API-key gateway URL ending in `/rpc` and a key
-for the intended universe. The Platform's authenticated browser routes and
-its private `trusted-header` gateway are different endpoints. Follow
-[Authentication and access](../deployment/authentication-and-tenancy.md#issue-a-key-for-an-api-client)
+For this example, provide an authenticated gateway URL ending in `/rpc` and a
+universe key with the `session` method group. This key authenticates directly
+to the runtime, independently of a Platform browser login. Follow
+[API keys and service access](../access-and-security/api-keys-and-service-access.md)
 to configure the client path.
 
 Run this integration on your application server or another trusted client.
-A runtime key supplies ordinary API access within its universe, so do not
-embed it in a publicly distributed frontend. Applications serving people
-should authenticate those people and enforce their own access policy before
+A runtime key can call its allowed method groups throughout its universe,
+including private sessions when it has the `session` group. Do not embed it
+in a publicly distributed frontend. Applications serving people should
+authenticate those people and enforce their own access policy before
 submitting work with the application's credentials.
 
 Create the `release-editor` profile and `release-notes` workspace from
@@ -47,7 +48,7 @@ application's protected configuration. The example also reads
 
 ## Submit and observe one task
 
-Save this as `release-notes.mts`. The explicit session and submission IDs
+Save this as `release-notes.mts`. The session and submission IDs
 allow the same script to find the same work after a network failure:
 
 ```ts
@@ -68,6 +69,7 @@ const client = new LightspeedClient({
 const started = await client.call("session/start", {
   sessionId: `release-${jobId}`,
   displayName: "Acorn 1.2 release notes",
+  access: { visibility: "universe" },
   profile: { kind: "named", profileId: "release-editor" },
   metadata: { application: "release-pipeline", jobId },
 });
@@ -114,10 +116,13 @@ existing work or already running; it does not mean generation finished.
 event for the requested run. The final read returns that run's projection,
 including its complete visible terminal text in `outputText` when present.
 
-Open the session in the Platform and inspect `release-notes.md` to verify the
-workspace change. The run's final message and a file it wrote are different
-outputs. Reuse the session for a follow-up conversation, or create another
-session ID for independent work.
+The example creates a session shared with the universe so teammates can inspect
+it in the Platform. Omitting `access` creates private work; because this key
+asserts no user, only admins can see that session through the Platform.
+Open the session and inspect `release-notes.md` to verify the workspace change.
+The run's final message and a file it wrote are different outputs. Reuse the
+session for a follow-up conversation, or create another session ID for
+independent work.
 
 ## Keep retry identity with the business operation
 
@@ -136,8 +141,8 @@ repeating creation.
 
 `session/runs/start` deduplicates by submission ID within the session. The
 same ID and source/configuration/terminal notification return the original
-run. Reusing the ID with changed inputs is rejected. To request a genuinely
-new run, allocate a new submission ID.
+run. Reusing the ID with changed inputs is rejected. Allocate a new submission
+ID when asking for another run.
 
 The `startRun` helper generates an ID if you omit one, but calling the helper
 again generates another ID. That default does not provide retry safety across
@@ -148,7 +153,7 @@ failed HTTP calls.
 A timeout or aborted HTTP wait also does not cancel the durable run. The
 five-minute timeout above bounds this client's waiting time. On recovery,
 read the known run first: if it is terminal, use its result; otherwise resume
-observation or explicitly request cancellation.
+observation or request cancellation.
 
 ## Follow events and reconnect
 
@@ -205,7 +210,9 @@ plain text: model output can be provider-native JSON or media. Tool and catalog
 previews are bounded, while their full bodies remain available by reference.
 Use the declared representation when decoding or storing an artifact.
 
-## Handle errors and lifecycle explicitly
+<a id="handle-errors-and-lifecycle-explicitly"></a>
+
+## Handle errors and lifecycle
 
 Successful `call` results retain the `AgentApiOutcome` envelope:
 `outcome.result` contains method data and `outcome.notifications` contains

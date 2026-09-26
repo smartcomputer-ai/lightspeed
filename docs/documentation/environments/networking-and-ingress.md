@@ -6,9 +6,10 @@ inside the machine may separately need a route for people using a browser.
 Enabling application ingress does not expose the daemon or grant access to
 Lightspeed's runtime API.
 
-The connection path depends on whether the environment is registered,
-externally attached, or provisioned. This guide describes those paths and the
-included Incus provider's optional HTTP application edge.
+Deployment operators configure these routes. The connection path depends on
+whether the environment is registered, externally attached, or provisioned.
+The application publishing procedure later in this guide needs an Operator
+or Admin account in the universe.
 
 ## Follow an environment operation
 
@@ -21,9 +22,11 @@ flowchart LR
   Registered[Registered daemon] -->|Outbound control and data sockets|Gateway
 ```
 
-The runtime uses the selected environment and incarnation to resolve the
-route. A process or file tool travels over that route to the machine; the
-machine's response returns as the tool result.
+For a file or process tool, the runtime resolves the selected environment to
+its current machine and connection. The request follows that route and the
+response returns as the tool result. Registered machines initiate their own
+outbound connections; external daemons and Incus guests are reached over
+private deployment networks.
 
 Run exactly one **environment-gateway** process per deployment. It owns live
 registered-daemon connections, lifecycle reconciliation, and idle power
@@ -64,7 +67,7 @@ machines. The daemon registration flow supplies what those machines need.
 
 Follow [Bring your own compute](bring-your-own-compute.md) for the complete
 registration procedure. [Self-hosting](../deployment/self-hosting.md#configure-the-public-edge)
-shows how to publish the daemon routes while keeping the trusted runtime RPC
+shows how to publish the daemon routes while keeping the runtime RPC
 listener private.
 
 ## Reach passive daemons and Incus guests
@@ -184,9 +187,8 @@ flowchart LR
 ```
 
 The edge resolves the enabled route from current Incus target metadata and
-proxies HTTP, streaming bodies, and WebSockets. It does not mount VFS files,
-install a browser IDE, or expose a terminal. Those would be applications you
-install and operate within the template's allowed surface.
+proxies HTTP, streaming bodies, and WebSockets. You supply the application and
+its content on the guest machine.
 
 ## Keep application lifetime and power aligned
 

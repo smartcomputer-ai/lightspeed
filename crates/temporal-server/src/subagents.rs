@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use api::{
     AgentApiError, AgentApiService, AgentProfile, InlineAgentProfile, InputItem, ProfileId,
-    ProfileReadParams, ProfileSource, SessionCloseParams, SessionReadParams,
+    ProfileSource, SessionCloseParams, SessionReadParams,
 };
 use async_trait::async_trait;
 use engine::{
@@ -80,12 +80,12 @@ impl AgentApiSubagentRuntime {
 #[async_trait]
 impl SubagentChildRuntime for AgentApiSubagentRuntime {
     async fn read_profile(&self, profile_id: ProfileId) -> Result<AgentProfile, AgentApiError> {
-        Ok(self
-            .api
-            .read_profile(ProfileReadParams { profile_id })
-            .await?
-            .result
-            .profile)
+        use profiles::ProfileStore as _;
+        self.api
+            .store()
+            .read_agent_profile(&profile_id)
+            .await
+            .map_err(|e| AgentApiError::internal(e.to_string()))
     }
 
     async fn start_session(
@@ -93,9 +93,13 @@ impl SubagentChildRuntime for AgentApiSubagentRuntime {
         session_id: &SessionId,
         profile: ProfileSource,
     ) -> Result<(), AgentApiError> {
-        self.api
-            .start_session_for_subagent(session_id, profile)
-            .await
+        let authority = self.api.delegated_session_authority(session_id).await?;
+        crate::gateway::service::authorization::with_controller_authority(authority, async {
+            self.api
+                .start_session_for_subagent(session_id, profile)
+                .await
+        })
+        .await
     }
 
     async fn start_run(
@@ -105,9 +109,13 @@ impl SubagentChildRuntime for AgentApiSubagentRuntime {
         submission_id: SubmissionId,
         notify_on_terminal: Vec<RunTerminalNotifyIntent>,
     ) -> Result<String, AgentApiError> {
-        self.api
-            .start_run_for_subagent(session_id, input, submission_id, notify_on_terminal)
-            .await
+        let authority = self.api.delegated_session_authority(session_id).await?;
+        crate::gateway::service::authorization::with_controller_authority(authority, async {
+            self.api
+                .start_run_for_subagent(session_id, input, submission_id, notify_on_terminal)
+                .await
+        })
+        .await
     }
 
     async fn close_session(
@@ -115,42 +123,50 @@ impl SubagentChildRuntime for AgentApiSubagentRuntime {
         session_id: &SessionId,
         force: bool,
     ) -> Result<(), AgentApiError> {
-        self.api
-            .close_session(SessionCloseParams {
-                session_id: session_id.as_str().to_owned(),
-                force,
-            })
-            .await
-            .map(|_| ())
+        let authority = self.api.delegated_session_authority(session_id).await?;
+        crate::gateway::service::authorization::with_controller_authority(authority, async {
+            self.api
+                .close_session(SessionCloseParams {
+                    session_id: session_id.as_str().to_owned(),
+                    force,
+                })
+                .await
+                .map(|_| ())
+        })
+        .await
     }
 
     async fn session_media(
         &self,
         session_id: &SessionId,
     ) -> Result<Vec<MediaDescriptor>, AgentApiError> {
-        let session = self
-            .api
-            .read_session(SessionReadParams {
-                session_id: session_id.as_str().to_owned(),
-                run_limit: Some(1),
-            })
-            .await?
-            .result
-            .session;
-        Ok(session
-            .active_context
-            .entries
-            .iter()
-            .filter(|entry| entry.content.media_handle.is_some())
-            .filter_map(|entry| {
-                let content_ref = BlobRef::parse(entry.content.content_ref.clone()).ok()?;
-                MediaDescriptor::new(
-                    content_ref,
-                    entry.content.media_type.as_deref()?,
-                    engine::media::media_preview_name(entry.preview.as_deref()).as_deref(),
-                )
-            })
-            .collect())
+        let authority = self.api.delegated_session_authority(session_id).await?;
+        crate::gateway::service::authorization::with_controller_authority(authority, async {
+            let session = self
+                .api
+                .read_session(SessionReadParams {
+                    session_id: session_id.as_str().to_owned(),
+                    run_limit: Some(1),
+                })
+                .await?
+                .result
+                .session;
+            Ok(session
+                .active_context
+                .entries
+                .iter()
+                .filter(|entry| entry.content.media_handle.is_some())
+                .filter_map(|entry| {
+                    let content_ref = BlobRef::parse(entry.content.content_ref.clone()).ok()?;
+                    MediaDescriptor::new(
+                        content_ref,
+                        entry.content.media_type.as_deref()?,
+                        engine::media::media_preview_name(entry.preview.as_deref()).as_deref(),
+                    )
+                })
+                .collect())
+        })
+        .await
     }
 }
 
@@ -231,6 +247,11 @@ impl SubagentService {
             AgentApiError::invalid_request("subagent invocation is missing its execution context")
         })?;
         let context: SubagentExecutionContextV1 = self.read_json(context_ref).await?;
+        if context.parent_session_id != invocation.session_id.as_str() {
+            return Err(AgentApiError::rejected(
+                "delegation parent does not match admitted invocation",
+            ));
+        }
         if context.version != SubagentExecutionContextV1::VERSION {
             return Err(AgentApiError::invalid_request(format!(
                 "unsupported subagent execution context version {}",
@@ -639,8 +660,9 @@ fn is_not_found(error: &AgentApiError) -> bool {
     matches!(error.kind, api::AgentApiErrorKind::NotFound)
 }
 
-/// Errors that describe the request rather than the runtime: surfaced to
-/// the parent as a rejected delegation instead of retried.
+/// Errors that describe the request rather than the runtime, a resource
+/// the child's identity may not use included: surfaced to the parent as a
+/// rejected delegation instead of retried.
 fn is_caller_error(error: &AgentApiError) -> bool {
     matches!(
         error.kind,
@@ -648,6 +670,7 @@ fn is_caller_error(error: &AgentApiError) -> bool {
             | api::AgentApiErrorKind::InvalidRequest
             | api::AgentApiErrorKind::Rejected
             | api::AgentApiErrorKind::Conflict
+            | api::AgentApiErrorKind::Forbidden
     )
 }
 
@@ -1142,12 +1165,10 @@ mod tests {
         let listed = h
             .sessions
             .list_sessions(engine::storage::ListSessions {
-                metadata: Default::default(),
-                cursor: None,
                 limit: 10,
-                root_session_id: Some(SessionId::new("parent")),
-                parent_session_id: None,
-                exclude_closed: false,
+                trees: vec![SessionId::new("parent")],
+                subagent: Some(true),
+                ..Default::default()
             })
             .await
             .expect("list")

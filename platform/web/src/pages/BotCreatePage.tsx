@@ -46,6 +46,7 @@ import { ProgressSteps } from "@/components/ui/progress-steps";
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
 import { setupResourceFeatureError } from "@/lib/sessions/resource-features";
 import { cn } from "@/lib/utils";
+import { useActionPermissions } from "@/lib/permissions";
 
 type Step = "job" | "wakeups" | "profile" | "bots" | "guardrails";
 /** The same sections as Bot settings, in the same order. */
@@ -132,6 +133,8 @@ export function BotCreateDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const permissions = useActionPermissions(universeId);
+  if (!permissions.can("create_bot")) return null;
   return <Wizard universeId={universeId} slug={slug} open={open} onOpenChange={onOpenChange} />;
 }
 
@@ -146,6 +149,7 @@ function Wizard({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const permissions = useActionPermissions(universeId);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [step, setStep] = useState<Step>("job");
@@ -308,6 +312,9 @@ function Wizard({
 
   const create = useMutation({
     mutationFn: async () => {
+      if (!permissions.can("create_bot") || (setupMode === "own" && !permissions.can("create_profile"))) {
+        throw new Error("You do not have permission to create this bot setup.");
+      }
       const id = botId.trim();
       let profileId = sharedProfileId;
       if (setupMode === "own") {
@@ -753,7 +760,7 @@ function Wizard({
             <Button
               className="shrink-0"
               onClick={() => create.mutate()}
-              disabled={create.isPending || problems.length > 0}
+              disabled={!permissions.can("create_bot") || (setupMode === "own" && !permissions.can("create_profile")) || create.isPending || problems.length > 0}
             >
               {create.isPending ? "Creating…" : "Create bot"}
             </Button>

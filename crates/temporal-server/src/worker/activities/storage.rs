@@ -965,6 +965,7 @@ mod tests {
                 lifecycle_status: engine::storage::SessionLifecycleStatus::New,
                 closed_at_seq: None,
                 closed_at_ms: None,
+                activity: Default::default(),
                 retention_root_session_id: session_id.clone(),
                 delete_after_close_ms: None,
                 delete_at_ms: None,
@@ -1519,6 +1520,7 @@ mod tests {
                 session_id: session_id.clone(),
                 observed_at_ms: 12,
                 command: CoreAgentCommand::RequestRun(RunRequestCommand {
+                    requested_by: None,
                     notify_on_terminal: Vec::new(),
                     submission_id: None,
                     source: RunRequestSource::Input {

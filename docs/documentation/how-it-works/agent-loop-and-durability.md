@@ -7,7 +7,7 @@ records the facts that determine the session's next step. The process holds a
 working copy of state; durable history allows another process to reconstruct it.
 
 The core loop is straightforward: admit work, record facts, reduce them into
-state, and decide what should happen next. The care is in the boundaries.
+state, and decide what should happen next.
 A proposed event must be committed before it changes authoritative state, and
 an external effect must be represented by its recorded result before replay
 can rely on it.
@@ -52,9 +52,9 @@ flowchart TD
   Decide --> Wait[Idle, waiting, or closed]
 ```
 
-The persistence step sits outside the core. An event proposal is not already
-a durable fact, and an intent is not proof that an external operation completed.
-Keeping those distinctions explicit makes recovery understandable.
+Storage commits the event before the core advances its state. Effects follow
+that committed decision, and their results go through the same commit step.
+Recovery can therefore distinguish the work requested from the work completed.
 
 ## Follow one run
 
@@ -138,11 +138,9 @@ conversation would be unnecessary work. Lightspeed stores reducer checkpoints:
 the reduced state at a known position in the session history.
 
 To reconstruct a session, a storage activity loads a valid checkpoint and
-replays the tail through a captured head. The loader checks the checkpoint's
-format, lineage, position, and recorded byte length, and verifies that the required tail
-is complete. If the checkpoint cannot be used, it falls back to the event log.
-A missing checkpoint is therefore a performance issue; missing authoritative
-events are a correctness issue and fail explicitly.
+replays the events committed since it was taken. If the checkpoint cannot be
+used, it falls back to the event log. A missing checkpoint slows recovery;
+missing authoritative events prevent it.
 
 The activity returns reduced state, its head, and the run-submission index to
 the workflow. It does not send the entire event history through the activity
@@ -150,8 +148,7 @@ result. The same distinction lets a transcript reader load a bounded event
 range without reconstructing the full execution state first.
 
 The [checkpoint loader](../../../crates/temporal-server/src/checkpoint.rs)
-implements this recovery boundary. Checkpoints are accelerators, not a second
-source of truth that can silently override the log.
+validates checkpoints and checks that the required history is complete.
 
 ## Continue with a new Temporal execution
 
@@ -164,23 +161,19 @@ history threshold is reached. It then waits for a safe committed boundary.
 This can happen during an active run; the agent does not have to finish the
 whole task first.
 
-The safe boundary matters because not every piece of transport state has
-already become reconstructible session state. Pending admissions, emissions,
-tool resumes, promise/source deliveries, and local retry or cancellation
-deadline state can delay rollover. The workflow drains or settles that work
-before continuing. Parked batches and durable promises can survive the boundary
-because their facts are already in session state.
+Before rollover, the workflow must finish recording or delivering work that
+exists only in its current execution. That can delay rollover. Parked tool
+batches and durable promises can survive because their facts are already in
+session state.
 
 The new execution loads the session through the storage activity and resumes
 the drive. An active run does not require another user message to wake it.
 The logical session ID and Lightspeed run ID remain the same, while the
 Temporal execution ID changes.
 
-This is how a session can span many workflow executions. It is not an absolute
-bound on all state: unsafe transport state can delay rollover, and reduced
-bootstrap metadata still has a size budget. Large payload offloading,
-compaction, history rollover, and retention each address a different source
-of growth.
+Rollover limits the growth of Temporal history. Context compaction, payload
+storage, and retention address other kinds of growth, as described in
+[Context and storage](context-and-storage.md).
 
 ## Accept control while work is in flight
 
@@ -204,7 +197,9 @@ acknowledgment reverses a remote operation that already happened.
 For the user-facing choices between queueing, steering, and cancellation, see
 [Sessions and runs](../using-lightspeed/sessions-and-runs.md).
 
-## Make retries converge at explicit boundaries
+<a id="make-retries-converge-at-explicit-boundaries"></a>
+
+## Retry without repeating completed work
 
 Suppose a storage activity commits an append and loses its completion response.
 Temporal may retry the activity. The storage activity recognizes an exact repeat
@@ -232,9 +227,5 @@ provider idempotency, and effect-specific recovery are still necessary. An
 email already sent or a machine command already run is not undone by replaying
 the session.
 
-These are the practical limits of durability: compatible workflow code and
-retained histories let processing resume; recorded events reconstruct decisions;
-effect adapters handle the uncertainty at their external boundaries. The
-[operations](../deployment/operations.md) and
-[recovery](../deployment/upgrades-and-recovery.md) guides explain how to inspect
-those boundaries in a deployment.
+For monitoring and backup procedures, see [Operations](../deployment/operations.md)
+and [Upgrades and recovery](../deployment/upgrades-and-recovery.md).

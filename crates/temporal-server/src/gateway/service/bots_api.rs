@@ -29,6 +29,9 @@ use crate::bots::{
 
 const DEFAULT_EVENT_PAGE: usize = 50;
 const MAX_EVENT_PAGE: usize = 200;
+/// Full session pages a bot's state reads before it stops, so a runaway
+/// sub-agent tree cannot make the read unbounded.
+const BOT_STATE_MAX_SESSION_PAGES: usize = 10;
 const DEFAULT_FILTER_SAMPLE: usize = 20;
 const MAX_FILTER_SAMPLE: usize = 50;
 /// How long `bots/delete` waits for a closing controller to complete.
@@ -160,7 +163,10 @@ impl GatewayAgentApi {
         }
     }
 
-    async fn validate_retrievable_grant_id(&self, grant_id: &str) -> Result<(), AgentApiError> {
+    async fn validate_retrievable_grant_id(
+        &self,
+        grant_id: &str,
+    ) -> Result<auth::AuthGrantRecord, AgentApiError> {
         let grant_id = parse_auth_grant_id(grant_id.to_owned())?;
         let grants: &dyn AuthGrantStore = self.store().as_ref();
         let record = grants.read_grant(&grant_id).await.map_err(map_auth_error)?;
@@ -169,9 +175,13 @@ impl GatewayAgentApi {
                 "auth grant {grant_id} is not active"
             )));
         }
-        require_retrievable_grant(&record)
+        require_retrievable_grant(&record)?;
+        Ok(record)
     }
 
+    /// A poll sends its leased credential to the poll URL, so the URL must
+    /// lie within the grant's audience. A grant bound to no audience would
+    /// follow any URL; attaching one is universe configuration, not bot use.
     async fn validate_trigger_grants(
         &self,
         document: &BotTriggerDocument,
@@ -180,14 +190,41 @@ impl GatewayAgentApi {
             BotTriggerSpec::Webhook {
                 verification: WebhookVerification::HmacSha256 { grant_id, .. },
                 ..
-            } => self.validate_retrievable_grant_id(grant_id).await,
+            } => self
+                .validate_retrievable_grant_id(grant_id)
+                .await
+                .map(|_| ()),
             BotTriggerSpec::Poll {
                 source:
                     PollSource::Http {
-                        auth: Some(auth), ..
+                        url,
+                        auth: Some(auth),
+                        ..
                     },
                 ..
-            } => self.validate_retrievable_grant_id(&auth.grant_id).await,
+            } => {
+                let grant = self.validate_retrievable_grant_id(&auth.grant_id).await?;
+                match &grant.audience {
+                    Some(audience) if auth::audience_covers(audience, url) => Ok(()),
+                    Some(audience) => Err(AgentApiError::rejected(format!(
+                        "auth grant {} is bound to {audience}, which does not cover the poll URL",
+                        grant.grant_id
+                    ))),
+                    None => {
+                        if self
+                            .permitted(
+                                MethodAccess::Universe(UniverseAction::ConfigureResource),
+                                None,
+                            )
+                            .await?
+                        {
+                            Ok(())
+                        } else {
+                            Err(AgentApiError::forbidden())
+                        }
+                    }
+                }
+            }
             _ => Ok(()),
         }
     }
@@ -201,6 +238,11 @@ impl GatewayAgentApi {
         input: BotTriggerInput,
         expected_revision: Option<u64>,
     ) -> Result<BotTriggerRecord, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_PUT,
+            Some(ResourceRef::Bot(bot_id.as_str().to_owned())),
+        )
+        .await?;
         let bot = self.read_bot_record(bot_id).await?;
         if bot.is_closed() {
             return Err(AgentApiError::rejected(format!(
@@ -256,7 +298,6 @@ impl GatewayAgentApi {
                 })?;
         }
         self.validate_trigger_grants(&input.document).await?;
-
         let mut secrets = existing
             .as_ref()
             .map(|existing| existing.secrets.clone())
@@ -323,6 +364,11 @@ impl GatewayAgentApi {
         bot_id: &BotId,
         trigger_id: &BotTriggerId,
     ) -> Result<BotTriggerRecord, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_DELETE,
+            Some(ResourceRef::Bot(bot_id.as_str().to_owned())),
+        )
+        .await?;
         self.delete_bot_trigger_schedule(bot_id, trigger_id)
             .await
             .map_err(|error| {
@@ -341,6 +387,11 @@ impl GatewayAgentApi {
         input: BotInput,
         expected_revision: Option<u64>,
     ) -> Result<BotRecord, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_PUT,
+            Some(ResourceRef::Bot(input.bot_id.as_str().to_owned())),
+        )
+        .await?;
         let store = self.store();
         let previous = self.read_bot_record(&input.bot_id).await?;
         self.require_profile(&input.document.profile_id).await?;
@@ -411,6 +462,11 @@ impl GatewayAgentApi {
         &self,
         bot_id: &BotId,
     ) -> Result<BotRecord, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_CLOSE,
+            Some(ResourceRef::Bot(bot_id.as_str().to_owned())),
+        )
+        .await?;
         let store = self.store();
         let bot = store
             .close_bot(bot_id, bot_now_ms())
@@ -470,6 +526,11 @@ impl GatewayAgentApi {
         &self,
         bot_id: &BotId,
     ) -> Result<(BotRecord, Vec<String>), AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_DELETE,
+            Some(ResourceRef::Bot(bot_id.as_str().to_owned())),
+        )
+        .await?;
         let bot = self.read_bot_record(bot_id).await?;
         if !bot.is_closed() {
             self.close_bot_record(bot_id).await?;
@@ -512,25 +573,36 @@ impl GatewayAgentApi {
     ) -> Result<BotStateView, AgentApiError> {
         self.read_bot_record(bot_id).await?;
         let controller = self.query_bot_controller(bot_id).await?;
-        let mut descendants = Vec::new();
-        if let Some(snapshot) = &controller {
-            for session in &snapshot.sessions {
-                let listed = self
+        // The controller knows its sessions; the session layer lists them and
+        // their sub-agents, each with what it is doing now.
+        let trees: Vec<String> = controller
+            .iter()
+            .flat_map(|snapshot| &snapshot.sessions)
+            .map(|session| session.session_id.clone())
+            .collect();
+        let mut sessions = Vec::new();
+        let mut cursor = None;
+        if !trees.is_empty() {
+            for _ in 0..BOT_STATE_MAX_SESSION_PAGES {
+                let page = self
                     .list_sessions(SessionListParams {
-                        metadata: Default::default(),
-                        cursor: None,
+                        cursor: cursor.take(),
                         limit: Some(MAX_SESSION_LIST_LIMIT as u32),
-                        root_session_id: Some(session.session_id.clone()),
-                        parent_session_id: None,
-                        exclude_closed: false,
+                        trees: trees.clone(),
+                        ..Default::default()
                     })
-                    .await?;
-                descendants.extend(listed.result.sessions);
+                    .await?
+                    .result;
+                sessions.extend(page.sessions);
+                match page.next_cursor {
+                    Some(next) => cursor = Some(next),
+                    None => break,
+                }
             }
         }
         Ok(BotStateView {
             controller,
-            descendants,
+            sessions,
         })
     }
 
@@ -777,6 +849,8 @@ impl GatewayAgentApi {
             .create_bot(bot_id.clone(), document, bot_now_ms())
             .await
             .map_err(map_bot_error)?;
+        // Bots are shared with the universe; only who created one is kept.
+        self.record_bot_creator(&bot_id).await?;
         let mut triggers = Vec::new();
         let rollback = |store: Arc<PgStore>, bot_id: BotId| async move {
             let _ = store.delete_bot(&bot_id).await;
@@ -815,20 +889,25 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn list_bot_roster(&self) -> Result<BotListResponse, AgentApiError> {
+    pub(super) async fn list_bot_roster(
+        &self,
+        params: BotListParams,
+    ) -> Result<BotListResponse, AgentApiError> {
         let rows = self
             .store()
-            .list_bot_roster()
+            .list_bot_roster_for(params.created_by.as_deref())
             .await
             .map_err(map_bot_error)?;
         Ok(BotListResponse {
             bots: rows
                 .into_iter()
-                .map(|row| BotListItem {
+                .map(|(row, access)| BotListItem {
                     bot: row.bot.view(),
+                    access,
                     trigger_count: row.trigger_count,
                     pending_count: row.pending_count,
                     last_event: row.last_event.map(|event| event.view()),
+                    activity: row.activity,
                 })
                 .collect(),
         })

@@ -4,7 +4,7 @@
 //
 // Stateful dependencies run in Docker Compose. Rust and TypeScript processes
 // run from the checkout so cargo, tsx, and Vite retain their normal edit loops.
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import {
   closeSync,
   mkdirSync,
@@ -13,92 +13,121 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startProcesses, waitForService as awaitService, tcpUp } from "./startup.mjs";
+import { DevError, formatFailure } from "./errors.mjs";
+import { launchCommand, commandFailure, stopCommands } from "./processes.mjs";
 
 const devDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(devDir, "..", "..");
 const infraDir = path.join(devDir, "infra");
 const supervisorStatePath = path.join(repoRoot, ".lightspeed", "dev-supervisor.json");
-try {
-  process.loadEnvFile(path.join(repoRoot, ".env"));
-} catch (error) {
-  if (error?.code !== "ENOENT") throw error;
-}
-const profiles = new Set(["full", "platform", "runtime", "demo", "infra"]);
+const profiles = new Set(["full", "platform", "runtime", "demo", "docs", "infra"]);
 const actions = new Set(["start", "stop", "down", "reset", "status"]);
-const cli = parseCli(process.argv.slice(2));
+const debug = process.argv.includes("--debug");
 const children = [];
+let cli;
 let stopping = false;
-let requestedExitCode = 0;
-
-if (cli.help) {
-  printHelp();
-  process.exit(0);
-}
-
-const baseEnv = loadDevEnvironment();
-
-if (cli.action !== "start") {
-  await runDevelopmentAction(cli, baseEnv);
-  process.exit(0);
-}
-
-const plan = createPlan(cli.profile, baseEnv);
-if (cli.planOnly) {
-  printPlan(plan);
-  process.exit(0);
-}
-
-validateProviderCredentials(plan, cli.requireApiKeys);
-ensureLocalTooling(plan);
-if (plan.profile !== "infra") {
-  assertSupervisorStopped();
-  claimSupervisor(plan.profile);
-  process.once("SIGINT", () => shutdown(0));
-  process.once("SIGTERM", () => shutdown(0));
-}
-if (plan.infra) runChecked("infra", path.join(infraDir, "up.sh"), [], baseEnv);
-if (plan.profile === "infra") {
-  process.exit(0);
-}
-
-for (const port of plan.ports) {
-  if (await tcpUp(port.port)) {
-    throw new Error(
-      `port ${port.port} (${port.name}) is already in use; stop the existing process or choose another development port`,
-    );
-  }
-}
-
-for (const preparation of plan.preparations) {
-  runChecked(preparation.name, preparation.command, preparation.args, preparation.env);
-}
+let phase = "reading command arguments";
+let infrastructureTouched = false;
 
 try {
-  for (const processPlan of plan.processes) {
-    if (processPlan.startAfter) {
-      console.log(
-        `[startup] waiting for ${processPlan.startAfter.name} before ${processPlan.name}`,
-      );
-      await waitForService(processPlan.startAfter);
-    }
-    startProcess(processPlan);
-  }
-  await waitForReadiness(plan);
+  await main();
 } catch (error) {
-  console.error(`[readiness] ${error.message}`);
-  shutdown(1);
+  await fail(error);
 }
-if (!stopping) printRunning(plan);
+
+async function main() {
+  cli = parseCli(process.argv.slice(2));
+  if (cli.help) return printHelp();
+  process.once("SIGINT", () => void shutdown(0));
+  process.once("SIGTERM", () => void shutdown(0));
+  phase = "loading the development environment";
+  try {
+    process.loadEnvFile(path.join(repoRoot, ".env"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  const baseEnv = loadDevEnvironment();
+  if (cli.action !== "start") {
+    phase = `running ./dev.sh ${cli.action}`;
+    return await runDevelopmentAction(cli, baseEnv);
+  }
+
+  phase = `configuring the ${cli.profile} profile`;
+  const plan = createPlan(cli.profile, baseEnv);
+  if (cli.planOnly) return printPlan(plan);
+  validateProviderCredentials(plan, cli.requireApiKeys);
+  ensureLocalTooling(plan);
+  phase = `starting the ${cli.profile} profile`;
+  if (plan.profile !== "infra") {
+    assertSupervisorStopped();
+    claimSupervisor(plan.profile);
+  }
+  // Check host ports before starting Docker or running migrations.
+  for (const port of plan.ports) {
+    if (await tcpUp(port.port) || await tcpUp(port.port, "::1")) {
+      throw new DevError(`Port ${port.port} (${port.name}) is already in use.`, {
+        hint: `Check the listener with lsof -nP -iTCP:${port.port} -sTCP:LISTEN. Stop it if appropriate, then retry.`,
+      });
+    }
+  }
+  if (plan.infra) {
+    infrastructureTouched = true;
+    phase = "starting Docker infrastructure";
+    await runChecked("infra", path.join(infraDir, "up.sh"), [], baseEnv);
+  }
+  if (plan.profile === "infra") return;
+
+  for (const preparation of plan.preparations) {
+    phase = `running ${preparation.name}`;
+    await runChecked(preparation.name, preparation.command, preparation.args, preparation.env);
+  }
+
+  if (plan.profile === "full") {
+    const runtime = plan.processes.find((p) => p.name === "runtime");
+    if (runtime.env.LIGHTSPEED_AUTH_MODE === "authenticated" && !runtime.env.LIGHTSPEED_PLATFORM_API_KEY) {
+      phase = "bootstrapping the development universe and API key";
+      const result = await runChecked("development key bootstrap", "cargo",
+        ["run", "-p", "temporal-server", "--", "api-key", "bootstrap", "--universe-id", runtime.env.LIGHTSPEED_PG_UNIVERSE_ID],
+        { ...runtime.env, RUST_LOG: "off" }, { captureStdout: true });
+      let credential;
+      try {
+        credential = JSON.parse(result.stdout);
+        if (typeof credential.secret !== "string" || !credential.secret) throw new Error("missing secret");
+      } catch {
+        throw new DevError("Development key bootstrap returned an invalid credential response.", {
+          hint: "Check that the runtime and launcher are from the same checkout. Bootstrap output is withheld because it may contain a secret.",
+        });
+      }
+      for (const processPlan of plan.processes) processPlan.env.LIGHTSPEED_PLATFORM_API_KEY = credential.secret;
+    }
+  }
+  phase = `starting services for ${plan.profile}`;
+  await startProcesses(plan.processes, { start: startProcess, wait: waitForService, isStopping: () => stopping });
+  if (stopping) return;
+  phase = `waiting for ${plan.profile} services to become ready`;
+  await waitForReadiness(plan);
+  if (!stopping) {
+    printRunning(plan);
+    phase = `running the ${plan.profile} profile`;
+  }
+}
+
+async function fail(error) {
+  if (stopping) return;
+  console.error(formatFailure(error, { phase, debug }));
+  await shutdown(1);
+}
 
 function parseCli(argv) {
   const args = [...argv];
   const help = removeFlag(args, "--help") || removeFlag(args, "-h");
   const planOnly = removeFlag(args, "--plan");
+  removeFlag(args, "--debug");
   // Accepted for compatibility; missing keys only warn since keys can be
-  // added per universe from the Platform UI (Integrations).
+  // added per universe from the Platform UI (Models -> Add provider).
   removeFlag(args, "--allow-missing-api-keys");
   const requireApiKeys = removeFlag(args, "--require-api-keys");
   const noEnvd = removeFlag(args, "--no-envd");
@@ -106,6 +135,7 @@ function parseCli(argv) {
   let profile = "full";
 
   if (actions.has(args[0])) action = args.shift();
+  if (args[0] === "doc" || args[0] === "documentation") args[0] = "docs";
   if (action === "start" && profiles.has(args[0])) profile = args.shift();
 
   let volumes = false;
@@ -171,11 +201,7 @@ function createPlan(profile, sourceEnv) {
   const defaultConfiguratorMcpUrl = `http://127.0.0.1:${configuratorPort}/mcp`;
   const configuratorMcpUrl =
     sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL ?? defaultConfiguratorMcpUrl;
-  const configuratorInternalTrustedHeader =
-    sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER ??
-    (profile === "full" && !sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL
-      ? "true"
-      : "false");
+  const configuratorInternalTrustedHeader = "false";
   const runtimePort = addressPort(sourceEnv.LIGHTSPEED_GATEWAY_BIND, 18_080);
   const temporalAddress =
     sourceEnv.TEMPORAL_ADDRESS ?? `127.0.0.1:${sourceEnv.TEMPORAL_PORT ?? "7233"}`;
@@ -183,7 +209,7 @@ function createPlan(profile, sourceEnv) {
   // names; the frontend-only loop is `npm run demo` (in-browser backend).
   const platformApiUrl = runtimeRpc;
   const runtimeAuthMode =
-    sourceEnv.LIGHTSPEED_AUTH_MODE ?? (profile === "full" ? "trusted-header" : "single");
+    sourceEnv.LIGHTSPEED_AUTH_MODE ?? (profile === "full" ? "authenticated" : "single");
   // Local environment daemon: a directly attached `lightspeed-envd` on the
   // developer machine (no provider; registered as an external environment).
   const envdEnabled =
@@ -240,6 +266,9 @@ function createPlan(profile, sourceEnv) {
     LIGHTSPEED_PLATFORM_ADMIN_PASSWORD:
       sourceEnv.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD ??
       "lightspeed-dev-password",
+    LIGHTSPEED_PLATFORM_DEV_SEED:
+      sourceEnv.LIGHTSPEED_PLATFORM_DEV_SEED ??
+      (profile === "full" && runtimeAuthMode === "authenticated" ? "true" : "false"),
     LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL:
       configuratorMcpUrl,
     LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK:
@@ -259,6 +288,7 @@ function createPlan(profile, sourceEnv) {
 
   const tsx = path.join(repoRoot, "node_modules", ".bin", "tsx");
   const vite = path.join(repoRoot, "node_modules", ".bin", "vite");
+  const astro = path.join(repoRoot, "node_modules", ".bin", "astro");
   const processes = [];
   const preparations = [];
   const ports = [];
@@ -313,6 +343,12 @@ function createPlan(profile, sourceEnv) {
         args: ["watch", "platform/server/src/main.ts"],
         cwd: repoRoot,
         env,
+        // First-login bootstrap checks the canonical administrator through RPC.
+        // Wait for the configured runtime in both full and platform-only loops.
+        startAfter: {
+          name: "runtime gateway",
+          url: new URL("health", platformApiUrl).href,
+        },
       },
       {
         name: "web",
@@ -334,6 +370,18 @@ function createPlan(profile, sourceEnv) {
       command: vite,
       args: ["--mode", "demo", "--host", "localhost"],
       cwd: path.join(repoRoot, "platform", "web"),
+      env,
+    });
+  }
+
+  if (profile === "docs") {
+    ports.push({ name: "documentation", port: 4_321 });
+    readiness.push({ name: "documentation", url: "http://127.0.0.1:4321/docs/" });
+    processes.push({
+      name: "docs",
+      command: process.execPath,
+      args: [path.join(repoRoot, "docs", "site", "scripts", "dev.mjs")],
+      cwd: path.join(repoRoot, "docs", "site"),
       env,
     });
   }
@@ -397,9 +445,9 @@ function createPlan(profile, sourceEnv) {
     readiness,
     connectors: connectorNames,
     envd: envdEnabled ? { endpoint: envdEndpoint, workspace: envdWorkspace } : null,
-    infra: profile !== "demo",
+    infra: profile !== "demo" && profile !== "docs",
     tools:
-      profile === "platform" || profile === "full" ? [tsx, vite] : profile === "demo" ? [vite] : [],
+      profile === "platform" || profile === "full" ? [tsx, vite] : profile === "demo" ? [vite] : profile === "docs" ? [astro] : [],
   };
 }
 
@@ -419,9 +467,12 @@ function parseConnectors(value) {
 }
 
 // Provider tokens are leased from the core (`auth/grants/lease`), so a
-// Telegram connector needs no local credential. WhatsApp keeps its Baileys
+// Telegram connector leases provider credentials from core. WhatsApp keeps its Baileys
 // session on disk and seals media locators with a deployment key.
 function validateConnectorEnvironment(connectors, env) {
+  if (connectors.length > 0 && !env.LIGHTSPEED_CONNECTOR_API_KEY?.trim()) {
+    throw new TypeError("development connectors require LIGHTSPEED_CONNECTOR_API_KEY with scoped capabilities");
+  }
   if (!connectors.includes("whatsapp")) return;
   const missing = ["LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY"].filter(
     (name) => !env[name]?.trim(),
@@ -464,9 +515,9 @@ function ensureLocalTooling(plan) {
   for (const tool of plan.tools) {
     const check = spawnSync("test", ["-x", tool]);
     if (check.status !== 0) {
-      throw new Error(
-        `missing ${path.relative(repoRoot, tool)}; run npm install from the repository root`,
-      );
+      throw new DevError(`Missing executable: ${path.relative(repoRoot, tool)}.`, {
+        hint: "Run npm install from the repository root, then retry.",
+      });
     }
   }
 }
@@ -484,13 +535,13 @@ function validateProviderCredentials(plan, requireApiKeys) {
   if (configured) return;
   if (requireApiKeys) {
     throw new Error(
-      "no OPENAI_API_KEY or ANTHROPIC_API_KEY is configured; set a deployment key in .env or drop --require-api-keys and add keys per universe under Integrations",
+      "no OPENAI_API_KEY or ANTHROPIC_API_KEY is configured; set a deployment key in .env or drop --require-api-keys and add keys per universe under Models -> Add provider",
     );
   }
   console.warn(`
 [credentials] No deployment-wide OPENAI_API_KEY or ANTHROPIC_API_KEY is configured.
 [credentials] Starting anyway: add provider API keys per universe in the Platform UI
-[credentials] (Settings -> Integrations). Sessions fail until a key exists for their provider.
+[credentials] (Models -> Add provider). Sessions fail until a key exists for their provider.
 [credentials] Pass --require-api-keys to make this fatal (for CI).`);
 }
 
@@ -501,12 +552,14 @@ async function runDevelopmentAction(options, env) {
   }
   if (options.action === "down") {
     await stopSupervisor();
-    runChecked(
+    infrastructureTouched = true;
+    await runChecked(
       "infra",
       path.join(infraDir, "down.sh"),
       options.volumes ? ["--volumes"] : [],
       env,
     );
+    infrastructureTouched = false;
     return;
   }
   if (options.action === "reset") {
@@ -516,7 +569,9 @@ async function runDevelopmentAction(options, env) {
         `development supervisor is running (profile ${supervisor.profile}, pid ${supervisor.pid}); run ./dev.sh stop before resetting state`,
       );
     }
-    runChecked("infra", path.join(infraDir, "reset.sh"), [], env);
+    infrastructureTouched = true;
+    await runChecked("infra", path.join(infraDir, "reset.sh"), [], env);
+    infrastructureTouched = false;
     return;
   }
   const supervisor = readSupervisorState();
@@ -525,7 +580,7 @@ async function runDevelopmentAction(options, env) {
       ? `Host supervisor: running (profile ${supervisor.profile}, pid ${supervisor.pid}, started ${supervisor.startedAt})`
       : "Host supervisor: stopped",
   );
-  runChecked(
+  await runChecked(
     "infra",
     "docker",
     [
@@ -543,9 +598,9 @@ async function runDevelopmentAction(options, env) {
 function assertSupervisorStopped() {
   const supervisor = readSupervisorState();
   if (!supervisor) return;
-  throw new Error(
-    `development supervisor is already running (profile ${supervisor.profile}, pid ${supervisor.pid}); run ./dev.sh stop first`,
-  );
+  throw new DevError(`A development supervisor is already running (${supervisor.profile}, pid ${supervisor.pid}).`, {
+    hint: "Use ./dev.sh status to inspect it. To switch profiles, run ./dev.sh stop first; Docker services and data are preserved.",
+  });
 }
 
 function claimSupervisor(profile) {
@@ -570,7 +625,10 @@ function claimSupervisor(profile) {
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
-  process.once("exit", () => clearSupervisorState(process.pid));
+  process.once("exit", () => {
+    try { clearSupervisorState(process.pid); }
+    catch (error) { console.error(formatFailure(error, { phase: "removing supervisor state", debug })); }
+  });
 }
 
 function readSupervisorState() {
@@ -651,96 +709,42 @@ async function waitForReadiness(plan) {
 }
 
 async function waitForService(service) {
-  const deadline = Date.now() + 60_000;
-  while (!stopping && Date.now() < deadline) {
-    const ready = service.url ? await httpUp(service.url) : await tcpUp(service.port);
-    if (ready) return;
-    await delay(250);
-  }
-  throw new Error(`${service.name} did not become ready within 60 seconds`);
-}
-
-async function httpUp(url) {
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
-    return response.ok;
-  } catch {
-    return false;
+    await awaitService(service, { isStopping: () => stopping });
+  } catch (error) {
+    for (const record of children.filter((record) => !record.closed && record.tail().trim())) {
+      error.details ??= [];
+      error.details.push(`Recent ${record.name} output:`, ...record.tail().trimEnd().split("\n").slice(-8).map((line) => `  ${line}`));
+    }
+    throw error;
   }
 }
 
-function runChecked(name, command, args, env) {
+async function runChecked(name, command, args, env, options = {}) {
   console.log(`[${name}] ${displayCommand(command, args)}`);
-  const result = spawnSync(command, args, { cwd: repoRoot, env, stdio: "inherit" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`${name} command exited with ${result.status ?? "a signal"}`);
-  }
+  const record = launchCommand({ name, command, args, env, cwd: repoRoot }, options);
+  children.push(record);
+  return await record.done;
 }
 
 function startProcess(processPlan) {
-  const child = spawn(processPlan.command, processPlan.args, {
-    cwd: processPlan.cwd,
-    env: processPlan.env,
-    shell: false,
-  });
-  children.push(child);
-  const prefix = `[${processPlan.name}] `;
-  pipePrefixed(child.stdout, process.stdout, prefix);
-  pipePrefixed(child.stderr, process.stderr, prefix);
-  child.once("error", (error) => {
-    console.error(`${prefix}${error.message}`);
-    shutdown(1);
-  });
-  child.once("exit", (code, signal) => {
-    console.log(`${prefix}exited (${code ?? signal ?? "unknown"})`);
-    if (!stopping) shutdown(code === 0 ? 1 : (code ?? 1));
-  });
+  if (stopping) return;
+  console.log(`[${processPlan.name}] Starting ${displayCommand(processPlan.command, processPlan.args)}`);
+  const record = launchCommand(processPlan);
+  children.push(record);
+  record.done.then(() => {
+    if (!stopping) return fail(commandFailure(processPlan, { code: 0, tail: record.tail() }));
+  }, (error) => fail(error));
 }
 
-function pipePrefixed(stream, output, prefix) {
-  let buffer = "";
-  stream.on("data", (chunk) => {
-    buffer += chunk.toString();
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) output.write(prefix + line + "\n");
-  });
-  stream.on("end", () => {
-    if (buffer) output.write(prefix + buffer + "\n");
-  });
-}
-
-function shutdown(exitCode) {
+async function shutdown(exitCode) {
   if (stopping) return;
   stopping = true;
-  requestedExitCode = exitCode;
-  for (const child of children) {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+  await stopCommands(children);
+  if (infrastructureTouched) {
+    console.error("[cleanup] Docker infrastructure was left in place; some services may still be running. Check ./dev.sh status; use ./dev.sh down to stop it.");
   }
-  const deadline = setTimeout(() => process.exit(requestedExitCode), 2_000);
-  deadline.unref();
-  Promise.all(children.map(waitForExit)).then(() => process.exit(requestedExitCode));
-}
-
-function waitForExit(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-  return new Promise((resolve) => child.once("exit", resolve));
-}
-
-function tcpUp(port) {
-  return new Promise((resolve) => {
-    const socket = net.connect({ port, host: "127.0.0.1", timeout: 500 });
-    socket.once("connect", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.once("error", () => resolve(false));
-    socket.once("timeout", () => {
-      socket.destroy();
-      resolve(false);
-    });
-  });
+  process.exit(exitCode);
 }
 
 function printPlan(plan) {
@@ -755,9 +759,13 @@ function printPlan(plan) {
     console.log(
       `process: ${processPlan.name} -> ${displayCommand(processPlan.command, processPlan.args)}`,
     );
+    if (processPlan.startAfter) {
+      console.log(`  after: ${processPlan.startAfter.name} -> ${processPlan.startAfter.url ?? processPlan.startAfter.port}`);
+    }
   }
   console.log(`connectors: ${plan.connectors.length > 0 ? plan.connectors.join(", ") : "none"}`);
   console.log(`runtime auth: ${plan.env.LIGHTSPEED_AUTH_MODE}`);
+  console.log(`development fixtures: ${plan.env.LIGHTSPEED_PLATFORM_DEV_SEED}`);
   console.log(
     `environment daemon: ${plan.envd ? `${plan.envd.endpoint} (workspace ${plan.envd.workspace})` : "off"}`,
   );
@@ -779,9 +787,16 @@ function printRunning(plan) {
     console.log(
       `  login         ${plan.env.LIGHTSPEED_PLATFORM_ADMIN_EMAIL} / ${plan.env.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD}`,
     );
+    if (plan.env.LIGHTSPEED_PLATFORM_DEV_SEED === "true") {
+      console.log("  Test logins   operator@lightspeed.dev, contributor@lightspeed.dev, viewer@lightspeed.dev");
+      console.log("  initial password  same as Admin (existing passwords are preserved)");
+    }
   }
   if (plan.profile === "demo") {
     console.log("  demo web      http://localhost:5175/demo/  (in-browser backend, scripted data, no sign-in)");
+  }
+  if (plan.profile === "docs") {
+    console.log("  documentation http://127.0.0.1:4321/docs/");
   }
   if (plan.connectors.length > 0) {
     console.log(`  connectors    ${plan.connectors.join(", ")}`);
@@ -801,12 +816,13 @@ function displayCommand(command, args) {
 function printHelp() {
   console.log(`Usage:
   ./dev.sh                                 Bootstrap and start the full editable product
-  ./dev.sh [start] <profile>               Start full, platform, runtime, demo, or infra
+  ./dev.sh [start] <profile>               Start full, platform, runtime, demo, docs, or infra
   ./dev.sh [profile] --require-api-keys    Fail full/runtime startup without provider keys
                                            (default only warns; keys can be added per
-                                           universe under Settings -> Integrations)
+                                           universe under Models -> Add provider)
   ./dev.sh [profile] --no-envd             Do not start the local environment daemon
                                            (same as LIGHTSPEED_DEV_ENVD=off)
+  ./dev.sh [profile] --debug              Include launcher stack traces in errors
   ./dev.sh --plan <profile>                Print a profile without starting it
   ./dev.sh status                          Show host supervisor and infrastructure
   ./dev.sh stop                            Stop host processes; keep infrastructure
@@ -824,5 +840,7 @@ Profiles:
   runtime   Infrastructure and the migrated Rust runtime.
   demo      Web UI only, on http://localhost:5175/demo/, over the in-browser
             demo backend (scripted data, no sign-in). No Docker, no runtime.
+  docs      Documentation on http://127.0.0.1:4321/docs/ (aliases: doc, documentation).
+            Watches the manual for edits. No Docker, no runtime.
   infra     Postgres, pgAdmin, MinIO, and Temporal only.`);
 }

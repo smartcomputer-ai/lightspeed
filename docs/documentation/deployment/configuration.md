@@ -3,14 +3,14 @@
 A Lightspeed installation has several processes, each with its own
 configuration. The runtime owns agent execution and storage; the Platform
 owns login and management; optional services provide compute, chat bridges,
-and Configurator MCP. Start by deciding which process consumes a setting and
-which other processes must agree with it.
+and Configurator MCP. Put each setting on the process that uses it, and keep
+shared settings consistent across replicas.
 
 This guide explains those choices. The
 [environment-variable reference](../reference/environment-variables.md)
 contains the complete names, defaults, and requirements. Use the
 [self-hosting recipe](self-hosting.md) for a minimal full installation, then
-add the groups below as the deployment needs them.
+add the optional services below as the deployment needs them.
 
 ## Supply settings to the right process
 
@@ -24,7 +24,7 @@ schemas and migration histories are independent.
 connector host. It does not configure where the runtime listens. That address
 comes from `LIGHTSPEED_GATEWAY_BIND`.
 
-In deployed containers, supply explicit environment variables or protected
+In deployed containers, supply environment variables or protected
 environment files. Docker `--env-file` uses `KEY=value`, without `export` or
 shell quotes. Shell startup scripts use shell syntax instead. A file that
 works with `source` is not necessarily interpreted the same way by Docker.
@@ -53,11 +53,10 @@ state and routing:
 | Environment routing | The one environment gateway's internal URL and shared routing token. |
 | Provider transport | Required deployment fallbacks and network access for the roles performing discovery or generation. |
 
-Roles, listener addresses, and gateway authentication modes can differ by
-process. For example, a private `trusted-header` gateway for the Platform and
-an API-key gateway for direct clients can share stores and workers. They still
-belong to one deployment. [Authentication and access](authentication-and-tenancy.md)
-explains that topology.
+Roles and listener addresses can differ by process. Authenticated gateways
+serve both the Platform and direct clients, checking each key's scope and
+allowed method groups. The Platform separately checks its members' roles and
+session visibility. See [API keys and service access](../access-and-security/api-keys-and-service-access.md).
 
 If multiple deployments share a Temporal namespace, set all three queue
 variables independently. A deployment-specific `LIGHTSPEED_TASK_QUEUE` does
@@ -82,7 +81,7 @@ callers:
 An address containing `localhost` is relative to the process using it. Inside
 a container it refers to that container. Conversely, binding to `0.0.0.0`
 does not make that a useful public callback URL. Set the external origins
-explicitly behind a reverse proxy.
+to the public HTTPS addresses when using a reverse proxy.
 
 Preserve paths, query strings, host, and scheme as described in
 [Configure the public edge](self-hosting.md#configure-the-public-edge).
@@ -115,8 +114,8 @@ protect different state and are not interchangeable. The
 [recovery inventory](upgrades-and-recovery.md#preserve-a-complete-recovery-set)
 explains what needs to be retained together.
 
-Provider API keys can be stored per universe through **Settings →
-Integrations**. This keeps the credential associated with the team that uses
+Provider API keys can be stored per universe through **Models → Add provider**.
+This keeps the credential associated with the team that uses
 it. Deployment-level `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are fallback
 credentials when the corresponding universe record is absent. A disabled or
 broken stored record blocks fallback.
@@ -182,11 +181,12 @@ or [Incus VMs](../environments/incus-vms.md) for complete procedures.
 
 ### Chat connectors
 
-The connector host calls a private `trusted-header` runtime endpoint and the
-deployment's Temporal namespace. Its account requests include tenant headers,
-which single and API-key modes reject. It discovers channel
-accounts through the operator API and leases their credentials; provider bot
-tokens do not go into connector environment variables.
+The connector host uses `LIGHTSPEED_CONNECTOR_API_KEY` against an authenticated
+runtime and the deployment's Temporal namespace. Its deployment-scoped key needs
+the `deployment/channels`, `auth/lease`, `channels/inbound`, and `blobs/put`
+method groups for account discovery, credential leasing, inbound admission,
+and attachment uploads. Provider bot tokens are leased from core rather than
+configured on the connector host.
 
 WhatsApp additionally needs `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR` on
 persistent storage and a stable
@@ -211,9 +211,10 @@ traffic does not authorize tool discovery or execution.
 Configurator is a separately deployed MCP server that manages Lightspeed. Its
 mode must match its upstream gateway, and a non-loopback listener requires an
 explicit allowed-host configuration. The Platform's Configurator URL enables
-its setup flow; it does not start the service. The credentialless trusted-header
-loopback shortcut is for local development and tests, and should remain
-disabled in deployed configuration.
+its setup flow; it does not start the service. The setup provisions a dedicated
+universe key for configuring resources and stores it as an outbound credential.
+That key has no session or VFS access. See [Agent and tool access](../access-and-security/agent-and-tool-access.md)
+for what attaching Configurator lets an agent do.
 
 See [Tools and MCP](../using-lightspeed/tools-and-mcp.md) and the
 [Configurator variables](../reference/environment-variables.md#configurator-mcp)
@@ -222,7 +223,7 @@ before enabling those paths.
 ## Verify a configuration change
 
 First confirm the affected process starts with the intended settings. Then
-exercise the boundary that changed: read existing content after a storage
+test the capability that changed: read existing content after a storage
 change, complete a run after a queue or provider change, or perform a harmless
 machine operation after an environment-route change. A successful listener
 health check alone cannot establish those results.

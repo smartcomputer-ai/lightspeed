@@ -23,9 +23,15 @@ pub enum Event {
         run_id: RunId,
         steering_id: SteeringId,
         input: Vec<ContextEntryInput>,
+        /// Who asked, as the API boundary attributed the request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_by: Option<crate::Attribution>,
     },
     CancellationRequested {
         run_id: RunId,
+        /// Who asked, as the API boundary attributed the request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_by: Option<crate::Attribution>,
     },
     Completed {
         run_id: RunId,
@@ -49,6 +55,9 @@ pub enum Event {
     /// queue). Recorded as a `Cancelled` run record.
     QueuedCancelled {
         run_id: RunId,
+        /// Who cancelled it; absent when force-close drained the queue.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_by: Option<crate::Attribution>,
     },
 }
 
@@ -272,6 +281,9 @@ pub struct AcceptedRunEvent {
     pub config_revision: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notify_on_terminal: Vec<RunTerminalNotifyIntent>,
+    /// Who asked, as the API boundary attributed the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_by: Option<crate::Attribution>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,6 +296,9 @@ pub struct RunRequestCommand {
     /// holder-side promise id). The edge event is the subscription.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notify_on_terminal: Vec<RunTerminalNotifyIntent>,
+    /// Who asked, as the API boundary attributed the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_by: Option<crate::Attribution>,
 }
 
 /// One log-backed notify-intent attached to a run. Replaces the former
@@ -560,6 +575,7 @@ pub(crate) fn apply_event(
                 run_config,
                 config_revision,
                 notify_on_terminal,
+                requested_by: _,
             } = accepted;
             if state.lifecycle.status != CoreAgentStatus::Open {
                 return Err(DomainError::InvariantViolation(
@@ -651,6 +667,7 @@ pub(crate) fn apply_event(
             run_id,
             steering_id,
             input,
+            ..
         } => {
             let expected_steering_id = state
                 .id_cursors
@@ -680,7 +697,7 @@ pub(crate) fn apply_event(
             state.id_cursors.last_steering_id = steering_id.as_u64();
             Ok(())
         }
-        Event::CancellationRequested { run_id } => {
+        Event::CancellationRequested { run_id, .. } => {
             let active_run = active_run_mut(state, *run_id)?;
             if !matches!(active_run.status, RunStatus::Active | RunStatus::Parked) {
                 return Err(DomainError::InvariantViolation(
@@ -754,7 +771,7 @@ pub(crate) fn apply_event(
                 observed_at_ms,
             )
         }
-        Event::QueuedCancelled { run_id } => {
+        Event::QueuedCancelled { run_id, .. } => {
             let Some(position) = state
                 .runs
                 .queued

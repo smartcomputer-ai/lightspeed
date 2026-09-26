@@ -7,16 +7,19 @@ Lightspeed runtime, credentials, a database, or the neighboring `ls-site` repo.
 From the repository root:
 
 ```bash
-npm install
-npm run dev:docs       # local preview; open the printed URL under /docs/
+./dev.sh docs          # installs dependencies and serves http://127.0.0.1:4321/docs/
 npm run check:docs     # adapter tests, Astro diagnostics, build, and link checks
 npm run build:docs     # static output in docs/site/dist/
 npm run preview:docs   # serve the production build, including search
 ```
 
-Astro's development server watches the original manual and the included
-references. Editing a source updates the preview. Astro 7 runs the development
-server in the background; `npm exec --workspace @lightspeed/docs -- astro dev stop`
+`./dev.sh doc` and `./dev.sh documentation` are aliases. The server watches the
+original manual and included references; edits update the preview. Ctrl-C or
+`./dev.sh stop` stops it.
+
+For a standalone preview alongside another launcher profile, `npm run dev:docs`
+still invokes Astro directly. Astro can run that server in the background when
+it detects an agent; `npm exec --workspace @lightspeed/docs -- astro dev stop`
 stops it. Search is indexed during the production build, so use `preview:docs`
 when checking search behavior.
 
@@ -58,24 +61,40 @@ Crop to the dialog or working panel so labels remain readable at article width.
 To refresh them, run `npm run demo`, open `http://localhost:5175/demo/`, and use
 the **Software Factory** universe. Select **Dark** under the account menu's
 **Theme** submenu, hide the demo notice, and use a 1440 × 1000 viewport at
-normal zoom. Capture PNGs at CSS-pixel scale through the browser; do not replace
-UI text or fabricate results. These captures need no live backend or credentials.
+normal zoom. Use Playwright to operate the UI and capture PNGs with
+`scale: 'css'` and `animations: 'disabled'`. Wait for the relevant view to load,
+move the pointer away from controls, and use a dialog or panel crop. Do not
+replace UI text or fabricate results. These captures need no live backend or
+credentials.
+
+For a loopback-only demo server, use:
+
+```bash
+npm run dev:demo --workspace @lightspeed/platform-web -- --host 127.0.0.1
+```
 
 | Image | Demo view and state |
 | --- | --- |
-| `welcome-session.png` | Sessions → Fix flaky scheduler test; scroll the conversation to the top with tool groups collapsed. Capture the full UI at 1440 × 960, including navigation and the sub-agent link. |
+| `../../images/ls-screenshot-factory.png` | Bots → Implementer → lin-1421-c; leave run activity collapsed and scroll to the top. Capture the full UI at 1440 × 900, including the sub-agent link and final replies. Copy the same PNG to `public/social.png`. |
+| `welcome-session.png` | Sessions → Fix flaky scheduler test; expand the first run's activity and scroll the conversation to the top. Leave individual tool calls collapsed. Capture the full UI at 1440 × 960, including navigation and the sub-agent link. |
 | `new-session.png` | Sessions → New session; name `First conversation`, no profile, before customizing. Capture the dialog. |
-| `profile-editor.png` | Profiles → Release scribe → Form; capture the header, instructions, and model configuration. |
-| `session-tool-result.png` | Sessions → Fix flaky scheduler test; expand the first tool group and capture its header and first command's Result. |
+| `profile-editor.png` | Profiles → Release scribe → Form; capture the header, instructions, and model configuration, with Customize run controls closed. |
+| `session-tool-result.png` | Sessions → Fix flaky scheduler test; expand the first run, then its Run tool call. Capture the tool batch with the first command's Result selected. |
 | `workspace-skill.png` | Create the `release-notes` workspace and save the skill from the Workspaces and skills guide at `.lightspeed/skills/release-review/SKILL.md`. Capture the tree and editor. |
 | `bot-event-outcome.png` | Bots → PR Reviewer → Activity; expand event #11. Capture the bot header, activity controls, expanded event, and neighboring outcomes. |
 | `environment-details.png` | Environments → CI runner → Details; capture the expanded machine card. |
+| `members-and-roles.png` | Members; capture the heading, Add member button, and member table showing the seeded Admin and Contributor roles. |
+| `session-share.png` | Fix flaky scheduler test → Session actions → Share with universe…; capture the confirmation, then cancel. |
+| `api-key-groups.png` | API keys → Create key; enter `Release automation`, keep Agent client selected, and capture the dialog including its private-session warning. Cancel without creating a key. |
+| `model-providers.png` | Models → Add provider; capture the provider catalogue before selecting a connection. |
 
 The release-notes workspace is created through the demo UI for this capture;
 it is not a seeded fixture. Refreshing the demo discards that work. Other
 captures use the existing fixtures. Captions distinguish these examples from
 the reader's installation. Run the docs build after replacing images to check
-their published paths and Markdown exports.
+their published paths and Markdown exports. Preview the built pages in
+Playwright at desktop and mobile widths; check image loading, readable crops,
+and horizontal overflow.
 
 ## Markdown access for agents
 

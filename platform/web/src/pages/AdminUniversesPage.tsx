@@ -167,7 +167,7 @@ export function AdminUniversesPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => navigate(universeHome(universe.slug))}
+                      onClick={() => navigate(universeHome(universe))}
                     >
                       Open
                     </Button>
@@ -394,10 +394,9 @@ function AdoptDialog({
         <DialogHeader>
           <DialogTitle>Adopt engine universe</DialogTitle>
           <DialogDescription>
-            Creates the platform half — organization, your owner membership, and
-            the universe row linked to{" "}
+            Creates the Platform display entry linked to{" "}
             <span className="font-mono text-xs">{orphan?.universeId}</span>. Engine
-            data is untouched.
+            permissions are managed separately.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4">

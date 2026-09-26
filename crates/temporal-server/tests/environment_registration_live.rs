@@ -11,11 +11,11 @@ mod support;
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use api::{
-    AgentApiService, EnvironmentCloseParams, EnvironmentIdentityModeView,
-    EnvironmentLifecycleStatusView, EnvironmentListParams, EnvironmentReadParams,
-    EnvironmentRegistrationKeyCreateParams, EnvironmentRegistrationKeyReadParams,
-    EnvironmentRegistrationKeyRevokeParams, EnvironmentSourceView, EnvironmentView,
-    OperatorApiService, OperatorUniverseCreateParams,
+    AgentApiService, DeploymentApiService, DeploymentUniverseCreateParams, EnvironmentCloseParams,
+    EnvironmentIdentityModeView, EnvironmentLifecycleStatusView, EnvironmentListParams,
+    EnvironmentReadParams, EnvironmentRegistrationKeyCreateParams,
+    EnvironmentRegistrationKeyReadParams, EnvironmentRegistrationKeyRevokeParams,
+    EnvironmentSourceView, EnvironmentView,
 };
 use environment_client::{EnvironmentDataClient, JsonRpcTransport};
 use environment_daemon::{
@@ -39,8 +39,9 @@ use support::live::{LIVE_TEST_LOCK, require_storage_live_env};
 use temporal_server::{
     DeploymentStores, GatewayAuthMode, UniverseRuntime,
     gateway::{
-        DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayAgentApi, GatewayOperatorApi, GatewayRoutes,
+        DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayAgentApi, GatewayDeploymentApi, GatewayRoutes,
         GatewayState, gateway_router,
+        request_context::{RequestContext, with_request_context as calling},
     },
 };
 use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
@@ -85,12 +86,16 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
         Some(base_url.clone()),
         stores,
     )?);
-    let operator = GatewayOperatorApi::new(runtime.clone());
-    operator
-        .create_universe(OperatorUniverseCreateParams {
+    let operator = GatewayDeploymentApi::new(runtime.clone());
+    // Direct service calls carry an explicit local request context.
+    calling(
+        RequestContext::local(api::AccessScope::Deployment),
+        operator.create_universe(DeploymentUniverseCreateParams {
             universe_id: universe_id.to_string(),
-        })
-        .await?;
+        }),
+    )
+    .await?;
+    let caller = RequestContext::local(api::AccessScope::Universe { universe_id });
     let state = Arc::new(GatewayState::multi(
         GatewayAuthMode::Single { universe_id },
         runtime.clone(),
@@ -160,13 +165,16 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
     let api = runtime.state_for(universe_id, false).await?.api.clone();
     let sandbox = tempfile::tempdir()?;
 
-    let result = scenario(
-        &runtime,
-        &api,
-        universe_id,
-        &base_url,
-        &connect_url,
-        sandbox.path(),
+    let result = calling(
+        caller,
+        scenario(
+            &runtime,
+            &api,
+            universe_id,
+            &base_url,
+            &connect_url,
+            sandbox.path(),
+        ),
     )
     .await;
     reconciler.abort();

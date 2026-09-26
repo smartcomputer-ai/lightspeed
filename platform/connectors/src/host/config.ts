@@ -8,6 +8,7 @@ export const CHANNEL_PROVIDERS: readonly ChannelProvider[] = ["telegram", "whats
 export interface ConnectorHostConfig {
   /** Core JSON-RPC endpoint. */
   apiUrl: string;
+  apiKey: string;
   /** Providers this host serves. */
   providers: ChannelProvider[];
   /** Accounts to serve, or every discovered account when null. */
@@ -34,6 +35,7 @@ export function parseHostConfig(env: NodeJS.ProcessEnv): ConnectorHostConfig {
     : null;
   return {
     apiUrl,
+    apiKey: required(env, "LIGHTSPEED_CONNECTOR_API_KEY"),
     providers,
     accounts: parseAccountSelectors(env.LIGHTSPEED_CONNECTOR_ACCOUNTS),
     discoveryIntervalMs: parsePositiveInteger(

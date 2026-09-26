@@ -1,30 +1,29 @@
 # Profiles and instructions
 
-A profile is a reusable agent setup. It collects the model, instructions,
-capabilities, and the workspaces, environments, and MCP servers it attaches
-that a session needs. You can use the same profile for an interactive session, a
-bot, or a delegated sub-agent.
+A profile is a reusable agent setup: its model, instructions, tools, and
+attached resources. You can use the same profile for an interactive session,
+a bot, or a delegated sub-agent.
 
 For example, a release editor needs instructions about factual claims, a
 model that can call tools, and write access to the release workspace. A
 release reviewer can use the same files with read-only access and a different
-job. Separate profiles make those differences explicit and repeatable.
+job. Separate profiles let you reuse each setup without configuring it again.
 
-Profiles belong to a universe. Use a universe owner/admin or platform
-administrator account to manage them.
+Profiles belong to a universe. Use an Operator or Admin account to manage them.
 
 ## Create a profile for a job
 
-Open **Profiles → New profile**. Give it a **Display name**, a stable
-**Profile id**, and choose **Empty profile** under **Start from**. Choose
-**Create** to open the editor.
+Open **Profiles → New profile** and enter **Release reviewer** as the
+**Display name**. Its ID is derived from the name; choose **Change** beneath
+the name to set **Profile id** to `release-reviewer` if needed. Keep the
+default empty starting point and choose **Create** to open the editor.
 
 The editor has **Form** and **JSON** views of the same setup. Start with the
 form; use JSON when you need to inspect or transfer the underlying document.
 The [API reference](../../../crates/api/contract/api-reference.md) defines
 the full `ProfileDocument` and `SessionConfig` shapes.
 
-![Release scribe profile in Form view, showing its instructions, model selection, reasoning effort, and model run controls.](../images/profile-editor.png)
+![Release scribe profile in Form view, showing its instructions, model selection, reasoning effort, and Customize run controls link.](../images/profile-editor.png)
 
 *The demo's Release scribe profile shows where instructions and model
 settings live. Use the reviewer instructions below for this walkthrough.*
@@ -48,10 +47,10 @@ and explain the discrepancy. Do not edit files. If the source is ambiguous,
 report the uncertainty instead of filling in the gap.
 ```
 
-Select an explicit **Model** and enable the capabilities this job requires.
+Select a **Model** and enable the capabilities this job requires.
 For the reviewer, enable **Virtual File System: Files, Instructions, Skills**
-and link the `release-notes` workspace at `/workspace` with **Read** access.
-Save the profile as `release-reviewer`.
+and choose **Add workspace**. Select `release-notes`, set **Session path** to
+`/workspace`, and choose **Read only** access. Save the profile.
 
 Create a session from it and ask it to compare `/workspace/changes.md` with
 `/workspace/release-notes.md`. Verify both the review and the tool activity.
@@ -65,47 +64,36 @@ operations Lightspeed makes available. Both matter: “do not edit files”
 expresses the reviewer's procedure, while read-only tools and links enforce
 the file-access boundary even if the model asks to write.
 
-The profile editor groups grants into VFS, Web, Sub-agents, Timers,
-Environments, and MCP Servers. Leaving a feature absent supplies no tools
-from that feature. Resource-backed features are lists of attachments, each
-naming a workspace, environment, or MCP server together with what the session
-may do with it: a workspace attachment carries `read` or `edit` access, an
-environment attachment carries `read`, `edit`, `exec`, or `jobs` (each level
-including the ones before it), and an MCP server entry can narrow the
-server's tool allowlist. The tools the agent sees follow from the union of
-those grants; there is no separate file-tool switch, and a call the active
-environment's own access does not cover is refused when it executes.
+The editor groups capabilities into VFS, Web, Sub-agents, Timers,
+Environments, and MCP Servers. Attach a workspace, environment, or MCP server
+to make that resource available, then select the access this job needs.
+Workspace access can be read-only or editable. Environment access can also
+allow processes and jobs. An MCP attachment can select a subset of the
+server's allowed tools. [Tools and MCP](tools-and-mcp.md) explains the choices.
 
-Workspace attachments and environment attachments together also grant
-[VFS transfer tools](../environments/vfs-transfer.md). Any workspace attachment plus
-an environment attached with `edit` or higher enables materialize into the
-active environment; an `edit` attachment plus any environment attachment enables
-capture into that workspace. A VFS or environment feature with no attachments
-enables neither. These rules also apply in session settings.
+Enabling VFS or Environments in the form also turns on **Prompt loading** and
+**Skill discovery**. Adjust those switches separately when the agent should
+use files without loading instructions or skills from them. Both search
+conventional directories by default. Use **Customize roots** when a project
+keeps these sources elsewhere; see [Workspaces and skills](workspaces-and-skills.md).
 
-VFS **Skill discovery** and **Prompt loading** are separate opt-in switches.
-Each enables its configuration block (`features.vfs.skills` or
-`features.vfs.prompts`); an empty block uses conventional directories beneath
-workspace attachments. Optional root overrides replace the defaults. Clearing an
-override restores defaults; switching off disables that source. Links alone
-enable neither source. Environment skill discovery is configured
-independently under `features.environments.skills`; environment prompts use
-`features.environments.prompts` with the same enablement and override rules.
+The VFS and each environment attachment have their own **Working directory**.
+Set `/workspace` as the VFS directory if relative file paths should start
+there. Environment file tools, commands, jobs, and discovery use the active
+attachment's directory, or the machine's default when it is blank. A command
+can override its own working directory without changing the session setting.
 
-Each domain has a **Working directory** setting: `features.vfs.workingDirectory`
-(default `/`) for the VFS, and `workingDirectory` on each environment
-attachment (default supplied by that machine). Configure `/workspace`
-explicitly if that is the desired VFS base. Environment file tools, commands,
-jobs, and discovery share the active attachment's base; a per-command `cwd`
-override does not change the session setting.
+Attaching both a workspace and an environment also makes
+[VFS transfer](../environments/vfs-transfer.md) possible. The destination
+needs edit access; the source needs read access.
 
 Apply the same reasoning to delegated work. A parent that can call a powerful
 child profile can ask that child to use its capabilities. The child's setup
 is independent; it is not automatically reduced to the parent's grants.
 [Sub-agents and federation](subagents-and-federation.md) explains that boundary.
 
-Keep credentials in the universe's integrations and secrets. Profiles refer
-to provider IDs, MCP server IDs, and environment configuration rather than
+Keep model credentials on **Models**, and reusable tokens on **Credentials**.
+Profiles refer to provider IDs, MCP server IDs, and environment configuration rather than
 embedding API keys in instructions. See
 [Models and credentials](models-and-credentials.md) and
 [Tools and MCP](tools-and-mcp.md).
@@ -113,14 +101,13 @@ embedding API keys in instructions. See
 ## Combine profile text with workspace instructions
 
 Profile **Instructions** can hold the agent's stable role and working rules.
-For project-specific instructions that should travel with files, configure
-VFS **Prompt roots**. Lightspeed loads the prompt files from those roots and
+For project-specific instructions that should travel with files, enable
+VFS **Prompt loading**. Lightspeed loads the prompt files from its roots and
 combines them with the profile's instruction text.
 
-The profile text comes before the sourced files. That is an ordering rule,
-not a system for resolving contradictory prose. If one source says to edit
-the document and another says never to edit it, remove the contradiction.
-There is no field-level override operation between English instructions.
+The profile text comes before the sourced files. Keep the sources consistent:
+if one says to edit the document and another says never to edit it, their
+order cannot resolve the contradiction reliably.
 
 Built-in default instructions are a fallback when no authored instruction
 sources remain. They are removed when custom instructions are present. In
@@ -135,11 +122,9 @@ both prompt sourcing and a review skill.
 
 ## Apply changes deliberately
 
-A new ordinary session completes the profile's setup in its durable workflow
-before it reports readiness. Retrying session creation finishes the original
-setup even if the named profile has since changed. Saving a
-later profile revision affects future sessions; it does not alter those
-existing conversations automatically.
+A new ordinary session receives the profile's setup at creation. Saving a
+later profile revision affects future sessions; existing conversations keep
+their current setup until you apply a change.
 
 For a one-off change, open the idle session's **Session settings**, edit the
 setup, and choose **Apply setup**. To apply a saved profile to an existing
@@ -147,7 +132,7 @@ ordinary session, use the CLI with the connection settings described in
 [Sessions and runs](sessions-and-runs.md#continue-from-the-cli):
 
 ```bash
-target/debug/lightspeed profiles apply "<session-id>" --profile release-reviewer
+lightspeed profiles apply "<session-id>" --profile release-reviewer
 ```
 
 The API equivalent is `session/profiles/apply`. The session must be open with
@@ -181,21 +166,15 @@ provide per-run overrides, so these fields should not be treated as hard
 authorization ceilings. Bot daily budgets and sub-agent tree limits govern
 different scopes.
 
-A profile activates a machine through its environment attachments. Mark one
-attachment `"default": true` and it is activated at session creation and
-whenever the profile is applied to a session that has no active environment.
-Session creation uses that default attachment and has no separate environment
-override in the UI or the ordinary and managed session APIs. To start with a
-different selection, customize the attachments and their default. With no
-default attachment, a new session has no active environment.
-A sub-agent profile can instead attach `"inherit": true`, which resolves to
-the delegating parent's active environment when the child is spawned. A plain
-session configuration replacement never activates a default. Environments
-are created and managed independently: profiles never provision machines,
-bind credentials, or close them with the session. Attaching a machine both
-allows it and sets what the session may do there. Read
-[Environments](../environments/overview.md) before adding compute to a profile
-that currently needs only VFS files.
+Choose a default environment attachment when new sessions should start with
+an active machine. Without one, the session starts with no active environment.
+Applying a profile also activates its default when the session has no active
+environment; it preserves an existing selection that remains attached.
+
+A sub-agent profile can instead inherit the parent's active environment.
+Create machines and assign their credentials on **Environments** before
+attaching them to profiles. Closing a session leaves its machines intact.
+See [Environments](../environments/overview.md) for setup and cleanup.
 
 Metadata and retention settings supply defaults for newly created sessions.
 Use metadata for organization, such as `project=acorn`, and retention to

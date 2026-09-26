@@ -5,16 +5,16 @@ and on what that shape means. Generated types carry the declared API into
 consumers. Compatibility fixtures and behavior tests establish that existing
 callers still work and that a new field does what its documentation promises.
 
-Lightspeed has several contract boundaries. A public request, a durable
+Lightspeed has several kinds of contract. A public request, a durable
 workflow message, an environment handshake, and a database migration have
-different owners and different compatibility rules. Identify the boundary
+different owners and different compatibility rules. Identify the contract
 before choosing an exporter or changing a version.
 
 ## Find the authored source
 
 | Boundary | Authored source | Outputs to keep aligned |
 | --- | --- | --- |
-| Public JSON-RPC API | DTOs, method metadata, and service interfaces in `crates/api/src/` | Rust-exported schema, method manifest, OpenRPC, and API reference; TypeScript client, Configurator tools, and profile-editor reference. |
+| Public JSON-RPC API | DTOs, method metadata, and service interfaces in `crates/api/src/` | Rust-exported schema, method manifest, OpenRPC, and API reference; TypeScript client, Configurator tools, Platform method-role map, and profile-editor reference. |
 | Workflow integration | Engine emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript types, and known-answer vectors used by client helpers. |
 | Environment control and data | `crates/environment-protocol` | Rust serde fixtures, daemon and provider implementations, and explicit protocol versions. There is no schema exporter for this boundary today. |
 | Runtime database | SQL migrations and their embedded registry in `crates/store-pg` | Migration ledger, required schema revision, table ownership list, and release metadata. |
@@ -24,7 +24,9 @@ Generated files are checked in so callers can use a reviewed, coherent
 contract. Edit their source and run the generators; changes made directly to
 generated output will be lost on the next export.
 
-## Change the public API at its boundary
+<a id="change-the-public-api-at-its-boundary"></a>
+
+## Change the public API
 
 Public clients depend on `crates/api`, rather than reducer internals. Put wire
 field descriptions on the Rust DTOs and operation behavior on the method
@@ -34,16 +36,28 @@ both repository readers and the documentation site see.
 For a new operation, follow the neighboring DTO, method constant, service
 interface, and manifest/dispatcher entries in `crates/api`. The
 [RPC manifest](../../../crates/api/src/rpc.rs) ties ordinary dispatch and
-method metadata together; operator methods have their corresponding
-[operator manifest](../../../crates/api/src/operator.rs). Implement the
+method metadata together; deployment methods have their corresponding
+[deployment manifest](../../../crates/api/src/deployment.rs). Implement the
 service behavior in the runtime and test the actual admission and result.
 
-Choose the operation's scope deliberately. Universe, service, and operator
-methods cross different authority boundaries. The Configurator generator
+Every method declaration requires an `access:` classification. From it, the
+exporter derives scope and the recommended member role. The method's name
+determines its API-key group, and session-target metadata identifies calls that
+need a session visibility check. These appear in the generated contract and
+TypeScript `METHOD_INFO`.
+
+Core enforces the key's scope and method group. Platform uses the generated
+role and target metadata to enforce people's access, while the runtime applies
+separate rules to its own controllers. Review all three when adding a method;
+the classification alone does not implement a resource-specific policy. See
+[Access and security](../access-and-security/overview.md).
+
+Choose whether the operation serves universe members, internal services, or
+deployment administration. The Configurator generator
 selects universe-scoped methods and applies
 [`tool-filter.json`](../../../platform/configurator-mcp/tool-filter.json).
 A new universe method normally becomes an MCP tool unless excluded there;
-review that exposure as part of adding the method. Service and operator
+review that exposure as part of adding the method. Service and deployment
 methods are not automatically exposed through Configurator.
 
 ### Preserve the meaning of an omitted field
@@ -100,6 +114,7 @@ npm install
 npm run generate --workspace @lightspeed-ai/agent-client
 npm run generate --workspace @lightspeed/configurator-mcp
 node platform/scripts/generate-config-reference.mjs
+node platform/scripts/generate-method-roles.mjs
 ```
 
 The API exporter writes four files under `crates/api/contract/`:
@@ -110,10 +125,14 @@ OpenRPC is an additional documentation format.
 The TypeScript generator reads both the API and workflow exports. It writes
 the generated types and method metadata under `clients/typescript/src/generated/`
 and schema copies under `clients/typescript/schema/`. Configurator generates
-`platform/configurator-mcp/src/generated/tools.ts`. The final command updates
+`platform/configurator-mcp/src/generated/tools.ts`. The config-reference command updates
 `platform/web/src/lib/profile-config-reference.ts`, which the profile editor
 uses to describe configuration fields. Generate the client before that
 reference so its installed schema is current.
+
+The method-role generator updates `platform/server/src/routes/method-roles.ts`:
+minimum member roles, session-target checks, and methods unavailable to member
+calls. Keep this generated policy map with the API change.
 
 Keep the generated diff with the authored change. Then check the exported
 contract and consumers:
@@ -186,14 +205,16 @@ and the connector's
 When changing delivery compatibility, check both validators and their tests;
 regenerating TypeScript shapes does not prove they accept the same versions.
 
-## Change the environment protocol explicitly
+<a id="change-the-environment-protocol-explicitly"></a>
+
+## Change the environment protocol
 
 The environment protocol belongs to `crates/environment-protocol`. Its serde
 fixtures establish the serialized controller and data-plane messages, and
 `CURRENT_PROTOCOL_VERSION` defines the handshake version. Daemon and
 controller handshakes check exact version equality.
 
-A deliberate protocol-version change therefore affects which existing
+A protocol-version change therefore affects which existing
 daemons and providers can connect. Update the corresponding implementations
 and fixtures, align `LIGHTSPEED_ENVIRONMENT_PROTOCOL_VERSION` in
 `release/metadata.env`, and plan the rollout across those components. Product
@@ -213,9 +234,12 @@ covers the controller, daemon, and gateway responsibilities in more detail.
 ## Database migrations
 
 Runtime and Platform data have separate owners and migration histories.
-Runtime PostgreSQL holds sessions and domain records such as bots and channel
-accounts. Platform owns people, authentication, organization/universe mapping,
-and setup provenance. Add a table to the database that owns its behavior.
+Runtime PostgreSQL holds universes, API keys, sessions, creator attribution,
+visibility, and domain records such as bots and channel accounts. Platform owns
+login credentials, accounts, organization memberships and roles, universe
+mapping, and setup provenance. Add a table to the database that owns its
+behavior. [Access and security](../access-and-security/overview.md) explains the
+boundary that these records support.
 
 ### Runtime migrations
 
@@ -225,6 +249,20 @@ migration under `crates/store-pg/migrations/`, register it in
 `crates/store-pg/src/migrations.rs`, and update `REQUIRED_SCHEMA_REVISION`
 and `LIGHTSPEED_SCHEMA_REVISION` in `release/metadata.env` together. Maintain
 the `LIGHTSPEED_TABLES` ownership list when tables are added or removed.
+
+During greenfield development, an explicitly agreed database reset permits
+consolidating unreleased changes into their owning domain definitions. The
+baseline is defined by the registered migrations in `crates/store-pg`.
+Fold alterations into the definition they refine; keep distinct domains separate
+and retain post-create foreign keys needed by dependency order. Transitional
+tables, backfills, and copy steps are unnecessary when no existing data must
+survive.
+
+A changed baseline requires recreation of both the runtime schema and its
+migration ledger; deleting rows or changing stored checksums is insufficient.
+For disposable local state, `./dev.sh reset` also recreates the Platform database
+and clears the Lightspeed MinIO prefix. Stop the supervisor first. Checksum
+validation and startup verification remain enabled; resets are never automatic.
 
 Normal Rust startup verifies the ledger. Apply migrations explicitly before
 starting the upgraded runtime:
@@ -276,7 +314,9 @@ not establish an upgrade path for valuable data. Explain any compatibility
 constraint in the change and the relevant
 [upgrade documentation](../deployment/upgrades-and-recovery.md).
 
-## Review the complete boundary
+<a id="review-the-complete-boundary"></a>
+
+## Review the complete change
 
 Before submitting, read the authored and generated diff as one change.
 Request defaults, authority scope, runtime behavior, wire examples, and

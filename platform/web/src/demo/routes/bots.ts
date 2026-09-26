@@ -22,6 +22,7 @@ import type {
   BotView,
   LlmUsageView,
   RunView,
+  SessionSummaryView,
   WebhookPreset,
 } from "@lightspeed-ai/agent-client";
 import type { ProfileDocument } from "@/api";
@@ -35,8 +36,11 @@ import {
   newSession,
   startRun,
   steerRun,
+  demoAccess,
 } from "../engine";
 import type { BotRecord, DemoStore, SessionRecord, UniverseState } from "../store";
+import { sessionSummaryOf } from "../fixtures/builders";
+import { foldActivity } from "@/components/activity-dot";
 import { badRequest, conflict, intQuery, notFound, readBody, universeFor } from "./common";
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -127,13 +131,29 @@ function botViewOf(record: BotRecord): BotView {
   return { ...record.bot, eventSeq: eventSeqOf(record) };
 }
 
-function listItemOf(record: BotRecord): BotListItem {
+/// The bot's sessions and their sub-agents as its state read lists them,
+/// each with what it is doing now.
+function botSessionsOf(universe: UniverseState, record: BotRecord): SessionSummaryView[] {
+  const own = (record.state?.sessions ?? [])
+    .map((session) => universe.sessions.get(session.sessionId))
+    .filter((session): session is SessionRecord => session !== undefined)
+    .map(sessionSummaryOf);
+  const descendants = record.descendants.map((child) => {
+    const live = universe.sessions.get(child.id);
+    return live ? sessionSummaryOf(live) : child;
+  });
+  return [...own, ...descendants];
+}
+
+function listItemOf(universe: UniverseState, record: BotRecord): BotListItem {
   return {
     ...botViewOf(record),
+    access: demoAccess(),
     triggerCount: record.triggers.size,
     pendingCount: record.events.filter((event) => event.outcome === null || event.outcome === undefined)
       .length,
     lastEvent: record.events.at(-1) ?? null,
+    activity: foldActivity(botSessionsOf(universe, record).map((session) => session.activity)),
   };
 }
 
@@ -1030,7 +1050,7 @@ export function botRoutes(store: DemoStore): Hono {
         );
         return byLabel !== 0 ? byLabel : COLLATOR.compare(left.bot.botId, right.bot.botId);
       })
-      .map(listItemOf);
+      .map((record) => listItemOf(universe, record));
     return c.json({ bots });
   });
 
@@ -1110,7 +1130,7 @@ export function botRoutes(store: DemoStore): Hono {
   app.get("/:id/bots/:botId/state", (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
-    return c.json({ state: { controller: found.record.state, descendants: found.record.descendants } });
+    return c.json({ state: { controller: found.record.state, sessions: botSessionsOf(found.universe, found.record) } });
   });
 
   app.post("/:id/bots/:botId/sessions/:sessionId/rotate", (c) => {

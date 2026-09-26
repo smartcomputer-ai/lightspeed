@@ -8,6 +8,7 @@ import type {
   EventJoinsView,
   ModelConfig,
   RunAcceptedSourceView,
+  ResourceAccessSummary,
   RunSummaryView,
   RunView,
   SessionEventKindView,
@@ -24,6 +25,12 @@ import type {
   SessionRecord,
   UniverseState,
 } from "./store";
+
+/// A session's or bot's audience in seeded demo data: shared with the
+/// universe, created by the demo user.
+export function demoAccess(): ResourceAccessSummary {
+  return { visibility: "universe", createdBy: { kind: "actor", id: "user-ada" } };
+}
 
 export const DEFAULT_MODEL: ModelConfig = {
   providerId: "anthropic",
@@ -115,6 +122,28 @@ export function applyEntries(
   joins: EventJoinsView = {},
   at = Date.now(),
 ): SessionEventView {
+  // Entry provenance is read independently of event joins, including when
+  // matching the recorded final output to its run in the transcript.
+  const { runId, turnId, toolBatchId } = joins;
+  if (runId && turnId) {
+    entries = entries.map((entry): ContextEntryView => {
+      if (entry.source) return entry;
+      switch (entry.kind.type) {
+        case "message":
+          return entry.kind.role === "assistant"
+            ? { ...entry, source: { type: "assistantOutput", runId, turnId } }
+            : entry;
+        case "toolCall":
+          return { ...entry, source: { type: "assistantOutput", runId, turnId } };
+        case "reasoningState":
+          return { ...entry, source: { type: "reasoning", runId, turnId } };
+        case "toolResult":
+          return { ...entry, source: { type: "tool", runId, turnId, batchId: toolBatchId } };
+        default:
+          return entry;
+      }
+    });
+  }
   const baseRevision = session.activeContext.revision;
   const revision = baseRevision + 1;
   session.activeContext.revision = revision;
@@ -183,6 +212,9 @@ export interface NewSessionInit {
   instructions?: string | null;
   createdAtMs?: number;
   deleteAfterCloseMs?: number | null;
+  /// Who sees a root session; seeded work defaults to shared. A sub-agent's
+  /// session follows its root.
+  access?: ResourceAccessSummary;
   responder?: DemoResponder;
 }
 
@@ -197,8 +229,13 @@ export function newSession(
   const retentionRootSessionId = init.origin
     ? universe.sessions.get(init.origin.parentSessionId)?.view.retention.rootSessionId ?? id
     : id;
+  const access = retentionRootSessionId === id
+    ? init.access ?? demoAccess()
+    : universe.sessions.get(retentionRootSessionId)?.view.access ?? demoAccess();
   const view: SessionView = {
     id,
+    access,
+    activity: "idle",
     displayName: init.displayName ?? null,
     metadata: init.metadata ?? {},
     createdAtMs: at,
@@ -353,6 +390,7 @@ export function startRun(
     run.status = "running";
     run.startedAtMs = Date.now();
     session.view.status = "active";
+    session.view.activity = "working";
     pushEvent(session, { type: "runStarted", runId: run.id }, joins);
     session.turns += 1;
     applyEntries(
@@ -439,6 +477,7 @@ export function finishRun(
     );
   }
   if (session.view.status !== "closed") session.view.status = "idle";
+  session.view.activity = "idle";
   const next = session.queue.shift();
   if (next) next.begin();
 }
@@ -517,6 +556,7 @@ export function closeSession(session: SessionRecord, force: boolean, at = Date.n
   session.queue = [];
   if (active) finishRun(session, active, "cancelled", at);
   session.view.status = "closed";
+  session.view.activity = "idle";
   session.view.closedAtMs = at;
   if (session.view.retention.rootSessionId === session.view.id) {
     const duration = session.view.retention.deleteAfterCloseMs;

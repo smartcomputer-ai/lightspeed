@@ -13,22 +13,22 @@ CLI's chat interface with the same session and capabilities.
 
 Start with [an active environment](using-environments.md) and a model that
 can call its process tools. Attach the machine under **Environments** in the
-profile or session setup with **Exec** access (`"access": "exec"`), which
-includes file reading and editing; **Jobs** access adds durable jobs on top.
+profile or session setup with **Run commands** access (`"access": "exec"`),
+which includes file reading and editing; **Run durable jobs** adds jobs on top.
 The first exercise needs a POSIX shell and common
 utilities such as `grep`. The example Incus image supplies them.
 
 ## Run a check against a file
 
 Use the release notes from [Build your first agent](../getting-started/first-agent.md).
-The `exec` attachment already includes environment file editing, so ask the
-agent to prepare a separate machine copy:
+The `exec` attachment already permits [VFS transfer](vfs-transfer.md), so ask
+the agent to prepare a separate machine copy:
 
 ```text
 Create a new, uniquely named task directory under the active environment's
-working directory. Read /workspace/release-notes.md with the VFS tools and
-copy its exact contents into release-notes.md in that task directory using
-environment tools. Read the machine copy back to verify the transfer.
+working directory. Use vfs_materialize to copy /workspace/release-notes.md
+from VFS to release-notes.md in that task directory. Read the machine copy
+back to verify the transfer.
 Report the absolute task directory. Leave the VFS original unchanged.
 ```
 
@@ -83,8 +83,9 @@ above. Replace the directory with the absolute path created by the agent:
 shell syntax by itself; use a shell explicitly when the command needs them.
 The working directory is on the environment machine. The active attachment's
 `workingDirectory` supplies the default for file tools, commands, jobs, and
-prompt/skill discovery; when unset, the machine's default is used. A per-command `cwd` overrides this base and relative overrides resolve
-against it. A shell `cd` does not persist into later tool calls. VFS has a
+prompt/skill discovery; when unset, the machine's default is used. A
+per-command `cwd` overrides this base, with relative paths resolved against
+it. A shell `cd` does not persist into later tool calls. VFS has a
 separate `features.vfs.workingDirectory`, defaulting to `/`.
 
 The wait before yielding and the command's deadline are separate. In this
@@ -134,10 +135,9 @@ agent to execute the same side-effecting command again.
 ## Submit jobs with dependencies
 
 In the profile or idle session setup, give the environment attachment
-**Jobs** access (`"access": "jobs"`). The environment must advertise job
-support too. Because the toolset is the union of every attachment's access,
-the job tools can be visible while a lower-access machine is active; `job_run`
-and `job_submit` are then refused before any job starts. The agent receives:
+**Run durable jobs** access (`"access": "jobs"`). The environment must support
+jobs too. As with other tools, the active attachment must permit the call even
+if another attachment made it available. The agent receives:
 
 | Tool | Use |
 | --- | --- |
@@ -220,10 +220,10 @@ environment's job service; there is no central Lightspeed job registry that
 copies the machine's execution state.
 
 The included daemon persists job records and output under its state directory.
-When that daemon restarts, previously unfinished records become `interrupted`.
-The jobs are not resumed transparently. Completed records remain readable
-when the state directory survives; destroying the machine can destroy those
-records and its output files.
+After a daemon restart, previously unfinished records become `interrupted`;
+inspect any effects before starting replacement work. Completed records remain
+readable when that directory survives. Save useful output outside a disposable
+machine before destroying it.
 
 Inspect terminal statuses such as `succeeded`, `failed`, `cancelled`,
 `timedOut`, `dependencyFailed`, `interrupted`, or `lost`. A missing record is

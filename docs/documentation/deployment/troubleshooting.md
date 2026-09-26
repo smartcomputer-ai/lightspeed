@@ -1,6 +1,6 @@
 # Troubleshoot a deployment
 
-Start with the last boundary that worked. If sign-in succeeds but a universe
+Start with the last step that worked. If sign-in succeeds but a universe
 will not open, investigate the Platform's runtime access. If a run is accepted
 but does not progress, inspect its state and workers. This narrows the problem
 without repeatedly restarting services that are already doing their job.
@@ -11,7 +11,9 @@ logs before changing state. Keep credential values and private conversation
 content out of reports unless they are necessary and the report's recipients
 are authorized to see them.
 
-## Locate the failing boundary
+<a id="locate-the-failing-boundary"></a>
+
+## Find where the request fails
 
 | Symptom | Start here |
 | --- | --- |
@@ -65,26 +67,25 @@ termination and forwarded host/scheme handling. Retain the Platform's
 authentication secret across restarts.
 
 The administrator bootstrap variables apply only while the users table is
-empty. They cannot reset an existing password. Use **Admin → Users** from an
-authorized administrator account for account management.
+empty. They cannot reset an existing password. Use **Platform admin → Users**
+from an authorized administrator account for account management.
 
 When sign-in works but a page fails, distinguish a Platform permission denial
-from an upstream runtime error. Sessions, profiles, workspaces, integrations,
-and setup controls require owner/admin or platform administrator access. The
-ordinary member role is narrower.
+from an upstream runtime error. Viewers can read visible work, Contributors can
+run work, Operators can configure shared resources, and Admins manage membership
+and keys. Admins can access every session; other members see their own private
+sessions and sessions shared with the universe. A private session outside that
+audience appears absent. See [People and roles](../access-and-security/people-and-roles.md)
+for the permission matrix.
 
-For runtime errors, verify that the Platform calls a reachable private
-`trusted-header` gateway and that its mapped runtime UUID exists. The browser
-slug is not the runtime UUID. **Admin → Universes** can identify a missing
-runtime or Platform record; creating an empty missing universe does not
-restore its former contents.
-
-For a direct API client, confirm the listener's authentication mode. An
-`lsk_` key authenticates at an API-key gateway, and the client must not also
-send tenant/principal headers. A trusted-header listener does not switch
-modes because a bearer key is present. The
-[access guide](authentication-and-tenancy.md) covers keys, roles, and the
-separate offboarding steps for membership and runtime access.
+For runtime errors, verify the endpoint, key status, key scope, and allowed
+method groups. The Platform needs a deployment key allowed to assert actors.
+It sends the runtime universe UUID, which differs from the browser slug.
+A direct universe key must omit `x-lightspeed-universe`; a deployment key must
+send it for universe methods and omit it for deployment methods. See
+[API keys and service access](../access-and-security/api-keys-and-service-access.md)
+for request authentication, and [People and roles](../access-and-security/people-and-roles.md)
+for membership changes and offboarding.
 
 ## Session progress
 
@@ -123,7 +124,7 @@ name together. Verify the integration in the same universe as the session.
 Then check the provider's returned error: authentication, quota, unsupported
 parameters, and network failures require different corrections.
 
-A disabled or unusable universe provider record deliberately blocks a
+A disabled or unusable universe provider record blocks a
 deployment fallback key. Removing the record permits fallback again, so do
 not confuse removal with disabling access. A coding-agent subscription login
 also does not authenticate Lightspeed's own session inference. Follow
@@ -226,5 +227,5 @@ individual decisions.
 
 Universe archive is also separate from shutdown. It does not stop automation
 or revoke access, and permanent purge is not a complete infrastructure cleanup
-operation. Follow [Multitenancy](multi-tenancy.md#archive-and-delete-a-universe)
+operation. Follow [Managing universes](multi-tenancy.md#archive-and-delete-a-universe)
 when retiring an entire tenant.

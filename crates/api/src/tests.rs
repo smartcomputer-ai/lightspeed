@@ -1834,6 +1834,10 @@ impl AgentApiService for TestService {
                 event_log: true,
                 local_execution: false,
             },
+            caller: CallerAccess {
+                key_prefix: None,
+                groups: MethodGroup::ALL.to_vec(),
+            },
         }))
     }
 
@@ -1940,6 +1944,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionListResponse {
             sessions: vec![SessionSummaryView {
+                access: test_access_summary(),
+                activity: SessionActivity::Idle,
                 metadata: Default::default(),
                 id: "session_test".to_owned(),
                 display_name: Some("Test session".to_owned()),
@@ -1961,6 +1967,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionRenameResponse {
             session: SessionSummaryView {
+                access: test_access_summary(),
+                activity: SessionActivity::Idle,
                 metadata: Default::default(),
                 retention: test_session_retention(&params.session_id),
                 id: params.session_id,
@@ -1981,6 +1989,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionMetadataPutResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionMetadataPutResponse {
             session: SessionSummaryView {
+                access: test_access_summary(),
+                activity: SessionActivity::Idle,
                 retention: test_session_retention(&params.session_id),
                 id: params.session_id,
                 display_name: None,
@@ -2017,6 +2027,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionDeleteResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionDeleteResponse {
             session: SessionSummaryView {
+                access: test_access_summary(),
+                activity: SessionActivity::Idle,
                 metadata: Default::default(),
                 retention: test_session_retention(&params.session_id),
                 id: params.session_id,
@@ -3073,7 +3085,9 @@ fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
         provider_id: "static".to_owned(),
         provider_kind: AuthProviderKind::StaticBearer,
         exposure: AuthGrantExposure::Brokered,
-        principal: PrincipalRefView::default(),
+        created_by: Attribution::Key {
+            prefix: "lsk_abcdefgh".into(),
+        },
         display_name: None,
         subject_hint: None,
         scopes: Vec::new(),
@@ -3141,6 +3155,8 @@ fn test_workspace(workspace_id: String, revision: u64) -> VfsWorkspaceView {
 fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
     let retention = test_session_retention(&id);
     SessionView {
+        access: test_access_summary(),
+        activity: SessionActivity::Idle,
         metadata: Default::default(),
         id,
         display_name: Some("Test session".to_owned()),
@@ -3328,10 +3344,10 @@ fn test_mcp_server(server_id: String) -> McpServerView {
     }
 }
 
-struct TestOperatorService;
+struct TestDeploymentService;
 
-fn test_operator_universe(universe_id: &str) -> OperatorUniverseView {
-    OperatorUniverseView {
+fn test_deployment_universe(universe_id: &str) -> DeploymentUniverseView {
+    DeploymentUniverseView {
         universe_id: universe_id.to_owned(),
         slug: Some("acme".to_owned()),
         created_at_ms: 10,
@@ -3343,8 +3359,14 @@ fn test_operator_universe(universe_id: &str) -> OperatorUniverseView {
     }
 }
 
-fn test_operator_api_key(key_prefix: &str) -> OperatorApiKeyView {
-    OperatorApiKeyView {
+fn test_deployment_api_key(key_prefix: &str) -> DeploymentApiKeyView {
+    DeploymentApiKeyView {
+        scope: AccessScope::Universe {
+            universe_id: uuid::Uuid::nil(),
+        },
+        groups: vec![MethodGroup::Session],
+        assert_actor: false,
+        created_by: Attribution::Local,
         key_prefix: key_prefix.to_owned(),
         display_name: Some("coding agent".to_owned()),
         created_at_ms: 10,
@@ -3353,13 +3375,13 @@ fn test_operator_api_key(key_prefix: &str) -> OperatorApiKeyView {
     }
 }
 
-fn test_operator_environment_provider(provider_id: &str) -> OperatorEnvironmentProviderView {
-    OperatorEnvironmentProviderView {
+fn test_deployment_environment_provider(provider_id: &str) -> DeploymentEnvironmentProviderView {
+    DeploymentEnvironmentProviderView {
         provider_id: provider_id.to_owned(),
         display_name: Some("Local Incus".to_owned()),
-        controller_connection: OperatorEnvironmentProviderConnection {
+        controller_connection: DeploymentEnvironmentProviderConnection {
             endpoint: "ws://127.0.0.1:19090/control".to_owned(),
-            transport: OperatorEnvironmentProviderTransport::WebSocket,
+            transport: DeploymentEnvironmentProviderTransport::WebSocket,
         },
         metadata: BTreeMap::new(),
         created_at_ms: 10,
@@ -3368,40 +3390,40 @@ fn test_operator_environment_provider(provider_id: &str) -> OperatorEnvironmentP
 }
 
 #[async_trait]
-impl OperatorApiService for TestOperatorService {
+impl DeploymentApiService for TestDeploymentService {
     async fn create_universe(
         &self,
-        params: OperatorUniverseCreateParams,
-    ) -> Result<AgentApiOutcome<OperatorUniverseCreateResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(OperatorUniverseCreateResponse {
-            universe: test_operator_universe(&params.universe_id),
+        params: DeploymentUniverseCreateParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseCreateResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(DeploymentUniverseCreateResponse {
+            universe: test_deployment_universe(&params.universe_id),
             created: true,
         }))
     }
 
     async fn list_universes(
         &self,
-        _params: OperatorUniverseListParams,
-    ) -> Result<AgentApiOutcome<OperatorUniverseListResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(OperatorUniverseListResponse {
-            universes: vec![test_operator_universe("universe_test")],
+        _params: DeploymentUniverseListParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(DeploymentUniverseListResponse {
+            universes: vec![test_deployment_universe("universe_test")],
         }))
     }
 
     async fn read_universe(
         &self,
-        params: OperatorUniverseReadParams,
-    ) -> Result<AgentApiOutcome<OperatorUniverseReadResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(OperatorUniverseReadResponse {
-            universe: test_operator_universe(&params.universe_id),
+        params: DeploymentUniverseReadParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
+            universe: test_deployment_universe(&params.universe_id),
         }))
     }
 
     async fn delete_universe(
         &self,
-        params: OperatorUniverseDeleteParams,
-    ) -> Result<AgentApiOutcome<OperatorUniverseDeleteResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(OperatorUniverseDeleteResponse {
+        params: DeploymentUniverseDeleteParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(DeploymentUniverseDeleteResponse {
             universe_id: params.universe_id,
             workflows_terminated: 2,
             blob_objects_deleted: 5,
@@ -3410,97 +3432,97 @@ impl OperatorApiService for TestOperatorService {
 
     async fn create_api_key(
         &self,
-        _params: OperatorApiKeyCreateParams,
-    ) -> Result<AgentApiOutcome<OperatorApiKeyCreateResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(OperatorApiKeyCreateResponse {
-            api_key: test_operator_api_key("lsk_ab12cd34"),
+        _params: DeploymentApiKeyCreateParams,
+    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
+            api_key: test_deployment_api_key("lsk_ab12cd34"),
             secret: "lsk_one_time_secret".to_owned(),
         }))
     }
 
     async fn list_api_keys(
         &self,
-        _params: OperatorApiKeyListParams,
-    ) -> Result<AgentApiOutcome<OperatorApiKeyListResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(OperatorApiKeyListResponse {
-            api_keys: vec![test_operator_api_key("lsk_ab12cd34")],
+        _params: DeploymentApiKeyListParams,
+    ) -> Result<AgentApiOutcome<DeploymentApiKeyListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(DeploymentApiKeyListResponse {
+            api_keys: vec![test_deployment_api_key("lsk_ab12cd34")],
         }))
     }
 
     async fn revoke_api_key(
         &self,
-        _params: OperatorApiKeyRevokeParams,
-    ) -> Result<AgentApiOutcome<OperatorApiKeyRevokeResponse>, AgentApiError> {
-        let mut api_key = test_operator_api_key("lsk_ab12cd34");
+        _params: DeploymentApiKeyRevokeParams,
+    ) -> Result<AgentApiOutcome<DeploymentApiKeyRevokeResponse>, AgentApiError> {
+        let mut api_key = test_deployment_api_key("lsk_ab12cd34");
         api_key.revoked_at_ms = Some(30);
-        Ok(AgentApiOutcome::new(OperatorApiKeyRevokeResponse {
+        Ok(AgentApiOutcome::new(DeploymentApiKeyRevokeResponse {
             api_key,
         }))
     }
 
     async fn put_environment_provider(
         &self,
-        params: OperatorEnvironmentProviderPutParams,
-    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderPutResponse>, AgentApiError> {
+        params: DeploymentEnvironmentProviderPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderPutResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(
-            OperatorEnvironmentProviderPutResponse {
-                provider: test_operator_environment_provider(&params.provider_id),
+            DeploymentEnvironmentProviderPutResponse {
+                provider: test_deployment_environment_provider(&params.provider_id),
             },
         ))
     }
 
     async fn list_environment_providers(
         &self,
-        _params: OperatorEnvironmentProviderListParams,
-    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderListResponse>, AgentApiError> {
+        _params: DeploymentEnvironmentProviderListParams,
+    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderListResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(
-            OperatorEnvironmentProviderListResponse {
-                providers: vec![test_operator_environment_provider("incus-local")],
+            DeploymentEnvironmentProviderListResponse {
+                providers: vec![test_deployment_environment_provider("incus-local")],
             },
         ))
     }
 
     async fn read_environment_provider(
         &self,
-        params: OperatorEnvironmentProviderReadParams,
-    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderReadResponse>, AgentApiError> {
+        params: DeploymentEnvironmentProviderReadParams,
+    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderReadResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(
-            OperatorEnvironmentProviderReadResponse {
-                provider: test_operator_environment_provider(&params.provider_id),
+            DeploymentEnvironmentProviderReadResponse {
+                provider: test_deployment_environment_provider(&params.provider_id),
             },
         ))
     }
 
     async fn delete_environment_provider(
         &self,
-        params: OperatorEnvironmentProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<OperatorEnvironmentProviderDeleteResponse>, AgentApiError> {
+        params: DeploymentEnvironmentProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderDeleteResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(
-            OperatorEnvironmentProviderDeleteResponse {
-                provider: test_operator_environment_provider(&params.provider_id),
+            DeploymentEnvironmentProviderDeleteResponse {
+                provider: test_deployment_environment_provider(&params.provider_id),
             },
         ))
     }
 
     async fn adopt_environment(
         &self,
-        params: OperatorEnvironmentAdoptParams,
-    ) -> Result<AgentApiOutcome<OperatorEnvironmentAdoptResponse>, AgentApiError> {
+        params: DeploymentEnvironmentAdoptParams,
+    ) -> Result<AgentApiOutcome<DeploymentEnvironmentAdoptResponse>, AgentApiError> {
         let mut environment = test_environment_instance();
         environment.request_id = params.request_id;
         environment.display_name = params.display_name;
         environment.incarnation.template_id = None;
-        Ok(AgentApiOutcome::new(OperatorEnvironmentAdoptResponse {
+        Ok(AgentApiOutcome::new(DeploymentEnvironmentAdoptResponse {
             environment,
         }))
     }
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn operator_environment_provider_methods_dispatch() {
+async fn deployment_environment_provider_methods_dispatch() {
     let requests = [
         (
-            METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_PUT,
+            METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT,
             json!({
                 "providerId": "incus-local",
                 "displayName": "Local Incus",
@@ -3510,19 +3532,19 @@ async fn operator_environment_provider_methods_dispatch() {
                 }
             }),
         ),
-        (METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_LIST, json!({})),
+        (METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST, json!({})),
         (
-            METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_READ,
+            METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ,
             json!({ "providerId": "incus-local" }),
         ),
         (
-            METHOD_OPERATOR_ENVIRONMENT_PROVIDERS_DELETE,
+            METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE,
             json!({ "providerId": "incus-local" }),
         ),
     ];
     for (index, (method, params)) in requests.into_iter().enumerate() {
-        let response = dispatch_operator_json_rpc(
-            &TestOperatorService,
+        let response = dispatch_deployment_json_rpc(
+            &TestDeploymentService,
             JsonRpcRequest {
                 id: RequestId::Number(index as u64),
                 method: method.to_owned(),
@@ -3545,12 +3567,12 @@ async fn operator_environment_provider_methods_dispatch() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn operator_environment_adoption_dispatches_explicit_ownership_transfer() {
-    let response = dispatch_operator_json_rpc(
-        &TestOperatorService,
+async fn deployment_environment_adoption_dispatches_explicit_ownership_transfer() {
+    let response = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_OPERATOR_ENVIRONMENTS_ADOPT.to_owned(),
+            method: METHOD_DEPLOYMENT_ENVIRONMENTS_ADOPT.to_owned(),
             params: Some(json!({
                 "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f",
                 "requestId": "adopt-1",
@@ -3570,12 +3592,12 @@ async fn operator_environment_adoption_dispatches_explicit_ownership_transfer() 
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn dispatch_operator_json_rpc_routes_universe_lifecycle() {
-    let create = dispatch_operator_json_rpc(
-        &TestOperatorService,
+async fn dispatch_deployment_json_rpc_routes_universe_lifecycle() {
+    let create = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_OPERATOR_UNIVERSES_CREATE.to_owned(),
+            method: METHOD_DEPLOYMENT_UNIVERSES_CREATE.to_owned(),
             params: Some(json!({ "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" })),
         },
     )
@@ -3588,11 +3610,11 @@ async fn dispatch_operator_json_rpc_routes_universe_lifecycle() {
         json!("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f")
     );
 
-    let list = dispatch_operator_json_rpc(
-        &TestOperatorService,
+    let list = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
         JsonRpcRequest {
             id: RequestId::Number(2),
-            method: METHOD_OPERATOR_UNIVERSES_LIST.to_owned(),
+            method: METHOD_DEPLOYMENT_UNIVERSES_LIST.to_owned(),
             params: Some(json!({})),
         },
     )
@@ -3601,11 +3623,11 @@ async fn dispatch_operator_json_rpc_routes_universe_lifecycle() {
     assert_eq!(result["result"]["universes"][0]["sessions"], json!(3));
     assert_eq!(result["result"]["universes"][0]["blobBytes"], json!(4096));
 
-    let delete = dispatch_operator_json_rpc(
-        &TestOperatorService,
+    let delete = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
         JsonRpcRequest {
             id: RequestId::Number(3),
-            method: METHOD_OPERATOR_UNIVERSES_DELETE.to_owned(),
+            method: METHOD_DEPLOYMENT_UNIVERSES_DELETE.to_owned(),
             params: Some(json!({ "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" })),
         },
     )
@@ -3616,17 +3638,17 @@ async fn dispatch_operator_json_rpc_routes_universe_lifecycle() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn dispatch_operator_json_rpc_routes_scoped_api_key_management() {
+async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
     let universe_id = "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f";
-    let create = dispatch_operator_json_rpc(
-        &TestOperatorService,
+    let create = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_OPERATOR_API_KEYS_CREATE.to_owned(),
+            method: METHOD_DEPLOYMENT_API_KEYS_CREATE.to_owned(),
             params: Some(json!({
-                "universeId": universe_id,
-                "displayName": "coding agent",
-                "principal": { "kind": "serviceAccount", "id": "agent-1" }
+                "scope": { "kind": "universe", "universeId": universe_id },
+                "groups": ["session", "vfs"],
+                "displayName": "coding agent"
             })),
         },
     )
@@ -3635,12 +3657,12 @@ async fn dispatch_operator_json_rpc_routes_scoped_api_key_management() {
     assert_eq!(result["result"]["apiKey"]["keyPrefix"], "lsk_ab12cd34");
     assert_eq!(result["result"]["secret"], "lsk_one_time_secret");
 
-    let list = dispatch_operator_json_rpc(
-        &TestOperatorService,
+    let list = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
         JsonRpcRequest {
             id: RequestId::Number(2),
-            method: METHOD_OPERATOR_API_KEYS_LIST.to_owned(),
-            params: Some(json!({ "universeId": universe_id })),
+            method: METHOD_DEPLOYMENT_API_KEYS_LIST.to_owned(),
+            params: Some(json!({ "scope": { "kind": "universe", "universeId": universe_id } })),
         },
     )
     .await;
@@ -3648,15 +3670,12 @@ async fn dispatch_operator_json_rpc_routes_scoped_api_key_management() {
     assert_eq!(result["result"]["apiKeys"].as_array().unwrap().len(), 1);
     assert!(result["result"]["apiKeys"][0].get("secret").is_none());
 
-    let revoke = dispatch_operator_json_rpc(
-        &TestOperatorService,
+    let revoke = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
         JsonRpcRequest {
             id: RequestId::Number(3),
-            method: METHOD_OPERATOR_API_KEYS_REVOKE.to_owned(),
-            params: Some(json!({
-                "universeId": universe_id,
-                "keyPrefix": "lsk_ab12cd34"
-            })),
+            method: METHOD_DEPLOYMENT_API_KEYS_REVOKE.to_owned(),
+            params: Some(json!({ "keyPrefix": "lsk_ab12cd34" })),
         },
     )
     .await;
@@ -3665,9 +3684,9 @@ async fn dispatch_operator_json_rpc_routes_scoped_api_key_management() {
 }
 
 #[test]
-fn operator_api_key_create_response_redacts_secret_in_debug_output() {
-    let response = OperatorApiKeyCreateResponse {
-        api_key: test_operator_api_key("lsk_ab12cd34"),
+fn deployment_api_key_create_response_redacts_secret_in_debug_output() {
+    let response = DeploymentApiKeyCreateResponse {
+        api_key: test_deployment_api_key("lsk_ab12cd34"),
         secret: "lsk_one_time_secret".to_owned(),
     };
     let debug = format!("{response:?}");
@@ -3676,10 +3695,10 @@ fn operator_api_key_create_response_redacts_secret_in_debug_output() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn operator_dispatch_rejects_universe_scoped_methods_and_vice_versa() {
-    // The operator dispatcher only knows operator methods…
-    let response = dispatch_operator_json_rpc(
-        &TestOperatorService,
+async fn deployment_dispatch_rejects_universe_scoped_methods_and_vice_versa() {
+    // The deployment dispatcher only knows deployment methods…
+    let response = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
         JsonRpcRequest {
             id: RequestId::Number(1),
             method: METHOD_SESSION_LIST.to_owned(),
@@ -3689,15 +3708,22 @@ async fn operator_dispatch_rejects_universe_scoped_methods_and_vice_versa() {
     .await;
     assert_eq!(response.error.expect("error").code, -32601);
 
-    // …and the universe dispatcher does not know operator methods.
+    // …and the universe dispatcher does not know deployment methods.
     let response = dispatch_json_rpc(
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(2),
-            method: METHOD_OPERATOR_UNIVERSES_LIST.to_owned(),
+            method: METHOD_DEPLOYMENT_UNIVERSES_LIST.to_owned(),
             params: Some(json!({})),
         },
     )
     .await;
     assert_eq!(response.error.expect("error").code, -32601);
+}
+
+fn test_access_summary() -> ResourceAccessSummary {
+    ResourceAccessSummary {
+        visibility: Visibility::Universe,
+        created_by: Some(Attribution::Local),
+    }
 }

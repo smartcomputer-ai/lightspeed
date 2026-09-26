@@ -22,6 +22,7 @@ export function SessionComposer({
   draftKey,
   runActive,
   canSteer,
+  canStop = false,
   stopping = false,
   disabled = false,
   disabledReason,
@@ -38,6 +39,8 @@ export function SessionComposer({
   /// The active run accepts steering (it is running or parked, not
   /// cancelling and not merely queued).
   canSteer: boolean;
+  /** Stopping is independent of permission to send or steer messages. */
+  canStop?: boolean;
   /// A cancel is in flight for the active run.
   stopping?: boolean;
   disabled?: boolean;
@@ -106,7 +109,7 @@ export function SessionComposer({
           rows={1}
           className="field-sizing-content max-h-40 min-h-9 min-w-0 flex-1 resize-none rounded-md border bg-background px-3 py-2 text-base md:text-sm [@media(pointer:coarse)]:text-base outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         />
-        {runActive && !disabled && (
+        {runActive && canStop && (
           <Button
             variant="outline"
             size="icon"

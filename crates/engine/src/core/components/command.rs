@@ -77,12 +77,18 @@ pub enum CoreAgentCommand {
     RequestRunSteering {
         run_id: RunId,
         input: Vec<ContextEntryInput>,
+        /// Who asked, as the API boundary attributed the request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_by: Option<crate::Attribution>,
     },
     /// Cancel one run owned by this session. Queued runs are dequeued as
     /// cancelled; the active run enters the normal cancellation funnel; a
     /// terminal or unknown run is an idempotent no-op.
     CancelRun {
         run_id: RunId,
+        /// Who asked, as the API boundary attributed the request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_by: Option<crate::Attribution>,
     },
     DecideApproval(ApprovalDecisionCommand),
     /// Force the matching active run to `cancelled` regardless of open turn
@@ -131,6 +137,7 @@ mod tests {
     #[test]
     fn steering_requires_an_explicit_run_target() {
         let command = CoreAgentCommand::RequestRunSteering {
+            requested_by: None,
             run_id: RunId::new(7),
             input: Vec::new(),
         };

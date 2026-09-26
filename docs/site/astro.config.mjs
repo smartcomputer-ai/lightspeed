@@ -65,10 +65,17 @@ export default defineConfig({
           { slug: 'environments/power-and-cleanup' },
           { slug: 'environments/networking-and-ingress' },
         ] },
+        { label: 'Access and security', collapsed: true, items: [
+          { slug: 'access-and-security/overview' },
+          { slug: 'access-and-security/people-and-roles' },
+          { slug: 'access-and-security/private-and-shared-work' },
+          { slug: 'access-and-security/api-keys-and-service-access' },
+          { slug: 'access-and-security/agent-and-tool-access' },
+          { slug: 'access-and-security/tenant-isolation-and-data-protection' },
+        ] },
         { label: 'Deployment', items: [
           { slug: 'deployment/overview' },
           { slug: 'deployment/self-hosting' },
-          { slug: 'deployment/authentication-and-tenancy' },
           { slug: 'deployment/multi-tenancy' },
           { slug: 'deployment/configuration' },
           { slug: 'deployment/operations' },

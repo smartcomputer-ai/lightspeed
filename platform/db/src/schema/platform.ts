@@ -25,12 +25,21 @@ export const universes = pgTable("universes", {
   status: text("status", { enum: ["active", "archived"] })
     .default("active")
     .notNull(),
+  /// Feature switches set away from their default (see the shared feature
+  /// registry); an empty map is every feature at its default.
+  features: jsonb("features").$type<Record<string, boolean>>().default({}).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
 
 export type UniverseSetupState = {
   keyPrefix?: string;
+  /// What the setup's key may call, shown on the template.
+  keyGroups?: string[];
+  /// `minted` keys belong to the setup and are revoked when replaced;
+  /// `existing` keys were brought by an admin and never are. Absent means
+  /// minted, as every installation before this choice was.
+  keySource?: "minted" | "existing";
   grantId?: string;
   serverId?: string;
   profileId?: string;

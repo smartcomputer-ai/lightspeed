@@ -3,8 +3,8 @@
 A Lightspeed deployment combines the agent runtime with durable infrastructure
 and, optionally, the Platform web app. The runtime executes sessions, bots, and
 channel workflows. Temporal coordinates that work, PostgreSQL stores the
-product's records, and the Platform handles people, universe membership, and
-the browser interface.
+product's records, and the Platform handles login, team membership, access rules,
+and the browser interface.
 
 The first deployment can run all runtime roles in one process. Separate those
 roles when you need to scale or operate them independently.
@@ -16,8 +16,8 @@ roles when you need to scale or operate them independently.
 | `lightspeed-server` | JSON-RPC gateway, environment gateway, and Temporal workers for sessions, bots, and channels | Every hosted Lightspeed installation |
 | Temporal | Durable workflow execution and coordination | The hosted runtime |
 | Runtime PostgreSQL database | Session events, blobs, workspaces, credentials, profiles, bots, channels, and environment records | The hosted runtime |
-| Platform server and web app | Sign-in, users, memberships, universe management, and browser access to the runtime | The full web product |
-| Platform PostgreSQL database | Authentication and Platform-owned records | The Platform |
+| Platform server and web app | Sign-in, membership and role enforcement, universe management, and browser access | The full web product |
+| Platform PostgreSQL database | Accounts, memberships, roles, and universe display/routing records | The Platform |
 | S3-compatible object storage | Stores blobs larger than the 64 KiB inline limit | Required for larger payloads; small blobs remain in PostgreSQL |
 | Configurator MCP | Exposes Lightspeed management operations to an MCP client | Managing Lightspeed through MCP |
 | Connector host | Telegram and WhatsApp transport connections | Those chat channels |
@@ -45,29 +45,27 @@ The Platform sends authenticated, universe-scoped requests to the private
 runtime. Registered machines use separate public daemon routes. The reverse
 proxy must preserve that distinction.
 
-## Choose the client and authentication boundary
+<a id="choose-the-client-and-authentication-boundary"></a>
 
-For the full web product, run the runtime in `trusted-header` mode. The
-Platform authenticates the user, checks access, and supplies the universe
-header. That header is trusted because the caller is the
-Platform. Exposing that runtime's `/rpc` endpoint directly would let untrusted
-callers choose tenant headers and invoke deployment-level operator methods.
-Operator calls are available without a universe header on this listener.
-Keep it on the private service network.
+## Choose how clients connect
 
-A deployment with its own client or management plane can use the runtime
-without the Platform. The available gateway modes are:
+The full web product uses an authenticated runtime. Platform checks the signed-in
+person's membership, role, and session visibility before making a runtime call.
+It authenticates with `LIGHTSPEED_PLATFORM_API_KEY`, selects the universe, and
+names the person as the actor for attribution. The runtime checks the key's
+scope and allowed method groups; it does not look up the person's permissions.
 
-| Mode | How requests are scoped | Deployment use |
+| Mode | How requests are scoped | Use |
 | --- | --- | --- |
-| `trusted-header` | An authenticating upstream supplies a universe header and optional principal | Platform or a custom trusted management plane |
-| `api-key` | A Lightspeed bearer key identifies a universe and principal | Direct API clients; operator methods are unavailable on this listener |
-| `single` | One configured universe serves all requests | Local development or a separately protected dedicated deployment |
+| `authenticated` | Bearer key with a universe or deployment scope and allowed method groups | Platform, connectors, and direct clients |
+| `single` | No credential check; ordinary requests use one configured universe | Private local development |
 
-Each universe isolates its resources from other universes. Runtime API keys
-and tenant scoping do not add per-user resource policy inside a universe. The
-[access guide](authentication-and-tenancy.md) explains setup and permissions;
-[Multitenancy](multi-tenancy.md) describes isolation and shared infrastructure.
+This makes a runtime key a separate access path. A key with the `session` group
+can read and control sessions in its scope, including work that the Platform
+keeps private to its creator and admins. Keep the Platform key on the server.
+See [Access and security](../access-and-security/overview.md) for the complete
+access model and [Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md)
+for shared infrastructure and isolation limits.
 
 ## Runtime roles and scaling
 
@@ -93,10 +91,9 @@ queues to each deployment.
 
 ## Persistence determines what survives
 
-The runtime database holds Lightspeed's session history and domain records;
-Temporal persistence holds the workflow execution history. Both are necessary
-to continue durable work. A successful worker restart does not replace a
-backup and recovery procedure for those stores.
+The runtime database holds Lightspeed's session history and resource records;
+Temporal persistence holds the workflow execution history. Back up both so
+recovery can resume work from a consistent point.
 
 Keep the runtime secrets master key stable and backed up with appropriate
 access controls. It encrypts stored credentials. The Platform has its own
@@ -107,8 +104,8 @@ processes have a separate lifecycle from these stores.
 ## The first self-hosted installation
 
 The [self-hosting guide](self-hosting.md) installs the full web product on one
-Linux x86_64 application host, using release images built from a pinned source
-revision and existing PostgreSQL and Temporal services. It uses PostgreSQL
+Linux x86_64 application host, using matching images and existing PostgreSQL
+and Temporal services. It uses PostgreSQL
 for blobs up to 64 KiB initially. Configure object storage before using larger
 payloads. External integrations and compute can be added as needed.
 

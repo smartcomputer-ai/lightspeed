@@ -1,7 +1,8 @@
 import type { SecretGrant } from "@/api";
 
-/// Pure helpers for the Integrations UI (GitHub Apps and coding-agent
-/// subscriptions). Kept free of React so components and tests can share them.
+/// Pure helpers for GitHub Apps and coding-agent subscriptions (the
+/// Platform's `/integrations` routes). Kept free of React so components and
+/// tests can share them.
 
 /// The grant for one installation, preferring a live one when a revoked and
 /// an active grant both exist (a re-grant after revocation).

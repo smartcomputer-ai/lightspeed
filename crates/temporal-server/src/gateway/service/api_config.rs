@@ -12,6 +12,7 @@ impl GatewayAgentApi {
         config
             .validate()
             .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+        self.admit_attachments(&config.features).await?;
         self.validate_workspace_attachment_targets(&config.features)
             .await?;
         self.validate_subagent_agents(&config.features).await?;

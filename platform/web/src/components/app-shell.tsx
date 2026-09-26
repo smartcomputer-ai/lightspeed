@@ -1,21 +1,13 @@
-import { useEffect } from "react";
+import { useActionPermissions } from "@/lib/permissions";
+import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import {
   ArrowLeft,
-  Boxes,
-  FolderGit2,
   Globe,
   KeyRound,
-  LockKeyhole,
-  MessagesSquare,
   Palette,
-  PackageOpen,
-  Plug,
   RadioTower,
-  Server,
   ServerCog,
-  Settings,
-  SlidersHorizontal,
   UserRound,
   Users,
   UserCog,
@@ -35,12 +27,15 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { BotFaceIcon } from "@/components/icons/bot";
 import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
+import { UNIVERSE_NAV, navItemVisible } from "@/components/universe-nav";
+import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
+import { useUserPreferences } from "@/lib/user-preferences";
+import { cn } from "@/lib/utils";
 import { isMobileDetailRoute } from "@/lib/shell-navigation";
 import type { SessionUser } from "@/auth";
-import { canManage, rememberUniverse, useUniverses } from "@/lib/universes";
+import { rememberUniverse, useUniverses } from "@/lib/universes";
 
 /// The sidebar has three modes. Universe mode is the app's top level:
 /// switcher + universe nav. Admin and account are modes *above* the
@@ -48,22 +43,18 @@ import { canManage, rememberUniverse, useUniverses } from "@/lib/universes";
 /// (naming no universe) and the content is the mode's own menu.
 type ShellMode = "universe" | "admin" | "account";
 
+/// Active on the page itself and on detail views nested under it.
 function NavItem({
   to,
   icon: Icon,
   label,
-  prefix = false,
 }: {
   to: string;
-  icon: typeof MessagesSquare;
+  icon: ComponentType;
   label: string;
-  /// Match nested routes too (detail views under this section).
-  prefix?: boolean;
 }) {
   const location = useLocation();
-  const isActive = prefix
-    ? location.pathname === to || location.pathname.startsWith(`${to}/`)
-    : location.pathname === to;
+  const isActive = location.pathname === to || location.pathname.startsWith(`${to}/`);
   return (
     <SidebarMenuItem>
       <SidebarMenuButton isActive={isActive} render={<NavLink to={to} />} tooltip={label}>
@@ -81,8 +72,8 @@ function ModeHeader({ title }: { title: string }) {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton size="lg" render={<Link to="/" />}>
-          <div className="flex size-8 items-center justify-center rounded-lg border">
+        <SidebarMenuButton size="lg" render={<Link to="/" />} tooltip="Back">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border">
             <ArrowLeft className="size-4" />
           </div>
           <div className="grid flex-1 text-left leading-tight">
@@ -106,6 +97,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
   const active = activeSlug
     ? universes.data?.find((u) => u.slug === activeSlug)
     : undefined;
+  const permissions = useActionPermissions(active?.id);
   const location = useLocation();
   const mode: ShellMode = location.pathname.startsWith("/admin")
     ? "admin"
@@ -119,6 +111,23 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
     }
   }, [active]);
 
+  // The main menu's width can be dragged, and dragged narrow enough it
+  // folds to icons; both are kept per account.
+  const { sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed } = useUserPreferences();
+  const sidebarResize = useResizableWidth({
+    stored: sidebarWidth,
+    fallback: 256,
+    min: 192,
+    max: 384,
+    collapse: {
+      collapsed: sidebarCollapsed,
+      below: 160,
+      collapsedWidth: 48,
+      onCollapse: setSidebarCollapsed,
+    },
+    onCommit: setSidebarWidth,
+  });
+
   const mobileTitle =
     mode === "admin"
       ? "Platform admin"
@@ -127,8 +136,17 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         : (active?.name ?? "Lightspeed");
 
   return (
-    <SidebarProvider>
-      <Sidebar>
+    <SidebarProvider
+      open={!sidebarResize.collapsed}
+      onOpenChange={(open) => setSidebarCollapsed(!open)}
+      style={{ "--sidebar-width": `${sidebarResize.width}px` } as CSSProperties}
+      // A drag moves the menu with the pointer, not behind its animation.
+      className={cn(
+        sidebarResize.resizing
+          && "[&_[data-slot=sidebar-container]]:transition-none [&_[data-slot=sidebar-gap]]:transition-none",
+      )}
+    >
+      <Sidebar collapsible="icon">
         <SidebarHeader>
           {mode === "universe" ? (
             <UniverseSwitcher active={active} admin={admin} />
@@ -137,106 +155,27 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           )}
         </SidebarHeader>
         <SidebarContent>
-          {mode === "universe" && active && (
-            <>
-              {/* No group label: the switcher above already names the
-                  universe. Members see only the Settings group. */}
-              {canManage(active, admin) && (
-                <SidebarGroup>
-                  <SidebarGroupContent>
-                    <SidebarMenu>
-                      <NavItem
-                        to={`/u/${active.slug}/bots`}
-                        icon={BotFaceIcon}
-                        label="Bots"
-                        prefix
-                      />
-                      <NavItem
-                        to={`/u/${active.slug}/sessions`}
-                        icon={MessagesSquare}
-                        label="Sessions"
-                        prefix
-                      />
-                      <NavItem
-                        to={`/u/${active.slug}/profiles`}
-                        icon={SlidersHorizontal}
-                        label="Profiles"
-                        prefix
-                      />
-                      <NavItem
-                        to={`/u/${active.slug}/workspaces`}
-                        icon={FolderGit2}
-                        label="Workspaces"
-                        prefix
-                      />
-                    </SidebarMenu>
-                  </SidebarGroupContent>
-                </SidebarGroup>
-              )}
-              {/* Configuration: which chats bind here, who has access,
-                  and (owner/admin) the universe itself. */}
-              <SidebarGroup>
-                <SidebarGroupLabel>Settings</SidebarGroupLabel>
+          {mode === "universe" && active && UNIVERSE_NAV.map((group, index) => {
+            const items = group.items.filter((item) => navItemVisible(item, permissions.can, active.features));
+            if (items.length === 0) return null;
+            return (
+              <SidebarGroup key={group.label ?? index}>
+                {group.label && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {canManage(active, admin) && (
-                      <>
-                        <NavItem
-                          to={`/u/${active.slug}/settings/general`}
-                          icon={Settings}
-                          label="General"
-                        />
-                        <NavItem
-                          to={`/u/${active.slug}/settings/integrations`}
-                          icon={Plug}
-                          label="Integrations"
-                        />
-                        <NavItem
-                          to={`/u/${active.slug}/settings/setups`}
-                          icon={PackageOpen}
-                          label="Templates"
-                        />
-                        <NavItem
-                          to={`/u/${active.slug}/settings/environments`}
-                          icon={Boxes}
-                          label="Environments"
-                        />
-                        <NavItem
-                          to={`/u/${active.slug}/settings/mcp-servers`}
-                          icon={Server}
-                          label="MCP servers"
-                        />
-                        <NavItem
-                          to={`/u/${active.slug}/settings/channels`}
-                          icon={RadioTower}
-                          label="Channels"
-                        />
-                      </>
-                    )}
-                    {canManage(active, admin) && (
-                      <>
-                        <NavItem
-                          to={`/u/${active.slug}/settings/secrets`}
-                          icon={LockKeyhole}
-                          label="Secrets"
-                        />
-                        <NavItem
-                          to={`/u/${active.slug}/settings/api-keys`}
-                          icon={KeyRound}
-                          label="API keys"
-                        />
-                      </>
-                    )}
-                    <NavItem
-                      to={`/u/${active.slug}/settings/members`}
-                      icon={Users}
-                      label="Members"
-                    />
+                    {items.map((item) => (
+                      <NavItem
+                        key={item.path}
+                        to={`/u/${active.slug}/${item.path}`}
+                        icon={item.icon}
+                        label={item.label}
+                      />
+                    ))}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
-            </>
-          )}
+            );
+          })}
           {mode === "admin" && (
             <SidebarGroup>
               <SidebarGroupLabel>Platform admin</SidebarGroupLabel>
@@ -244,6 +183,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
                 <SidebarMenu>
                   <NavItem to="/admin/users" icon={UserCog} label="Users" />
                   <NavItem to="/admin/universes" icon={Globe} label="Universes" />
+                  <NavItem to="/admin/api-keys" icon={KeyRound} label="API keys" />
                   <NavItem to="/admin/channels" icon={RadioTower} label="Channels" />
                   <NavItem
                     to="/admin/environment-providers"
@@ -260,19 +200,19 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
               <SidebarGroupContent>
                 <SidebarMenu>
                   <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("profile")}>
+                    <SidebarMenuButton onClick={() => scrollToSection("profile")} tooltip="Profile">
                       <UserRound />
                       <span>Profile</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("security")}>
+                    <SidebarMenuButton onClick={() => scrollToSection("security")} tooltip="Security">
                       <KeyRound />
                       <span>Security</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("appearance")}>
+                    <SidebarMenuButton onClick={() => scrollToSection("appearance")} tooltip="Appearance">
                       <Palette />
                       <span>Appearance</span>
                     </SidebarMenuButton>
@@ -285,6 +225,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         <SidebarFooter>
           <UserMenu user={user} admin={admin} />
         </SidebarFooter>
+        <ResizeHandle label="Resize menu" handle={sidebarResize.handle} />
       </Sidebar>
       <SidebarInset className="max-h-svh">
         {!isMobileDetailRoute(location.pathname) && (

@@ -25,9 +25,10 @@ run the tests. The plan does not appear in the VM automatically. If a command
 needs that file, it must be transferred explicitly. Identical paths in the two
 domains can refer to unrelated files.
 
-VFS instructions and skill discovery also use linked VFS content. Placing a
-skill file on the environment machine does not automatically add it to the
-session's VFS skill catalog.
+Prompt loading and skill discovery can use either domain when enabled in the
+session's setup. Environment discovery reads the selected machine; VFS
+discovery reads attached workspaces and snapshots. Copying a file between them
+is still an explicit operation.
 
 ## How a machine becomes an environment
 
@@ -46,32 +47,34 @@ into a particular universe. Each admitted daemon then uses its own persistent
 identity to reconnect.
 
 A provider adds machine lifecycle management. The included Incus provider
-offers operator-configured templates and controls VM creation and power. An
-operator registers the provider and enables a binding for the universe; users
-can then create environments from its available templates.
+offers operator-configured templates and controls VM creation and power. A
+Platform admin registers the provider and enables a binding for the universe;
+Operators and Admins can then create environments from its available templates.
 
 ## Select an environment for a session
 
-Environments belong to a universe. A session's configuration attaches the
-environments it may use, each with an access level (`read`, `edit`, `exec`,
-or `jobs`, each including the previous ones) and an optional working
-directory, and records one active environment at a time; its environment file
-and process tools operate there. Enable the **Environments** capability,
-attach the machine, and select it as the **Active environment** in the
-session setup, or mark it as the profile's default attachment so it is
-activated when the profile is applied.
+Environments belong to a universe. A session attaches the machines it may use
+and selects one as its **Active environment**. Its file and process tools
+operate on that machine. Each attachment sets an access level and optional
+working directory; the levels are **Read files**, **Edit files**, **Run
+commands**, and **Run durable jobs**, each including the preceding levels.
+
+Enable **Environments** in the session setup, attach the machine, and select
+it. A profile can also mark one attachment as its **Default environment**, which
+fills an empty selection when that profile is applied. Contributors can use
+existing environments in sessions they control; Operators and Admins manage
+the machines and profiles. See [People and roles](../access-and-security/people-and-roles.md).
 
 A profile attaches existing environments and, for sub-agents, can inherit the
 parent's active machine. For a provisioned environment, the runtime can wait
 for readiness before executing an environment-dependent tool call. The
 session does not need to guess how long provisioning takes.
 
-Model-driven selection is a separate switch: selection tools let the agent
-list, activate, and deactivate the attached environments. They are
-unnecessary when you choose the machine yourself. The attachment list is the
-only allowed set; the toolset is the union of the attachments' access and
-does not change when the agent switches machines, while a call the active
-machine's access does not cover is refused when it executes.
+**Environment selection tools** lets the agent switch among its attachments.
+The agent keeps the same tools across switches, but each call must be allowed
+by the active attachment. For example, a command tool may be available because
+one attachment permits commands; it will still be refused on a machine
+attached with **Read files** access.
 
 Selecting an environment does not reserve it. Several sessions and bots can
 use the same environment, and their processes and file writes share that
@@ -139,10 +142,12 @@ Start with [Bring your own compute](bring-your-own-compute.md) to connect a
 machine or [Incus VMs](incus-vms.md) to configure operator-managed provisioning.
 Then continue through the task guides:
 
-- [Using environments](using-environments.md): select, share, and provision
-  machines through sessions and profiles.
+- [Using environments](using-environments.md): create machines and select them
+  through sessions and profiles.
 - [Processes and jobs](processes-and-jobs.md): run a check, follow output, and
   manage work across run boundaries.
+- [VFS transfer](vfs-transfer.md): move inputs to a machine and save outputs to
+  persistent workspaces.
 - [Environment credentials](credentials.md): assign secrets to commands and
   understand their resolution and lifetime.
 - [Power and cleanup](power-and-cleanup.md): pause, wake, retain, and close

@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 LIGHTSPEED_DEV_LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${LIGHTSPEED_DEV_LAUNCHER_DIR}"
 
 fail() {
-  echo "dev.sh: $*" >&2
+  printf '\ndev.sh: %s\n' "$1" >&2
+  if [[ -n "${2:-}" ]]; then printf '\nNext: %s\n' "$2" >&2; fi
   exit 1
 }
 
+bootstrap_step="checking local tools"
+trap 'fail "Failed while ${bootstrap_step} (shell line ${LINENO})." "Review the command output above, fix the reported error, and retry."' ERR
+
 require_command() {
-  command -v "$1" >/dev/null 2>&1 || fail "$1 is required; install it and retry"
+  command -v "$1" >/dev/null 2>&1 || fail "$1 was not found on PATH." "Install $1 and make it available in this terminal, then retry."
 }
 
 require_command node
@@ -28,8 +32,9 @@ for argument in "$@"; do
   case "${argument}" in
     --plan) plan_only=true ;;
     --help|-h) help_only=true ;;
-    --allow-missing-api-keys|--require-api-keys|--no-envd) ;;
+    --allow-missing-api-keys|--require-api-keys|--no-envd|--debug) ;;
     --volumes|-v) ;;
+    -*) fail "Unknown option: ${argument}" "Run ./dev.sh --help for supported options." ;;
     *) positionals+=("${argument}") ;;
   esac
 done
@@ -42,10 +47,21 @@ if (( ${#positionals[@]} > 0 )); then
         profile="${positionals[1]}"
       fi
       ;;
-    full|platform|runtime|demo|infra)
+    full|platform|runtime|demo|docs|doc|documentation|infra)
       profile="${positionals[0]}"
       ;;
+    *) fail "Unknown command or profile: ${positionals[0]}" "Run ./dev.sh --help for supported commands." ;;
   esac
+fi
+
+case "${profile}" in
+  full|platform|runtime|demo|docs|doc|documentation|infra) ;;
+  *) fail "Unknown profile: ${profile}" "Choose full, platform, runtime, demo, docs, or infra." ;;
+esac
+max_positionals=1
+if [[ "${positionals[0]:-}" == start ]]; then max_positionals=2; fi
+if (( ${#positionals[@]} > max_positionals )); then
+  fail "Too many command arguments." "Run ./dev.sh --help for supported commands."
 fi
 
 need_docker=false
@@ -62,8 +78,8 @@ if [[ "${help_only}" != true && "${plan_only}" != true ]]; then
           ;;
         platform) need_node_dependencies=true ;;
         runtime) need_cargo=true ;;
-        demo)
-          # In-browser backend: nothing to run in Docker.
+        demo|docs|doc|documentation)
+          # Standalone web previews: nothing to run in Docker.
           need_docker=false
           need_node_dependencies=true
           ;;
@@ -78,9 +94,16 @@ if [[ "${help_only}" != true && "${plan_only}" != true ]]; then
 fi
 
 if [[ "${need_docker}" == true ]]; then
+  bootstrap_step="checking Docker"
   require_command docker
-  docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
-  docker info >/dev/null 2>&1 || fail "the Docker daemon is not available"
+  if ! docker_check="$(docker compose version 2>&1)"; then
+    printf '%s\n' "${docker_check}" >&2
+    fail "Docker Compose is not available." "Install Docker Compose v2, then check docker compose version."
+  fi
+  if ! docker_check="$(docker info 2>&1)"; then
+    printf '%s\n' "${docker_check}" >&2
+    fail "Could not connect to the Docker daemon." "Start Docker and check docker info. If it is already running, check your Docker context and socket permissions."
+  fi
 fi
 
 if [[ "${need_cargo}" == true ]]; then
@@ -88,6 +111,7 @@ if [[ "${need_cargo}" == true ]]; then
 fi
 
 if [[ "${need_node_dependencies}" == true ]]; then
+  bootstrap_step="checking npm workspace dependencies"
   require_command npm
   lock_hash="$(node -e '
     const fs = require("node:fs");
@@ -99,9 +123,11 @@ if [[ "${need_node_dependencies}" == true ]]; then
   if [[ -f "${stamp_path}" ]]; then
     stamped_hash="$(<"${stamp_path}")"
   fi
-  if [[ ! -x node_modules/.bin/tsx || ! -x node_modules/.bin/vite || "${stamped_hash}" != "${lock_hash}" ]]; then
+  if [[ ! -x node_modules/.bin/tsx || ! -x node_modules/.bin/vite || ! -x node_modules/.bin/astro || "${stamped_hash}" != "${lock_hash}" ]]; then
     echo "[bootstrap] Installing root npm workspace dependencies..."
-    npm install
+    if ! npm install; then
+      fail "Could not install npm workspace dependencies." "Check npm's error above for registry, network, or filesystem problems. Fix it and retry npm install from the repository root."
+    fi
     mkdir -p "$(dirname "${stamp_path}")"
     lock_hash="$(node -e '
       const fs = require("node:fs");

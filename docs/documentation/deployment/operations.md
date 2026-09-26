@@ -9,7 +9,7 @@ provides, alongside process and infrastructure monitoring.
 After a deployment change, sign in, read a known workspace file, and complete
 a short session run. If the installation supplies compute or chat channels,
 check those paths too. [Troubleshooting](troubleshooting.md) follows failures
-through these boundaries; [upgrades and recovery](upgrades-and-recovery.md)
+across the services; [upgrades and recovery](upgrades-and-recovery.md)
 covers planned maintenance and restored state.
 
 ## Know what health checks establish
@@ -72,7 +72,7 @@ Platform URL slug.
 The Temporal execution ID and Lightspeed run ID identify different things.
 Temporal continue-as-new starts another execution of the same logical session
 workflow; the session and its current Lightspeed run can continue across that
-boundary. Search the workflow's execution chain when investigating an event
+transition. Search the workflow's execution chain when investigating an event
 that predates the current execution.
 
 In the deployment's Temporal UI or administrative tooling, inspect the
@@ -161,7 +161,7 @@ is no automatic deletion deadline.
 
 Forked and delegated descendants share that retained root. Automatic deletion
 waits until the deadline and until the entire retained tree is closed. An
-open descendant therefore prevents collection of the tree. The session
+open descendant therefore prevents deletion of the tree. The session
 retention reaper checks every five minutes and reports due roots, deletions,
 open-tree skips, conflicts, and errors.
 

@@ -1,5 +1,6 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
+import { effectiveFeatures, type FeatureOverrides, type UniverseRole } from "@lightspeed/platform-shared";
 import type {
   BlobContent,
   ChannelsStatus,
@@ -19,7 +20,6 @@ import type {
   SessionSummary,
   SessionView,
   Universe,
-  UniverseApiKey,
   UniverseSetup,
   WorkspaceRow,
   WorkspaceTree,
@@ -32,7 +32,9 @@ import type {
   ChannelAccountView,
   ChannelPairingView,
   ContextEntryView,
-  OperatorEnvironmentProviderView,
+  DeploymentApiKeyView,
+  DeploymentEnvironmentProviderView,
+  MethodGroup,
   RunView,
   SessionEventView,
   SessionSummaryView,
@@ -125,8 +127,12 @@ export interface BotRecord {
 
 export interface UniverseState {
   universe: Universe;
+  /// The feature switches set away from their default, as the Platform
+  /// stores them; `universe.features` is what they add up to.
+  featureOverrides: FeatureOverrides;
   members: Member[];
-  apiKeys: UniverseApiKey[];
+  /// Universe keys as core lists them.
+  apiKeys: DeploymentApiKeyView[];
   profiles: Map<string, ProfileDocument>;
   sessions: Map<string, SessionRecord>;
   workspaces: Map<string, WorkspaceRecord>;
@@ -158,7 +164,7 @@ export interface UniverseInit {
   name: string;
   lightspeedUniverseId?: string;
   /// Membership role of the demo user; null = platform admin browsing.
-  role?: string | null;
+  role?: UniverseRole | null;
   createdAt?: string;
   responder?: DemoResponder;
 }
@@ -175,7 +181,9 @@ export class DemoStore {
   readonly universes = new Map<string, UniverseState>();
   /// Engine universes no platform row links to (admin reconcile view).
   readonly orphanEngineUniverses: EngineUniverse[] = [];
-  readonly environmentProviders = new Map<string, OperatorEnvironmentProviderView>();
+  readonly environmentProviders = new Map<string, DeploymentEnvironmentProviderView>();
+  /// Deployment keys; universe keys live on their universe.
+  readonly deploymentKeys: DeploymentApiKeyView[] = [];
   channelsStatus: ChannelsStatus = { connectors: [] };
   readonly blobs = new Map<string, BlobContent>();
   readonly defaultInstructionsRef: string;
@@ -223,11 +231,10 @@ export class DemoStore {
   addUniverse(init: UniverseInit): UniverseState {
     const id = init.id ?? crypto.randomUUID();
     const createdAt = init.createdAt ?? new Date().toISOString();
-    const role = init.role === undefined ? "owner" : init.role;
+    const role = init.role === undefined ? "admin" : init.role;
     const state: UniverseState = {
       universe: {
         id,
-        organizationId: `org-${init.slug}`,
         lightspeedUniverseId: init.lightspeedUniverseId ?? crypto.randomUUID(),
         name: init.name,
         slug: init.slug,
@@ -235,7 +242,9 @@ export class DemoStore {
         status: "active",
         createdAt,
         role,
+        features: effectiveFeatures({}),
       },
+      featureOverrides: {},
       members: [],
       apiKeys: [],
       profiles: new Map(),
@@ -292,6 +301,24 @@ export class DemoStore {
   }
 }
 
+/// A key scoped to `state`'s universe, as core lists it.
+export function universeApiKey(
+  state: UniverseState,
+  key: { keyPrefix: string; displayName: string; groups: MethodGroup[]; createdAtMs: number; createdBy: string; lastUsedAtMs?: number | null; revokedAtMs?: number | null },
+): DeploymentApiKeyView {
+  return {
+    keyPrefix: key.keyPrefix,
+    displayName: key.displayName,
+    scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId },
+    groups: key.groups,
+    assertActor: false,
+    createdBy: { kind: "actor", id: key.createdBy },
+    createdAtMs: key.createdAtMs,
+    lastUsedAtMs: key.lastUsedAtMs ?? null,
+    revokedAtMs: key.revokedAtMs ?? null,
+  };
+}
+
 export function sessionSummary(record: SessionRecord): SessionSummary {
   const view = record.view;
   return {
@@ -305,6 +332,8 @@ export function sessionSummary(record: SessionRecord): SessionSummary {
     retention: view.retention,
     managed: view.managed,
     origin: view.origin ?? null,
+    access: view.access,
+    activity: view.activity,
   };
 }
 
