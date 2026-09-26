@@ -7,11 +7,12 @@
 //! lock keyed by universe and grant, so refresh single-flight holds across
 //! worker processes.
 
+use api::Attribution;
 use async_trait::async_trait;
 use auth::{
     AuthFlowId, AuthFlowRecord, AuthFlowStore, AuthGrantId, AuthRegistryError,
     CreateAuthFlowRecord, CreateOAuthClientRecord, FinishAuthFlow, GrantLockGuard,
-    GrantRefreshLock, OAuthClientId, OAuthClientRecord, OAuthClientStore, PrincipalRef, SecretId,
+    GrantRefreshLock, OAuthClientId, OAuthClientRecord, OAuthClientStore, SecretId,
     TokenEndpointAuthMethod,
 };
 use sqlx::Row;
@@ -19,7 +20,7 @@ use sqlx::Row;
 use crate::PgStore;
 use crate::auth::{
     auth_sql_error, auth_store_error, grant_exposure_from_str, grant_exposure_to_str,
-    principal_kind_from_str, principal_kind_to_str, provider_kind_from_str, provider_kind_to_str,
+    provider_kind_from_str, provider_kind_to_str,
 };
 
 const OAUTH_CLIENT_COLUMNS: &str = r#"
@@ -47,8 +48,7 @@ const AUTH_FLOW_COLUMNS: &str = r#"
     provider_id,
     provider_kind,
     grant_exposure,
-    principal_kind,
-    principal_id,
+    created_by,
     state_hash,
     pkce_verifier_secret_id,
     redirect_uri,
@@ -223,8 +223,7 @@ impl AuthFlowStore for PgStore {
                 provider_id,
                 provider_kind,
                 grant_exposure,
-                principal_kind,
-                principal_id,
+                created_by,
                 state_hash,
                 pkce_verifier_secret_id,
                 redirect_uri,
@@ -236,7 +235,7 @@ impl AuthFlowStore for PgStore {
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16)
             ON CONFLICT (universe_id, flow_id) DO NOTHING
             RETURNING {AUTH_FLOW_COLUMNS}
             "#
@@ -248,8 +247,7 @@ impl AuthFlowStore for PgStore {
             .bind(&record.provider_id)
             .bind(provider_kind_to_str(record.provider_kind))
             .bind(grant_exposure_to_str(record.grant_exposure))
-            .bind(principal_kind_to_str(record.principal.kind))
-            .bind(record.principal.id.as_deref())
+            .bind(sqlx::types::Json(&record.created_by))
             .bind(&record.state_hash)
             .bind(record.pkce_verifier_secret.as_str())
             .bind(&record.redirect_uri)
@@ -521,9 +519,6 @@ fn auth_flow_from_row(row: &sqlx::postgres::PgRow) -> Result<AuthFlowRecord, Aut
     let grant_exposure: String = row
         .try_get("grant_exposure")
         .map_err(|error| auth_sql_error("decode auth flow grant exposure", error))?;
-    let principal_kind: String = row
-        .try_get("principal_kind")
-        .map_err(|error| auth_sql_error("decode auth flow principal kind", error))?;
     let pkce_verifier_secret_id: String = row
         .try_get("pkce_verifier_secret_id")
         .map_err(|error| auth_sql_error("decode auth flow verifier secret id", error))?;
@@ -543,12 +538,10 @@ fn auth_flow_from_row(row: &sqlx::postgres::PgRow) -> Result<AuthFlowRecord, Aut
             .map_err(|error| auth_sql_error("decode auth flow provider id", error))?,
         provider_kind: provider_kind_from_str(&provider_kind)?,
         grant_exposure: grant_exposure_from_str(&grant_exposure)?,
-        principal: PrincipalRef {
-            kind: principal_kind_from_str(&principal_kind)?,
-            id: row
-                .try_get("principal_id")
-                .map_err(|error| auth_sql_error("decode auth flow principal id", error))?,
-        },
+        created_by: row
+            .try_get::<sqlx::types::Json<Attribution>, _>("created_by")
+            .map_err(|error| auth_sql_error("decode auth flow creator", error))?
+            .0,
         state_hash: row
             .try_get("state_hash")
             .map_err(|error| auth_sql_error("decode auth flow state hash", error))?,

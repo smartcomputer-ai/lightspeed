@@ -3,7 +3,7 @@
 A Lightspeed deployment combines the agent runtime with durable infrastructure
 and, optionally, the Platform web app. The runtime executes sessions, bots, and
 channel workflows. Temporal coordinates that work, PostgreSQL stores the
-product's records, and the Platform handles people, universe membership, and
+product's records and canonical access directory, and the Platform handles login and
 the browser interface.
 
 The first deployment can run all runtime roles in one process. Separate those
@@ -16,7 +16,7 @@ roles when you need to scale or operate them independently.
 | `lightspeed-server` | JSON-RPC gateway, environment gateway, and Temporal workers for sessions, bots, and channels | Every hosted Lightspeed installation |
 | Temporal | Durable workflow execution and coordination | The hosted runtime |
 | Runtime PostgreSQL database | Session events, blobs, workspaces, credentials, profiles, bots, channels, and environment records | The hosted runtime |
-| Platform server and web app | Sign-in, users, memberships, universe management, and browser access to the runtime | The full web product |
+| Platform server and web app | Sign-in, user profiles, core directory administration, universe management, and browser access | The full web product |
 | Platform PostgreSQL database | Authentication and Platform-owned records | The Platform |
 | S3-compatible object storage | Stores blobs larger than the 64 KiB inline limit | Required for larger payloads; small blobs remain in PostgreSQL |
 | Configurator MCP | Exposes Lightspeed management operations to an MCP client | Managing Lightspeed through MCP |
@@ -47,27 +47,21 @@ proxy must preserve that distinction.
 
 ## Choose the client and authentication boundary
 
-For the full web product, run the runtime in `trusted-header` mode. The
-Platform authenticates the user, checks access, and supplies the universe
-header. That header is trusted because the caller is the
-Platform. Exposing that runtime's `/rpc` endpoint directly would let untrusted
-callers choose tenant headers and invoke deployment-level operator methods.
-Operator calls are available without a universe header on this listener.
-Keep it on the private service network.
+The full web product uses an authenticated runtime. Platform authenticates with
+`LIGHTSPEED_PLATFORM_API_KEY` and selects a universe on each universe request.
+The runtime checks canonical principal status, action permissions, ownership,
+service capabilities and credential scope. Bare tenant headers never authenticate a caller.
 
-A deployment with its own client or management plane can use the runtime
-without the Platform. The available gateway modes are:
-
-| Mode | How requests are scoped | Deployment use |
+| Mode | How requests are scoped | Use |
 | --- | --- | --- |
-| `trusted-header` | An authenticating upstream supplies a universe header and optional principal | Platform or a custom trusted management plane |
-| `api-key` | A Lightspeed bearer key identifies a universe and principal | Direct API clients; operator methods are unavailable on this listener |
-| `single` | One configured universe serves all requests | Local development or a separately protected dedicated deployment |
+| `authenticated` | Canonical bearer principal; universe or deployment credential ceiling | Platform, connectors, and direct clients |
+| `single` | Explicit local development principal in one configured universe | Private local development |
 
-Each universe isolates its resources from other universes. Runtime API keys
-and tenant scoping do not add per-user resource policy inside a universe. The
-[access guide](authentication-and-tenancy.md) explains setup and permissions;
-[Multitenancy](multi-tenancy.md) describes isolation and shared infrastructure.
+Platform calls assert canonical users. Sessions, bots and collections have their
+own audiences within a universe; ordinary administration does not grant access
+to restricted content.
+See the [access guide](authentication-and-tenancy.md) for the exact boundary and
+[Multitenancy](multi-tenancy.md) for isolation and shared infrastructure.
 
 ## Runtime roles and scaling
 

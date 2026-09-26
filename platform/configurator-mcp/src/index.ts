@@ -3,7 +3,7 @@ export { createToolRegistry, type ToolRegistry } from "./mcp-server.js";
 export {
   authenticateHeaders,
   HttpAuthError,
-  PRINCIPAL_HEADER,
+  ACTOR_HEADER,
   UNIVERSE_HEADER,
   upstreamHeaders,
   type ConfiguratorAuthMode,

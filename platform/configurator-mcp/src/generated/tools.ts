@@ -6,10 +6,38 @@ import type { GeneratedToolDescriptor } from "../tool-descriptor.js";
 
 export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
+    "name": "lightspeed_vfs_workspaces_files_read",
+    "method": "vfs/workspaces/files/read",
+    "summary": "Read a workspace file",
+    "description": "Reads bytes at a path in the current workspace head.",
+    "paramsType": "VfsWorkspaceFileReadParams",
+    "resultType": "AgentApiOutcome<BlobReadResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "description": "Read a file from a workspace's current head, by path.",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "lightspeed_session_start",
     "method": "session/start",
     "summary": "Create or reopen a session",
-    "description": "Creates a session with optional config/profile setup. Profile metadata and retention supply creation defaults; explicit start values override them. The default environment attachment in the effective config supplies the initial active environment. Retrying an existing session id returns that session.",
+    "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.",
     "paramsType": "SessionStartParams",
     "resultType": "AgentApiOutcome<SessionStartResponse>",
     "inputSchema": {
@@ -18,6 +46,17 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "not": {}
       },
       "properties": {
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AccessInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Audience of the new session, set atomically with its creation. Absent\nmeans unshared until `session/share`; a retry keeps the original."
+        },
         "config": {
           "anyOf": [
             {
@@ -70,6 +109,25 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       },
       "type": "object",
       "definitions": {
+        "AccessInput": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "The audience of a new session, requested at creation. Absent means\nunshared: visible to its creator until it is shared with the universe. A\nsession created under another root (a bot's session, a delegated child)\nfollows that root and refuses this.",
+          "properties": {
+            "visibility": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Visibility"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
         "CompactionPolicy": {
           "oneOf": [
             {
@@ -943,6 +1001,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "Visibility": {
+          "description": "Who sees a root's tree. Sessions start unshared (`restricted`) and are\nshared with the universe once, one way; everything else is shared.",
+          "enum": [
+            "universe",
+            "restricted"
+          ],
+          "type": "string"
+        },
         "WebFeature": {
           "additionalProperties": {
             "not": {}
@@ -1083,12 +1149,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_session_list",
     "method": "session/list",
     "summary": "List sessions",
-    "description": "Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.",
+    "description": "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.",
     "paramsType": "SessionListParams",
     "resultType": "AgentApiOutcome<SessionListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
+        "createdBy": {
+          "description": "Only sessions whose root this actor created.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "cursor": {
           "description": "Opaque cursor from the previous page's `nextCursor`.",
           "type": [
@@ -1128,9 +1201,37 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "string",
             "null"
           ]
+        },
+        "visibility": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Visibility"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Only sessions whose root has this visibility."
+        },
+        "visibleTo": {
+          "description": "Only sessions whose root is shared with the universe or was created\nby this actor: what that actor sees as a non-administrator.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "type": "object"
+      "type": "object",
+      "definitions": {
+        "Visibility": {
+          "description": "Who sees a root's tree. Sessions start unshared (`restricted`) and are\nshared with the universe once, one way; everything else is shared.",
+          "enum": [
+            "universe",
+            "restricted"
+          ],
+          "type": "string"
+        }
+      }
     }
   },
   {
@@ -2126,6 +2227,29 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "description": "Delete history forks and delegated descendants too. False requires the\ntarget to be a closed retention-tree leaf.",
           "type": "boolean"
         },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_session_share",
+    "method": "session/share",
+    "summary": "Share a session with the universe",
+    "description": "Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.",
+    "paramsType": "SessionShareParams",
+    "resultType": "AgentApiOutcome<SessionShareResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "properties": {
         "sessionId": {
           "type": "string"
         }
@@ -4176,7 +4300,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_session_environments_activate",
     "method": "session/environments/activate",
     "summary": "Activate a session environment",
-    "description": "Selects an allowed, live universe environment for environment-targeted tools while the session is idle.",
+    "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
     "paramsType": "SessionEnvironmentActivateParams",
     "resultType": "AgentApiOutcome<SessionEnvironmentActivateResponse>",
     "inputSchema": {
@@ -4220,7 +4344,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_environments_credentials_bind",
     "method": "environments/credentials/bind",
     "summary": "Bind a credential into an environment",
-    "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. The response exposes only the source handle, never secret material.",
+    "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
     "paramsType": "EnvironmentCredentialBindParams",
     "resultType": "AgentApiOutcome<EnvironmentCredentialBindResponse>",
     "inputSchema": {
@@ -4346,7 +4470,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_environments_create",
     "method": "environments/create",
     "summary": "Create an environment",
-    "description": "Records an idempotent provisioning intent against an enabled universe binding. The provider validates its provider-wide template and provisions through its backend asynchronously.",
+    "description": "Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.",
     "paramsType": "EnvironmentCreateParams",
     "resultType": "AgentApiOutcome<EnvironmentCreateResponse>",
     "inputSchema": {
@@ -4459,7 +4583,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_environments_list",
     "method": "environments/list",
     "summary": "List environments",
-    "description": "Lists universe-owned environment resources, optionally filtered by provider, binding, or logical lifecycle state.",
+    "description": "Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.",
     "paramsType": "EnvironmentListParams",
     "resultType": "AgentApiOutcome<EnvironmentListResponse>",
     "inputSchema": {
@@ -4562,7 +4686,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_environments_external_create",
     "method": "environments/external/create",
     "summary": "Register an external environment",
-    "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint. Reachability is checked on demand.",
+    "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.",
     "paramsType": "EnvironmentExternalCreateParams",
     "resultType": "AgentApiOutcome<EnvironmentExternalCreateResponse>",
     "inputSchema": {
@@ -6946,7 +7070,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_blobs_read",
     "method": "blobs/read",
     "summary": "Read a content-addressed blob",
-    "description": "Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.",
+    "description": "Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.",
     "paramsType": "BlobReadParams",
     "resultType": "AgentApiOutcome<BlobReadResponse>",
     "inputSchema": {
@@ -7025,7 +7149,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_vfs_workspaces_create",
     "method": "vfs/workspaces/create",
     "summary": "Create a mutable VFS workspace",
-    "description": "Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.",
+    "description": "Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.",
     "paramsType": "VfsWorkspaceCreateParams",
     "resultType": "AgentApiOutcome<VfsWorkspaceCreateResponse>",
     "inputSchema": {
@@ -7078,7 +7202,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_vfs_workspaces_list",
     "method": "vfs/workspaces/list",
     "summary": "List VFS workspaces",
-    "description": "Lists mutable universe workspaces with head snapshots, sizes, and revisions.",
+    "description": "Lists the mutable universe workspaces with head snapshots, sizes, and revisions.",
     "paramsType": "VfsWorkspaceListParams",
     "resultType": "AgentApiOutcome<VfsWorkspaceListResponse>",
     "inputSchema": {
@@ -7090,7 +7214,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_vfs_workspaces_update",
     "method": "vfs/workspaces/update",
     "summary": "Update a VFS workspace",
-    "description": "Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.",
+    "description": "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
     "paramsType": "VfsWorkspaceUpdateParams",
     "resultType": "AgentApiOutcome<VfsWorkspaceUpdateResponse>",
     "inputSchema": {
@@ -7148,7 +7272,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_mcp_servers_put",
     "method": "mcp/servers/put",
     "summary": "Create or replace an MCP server record",
-    "description": "Stores the complete universe catalog document, including its optional universe auth-grant credential. Use expectedRevision when replacing; token material is never accepted or returned.",
+    "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.",
     "paramsType": "McpServerPutParams",
     "resultType": "AgentApiOutcome<McpServerPutResponse>",
     "inputSchema": {
@@ -7513,7 +7637,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_mcp_servers_list",
     "method": "mcp/servers/list",
     "summary": "List MCP server records",
-    "description": "Lists universe catalog entries, optionally filtered by lifecycle/configuration status.",
+    "description": "Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.",
     "paramsType": "McpServerListParams",
     "resultType": "AgentApiOutcome<McpServerListResponse>",
     "inputSchema": {
@@ -7652,7 +7776,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_auth_grants_read",
     "method": "auth/grants/read",
     "summary": "Read authentication grant metadata",
-    "description": "Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
+    "description": "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
     "paramsType": "AuthGrantReadParams",
     "resultType": "AgentApiOutcome<AuthGrantReadResponse>",
     "inputSchema": {
@@ -8646,7 +8770,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ]
             },
             "pairingCode": {
-              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nnon-managing principals.",
+              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nchannel-facing views.",
               "type": [
                 "string",
                 "null"
@@ -9252,11 +9376,20 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_bots_list",
     "method": "bots/list",
     "summary": "List bots",
-    "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event.",
+    "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.",
     "paramsType": "BotListParams",
     "resultType": "AgentApiOutcome<BotListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "createdBy": {
+          "description": "Only bots this actor created.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     }
   },
@@ -9663,7 +9796,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ]
             },
             "pairingCode": {
-              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nnon-managing principals.",
+              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nchannel-facing views.",
               "type": [
                 "string",
                 "null"
@@ -10104,7 +10237,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_bots_triggers_read",
     "method": "bots/triggers/read",
     "summary": "Read a trigger",
-    "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are shown only to managing principals.",
+    "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.",
     "paramsType": "BotTriggerReadParams",
     "resultType": "AgentApiOutcome<BotTriggerReadResponse>",
     "inputSchema": {
@@ -10136,7 +10269,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_bots_triggers_list",
     "method": "bots/triggers/list",
     "summary": "List a bot's triggers",
-    "description": "Returns every trigger of the bot ordered by id, secrets redacted for non-managing principals.",
+    "description": "Returns every trigger of the bot ordered by id, secrets included for bot-management callers.",
     "paramsType": "BotTriggerListParams",
     "resultType": "AgentApiOutcome<BotTriggerListResponse>",
     "inputSchema": {

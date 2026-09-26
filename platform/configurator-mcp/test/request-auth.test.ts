@@ -1,59 +1,29 @@
+import type { IncomingHttpHeaders } from "node:http";
 import { describe, expect, it } from "vitest";
-import {
-  authenticateHeaders,
-  HttpAuthError,
-  upstreamHeaders,
-} from "../src/request-auth.js";
-
+import { authenticateHeaders, upstreamHeaders } from "../src/request-auth.js";
+const universe = "00000000-0000-4000-8000-000000000001";
+const actor = "platform:user:00000000-0000-4000-8000-000000000002";
 describe("request authentication", () => {
-  it("keeps single mode header-free and rejects identity smuggling", () => {
+  it("keeps local development explicit", () => {
     expect(authenticateHeaders("single", {})).toEqual({ mode: "single" });
-    expect(upstreamHeaders({ mode: "single" })).toBeUndefined();
-    expect(() =>
-      authenticateHeaders("single", { "x-lightspeed-universe": universeA }),
-    ).toThrow(HttpAuthError);
-    expect(() => authenticateHeaders("single", { authorization: "Bearer lsk_a" })).toThrow(
-      /not accepted/,
-    );
+    for (const name of ["authorization", "x-lightspeed-universe", "x-lightspeed-actor", "x-lightspeed-principal"]) {
+      expect(() => authenticateHeaders("single", { [name]: "claim" })).toThrow();
+    }
   });
-
-  it("requires and forwards the trusted universe and principal", () => {
-    const auth = authenticateHeaders("trusted-header", {
-      "x-lightspeed-universe": universeA,
-      "x-lightspeed-principal": "service_account:configurator",
-    });
-    expect(auth).toEqual({
-      mode: "trusted-header",
-      universeId: universeA,
-      principal: "service_account:configurator",
-    });
+  it("requires a bearer before forwarding selectors and opaque actor assertions", () => {
+    const input = { authorization: "Bearer lsk_service", "x-lightspeed-universe": universe, "x-lightspeed-actor": actor };
+    const auth = authenticateHeaders("authenticated", input);
+    expect(auth).toEqual({ mode: "authenticated", apiKey: "lsk_service", universeId: universe, actor });
     const headers = new Headers(upstreamHeaders(auth));
-    expect(headers.get("x-lightspeed-universe")).toBe(universeA);
-    expect(headers.get("x-lightspeed-principal")).toBe("service_account:configurator");
-    expect(() => authenticateHeaders("trusted-header", {})).toThrow(/missing required/);
-    expect(() =>
-      authenticateHeaders("trusted-header", {
-        "x-lightspeed-universe": universeA,
-        authorization: "Bearer lsk_a",
-      }),
-    ).toThrow(/not accepted/);
+    for (const [name,value] of Object.entries(input)) expect(headers.get(name)).toBe(value);
+    expect(() => authenticateHeaders("authenticated", { "x-lightspeed-universe": universe })).toThrow(/missing required/);
+    expect(() => authenticateHeaders("authenticated", { ...input, "x-lightspeed-actor": "a".repeat(257) })).toThrow();
+    expect(() => authenticateHeaders("authenticated", { ...input, "x-lightspeed-principal": "user:old" })).toThrow();
   });
-
-  it("requires an lsk bearer and rejects tenant headers in api-key mode", () => {
-    const auth = authenticateHeaders("api-key", { authorization: "Bearer lsk_secret" });
-    expect(auth).toEqual({ mode: "api-key", apiKey: "lsk_secret" });
-    expect(new Headers(upstreamHeaders(auth)).get("authorization")).toBe("Bearer lsk_secret");
-    expect(() => authenticateHeaders("api-key", {})).toThrow(/missing required/);
-    expect(() => authenticateHeaders("api-key", { authorization: "Bearer other" })).toThrow(
-      /Lightspeed bearer/,
-    );
-    expect(() =>
-      authenticateHeaders("api-key", {
-        authorization: "Bearer lsk_secret",
-        "x-lightspeed-universe": universeA,
-      }),
-    ).toThrow(/not accepted/);
+  it("rejects malformed and duplicate credentials", () => {
+    for (const authorization of ["Bearer other", "Bearer lsk_with spaces", ["Bearer lsk_a", "Bearer lsk_b"]]) {
+      expect(() => authenticateHeaders("authenticated", { authorization } as IncomingHttpHeaders)).toThrow();
+    }
+    expect(authenticateHeaders("authenticated", { authorization: "Bearer lsk_only" })).toEqual({ mode:"authenticated",apiKey:"lsk_only" });
   });
 });
-
-const universeA = "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f";

@@ -1,4 +1,7 @@
+import type { UniverseRole } from "@lightspeed/platform-shared";
 import type {
+  Attribution,
+  ResourceAccessSummary,
   ContextEntryView,
   RunSummaryView,
   RunStatus,
@@ -68,20 +71,19 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
 
 export interface Universe {
   id: string;
-  organizationId: string;
   lightspeedUniverseId: string;
   name: string;
-  /// Immutable URL segment (the better-auth org slug).
+  /// Immutable URL segment (Platform display metadata).
   slug: string;
   gatewayUrl: string | null;
   status: "active" | "archived";
   createdAt: string;
   /// Own membership role; null for platform admins browsing a universe
   /// they are not a member of.
-  role?: string | null;
+  role?: UniverseRole | null;
 }
 
-/// Engine-side universe inventory entry (operator/universes/list view).
+/// Engine-side universe inventory entry (deployment/universes/list view).
 export interface EngineUniverse {
   universeId: string;
   sessions: number;
@@ -103,11 +105,13 @@ export interface UniverseReconcile {
   orphans: EngineUniverse[];
 }
 
+/// One member of a universe. Every member sees names and roles; emails are
+/// sent to admins only.
 export interface Member {
   id: string;
   userId: string;
-  role: string;
-  email: string;
+  role: UniverseRole;
+  email?: string;
   name: string;
   createdAt: string;
 }
@@ -219,10 +223,8 @@ export interface AuthGrantOption {
 }
 
 export interface SecretGrant extends AuthGrantOption {
-  principal: {
-    kind?: "user" | "serviceAccount" | "universeDefault" | string;
-    id?: string | null;
-  };
+  /// Who created the grant; attribution only.
+  createdBy: Attribution;
   scopes?: string[];
   audience?: string | null;
   hasAccessToken: boolean;
@@ -420,6 +422,7 @@ export interface SessionOrigin {
 }
 
 export interface SessionSummary {
+  access: ResourceAccessSummary;
   id: string;
   displayName?: string | null;
   /// Descriptive key/value metadata; absent or empty when none was set.
@@ -459,6 +462,7 @@ export interface ManagedWorkflowTool {
 }
 
 export interface SessionView {
+  access: ResourceAccessSummary;
   id: string;
   displayName?: string | null;
   metadata?: Record<string, string>;
@@ -643,8 +647,8 @@ export type {
   ChatScope,
   ChatTurnAccess,
   LlmUsageView,
-  OperatorChannelAccountListResponse,
-  OperatorChannelAccountView,
+  DeploymentChannelAccountListResponse,
+  DeploymentChannelAccountView,
   PollCursorSpec,
   PollCursorState,
   PollHttpAuth,

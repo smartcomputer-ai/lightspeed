@@ -63,7 +63,7 @@ describe("WhatsApp media", () => {
       })();
     });
     const rpc = fakeRpc(() => ({ blobs: [{ blobRef: `sha256:${"c".repeat(64)}`, bytes: 11 }] }));
-    const core = new CoreClient({ endpoint: "http://lightspeed.test/rpc", fetch: rpc.fetch });
+    const core = new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://lightspeed.test/rpc", fetch: rpc.fetch });
     const activities = createWhatsAppMediaActivities({
       universeId: UNIVERSE_A,
       accountId,
@@ -100,7 +100,7 @@ describe("WhatsApp media", () => {
       universeId: UNIVERSE_B,
       accountId,
       locatorKey,
-      core: new CoreClient({ endpoint: "http://lightspeed.test/rpc" }).forUniverse(UNIVERSE_B),
+      core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://lightspeed.test/rpc" }).forUniverse(UNIVERSE_B),
       download,
     });
     await expect(

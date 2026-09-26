@@ -3,7 +3,7 @@ import { METHOD_INFO } from "@lightspeed-ai/agent-client";
 import { GENERATED_TOOLS } from "../src/generated/tools.js";
 
 describe("generated universe tools", () => {
-  it("contains the configured universe-method surface and no operator methods", () => {
+  it("contains the configured universe-method surface and no deployment methods", () => {
     const excluded = new Set([
       "initialize",
       "session/managed/start",
@@ -21,7 +21,7 @@ describe("generated universe tools", () => {
       .sort();
     expect(GENERATED_TOOLS.map((tool) => tool.method).sort()).toEqual(expectedMethods);
     expect(new Set(GENERATED_TOOLS.map((tool) => tool.name)).size).toBe(expectedMethods.length);
-    expect(GENERATED_TOOLS.some((tool) => tool.method.startsWith("operator/"))).toBe(false);
+    expect(GENERATED_TOOLS.some((tool) => tool.method.startsWith("deployment/"))).toBe(false);
     expect(GENERATED_TOOLS.find((tool) => tool.method === "session/config/put")?.name).toBe(
       "lightspeed_session_config_put",
     );

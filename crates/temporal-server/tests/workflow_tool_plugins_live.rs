@@ -31,7 +31,7 @@ use engine::{
 };
 use support::live::{
     LIVE_TEST_LOCK, final_assistant_text, live_universe_id, live_workflow_handle,
-    require_storage_live_env, wait_for_terminal_run,
+    require_storage_live_env,
 };
 use temporal_server::{
     gateway::GatewayAgentApi,
@@ -409,7 +409,7 @@ impl TestClosedPluginWorkflow {
 /// Start-on-call plugin that works for a while before resolving. Used to
 /// exercise holder continue-as-new during a parked completion (the rebuilt
 /// start work re-issues the deterministic start and `AlreadyStarted` is
-/// success) and owned-execution cancellation after run-terminal auto-cancel.
+/// success).
 #[workflow(name = "TestSlowStartPluginWorkflow")]
 #[derive(Default)]
 pub struct TestSlowStartPluginWorkflow {
@@ -472,6 +472,32 @@ impl TestSlowStartPluginWorkflow {
     #[query(name = WORKFLOW_TOOL_RECOVERY_QUERY)]
     pub fn recovery(&self, _ctx: &WorkflowContextView) -> WorkflowToolRecoveryResult {
         self.recovery.clone()
+    }
+}
+
+/// A started execution that can only finish by cancellation. A timed fake
+/// could complete on a busy machine before the holder's cancellation arrives.
+#[workflow(name = "TestCancellationPluginWorkflow")]
+#[derive(Default)]
+pub struct TestCancellationPluginWorkflow;
+
+#[workflow_methods]
+impl TestCancellationPluginWorkflow {
+    #[run]
+    pub async fn run(
+        ctx: &mut WorkflowContext<Self>,
+        _args: WorkflowToolStartArgs,
+    ) -> WorkflowResult<()> {
+        ctx.cancelled().await;
+        Err(temporalio_sdk::WorkflowTermination::Cancelled)
+    }
+
+    #[signal(name = "deliver_emission")]
+    pub fn deliver_emission(
+        &mut self,
+        _ctx: &mut SyncWorkflowContext<Self>,
+        _envelope: EmissionEnvelope,
+    ) {
     }
 }
 
@@ -837,6 +863,7 @@ where
         .register_workflow::<TestSilentStartPluginWorkflow>()
         .register_workflow::<TestClosedPluginWorkflow>()
         .register_workflow::<TestSlowStartPluginWorkflow>()
+        .register_workflow::<TestCancellationPluginWorkflow>()
         .task_types(WorkerTaskTypes::workflow_only())
         .build();
     let mut plugin_worker = Worker::new(&runtime, client.clone(), plugin_worker_options)
@@ -845,7 +872,10 @@ where
     let plugin_worker_future = plugin_worker.run();
     tokio::pin!(plugin_worker_future);
 
-    let client_future = run_client(client.clone(), api, blobs, session_id, plugin_queue);
+    let client_future = temporal_server::gateway::request_context::with_request_context(
+        support::live::local_request_context().await?,
+        run_client(client.clone(), api, blobs, session_id, plugin_queue),
+    );
     tokio::pin!(client_future);
 
     let client_result = tokio::select! {
@@ -861,18 +891,24 @@ where
                 Err(error) => Err(error.context("plugin worker failed")),
             };
         }
-        client_result = client_future.as_mut() => client_result,
+        client_result = support::live::bounded_live_test("workflow_tool_plugins_live", support::live::LIVE_TEST_BUDGET, client_future.as_mut()) => client_result,
     };
 
     shutdown_session_worker();
     shutdown_plugin_worker();
-    tokio::time::timeout(Duration::from_secs(10), session_worker_future.as_mut())
-        .await
-        .map_err(|_| anyhow::anyhow!("session worker did not shut down within 10 seconds"))??;
-    tokio::time::timeout(Duration::from_secs(10), plugin_worker_future.as_mut())
-        .await
-        .map_err(|_| anyhow::anyhow!("plugin worker did not shut down within 10 seconds"))??;
-    client_result
+    let shutdown_result = support::live::bounded_live_test(
+        "session and plugin worker shutdown",
+        Duration::from_secs(10),
+        async {
+            tokio::try_join!(
+                session_worker_future.as_mut(),
+                plugin_worker_future.as_mut()
+            )
+            .map(|_| ())
+        },
+    )
+    .await;
+    client_result.and(shutdown_result)
 }
 
 use std::future::Future;
@@ -917,15 +953,13 @@ async fn wait_for_terminal_run_slow(
     session_id: &SessionId,
     run_id: &str,
 ) -> anyhow::Result<api::RunView> {
-    let started = std::time::Instant::now();
-    loop {
-        if started.elapsed() > Duration::from_secs(120) {
-            anyhow::bail!("timed out waiting for run {run_id} to finish");
-        }
-        if let Ok(run) = wait_for_terminal_run(api, session_id, run_id).await {
-            return Ok(run);
-        }
-    }
+    support::live::wait_for_terminal_run_with_timeout(
+        api,
+        session_id,
+        run_id,
+        Duration::from_secs(120),
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -1587,6 +1621,26 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             })
             .ok_or_else(|| anyhow::anyhow!("no emitted completion promise in events"))?;
 
+        // Delivery can precede the model's await. Wait for the parked run so
+        // unrelated appends cannot clear the rejection diagnostic below.
+        support::live::wait_until(
+            "run parked on the plugin reply",
+            Duration::from_secs(30),
+            async || {
+                let status = session_handle
+                    .query(
+                        AgentSessionWorkflow::status,
+                        (),
+                        temporalio_client::WorkflowQueryOptions::default(),
+                    )
+                    .await?;
+                Ok(status
+                    .active_run
+                    .is_some_and(|run| run.status == engine::RunStatus::Parked))
+            },
+        )
+        .await?;
+
         // Forged producer: wrong workflow id. Must be dropped.
         let forged = EmissionEnvelope::source_resolution(
             universe_id,
@@ -1642,6 +1696,24 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             )
             .await
             .map_err(|error| anyhow::anyhow!("signal authorized reply: {error}"))?;
+
+        // Signal acknowledgement precedes processing. Public reads report the
+        // prior rejection until the authorized reply has actually been applied.
+        support::live::wait_until(
+            "authorized reply applied",
+            Duration::from_secs(30),
+            async || {
+                let status = session_handle
+                    .query(
+                        AgentSessionWorkflow::status,
+                        (),
+                        temporalio_client::WorkflowQueryOptions::default(),
+                    )
+                    .await?;
+                Ok(status.last_error.is_none())
+            },
+        )
+        .await?;
 
         let run = wait_for_terminal_run_slow(&api, &session_id, &run.result.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
@@ -2494,7 +2566,7 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
 
     run_with_plugin_worker(|client, api, blobs, session_id, plugin_queue| async move {
         let recipe = serde_json::to_vec(&WorkflowToolRecipeV1 {
-            workflow_type: "TestSlowStartPluginWorkflow".to_owned(),
+            workflow_type: "TestCancellationPluginWorkflow".to_owned(),
             task_queue: plugin_queue,
         })?;
         let recipe_fingerprint = workflow_tool_recipe_fingerprint(&recipe);
@@ -2526,8 +2598,8 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
         .map_err(|error| anyhow::anyhow!("start managed session: {error:?}"))?;
         // A short await parks on the keyed promise long enough for the
         // deterministic start to be issued, then times out; the run
-        // terminal auto-cancels the still-pending promise while the slow
-        // execution is running.
+        // terminal auto-cancels the still-pending promise while the
+        // execution is waiting for cancellation.
         let run = api
             .start_run(RunStartParams {
         notify_on_terminal: None,

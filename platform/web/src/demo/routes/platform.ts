@@ -2,7 +2,7 @@
 /// universe API keys. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
-import { slugify } from "@lightspeed/platform-shared";
+import { memberUpdateSchema, slugify, universeRoleSchema } from "@lightspeed/platform-shared";
 import type { EngineUniverse, Member, Universe, UniverseApiKey } from "@/api";
 import type { DemoStore, UniverseState } from "../store";
 import { conflict, badRequest, notFound, nowIso, readBody, universeFor } from "./common";
@@ -25,7 +25,7 @@ export function platformRoutes(store: DemoStore): Hono {
     const base = body.slug?.trim() || slugify(name);
     let slug = base;
     for (let i = 2; store.universeBySlug(slug); i++) slug = `${base}-${i}`;
-    const state = store.addUniverse({ slug, name, role: "owner" });
+    const state = store.addUniverse({ slug, name, role: "admin" });
     return c.json(state.universe, 201);
   });
 
@@ -57,7 +57,7 @@ export function platformRoutes(store: DemoStore): Hono {
       slug: slugify(name),
       name,
       lightspeedUniverseId: engineId,
-      role: "owner",
+      role: null,
       createdAt: new Date(orphan.createdAtMs).toISOString(),
     });
     return c.json(state.universe, 201);
@@ -110,15 +110,20 @@ export function platformRoutes(store: DemoStore): Hono {
 
   // --- membership ---------------------------------------------------------
 
+  /// Every member may list members; emails are for admins only.
   app.get("/universes/:id/members", (c) => {
     const state = universeFor(store, c);
-    return state ? c.json(state.members) : notFound(c);
+    if (!state || !state.universe.role) return notFound(c);
+    if (state.universe.role === "admin") return c.json(state.members);
+    return c.json(state.members.map(({ email: _email, ...member }) => member));
   });
 
   app.post("/universes/:id/members", async (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
     const body = await readBody<{ userId?: string; email?: string; role?: string }>(c);
+    const role = universeRoleSchema.safeParse(body.role ?? "contributor");
+    if (!role.success) return badRequest(c, "invalid role");
     const target = body.userId
       ? store.users.get(body.userId)
       : [...store.users.values()].find((u) => u.email === body.email?.trim());
@@ -127,7 +132,7 @@ export function platformRoutes(store: DemoStore): Hono {
     const created: Member = {
       id: store.nextId("member"),
       userId: target.id,
-      role: body.role ?? "member",
+      role: role.data,
       email: target.email,
       name: target.name,
       createdAt: nowIso(),
@@ -136,9 +141,28 @@ export function platformRoutes(store: DemoStore): Hono {
     return c.json(created, 201);
   });
 
+  app.patch("/universes/:id/members/:memberId", async (c) => {
+    const state = universeFor(store, c);
+    if (!state) return notFound(c);
+    const body = memberUpdateSchema.safeParse(await readBody(c));
+    if (!body.success) return badRequest(c, "invalid role");
+    const member = state.members.find((m) => m.id === c.req.param("memberId"));
+    if (!member) return notFound(c);
+    if (member.role === "admin" && body.data.role !== "admin" && !state.members.some((m) => m.id !== member.id && m.role === "admin")) {
+      return conflict(c, "a universe keeps at least one admin");
+    }
+    member.role = body.data.role;
+    if (member.userId === store.currentUser.id) state.universe.role = member.role;
+    return c.json(member);
+  });
+
   app.delete("/universes/:id/members/:memberId", (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
+    const member = state.members.find((m) => m.id === c.req.param("memberId"));
+    if (member?.role === "admin" && !state.members.some((m) => m.id !== member.id && m.role === "admin")) {
+      return conflict(c, "a universe keeps at least one admin");
+    }
     const before = state.members.length;
     state.members = state.members.filter((m) => m.id !== c.req.param("memberId"));
     return state.members.length === before ? notFound(c) : c.json({ ok: true });

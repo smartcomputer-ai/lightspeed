@@ -1,43 +1,41 @@
 import { LightspeedClient } from "@lightspeed-ai/agent-client";
 
-/** The service principal the host stamps on every core call (trusted-header mode). */
-export const CONNECTOR_PRINCIPAL = "service_account:lightspeed-connectors";
 export const UNIVERSE_HEADER = "x-lightspeed-universe";
-export const PRINCIPAL_HEADER = "x-lightspeed-principal";
 
 export interface CoreClientOptions {
   /** Core JSON-RPC endpoint (`LIGHTSPEED_API_URL`). */
   endpoint: string;
-  principal?: string;
+  apiKey: string;
   fetch?: typeof fetch;
 }
 
 /**
- * The host's view of the core: one endpoint, one service principal, and
- * per-call universe scoping. Discovery is deployment-scoped (`operator/*`
+ * The host's view of the core: one endpoint, one service key, and
+ * per-call universe scoping. Discovery is deployment-scoped (`deployment/*`
  * never carries a universe header); everything an account does is stamped
  * with that account's universe.
  */
 export class CoreClient {
   private readonly endpoint: string;
-  private readonly principal: string;
+  private readonly apiKey: string;
   private readonly fetchImpl: typeof fetch | undefined;
   private readonly universes = new Map<string, LightspeedClient>();
-  private operatorClient: LightspeedClient | undefined;
+  private deploymentClient: LightspeedClient | undefined;
 
   constructor(options: CoreClientOptions) {
     if (options.endpoint.length === 0) {
       throw new TypeError("core endpoint must not be empty");
     }
     this.endpoint = options.endpoint;
-    this.principal = options.principal ?? CONNECTOR_PRINCIPAL;
+    if (!/^lsk_[A-Za-z0-9_-]+$/.test(options.apiKey)) throw new TypeError("a Lightspeed service API key is required");
+    this.apiKey = options.apiKey;
     this.fetchImpl = options.fetch;
   }
 
-  /** Deployment-scoped `operator/*` calls: the gateway rejects a universe header on them. */
-  operator(): LightspeedClient {
-    this.operatorClient ??= this.create({ [PRINCIPAL_HEADER]: this.principal });
-    return this.operatorClient;
+  /** Deployment-scoped `deployment/*` calls: the gateway rejects a universe header on them. */
+  deployment(): LightspeedClient {
+    this.deploymentClient ??= this.create({});
+    return this.deploymentClient;
   }
 
   /** Universe-scoped calls for one account's universe. */
@@ -49,7 +47,7 @@ export class CoreClient {
     if (client === undefined) {
       client = this.create({
         [UNIVERSE_HEADER]: universeId,
-        [PRINCIPAL_HEADER]: this.principal,
+
       });
       this.universes.set(universeId, client);
     }
@@ -59,7 +57,7 @@ export class CoreClient {
   private create(headers: Record<string, string>): LightspeedClient {
     return new LightspeedClient({
       endpoint: this.endpoint,
-      headers,
+      headers: { ...headers, authorization: `Bearer ${this.apiKey}` },
       ...(this.fetchImpl === undefined ? {} : { fetch: this.fetchImpl }),
     });
   }

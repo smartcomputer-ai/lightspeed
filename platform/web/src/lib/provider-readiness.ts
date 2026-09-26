@@ -35,7 +35,7 @@ export function useProviderReadiness(universeId: string, enabled = true): Provid
   return { isLoading: models.isLoading, ...summary };
 }
 
-/// Deep link that opens the Add-integration dialog on the given catalog entry.
-export function addIntegrationHref(slug: string, kind: string): string {
-  return `/u/${slug}/settings/integrations?add=${encodeURIComponent(kind)}`;
+/// Deep link that opens the Add-model-provider dialog on the given catalog entry.
+export function addModelProviderHref(slug: string, kind: string): string {
+  return `/u/${slug}/models?add=${encodeURIComponent(kind)}`;
 }

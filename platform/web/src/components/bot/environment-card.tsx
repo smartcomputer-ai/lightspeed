@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight } from "lucide-react";
@@ -27,14 +28,15 @@ export function BotEnvironmentCard({
   slug,
   universeId,
   environmentId,
-  manage,
 }: {
   /** Universe slug for page links. */
   slug: string;
   universeId: string;
   environmentId: string;
-  manage: boolean;
 }) {
+  const target = { kind: "environment" as const, id: environmentId };
+  const permissions = useActionPermissions(universeId);
+  const manage = permissions.can("configure_resource");
   const queryClient = useQueryClient();
   const [policyOpen, setPolicyOpen] = useState(false);
   const environments = useQuery({

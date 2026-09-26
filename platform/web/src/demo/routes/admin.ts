@@ -1,16 +1,19 @@
-/// Deployment-scoped administration: operator environment providers and
+/// Deployment-scoped administration: deployment environment providers and
 /// their per-universe bindings, the operator channel-account listing, and
 /// connector health.
 import { Hono } from "hono";
 import type { EnvironmentProviderBinding, EnvironmentTemplate } from "@/api";
 import type {
-  OperatorChannelAccountView,
-  OperatorEnvironmentProviderView,
+  DeploymentApiKeyView,
+  DeploymentChannelAccountView,
+  DeploymentEnvironmentProviderView,
+  MethodGroup,
 } from "@lightspeed-ai/agent-client";
+import { groupsFor } from "@/lib/method-groups";
 import type { DemoStore, UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody } from "./common";
 
-type ControllerConnection = OperatorEnvironmentProviderView["controllerConnection"];
+type ControllerConnection = DeploymentEnvironmentProviderView["controllerConnection"];
 
 /// What a fresh binding provisions from when no other universe already
 /// lists this provider's templates.
@@ -104,6 +107,59 @@ export function adminRoutes(store: DemoStore): Hono {
 
   app.get("/admin/environment-providers", (c) => c.json([...store.environmentProviders.values()]));
 
+  /// Every key: deployment keys, and each universe's keys with the groups
+  /// they hold.
+  app.get("/admin/api-keys", (c) => {
+    const universeKeys = [...store.universes.values()].flatMap((state) => state.apiKeys.map((key): DeploymentApiKeyView => ({
+      ...key,
+      scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId },
+      groups: store.keyGrants.get(key.keyPrefix)?.groups ?? groupsFor("universe"),
+      assertActor: store.keyGrants.get(key.keyPrefix)?.assertActor ?? false,
+      createdBy: { kind: "actor", id: store.currentUser.id },
+    })));
+    return c.json([...store.deploymentKeys, ...universeKeys]);
+  });
+
+  app.post("/admin/api-keys", async (c) => {
+    const body = await readBody<{
+      displayName?: string;
+      scope?: { kind: "deployment" } | { kind: "universe"; universeId: string };
+      groups?: MethodGroup[];
+      assertActor?: boolean;
+    }>(c);
+    const displayName = body.displayName?.trim();
+    if (!displayName || !body.scope) return badRequest(c, "displayName and scope are required");
+    const secret = `lsk_${crypto.randomUUID().replaceAll("-", "")}`;
+    const key = { keyPrefix: secret.slice(0, 12), displayName, createdAtMs: Date.now(), revokedAtMs: null, lastUsedAtMs: null };
+    const kind = body.scope.kind;
+    const groups = body.groups ?? groupsFor(kind);
+    const assertActor = body.assertActor ?? false;
+    if (body.scope.kind === "universe") {
+      const universeId = body.scope.universeId;
+      const state = store.universes.get(universeId);
+      if (!state) return notFound(c, "universe not found");
+      state.apiKeys.push(key);
+      store.keyGrants.set(key.keyPrefix, { groups, assertActor });
+      const apiKey: DeploymentApiKeyView = {
+        ...key, scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId }, groups, assertActor,
+        createdBy: { kind: "actor", id: store.currentUser.id },
+      };
+      return c.json({ apiKey, secret }, 201);
+    }
+    const apiKey: DeploymentApiKeyView = { ...key, scope: { kind: "deployment" }, groups, assertActor, createdBy: { kind: "actor", id: store.currentUser.id } };
+    store.deploymentKeys.push(apiKey);
+    return c.json({ apiKey, secret }, 201);
+  });
+
+  app.delete("/admin/api-keys/:keyPrefix", (c) => {
+    const prefix = c.req.param("keyPrefix");
+    const key = store.deploymentKeys.find((candidate) => candidate.keyPrefix === prefix)
+      ?? [...store.universes.values()].flatMap((state) => state.apiKeys).find((candidate) => candidate.keyPrefix === prefix);
+    if (!key) return notFound(c);
+    key.revokedAtMs ??= Date.now();
+    return c.json(key);
+  });
+
   app.put("/admin/environment-providers/:providerId", async (c) => {
     const providerId = c.req.param("providerId").trim();
     if (!providerId) return badRequest(c, "providerId is required");
@@ -114,7 +170,7 @@ export function adminRoutes(store: DemoStore): Hono {
     }
     const existing = store.environmentProviders.get(providerId);
     const now = Date.now();
-    const provider: OperatorEnvironmentProviderView = {
+    const provider: DeploymentEnvironmentProviderView = {
       providerId,
       ...(optionalString(body.displayName) ? { displayName: optionalString(body.displayName) } : {}),
       controllerConnection,
@@ -208,11 +264,11 @@ export function adminRoutes(store: DemoStore): Hono {
     return c.json(binding);
   });
 
-  /// Deployment-wide listing from the core's operator scope: every account
+  /// Deployment-wide listing from the core's deployment scope: every account
   /// across universes, each row carrying its universe id. The demo uses the
   /// platform universe id as the core `universeId`.
   app.get("/channel-accounts", (c) => {
-    const accounts: OperatorChannelAccountView[] = [];
+    const accounts: DeploymentChannelAccountView[] = [];
     for (const state of store.universes.values()) {
       for (const account of state.channelAccounts.values()) {
         accounts.push({ ...account, universeId: state.universe.id });

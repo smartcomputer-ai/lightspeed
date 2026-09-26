@@ -37,6 +37,7 @@ const subagent = (
 ): SessionSummaryView => ({
   id,
   displayName,
+  access: { visibility: "universe" },
   lifecycleStatus: "open",
   managed: true,
   createdAtMs: 0,

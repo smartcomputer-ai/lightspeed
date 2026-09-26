@@ -188,6 +188,12 @@ it.each(["server", "session"] as const)(
         }),
       },
     });
+    if (scope === "session") {
+      // A saved subset stays closed; its summary names the selection.
+      expect(container.textContent).toContain("2 tools selected");
+      expect(container.textContent).not.toContain("Not currently advertised");
+      await button("Customize tools");
+    }
     expect(container.textContent).toContain("Not currently advertised");
     if (scope === "session")
       expect(container.textContent).toContain("No longer allowed");
@@ -220,6 +226,8 @@ it("preserves selections through structured failures, transport errors, and refr
     value: ["search"],
     source: { universeId: "test", discover },
   });
+  expect(discover).not.toHaveBeenCalled();
+  await button("Customize tools");
   expect(container.querySelector('[role="alert"]')?.textContent).toContain(
     "Reconnect",
   );
@@ -265,6 +273,7 @@ it.each(["universe", "server", "revision"])(
       source: { universeId: "first", discover },
     };
     await setup(props);
+    await button("Customize tools");
     const next = {
       ...props,
       ...(change === "universe"
@@ -274,6 +283,8 @@ it.each(["universe", "server", "revision"])(
       ...(change === "revision" ? { revision: 2 } : {}),
     };
     await act(async () => root.render(<Harness {...next} />));
+    // A different server or revision is a fresh picker, closed again.
+    await button("Customize tools");
     await act(async () =>
       first.resolve({
         status: "failure",
@@ -323,4 +334,32 @@ it("blocks discovery for unsaved connections and discards an in-flight observati
   );
   expect(container.textContent).toContain("saved_connection");
   expect(selected).toEqual(["search"]);
+});
+
+it("opens a session subset on its own while it selects no tools", async () => {
+  await setup({
+    scope: "session",
+    serverId: "catalog",
+    value: [],
+    source: {
+      universeId: "test",
+      discover: async () => ({ status: "success", tools: [{ name: "search" }] }),
+    },
+  });
+  const toggle = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+    (item) => item.textContent === "Hide",
+  )!;
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(toggle.disabled).toBe(true);
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+    "Select at least one tool",
+  );
+  await checkbox("search");
+  expect(selected).toEqual(["search"]);
+  // Fixed fields stay in view until the person hides them.
+  expect(toggle.disabled).toBe(false);
+  expect(container.querySelector('[aria-label="search"]')).not.toBeNull();
+  await act(async () => toggle.click());
+  expect(container.textContent).toContain("1 tool selected");
+  expect(container.querySelector('[aria-label="search"]')).toBeNull();
 });

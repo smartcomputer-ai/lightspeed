@@ -95,7 +95,7 @@ export interface DeliveryShape {
 }
 
 /**
- * The Advanced disclosure, closed: what routing, batching, busy handling,
+ * The delivery disclosure, closed: what routing, batching, busy handling,
  * and idle close do, as one sentence. Reads the same for a form and a saved
  * trigger, so a person learns the vocabulary before opening the fields.
  */

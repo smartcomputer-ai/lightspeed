@@ -98,7 +98,7 @@ interface GrantInit {
   displayName?: string | null;
   subjectHint?: string | null;
   exposure?: SecretGrant["exposure"];
-  principal?: SecretGrant["principal"];
+  createdBy?: SecretGrant["createdBy"];
   scopes?: string[];
   audience?: string | null;
   expiresAtMs?: number | null;
@@ -118,7 +118,7 @@ function mintGrant(store: DemoStore, universe: UniverseState, init: GrantInit): 
     subjectHint: init.subjectHint ?? null,
     status: "active",
     exposure: init.exposure ?? "brokered",
-    principal: init.principal ?? { kind: "universeDefault" },
+    createdBy: init.createdBy ?? { kind: "actor", id: store.currentUser.id },
     scopes: init.scopes ?? [],
     audience: init.audience ?? null,
     hasAccessToken: true,
@@ -290,7 +290,7 @@ function modelDiscovery(universe: UniverseState): ModelListResponse {
     known.add(provider.providerId);
     return { ...provider, ...credentialStatus(universe, provider) };
   });
-  // Providers added through Integrations that the fixture never listed
+  // Providers added on Models that the fixture never listed
   // show up configured, with nothing discovered from them yet.
   for (const secret of universe.secrets.providers) {
     if (known.has(secret.providerId) || !secret.usableForModels || secret.status !== "active") continue;
@@ -322,7 +322,8 @@ function configuratorSetup(universe: UniverseState): UniverseSetup {
       id: "configurator",
       name: "Configurator",
       description:
-        "Creates a dedicated credential, registers the Configurator MCP server, and adds a ready-to-use profile for managing this universe.",
+        "Creates a dedicated credential, registers the Configurator MCP server, and adds a ready-to-use profile for managing this universe. " +
+        "Anyone who can attach the server configures profiles, MCP servers, environments, bots, channels, credentials and models with its key.",
       version: CONFIGURATOR_VERSION,
       available: true,
       status: "available",
@@ -350,7 +351,6 @@ function finishConfiguratorInstall(store: DemoStore, universe: UniverseState, se
     providerKind: "staticBearer",
     displayName: "Lightspeed Configurator setup",
     audience: CONFIGURATOR_MCP_URL,
-    principal: { kind: "user", id: store.currentUser.id },
   });
   const existingServer = universe.mcpServers.get(CONFIGURATOR_SERVER_ID);
   const server: McpServer = {
@@ -701,9 +701,11 @@ export function secretRoutes(store: DemoStore): Hono {
     return c.json(modelDiscovery(universe));
   });
 
+  /// Operators see the templates; installing stays with Admins.
   app.get("/:id/setups", (c) => {
     const universe = universeFor(store, c);
-    if (!universe) return notFound(c);
+    const role = universe?.universe.role;
+    if (!universe || (role !== "admin" && role !== "operator")) return notFound(c);
     configuratorSetup(universe);
     return c.json(universe.setups);
   });
@@ -712,6 +714,7 @@ export function secretRoutes(store: DemoStore): Hono {
   app.post("/:id/setups/configurator/install", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
+    if (universe.universe.role !== "admin") return c.json({ error: "universe admin required" }, 403);
     const setup = configuratorSetup(universe);
     if (!setup.available) return c.json({ error: "Configurator MCP URL is not configured" }, 501);
     if (setup.status === "installing") {

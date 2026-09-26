@@ -383,6 +383,139 @@ struct SessionSegment {
     through: u64,
 }
 
+impl PgStore {
+    /// `list_sessions` narrowed by the audience of each session's root, with
+    /// the access summary each view carries.
+    pub async fn list_sessions_for(
+        &self,
+        request: ListSessions,
+        filter: &crate::AccessFilter,
+    ) -> Result<crate::SessionListPageWithAccess, SessionStoreError> {
+        if request.limit == 0 {
+            return Err(SessionStoreError::InvalidLimit { limit: 0 });
+        }
+        let fetch_limit = usize_to_session_i64(request.limit.saturating_add(1), "limit")?;
+        let (cursor_updated_at_ms, cursor_session_id) = match &request.cursor {
+            Some(cursor) => (
+                Some(u64_to_i64(cursor.updated_at_ms, "cursor updated_at_ms")?),
+                Some(cursor.session_id.as_str().to_owned()),
+            ),
+            None => (None, None),
+        };
+        // Metadata predicates are appended only when their filter form is
+        // present. Exact containment can use the GIN index; presence matching
+        // uses PostgreSQL's native all-keys operator. A `$n IS NULL OR` form
+        // would force weaker generic plans.
+        let metadata_exact = request
+            .metadata
+            .iter()
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let metadata_keys = request
+            .metadata
+            .iter()
+            .filter(|(_, value)| value.is_empty())
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        let metadata_filter = (!metadata_exact.is_empty())
+            .then(|| metadata_json(&metadata_exact))
+            .transpose()?;
+        let metadata_predicate = match (metadata_filter.is_some(), metadata_keys.is_empty()) {
+            (true, false) => "AND s.metadata_json @> $12 AND s.metadata_json ?& $13",
+            (true, true) => "AND s.metadata_json @> $12",
+            (false, false) => "AND s.metadata_json ?& $12",
+            (false, true) => "",
+        };
+        let lifecycle_predicate = if request.exclude_closed {
+            "AND s.lifecycle_status <> 'closed'"
+        } else {
+            ""
+        };
+        let (access_predicate, access_binds) = filter.session_clause(7);
+        let summary_columns = crate::access::session_summary_columns();
+        let root_join = crate::access::SESSION_ROOT_JOIN;
+        // The root join brings columns of the same names; qualify ours.
+        let session_columns = SESSION_COLUMNS
+            .split(',')
+            .map(str::trim)
+            .filter(|column| !column.is_empty())
+            .map(|column| format!("s.{column}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query = format!(
+            r#"
+            SELECT {session_columns}, {summary_columns}
+            FROM sessions s
+            {root_join}
+            WHERE s.universe_id = $1
+              AND ($2::bigint IS NULL OR (s.updated_at_ms, s.session_id) < ($2, $3))
+              AND ($4::text IS NULL OR s.origin_root_session_id = $4)
+              AND ($5::text IS NULL OR s.origin_parent_session_id = $5)
+              {lifecycle_predicate}
+              {access_predicate}
+              {metadata_predicate}
+            ORDER BY s.updated_at_ms DESC, s.session_id DESC
+            LIMIT $6
+            "#,
+        );
+        let sql = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(cursor_updated_at_ms)
+            .bind(cursor_session_id)
+            .bind(
+                request
+                    .root_session_id
+                    .as_ref()
+                    .map(|id| id.as_str().to_owned()),
+            )
+            .bind(
+                request
+                    .parent_session_id
+                    .as_ref()
+                    .map(|id| id.as_str().to_owned()),
+            )
+            .bind(fetch_limit);
+        let mut sql = access_binds.bind(sql);
+        if let Some(filter) = metadata_filter {
+            sql = sql.bind(filter);
+        }
+        if !metadata_keys.is_empty() {
+            sql = sql.bind(metadata_keys);
+        }
+        let rows = sql
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| session_sql_error("list sessions", error))?;
+
+        let mut sessions = rows
+            .iter()
+            .map(|row| {
+                Ok((
+                    session_record_from_row(row)?,
+                    crate::access::summary_from_row(row).map_err(|error| {
+                        SessionStoreError::Store {
+                            message: error.to_string(),
+                        }
+                    })?,
+                ))
+            })
+            .collect::<Result<Vec<_>, SessionStoreError>>()?;
+        let next_cursor = (sessions.len() > request.limit).then(|| {
+            sessions.truncate(request.limit);
+            let (last, _) = sessions.last().expect("non-empty page");
+            SessionListCursor {
+                updated_at_ms: last.updated_at_ms,
+                session_id: last.session_id.clone(),
+            }
+        });
+        Ok(crate::SessionListPageWithAccess {
+            sessions,
+            next_cursor,
+        })
+    }
+}
+
 #[async_trait]
 impl SessionStore for PgStore {
     async fn create_session(
@@ -535,104 +668,16 @@ impl SessionStore for PgStore {
         &self,
         request: ListSessions,
     ) -> Result<SessionListPage, SessionStoreError> {
-        if request.limit == 0 {
-            return Err(SessionStoreError::InvalidLimit { limit: 0 });
-        }
-        let fetch_limit = usize_to_session_i64(request.limit.saturating_add(1), "limit")?;
-        let (cursor_updated_at_ms, cursor_session_id) = match &request.cursor {
-            Some(cursor) => (
-                Some(u64_to_i64(cursor.updated_at_ms, "cursor updated_at_ms")?),
-                Some(cursor.session_id.as_str().to_owned()),
-            ),
-            None => (None, None),
-        };
-        // Metadata predicates are appended only when their filter form is
-        // present. Exact containment can use the GIN index; presence matching
-        // uses PostgreSQL's native all-keys operator. A `$n IS NULL OR` form
-        // would force weaker generic plans.
-        let metadata_exact = request
-            .metadata
-            .iter()
-            .filter(|(_, value)| !value.is_empty())
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let metadata_keys = request
-            .metadata
-            .iter()
-            .filter(|(_, value)| value.is_empty())
-            .map(|(key, _)| key.clone())
-            .collect::<Vec<_>>();
-        let metadata_filter = (!metadata_exact.is_empty())
-            .then(|| metadata_json(&metadata_exact))
-            .transpose()?;
-        let metadata_predicate = match (metadata_filter.is_some(), metadata_keys.is_empty()) {
-            (true, false) => "AND metadata_json @> $7 AND metadata_json ?& $8",
-            (true, true) => "AND metadata_json @> $7",
-            (false, false) => "AND metadata_json ?& $7",
-            (false, true) => "",
-        };
-        let lifecycle_predicate = if request.exclude_closed {
-            "AND lifecycle_status <> 'closed'"
-        } else {
-            ""
-        };
-        let query = format!(
-            r#"
-            SELECT {SESSION_COLUMNS}
-            FROM sessions
-            WHERE universe_id = $1
-              AND ($2::bigint IS NULL OR (updated_at_ms, session_id) < ($2, $3))
-              AND ($4::text IS NULL OR origin_root_session_id = $4)
-              AND ($5::text IS NULL OR origin_parent_session_id = $5)
-              {lifecycle_predicate}
-              {metadata_predicate}
-            ORDER BY updated_at_ms DESC, session_id DESC
-            LIMIT $6
-            "#,
-        );
-        let mut sql = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(cursor_updated_at_ms)
-            .bind(cursor_session_id)
-            .bind(
-                request
-                    .root_session_id
-                    .as_ref()
-                    .map(|id| id.as_str().to_owned()),
-            )
-            .bind(
-                request
-                    .parent_session_id
-                    .as_ref()
-                    .map(|id| id.as_str().to_owned()),
-            )
-            .bind(fetch_limit);
-        if let Some(filter) = metadata_filter {
-            sql = sql.bind(filter);
-        }
-        if !metadata_keys.is_empty() {
-            sql = sql.bind(metadata_keys);
-        }
-        let rows = sql
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| session_sql_error("list sessions", error))?;
-
-        let mut sessions = rows
-            .iter()
-            .map(session_record_from_row)
-            .collect::<Result<Vec<_>, _>>()?;
-        let next_cursor = (sessions.len() > request.limit).then(|| {
-            sessions.truncate(request.limit);
-            let last = sessions.last().expect("non-empty page");
-            SessionListCursor {
-                updated_at_ms: last.updated_at_ms,
-                session_id: last.session_id.clone(),
-            }
-        });
+        let page = self
+            .list_sessions_for(request, &crate::AccessFilter::default())
+            .await?;
         Ok(SessionListPage {
-            sessions,
-            next_cursor,
+            sessions: page
+                .sessions
+                .into_iter()
+                .map(|(record, _)| record)
+                .collect(),
+            next_cursor: page.next_cursor,
         })
     }
 

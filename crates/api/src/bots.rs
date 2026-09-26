@@ -237,6 +237,7 @@ pub struct BotView {
 pub struct BotListItem {
     #[serde(flatten)]
     pub bot: BotView,
+    pub access: ResourceAccessSummary,
     pub trigger_count: u32,
     /// Events whose delivery has not finished.
     pub pending_count: u64,
@@ -625,7 +626,7 @@ pub struct BotTriggerInput {
     pub document: BotTriggerDocument,
     /// Chat triggers with `pairing: code`: set a specific pairing code
     /// (8–64 chars) instead of the server-minted one. Never returned to
-    /// non-managing principals.
+    /// channel-facing views.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pairing_code: Option<String>,
 }
@@ -669,11 +670,11 @@ pub struct BotTriggerView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_state: Option<PollCursorState>,
     /// Webhook triggers: the ingest path including its URL token, for
-    /// managing principals only.
+    /// bot-management callers only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ingest_path: Option<String>,
-    /// Chat triggers with `pairing: code`: the code, for managing
-    /// principals only.
+    /// Chat triggers with `pairing: code`: the code, for bot-management
+    /// callers only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pairing_code: Option<String>,
     pub created_at_ms: i64,
@@ -1054,11 +1055,17 @@ pub struct BotReadParams {
 #[serde(rename_all = "camelCase")]
 pub struct BotReadResponse {
     pub bot: BotView,
+    /// The bot's audience, always the universe, and who created it.
+    pub access: ResourceAccessSummary,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct BotListParams {}
+pub struct BotListParams {
+    /// Only bots this actor created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

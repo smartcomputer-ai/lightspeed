@@ -101,14 +101,9 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "channels",
         sql: include_str!("../migrations/009_channels.sql"),
     },
-    EmbeddedMigration {
-        version: 10,
-        name: "independent_environment_lifecycle",
-        sql: include_str!("../migrations/010_independent_environment_lifecycle.sql"),
-    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 10;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 9;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {
@@ -377,21 +372,26 @@ mod tests {
                 .all(|migration| checksum(migration.sql).len() == 64)
         );
         assert!(LIGHTSPEED_TABLES.windows(2).all(|pair| pair[0] < pair[1]));
-        // Relations the ledger owns: created by some migration and not
-        // dropped by a later one.
-        let dropped_tables: BTreeSet<_> = MIGRATIONS
+        // Follow table declarations in migration order, including any future
+        // removal or replacement of a relation.
+        let mut migrated_tables = BTreeSet::new();
+        for line in MIGRATIONS
             .iter()
             .flat_map(|migration| migration.sql.lines())
-            .filter_map(|line| line.trim().strip_prefix("DROP TABLE IF EXISTS "))
-            .map(|remainder| remainder.trim_end_matches(';').to_owned())
-            .collect();
-        let migrated_tables: BTreeSet<_> = MIGRATIONS
-            .iter()
-            .flat_map(|migration| migration.sql.lines())
-            .filter_map(|line| line.trim().strip_prefix("CREATE TABLE IF NOT EXISTS "))
-            .map(|remainder| remainder.trim_end_matches(" (").to_owned())
-            .filter(|table| !dropped_tables.contains(table))
-            .collect();
+            .map(str::trim)
+        {
+            if let Some(name) = line
+                .strip_prefix("DROP TABLE IF EXISTS ")
+                .or_else(|| line.strip_prefix("DROP TABLE "))
+            {
+                migrated_tables.remove(name.trim_end_matches(';'));
+            } else if let Some(name) = line
+                .strip_prefix("CREATE TABLE IF NOT EXISTS ")
+                .or_else(|| line.strip_prefix("CREATE TABLE "))
+            {
+                migrated_tables.insert(name.trim_end_matches(" (").to_owned());
+            }
+        }
         assert_eq!(
             migrated_tables,
             LIGHTSPEED_TABLES

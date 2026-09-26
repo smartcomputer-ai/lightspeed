@@ -182,19 +182,23 @@ where
     // The account is created before the connector worker so the queue name
     // is known; every test uses one fresh account.
     let account_id = ChannelAccountId::new(unique("tg"));
-    api.create_channel_account(ChannelAccountCreateParams {
-        account: ChannelAccountInput {
-            account_id: account_id.clone(),
-            document: ChannelAccountDocument {
-                provider: ChannelProvider::new("telegram"),
-                provider_account_id: unique("bot"),
-                display_name: "Live Telegram".to_owned(),
-                credential_grant_id: None,
-                settings: ChannelAccountSettings::default(),
-                enabled: true,
+    let context = support::live::local_request_context().await?;
+    temporal_server::gateway::request_context::with_request_context(
+        context.clone(),
+        api.create_channel_account(ChannelAccountCreateParams {
+            account: ChannelAccountInput {
+                account_id: account_id.clone(),
+                document: ChannelAccountDocument {
+                    provider: ChannelProvider::new("telegram"),
+                    provider_account_id: unique("bot"),
+                    display_name: "Live Telegram".to_owned(),
+                    credential_grant_id: None,
+                    settings: ChannelAccountSettings::default(),
+                    enabled: true,
+                },
             },
-        },
-    })
+        }),
+    )
     .await?;
     let connector = FakeConnector::default();
     let connector_queue =
@@ -203,6 +207,9 @@ where
         &runtime,
         client.clone(),
         WorkerOptions::new(connector_queue)
+            // Typing heartbeats intentionally run until cancelled. Ask the
+            // SDK to cancel them on shutdown instead of draining forever.
+            .graceful_shutdown_period(Duration::from_millis(100))
             .register_activities(connector.clone())
             .task_types(WorkerTaskTypes {
                 enable_workflows: false,
@@ -230,22 +237,30 @@ where
         .map(|_| ())
     };
     tokio::pin!(workers);
-    let body = body(Live {
-        api: api.clone(),
-        client: client.clone(),
-        connector: connector.clone(),
-        account_id: account_id.clone(),
-    });
+    let body = temporal_server::gateway::request_context::with_request_context(
+        context,
+        body(Live {
+            api: api.clone(),
+            client: client.clone(),
+            connector: connector.clone(),
+            account_id: account_id.clone(),
+        }),
+    );
     tokio::pin!(body);
     let result = tokio::select! {
         workers_result = workers.as_mut() => Err(anyhow::anyhow!("workers stopped early: {workers_result:?}")),
-        body_result = body.as_mut() => body_result,
+        body_result = support::live::bounded_live_test("channels_live", support::live::LIVE_TEST_BUDGET, body.as_mut()) => body_result,
     };
     for shutdown in shutdowns {
         shutdown();
     }
-    let _ = tokio::time::timeout(Duration::from_secs(10), workers.as_mut()).await;
-    result
+    let shutdown_result = support::live::bounded_live_test(
+        "worker shutdown",
+        Duration::from_secs(10),
+        workers.as_mut(),
+    )
+    .await;
+    result.and(shutdown_result)
 }
 
 fn unique(prefix: &str) -> String {
@@ -608,6 +623,11 @@ async fn temporal_live_chat_rebuilds_collected_declarations_and_retains_assets()
             .bind(held.iter().map(|r| r.as_str().trim_start_matches("sha256:")).collect::<Vec<_>>())
             .execute(store.pool()).await?;
         assert!(store.delete_dead_blobs(&held, 2, &[]).await?.is_empty());
+        // Admission has started bot work. Drain that event while the sessions
+        // worker is still polling, before the harness shuts every role down.
+        support::live::wait_until("GC recovery event processed", Duration::from_secs(30), async || {
+            Ok(store.read_bot_event(&bot_id, &event_id).await?.outcome.is_some())
+        }).await?;
         Ok(())
     }).await
 }

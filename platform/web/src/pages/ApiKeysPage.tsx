@@ -1,7 +1,8 @@
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, KeyRound, Plus, ShieldOff } from "lucide-react";
+import { KeyRound, Plus, ShieldOff } from "lucide-react";
+import { ApiKeySecret } from "@/components/api-keys/secret-once";
 import {
   api,
   type UniverseApiKey,
@@ -41,16 +42,18 @@ import {
   TableRow,
   TableTitleCell,
 } from "@/components/ui/table";
-import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { EmptyState, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
+import { useActiveUniverse } from "@/lib/universes";
+import { useActionPermissions } from "@/lib/permissions";
 
-export function ApiKeysPage({ admin }: { admin: boolean }) {
+export function ApiKeysPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
+  const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !canManage(universe, admin)) {
+  if (!universe || !permissions.can("manage_access")) {
     return <UniverseNotFound slug={slug} />;
   }
 
@@ -97,14 +100,10 @@ function ApiKeyList({ universeId }: { universeId: string }) {
         <p className="mb-3 text-sm text-destructive">{revoke.error.message}</p>
       )}
       {keys.data && rows.length === 0 && (
-        <div className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-8 text-center">
-          <KeyRound className="size-7 text-muted-foreground" />
-          <p className="text-sm font-medium">No API keys</p>
-          <p className="max-w-md text-sm text-muted-foreground">
-            Create one when an external agent needs access to this universe. The secret is
-            shown only once.
-          </p>
-        </div>
+        <EmptyState icon={KeyRound} title="No API keys yet">
+          Keys let external agents and clients reach this universe. A key's secret is shown only
+          once.
+        </EmptyState>
       )}
       {rows.length > 0 && (
         <TableCard>
@@ -210,7 +209,6 @@ function CreateApiKeyDialog({
 }) {
   const [displayName, setDisplayName] = useState("");
   const [created, setCreated] = useState<UniverseApiKeyCreated | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const create = useMutation({
     mutationFn: () =>
@@ -227,7 +225,6 @@ function CreateApiKeyDialog({
     onOpenChange(false);
     setDisplayName("");
     setCreated(null);
-    setCopied(false);
     create.reset();
   };
 
@@ -236,14 +233,6 @@ function CreateApiKeyDialog({
     if (displayName.trim()) {
       create.mutate();
     }
-  };
-
-  const copySecret = async () => {
-    if (!created) {
-      return;
-    }
-    await navigator.clipboard.writeText(created.secret);
-    setCopied(true);
   };
 
   return (
@@ -257,37 +246,7 @@ function CreateApiKeyDialog({
     >
       <DialogContent showCloseButton={!created}>
         {created ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>Copy your API key</DialogTitle>
-              <DialogDescription>
-                This secret is shown once. Store it in the agent's secret manager before
-                closing this dialog.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-2">
-              <FieldLabel htmlFor="api-key-secret">API key</FieldLabel>
-              <div className="flex gap-2">
-                <Input
-                  id="api-key-secret"
-                  value={created.secret}
-                  readOnly
-                  className="font-mono text-xs"
-                  onFocus={(event) => event.currentTarget.select()}
-                />
-                <Button type="button" variant="outline" onClick={() => void copySecret()}>
-                  {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
-                  {copied ? "Copied" : "Copy"}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Identifier: <span className="font-mono">{created.apiKey.keyPrefix}</span>
-              </p>
-            </div>
-            <DialogFooter>
-              <Button type="button" onClick={close}>I saved the key</Button>
-            </DialogFooter>
-          </>
+          <ApiKeySecret secret={created.secret} keyPrefix={created.apiKey.keyPrefix} onDone={close} />
         ) : (
           <>
             <DialogHeader>

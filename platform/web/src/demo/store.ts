@@ -1,5 +1,6 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
+import type { UniverseRole } from "@lightspeed/platform-shared";
 import type {
   BlobContent,
   ChannelsStatus,
@@ -32,7 +33,9 @@ import type {
   ChannelAccountView,
   ChannelPairingView,
   ContextEntryView,
-  OperatorEnvironmentProviderView,
+  DeploymentApiKeyView,
+  DeploymentEnvironmentProviderView,
+  MethodGroup,
   RunView,
   SessionEventView,
   SessionSummaryView,
@@ -158,7 +161,7 @@ export interface UniverseInit {
   name: string;
   lightspeedUniverseId?: string;
   /// Membership role of the demo user; null = platform admin browsing.
-  role?: string | null;
+  role?: UniverseRole | null;
   createdAt?: string;
   responder?: DemoResponder;
 }
@@ -175,7 +178,11 @@ export class DemoStore {
   readonly universes = new Map<string, UniverseState>();
   /// Engine universes no platform row links to (admin reconcile view).
   readonly orphanEngineUniverses: EngineUniverse[] = [];
-  readonly environmentProviders = new Map<string, OperatorEnvironmentProviderView>();
+  readonly environmentProviders = new Map<string, DeploymentEnvironmentProviderView>();
+  /// Deployment keys, and what each universe key may call beyond the
+  /// universe page's default of every universe group (admin API keys page).
+  readonly deploymentKeys: DeploymentApiKeyView[] = [];
+  readonly keyGrants = new Map<string, { groups: MethodGroup[]; assertActor: boolean }>();
   channelsStatus: ChannelsStatus = { connectors: [] };
   readonly blobs = new Map<string, BlobContent>();
   readonly defaultInstructionsRef: string;
@@ -223,11 +230,10 @@ export class DemoStore {
   addUniverse(init: UniverseInit): UniverseState {
     const id = init.id ?? crypto.randomUUID();
     const createdAt = init.createdAt ?? new Date().toISOString();
-    const role = init.role === undefined ? "owner" : init.role;
+    const role = init.role === undefined ? "admin" : init.role;
     const state: UniverseState = {
       universe: {
         id,
-        organizationId: `org-${init.slug}`,
         lightspeedUniverseId: init.lightspeedUniverseId ?? crypto.randomUUID(),
         name: init.name,
         slug: init.slug,
@@ -305,6 +311,7 @@ export function sessionSummary(record: SessionRecord): SessionSummary {
     retention: view.retention,
     managed: view.managed,
     origin: view.origin ?? null,
+    access: view.access,
   };
 }
 

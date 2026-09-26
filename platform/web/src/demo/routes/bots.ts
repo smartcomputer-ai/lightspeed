@@ -35,6 +35,7 @@ import {
   newSession,
   startRun,
   steerRun,
+  demoAccess,
 } from "../engine";
 import type { BotRecord, DemoStore, SessionRecord, UniverseState } from "../store";
 import { badRequest, conflict, intQuery, notFound, readBody, universeFor } from "./common";
@@ -130,6 +131,7 @@ function botViewOf(record: BotRecord): BotView {
 function listItemOf(record: BotRecord): BotListItem {
   return {
     ...botViewOf(record),
+    access: demoAccess(),
     triggerCount: record.triggers.size,
     pendingCount: record.events.filter((event) => event.outcome === null || event.outcome === undefined)
       .length,

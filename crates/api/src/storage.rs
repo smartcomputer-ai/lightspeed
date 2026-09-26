@@ -137,6 +137,14 @@ pub struct VfsWorkspaceReadParams {
     pub workspace_id: String,
 }
 
+/// Read a file from a workspace's current head, by path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VfsWorkspaceFileReadParams {
+    pub workspace_id: String,
+    pub path: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceReadResponse {

@@ -24,5 +24,13 @@ export function createDemoStore(): DemoStore {
   seedSoftwareFactory(store);
   seedTechnicalSupport(store);
   seedPersonalAssistant(store);
+  seedUnsharedWork(store);
   return store;
+}
+
+/// One investigation the demo user has not shared yet, to show the badge and
+/// the Share action.
+function seedUnsharedWork(store: DemoStore) {
+  const session = store.universeBySlug("software-factory")?.sessions.get("session-flaky-scheduler");
+  if (session) session.view.access = { visibility: "restricted", createdBy: { kind: "actor", id: DEMO_USER.id } };
 }

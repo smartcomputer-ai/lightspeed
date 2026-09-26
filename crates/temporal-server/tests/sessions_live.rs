@@ -12,6 +12,7 @@ use api::{
     SessionListParams, SessionReadParams, SessionStartParams, SessionStatus, TimersFeature,
 };
 use api_projection::model_to_api;
+use base64::Engine as _;
 use engine::{
     CoreAgentCommand, SessionId,
     storage::{BlobStore, SessionStore},
@@ -185,6 +186,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: Some("Checkpoint and bounded reads live test".to_owned()),
@@ -383,6 +385,7 @@ async fn run_fake_live_client(
 
     let started = api
         .start_session(SessionStartParams {
+            access: None,
             metadata: Default::default(),
             session_id: Some(session_id.as_str().to_owned()),
             display_name: None,
@@ -593,6 +596,7 @@ async fn run_fake_live_client(
     // Retried session/start with the same session id returns the session.
     let restarted = api
         .start_session(SessionStartParams {
+            access: None,
             metadata: Default::default(),
             session_id: Some(session_id.as_str().to_owned()),
             display_name: None,
@@ -665,6 +669,7 @@ async fn run_lifecycle_delete_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: Some("Lifecycle delete live test".to_owned()),
@@ -754,6 +759,7 @@ async fn run_continue_as_new_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -883,6 +889,7 @@ async fn run_context_append_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -897,7 +904,14 @@ async fn run_context_append_live_client(
 
     let first_text = "[telegram:group Engineering] Alice (12:01): the deploy looks stuck";
     let second_text = "[telegram:group Engineering] Bob (12:02): restarting the worker now";
-    let borrowed = store.put_bytes(first_text.as_bytes().to_vec()).await?;
+    let uploaded = api
+        .put_blobs(api::BlobPutParams {
+            blobs: vec![api::BlobPutItem {
+                bytes_base64: base64::engine::general_purpose::STANDARD.encode(first_text),
+            }],
+        })
+        .await?;
+    let borrowed = engine::BlobRef::parse(&uploaded.result.blobs[0].blob_ref)?;
     sqlx::query("UPDATE cas_blobs SET created_at_ms = 1, touched_at_ms = 1 WHERE universe_id = $1 AND digest = $2")
         .bind(store.config().universe_id)
         .bind(borrowed.as_str().trim_start_matches("sha256:"))
@@ -1094,6 +1108,7 @@ async fn run_admission_failure_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1114,6 +1129,7 @@ async fn run_admission_failure_live_client(
                 // No run is active, so admission rejects this command; the
                 // session must keep serving later admissions regardless.
                 command: CoreAgentCommand::RequestRunSteering {
+                    requested_by: None,
                     run_id: engine::RunId::new(1),
                     input: Vec::new(),
                 },
@@ -1207,6 +1223,7 @@ async fn run_openai_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1280,6 +1297,7 @@ async fn run_builtin_tool_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
@@ -1435,6 +1453,7 @@ async fn run_session_metadata_live_client(
 
     let started = api
         .start_session(SessionStartParams {
+            access: None,
             session_id: Some(session_id.as_str().to_owned()),
             display_name: Some("Metadata live test".to_owned()),
             metadata: job.clone(),
@@ -1503,6 +1522,7 @@ async fn run_session_metadata_live_client(
     // The registration bounds apply at start and at put.
     let reserved = api
         .start_session(SessionStartParams {
+            access: None,
             session_id: Some(format!("{}-reserved", session_id.as_str())),
             display_name: None,
             metadata: BTreeMap::from([pair("lightspeed.owner", "x")]),

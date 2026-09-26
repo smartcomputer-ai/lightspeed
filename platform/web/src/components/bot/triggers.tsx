@@ -23,7 +23,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Combobox,
   ComboboxChip,
@@ -45,6 +44,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SettingsDisclosure } from "@/components/ui/settings-disclosure";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { CronBuilder } from "./cron-builder";
@@ -540,11 +540,13 @@ export function SavedTriggerFormCard({
         : "Say what the bot should do when this fires."
       : triggerFormProblem(trigger.kind, forms);
   const save = useMutation({
-    mutationFn: () =>
-      api("PUT", `/api/v1/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
+    mutationFn: () => {
+      if (!editable) throw new Error("You do not have permission to edit this trigger.");
+      return api("PUT", `/api/v1/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
         trigger: triggerUpdateBody(trigger, forms, deliveryOnly),
         expectedRevision: trigger.revision,
-      }),
+      });
+    },
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["bot-triggers", universeId, botId] }),
@@ -571,7 +573,7 @@ export function SavedTriggerFormCard({
       secondarySummary={secondarySummary}
       problem={formIssue}
       error={error}
-      open={open}
+      open={open && editable}
       onOpenChange={onOpenChange}
       expandable={editable}
       badges={badges}
@@ -597,7 +599,7 @@ export function SavedTriggerFormCard({
               setError(null);
               save.mutate();
             }}
-            disabled={save.isPending || formIssue !== null}
+            disabled={!editable || save.isPending || formIssue !== null}
           >
             {save.isPending ? "Saving…" : "Save"}
           </Button>
@@ -1950,7 +1952,7 @@ export function WebhookFields({
               autoComplete="off"
             />
             <FieldDescription>
-              Active retrievable credential from Secrets; the signing value is leased only during verification.
+              Active retrievable credential from Credentials; the signing value is leased only during verification.
             </FieldDescription>
           </Field>
           {!form.preset && (
@@ -1980,30 +1982,20 @@ export function DeliveryFields<T extends DeliveryFormState>({
   form,
   setForm,
   chat = false,
-  defaultOpen = false,
 }: {
   form: T;
   setForm: (next: T) => void;
   /** Chat triggers route per conversation; the main session is not an option. */
   chat?: boolean;
-  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 max-w-full rounded-md border">
-      <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-sm">
-        <ChevronRight
-          className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
-        />
-        <span className="shrink-0 font-medium">Advanced</span>
-        {!open && (
-          <span className="min-w-0 truncate text-xs text-muted-foreground">{deliverySentence(form, chat)}</span>
-        )}
-      </CollapsibleTrigger>
-      <CollapsibleContent className="grid gap-4 border-t p-3">
-        <DeliveryFieldsBody form={form} setForm={setForm} chat={chat} />
-      </CollapsibleContent>
-    </Collapsible>
+    <SettingsDisclosure
+      summary={deliverySentence(form, chat)}
+      action="Customize delivery"
+      forceOpen={deliveryFormProblem(form) !== null}
+    >
+      <DeliveryFieldsBody form={form} setForm={setForm} chat={chat} />
+    </SettingsDisclosure>
   );
 }
 
@@ -2209,7 +2201,7 @@ export function PollFields({
               autoComplete="off"
             />
             <FieldDescription>
-              Active retrievable credential from Secrets. It is leased into worker memory only when the poll fires.
+              Active retrievable credential from Credentials. It is leased into worker memory only when the poll fires.
             </FieldDescription>
           </Field>
           {form.grantId.trim() && (
@@ -2392,7 +2384,7 @@ export function triggerCreateBody(kind: TriggerKind, triggerId: string, forms: T
   }
 }
 
-/** The per-kind essentials; the Advanced disclosure is inside each kind's fields. */
+/** The per-kind essentials; the delivery disclosure is inside each kind's fields. */
 export function TriggerKindFields({
   universeId,
   kind,

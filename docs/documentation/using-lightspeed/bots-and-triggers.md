@@ -32,7 +32,7 @@ This walkthrough builds `release-watch`, which reviews the Acorn release
 files from [Build your first agent](../getting-started/first-agent.md). First
 create the read-only `release-reviewer` profile from
 [Profiles and instructions](profiles-and-instructions.md#create-a-profile-for-a-job).
-Use a universe owner/admin or platform administrator account. The deployment
+Use a Contributor, Operator or Admin account in the universe. The deployment
 must run the bot controller role as well as the gateway and session workers;
 the local full stack includes it.
 
@@ -74,6 +74,25 @@ bot has no triggers.
 Typing into the bot's Chat composer sends a conversational message. It is
 useful for discussing the work, but it does not exercise the same numbered
 event admission as **Send a test event**.
+
+## Share the bot's work
+
+A bot and its conversations share one audience. The creation form offers
+**Who can read** and **Running as** alongside the job settings. New bots normally
+run as the universe service. Their conversations inherit the bot's audience and
+execution identity, so new conversations remain part of the same shared work.
+
+Use **Access** in the bot header to inspect or change that audience. Sharing the
+bot applies to its conversations as well. A colleague with read access
+can inspect the work; invocation and management still follow the bot's role and
+grant rules. Trigger secrets remain visible only to managers.
+
+If personal execution is enabled, a standalone bot can run as its creator.
+Disabling that person or removing resource-use rights prevents new run admission
+and fails the next model-call check in active work. A bot running as the universe
+service keeps that authority when its owner changes or leaves. The
+[execution guide](../deployment/authentication-and-tenancy.md#execution-authority)
+explains the fixed choice and the limits of those checks.
 
 ## Add a schedule
 
@@ -142,6 +161,13 @@ polls compare against that cursor. For example, a URL returning
 `{"releases":[{"id":"acorn-1.2"}]}` can use `releases` as its items path and
 `id` for unseen-item detection. Add a new ID in the source to verify that the
 next poll produces an event.
+
+A URL poll reaches public addresses over HTTPS and does not follow redirects;
+hosts on the deployment's private-network list (`LIGHTSPEED_MCP_PRIVATE_NETWORKS`)
+may also use HTTP. A poll can send a stored credential, which goes only where
+that credential belongs: the grant's audience must cover the poll URL, and a
+grant without an audience can be attached only by someone who may configure
+the universe.
 
 An execution poll needs an existing, lasting execution environment and a
 command that prints JSON to stdout. The UI enables **Run a command** when the

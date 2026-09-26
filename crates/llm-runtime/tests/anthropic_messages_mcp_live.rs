@@ -107,6 +107,7 @@ async fn anthropic_messages_live_core_session_uses_public_remote_mcp() {
             session_id: session_id.clone(),
             observed_at_ms: 20,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                requested_by: None,
                 notify_on_terminal: Vec::new(),
                 submission_id: None,
                 source: engine::RunRequestSource::Input {

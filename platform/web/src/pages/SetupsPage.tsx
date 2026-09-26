@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, PackageOpen, RefreshCw, Sparkles } from "lucide-react";
@@ -6,22 +7,24 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { useActiveUniverse } from "@/lib/universes";
 
-export function SetupsPage({ admin }: { admin: boolean }) {
+export function SetupsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
+  const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !canManage(universe, admin)) {
+  if (!universe || !permissions.can("configure_resource")) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <SetupList universeId={universe.id} />;
+  return <SetupList universeId={universe.id} installable={permissions.can("manage_access")} />;
 }
 
-function SetupList({ universeId }: { universeId: string }) {
+/// Operators see the templates; installing one takes an Admin.
+function SetupList({ universeId, installable }: { universeId: string; installable: boolean }) {
   const queryClient = useQueryClient();
   const setups = useQuery({
     queryKey: ["setups", universeId],
@@ -53,6 +56,7 @@ function SetupList({ universeId }: { universeId: string }) {
           <SetupCard
             key={setup.id}
             setup={setup}
+            installable={installable}
             pending={install.isPending && install.variables === setup.id}
             onInstall={() => install.mutate(setup.id)}
           />
@@ -64,10 +68,12 @@ function SetupList({ universeId }: { universeId: string }) {
 
 function SetupCard({
   setup,
+  installable,
   pending,
   onInstall,
 }: {
   setup: UniverseSetup;
+  installable: boolean;
   pending: boolean;
   onInstall: () => void;
 }) {
@@ -97,7 +103,7 @@ function SetupCard({
         <CardTitle>{setup.name}</CardTitle>
         <CardDescription>{setup.description}</CardDescription>
       </CardHeader>
-      <CardContent className="flex-1">
+      <CardContent className="grid flex-1 content-start gap-3">
         {ready && setup.resources?.profileId && (
           <div className="rounded-lg bg-muted p-3 text-sm">
             <div className="flex items-center gap-2 font-medium">
@@ -119,6 +125,11 @@ function SetupCard({
             The deployment has not configured a Configurator MCP URL.
           </p>
         )}
+        {!installable && !unavailable && (
+          <p className="text-sm text-muted-foreground">
+            Needs a universe Admin: it mints a key that configures the universe.
+          </p>
+        )}
       </CardContent>
       <CardFooter className="justify-between gap-3">
         <span className="text-xs text-muted-foreground">
@@ -127,7 +138,7 @@ function SetupCard({
         </span>
         <Button
           onClick={onInstall}
-          disabled={installing || unavailable}
+          disabled={installing || unavailable || !installable}
           variant={ready && !upgradeAvailable ? "outline" : "default"}
         >
           {installing ? (

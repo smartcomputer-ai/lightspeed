@@ -246,7 +246,7 @@ fn terminal_run_id_for_event(event: &CoreAgentEvent) -> Option<engine::RunId> {
             | RunEvent::Failed { run_id, .. }
             | RunEvent::Cancelled { run_id }
             | RunEvent::ForceCancelled { run_id }
-            | RunEvent::QueuedCancelled { run_id },
+            | RunEvent::QueuedCancelled { run_id, .. },
         ) => Some(*run_id),
         _ => None,
     }

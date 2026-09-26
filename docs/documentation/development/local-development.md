@@ -45,6 +45,30 @@ machine, or follow the
 [local attachment walkthrough](../environments/bring-your-own-compute.md#direct-attachment-for-local-development)
 to use it deliberately.
 
+## Development logins
+
+The default authenticated `./dev.sh` (full profile) ensures a **Test** universe
+and these accounts on every startup:
+
+| Role in Test | Login |
+| --- | --- |
+| Admin | `admin@lightspeed.dev` (or `LIGHTSPEED_PLATFORM_ADMIN_EMAIL`) |
+| Operator | `operator@lightspeed.dev` |
+| Contributor | `contributor@lightspeed.dev` |
+| Viewer | `viewer@lightspeed.dev` |
+
+New accounts share `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`, defaulting to
+`lightspeed-dev-password`. Admin keeps its deployment administrator role; the
+other accounts receive only their listed universe role. Startup reuses existing
+accounts and the Test universe, restores missing role assignments, and preserves
+existing passwords and content. Changing the password variable does not reset
+existing logins.
+
+Set `LIGHTSPEED_PLATFORM_DEV_SEED=false` to disable these fixtures. Ordinary
+Platform startup and other launcher profiles leave them disabled; a configured
+Platform service key must support the usual administrator bootstrap and identity
+operations when seeding is enabled.
+
 ## Choose the processes you need
 
 Launcher profiles select local processes. They are separate from the agent
@@ -75,12 +99,10 @@ daemon's working directory. It does not start the services. The complete
 override table is in the
 [environment-variable reference](../reference/environment-variables.md#local-development).
 
-The full profile uses `trusted-header` runtime authentication by default:
-Platform authenticates the user and supplies the universe on its internal
-requests. The focused runtime profile defaults to `single`, which is useful
-for direct CLI development. An explicit `LIGHTSPEED_AUTH_MODE` overrides those
-defaults. Account for that difference when moving a test or client between
-the two profiles; see [Authentication and access](../deployment/authentication-and-tenancy.md).
+The full profile uses authenticated runtime access and explicitly bootstraps a
+local service key when no Platform key is configured. The runtime-only profile
+uses `single` with a named local development principal. See
+[Authentication and access](../deployment/authentication-and-tenancy.md).
 
 Telegram and WhatsApp connector processes are opt-in. For example,
 `LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh` enables Telegram account

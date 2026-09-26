@@ -1,5 +1,6 @@
 /// Platform-wide fixtures: users beside the demo admin, operator-registered
 /// environment providers, channel accounts, and connector health.
+import { groupsFor } from "@/lib/method-groups";
 import type { DemoStore, DemoUser } from "../store";
 
 export const INCUS_PROVIDER_ID = "incus-eu-1";
@@ -46,6 +47,20 @@ const OTHER_USERS: DemoUser[] = [
 
 export function seedPlatform(store: DemoStore): void {
   for (const user of OTHER_USERS) store.users.set(user.id, { ...user });
+
+  // The Platform's own deployment key: every group, and it speaks for the
+  // signed-in person.
+  store.deploymentKeys.push({
+    keyPrefix: "lsk_platform",
+    displayName: "Lightspeed Platform",
+    scope: { kind: "deployment" },
+    groups: groupsFor("deployment"),
+    assertActor: true,
+    createdBy: { kind: "internal", component: "server", cause: "api-key bootstrap" },
+    createdAtMs: Date.parse("2026-06-02T09:00:00.000Z"),
+    lastUsedAtMs: Date.parse("2026-08-20T14:03:00.000Z"),
+    revokedAtMs: null,
+  });
 
   store.environmentProviders.set(INCUS_PROVIDER_ID, {
     providerId: INCUS_PROVIDER_ID,

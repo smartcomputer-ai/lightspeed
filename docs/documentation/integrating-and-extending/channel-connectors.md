@@ -14,7 +14,7 @@ own bot-routing decisions.
 ## Follow the message path
 
 The host discovers channel accounts with
-`operator/channels/accounts/list`. For each selected account it creates a
+`deployment/channels/accounts/list`. For each selected account it creates a
 universe-scoped API client, starts provider ingress, and runs a Temporal
 activity worker on that account's queue.
 
@@ -23,12 +23,10 @@ An incoming message becomes a `ChannelInbound` request to
 routable. If a bot processes it, the conversation workflow later schedules
 connector activities to prepare media, show typing, or deliver a response.
 
-The shipped host requires a private `trusted-header` runtime endpoint. Its
-account calls include the universe UUID and
-`service_account:lightspeed-connectors` principal. It also uses operator
-discovery, which is unavailable on API-key gateways. Single mode rejects the
-tenant headers the host sends, so it is not an alternative configuration for
-this host.
+The shipped host authenticates with `LIGHTSPEED_CONNECTOR_API_KEY` against an
+`authenticated` runtime. Account calls also select their universe. Provision
+`discover_channel_accounts` at deployment scope and the required per-universe
+`lease_credentials` and `admit_channel_inbound` capabilities.
 
 Keep that endpoint and Temporal access inside the deployment's trusted service
 boundary. The [access guide](../deployment/authentication-and-tenancy.md)

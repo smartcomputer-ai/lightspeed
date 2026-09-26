@@ -87,7 +87,7 @@ member
   .command("add")
   .requiredOption("--universe <id>")
   .requiredOption("--user <userId>")
-  .option("--role <role>", "owner | admin | member", "member")
+  .option("--role <role>", "viewer | contributor | operator | admin", "contributor")
   .action(async (opts: { universe: string; user: string; role: string }) =>
     printJson(
       await api("POST", `/api/v1/universes/${opts.universe}/members`, {
@@ -222,7 +222,7 @@ userCmd
       // better-auth admin plugin endpoint; bearer token must belong to a
       // platform admin.
       printJson(
-        await api("POST", "/api/auth/admin/create-user", {
+        await api("POST", "/api/v1/admin/users", {
           email: opts.email,
           name: opts.name,
           password,
@@ -236,9 +236,14 @@ userCmd
   .command("list")
   .action(async () =>
     printJson(
-      await api("GET", "/api/auth/admin/list-users?limit=100"),
+      await api("GET", "/api/v1/admin/users"),
     ),
   );
+
+const identity = program.command("identity").description("canonical deployment groups, memberships and role administration");
+identity.command("list").action(async () => printJson(await api("GET", "/api/v1/admin/identity")));
+identity.command("apply <json>").description("apply a core AccessChange JSON document")
+  .action(async (json: string) => printJson(await api("POST", "/api/v1/admin/identity", JSON.parse(json))));
 
 try {
   await program.parseAsync();

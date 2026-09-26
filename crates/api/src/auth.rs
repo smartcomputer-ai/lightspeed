@@ -30,24 +30,6 @@ pub enum AuthGrantExposure {
     Retrievable,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum PrincipalKind {
-    User,
-    ServiceAccount,
-    #[default]
-    UniverseDefault,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PrincipalRefView {
-    #[serde(default)]
-    pub kind: PrincipalKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantView {
@@ -55,7 +37,8 @@ pub struct AuthGrantView {
     pub provider_id: String,
     pub provider_kind: AuthProviderKind,
     pub exposure: AuthGrantExposure,
-    pub principal: PrincipalRefView,
+    /// Who created the grant. Attribution only; it confers no access.
+    pub created_by: Attribution,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

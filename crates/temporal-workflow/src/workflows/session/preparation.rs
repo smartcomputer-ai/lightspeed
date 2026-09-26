@@ -261,6 +261,7 @@ pub(super) async fn publish_pending_tools(
                 ctx,
                 drive,
                 CoreAgentCommand::CancelRun {
+                    requested_by: None,
                     run_id: pending.run_id,
                 },
             )
@@ -697,6 +698,7 @@ mod tests {
         PendingRunPreparation {
             admission: AgentAdmission {
                 command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                    requested_by: None,
                     submission_id: Some(SubmissionId::new("prepared")),
                     source: engine::RunRequestSource::Input { input: Vec::new() },
                     run_config: crate::default_run_config(),
@@ -735,6 +737,7 @@ mod tests {
         assert_eq!(state.status_snapshot().pending_admissions, 2);
         state.queue_admission(AgentAdmission {
             command: CoreAgentCommand::CancelRun {
+                requested_by: None,
                 run_id: engine::RunId::new(1),
             },
             correlation_token: None,

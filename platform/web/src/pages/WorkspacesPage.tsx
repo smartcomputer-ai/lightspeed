@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -41,6 +42,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { SettingsDisclosure } from "@/components/ui/settings-disclosure";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -49,8 +51,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { LoadingNote, UniverseNotFound } from "@/components/page";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
+import { useCreateParam } from "@/lib/create-param";
+import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 
 /// U4b: workspace explorer + functional editor. Pane = workspace picker +
@@ -58,16 +61,18 @@ import { cn } from "@/lib/utils";
 /// (images), or metadata (binary). Writes run the full VFS dance
 /// server-side (blob → manifest → snapshot → head advance) guarded by the
 /// workspace revision the tree was loaded at.
-export function WorkspacesPage({ admin }: { admin: boolean }) {
+export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
+  const permissions = useActionPermissions(universe?.id);
   const params = useParams<{ workspaceId: string; "*": string }>();
   const workspaceId = params.workspaceId;
   const filePath = params["*"] || undefined;
+  const [, setCreateOpen] = useCreateParam("workspace");
 
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !canManage(universe, admin)) {
+  if (!universe || !permissions.can("read")) {
     return (
       <div className="p-6">
         <UniverseNotFound slug={slug} />
@@ -101,11 +106,18 @@ export function WorkspacesPage({ admin }: { admin: boolean }) {
             filePath={filePath}
           />
         ) : (
-          <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-            {workspaceId
-              ? "Select a file, or create one."
-              : "Select a workspace, or create one."}
-          </div>
+          workspaceId ? (
+            <DetailPrompt icon={<File className="size-10 text-muted-foreground/60" />}>
+              Pick a file.
+            </DetailPrompt>
+          ) : (
+            <DetailPrompt
+              icon={<FolderGit2 className="size-10 text-muted-foreground/60" />}
+              create={permissions.can("create_workspace") ? { label: "New workspace", onClick: () => setCreateOpen(true) } : undefined}
+            >
+              Pick a workspace{permissions.can("create_workspace") ? ", or create one" : ""}.
+            </DetailPrompt>
+          )
         )}
       </section>
     </div>
@@ -124,6 +136,10 @@ function WorkspacePane({
   filePath: string | undefined;
 }) {
   const navigate = useNavigate();
+  const permissions = useActionPermissions(universeId);
+  const canCreate = permissions.can("create_workspace");
+  // Editing files is using the workspace; configuring it is not needed.
+  const canEditFiles = !!workspaceId && permissions.can("use_resource");
   const workspaces = useQuery({
     queryKey: ["workspaces", universeId],
     queryFn: () =>
@@ -138,7 +154,7 @@ function WorkspacePane({
       ),
     enabled: workspaceId !== undefined,
   });
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useCreateParam("workspace");
   const [newFileOpen, setNewFileOpen] = useState(false);
 
   // Auto-select the first workspace when landing on bare /workspaces.
@@ -154,15 +170,17 @@ function WorkspacePane({
     <>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
         <h1 className="text-sm font-semibold">Workspaces</h1>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="ml-auto"
-          onClick={() => setCreateOpen(true)}
-          aria-label="New workspace"
-        >
-          <Plus />
-        </Button>
+        {canCreate && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="ml-auto"
+            onClick={() => setCreateOpen(true)}
+            aria-label="New workspace"
+          >
+            <Plus />
+          </Button>
+        )}
       </div>
       <div className="grid gap-2 border-b p-3">
         {workspaces.data && workspaces.data.length > 0 ? (
@@ -182,7 +200,7 @@ function WorkspacePane({
             <SelectContent>
               {workspaces.data.map((workspace) => (
                 <SelectItem key={workspace.workspaceId} value={workspace.workspaceId}>
-                  {workspace.displayName ?? workspace.workspaceId}
+                  <span className="truncate">{workspace.displayName ?? workspace.workspaceId}</span>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -208,15 +226,18 @@ function WorkspacePane({
               {tree.data.workspace.files} file{tree.data.workspace.files === 1 ? "" : "s"} ·
               r{tree.data.workspace.revision}
             </span>
-            <Button
-              variant="ghost"
-              size="xs"
-              className="ml-auto"
-              onClick={() => setNewFileOpen(true)}
-            >
-              <FilePlus data-icon="inline-start" />
-              New file
-            </Button>
+            <div className="ml-auto flex items-center gap-1">
+              {canEditFiles && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setNewFileOpen(true)}
+                >
+                  <FilePlus data-icon="inline-start" />
+                  New file
+                </Button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -226,7 +247,7 @@ function WorkspacePane({
         )}
         {tree.data && Object.keys(tree.data.manifest.root.entries).length === 0 && (
           <p className="p-2 text-sm text-muted-foreground">
-            Empty workspace — create a file to get started.
+            Empty workspace.
           </p>
         )}
         {tree.data && (
@@ -239,13 +260,15 @@ function WorkspacePane({
           />
         )}
       </div>
-      <NewWorkspaceDialog
-        universeId={universeId}
-        slug={slug}
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-      />
-      {workspaceId && tree.data && (
+      {canCreate && (
+        <NewWorkspaceDialog
+          universeId={universeId}
+          slug={slug}
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+        />
+      )}
+      {canEditFiles && workspaceId && tree.data && (
         <NewFileDialog
           universeId={universeId}
           slug={slug}
@@ -396,6 +419,8 @@ function FileDetail({
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const permissions = useActionPermissions(universeId);
+  const canEditFiles = permissions.can("use_resource");
   const tree = useQuery({
     queryKey: ["workspace-tree", universeId, workspaceId],
     queryFn: () =>
@@ -406,11 +431,11 @@ function FileDetail({
   });
   const file = tree.data ? findFile(tree.data.manifest.root.entries, filePath) : null;
   const blob = useQuery({
-    queryKey: ["blob", universeId, file?.blob_ref],
+    queryKey: ["workspace-file", universeId, workspaceId, filePath, file?.blob_ref],
     queryFn: () =>
       api<BlobContent>(
         "GET",
-        `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(file!.blob_ref)}`,
+        `/api/v1/universes/${universeId}/workspaces/${encodeURIComponent(workspaceId)}/files/${filePath.split("/").map(encodeURIComponent).join("/")}`,
       ),
     enabled: !!file,
   });
@@ -495,7 +520,7 @@ function FileDetail({
           {file ? formatBytes(file.size_bytes) : ""}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          {decoded?.kind === "text" && (
+          {canEditFiles && decoded?.kind === "text" && (
             <Button
               size="sm"
               disabled={!dirty || save.isPending}
@@ -504,37 +529,39 @@ function FileDetail({
               {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
             </Button>
           )}
-          <AlertDialog>
-            <AlertDialogTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="text-destructive"
-                  aria-label="Delete file"
-                />
-              }
-            >
-              <Trash2 />
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete {filePath}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Commits a new snapshot without this file. Earlier snapshots keep it.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  className="bg-destructive text-white hover:bg-destructive/90"
-                  onClick={() => remove.mutate()}
-                >
-                  Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          {canEditFiles && (
+            <AlertDialog>
+              <AlertDialogTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-destructive"
+                    aria-label="Delete file"
+                  />
+                }
+              >
+                <Trash2 />
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete {filePath}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Commits a new snapshot without this file. Earlier snapshots keep it.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-white hover:bg-destructive/90"
+                    onClick={() => remove.mutate()}
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </div>
       </header>
       {error && <p className="border-b px-4 py-2 text-sm text-destructive">{error}</p>}
@@ -549,6 +576,8 @@ function FileDetail({
             value={value}
             onChange={(e) => setDraft(e.target.value)}
             spellCheck={false}
+            readOnly={!canEditFiles}
+            aria-label={canEditFiles ? "File contents" : "File contents (read only)"}
           />
         )}
         {decoded?.kind === "image" && (
@@ -647,22 +676,33 @@ function NewWorkspaceDialog({
               placeholder="Notes"
               autoFocus
             />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="new-workspace-id">Workspace id</FieldLabel>
-            <Input
-              id="new-workspace-id"
-              value={workspaceId}
-              onChange={(e) => {
-                setWorkspaceId(e.target.value);
-                setIdTouched(e.target.value.length > 0);
-              }}
-              placeholder="notes"
-              className="font-mono"
-            />
-            <FieldDescription>
-              What profile workspace attachments reference — cannot be changed later.
-            </FieldDescription>
+            {/* The id follows the name until it is edited; it opens on its own
+                when it is missing, invalid or already taken. */}
+            <SettingsDisclosure
+              summary={workspaceId
+                ? <>Id: <code className="font-mono">{workspaceId}</code></>
+                : "Id derived from the display name"}
+              action="Change"
+              label="Change workspace id"
+              forceOpen={Boolean(error) && (!workspaceId || /workspaceId|already exists/.test(error ?? ""))}
+            >
+              <Field>
+                <FieldLabel htmlFor="new-workspace-id">Workspace id</FieldLabel>
+                <Input
+                  id="new-workspace-id"
+                  value={workspaceId}
+                  onChange={(e) => {
+                    setWorkspaceId(e.target.value);
+                    setIdTouched(e.target.value.length > 0);
+                  }}
+                  placeholder="notes"
+                  className="font-mono"
+                />
+                <FieldDescription>
+                  What profile workspace attachments reference — cannot be changed later.
+                </FieldDescription>
+              </Field>
+            </SettingsDisclosure>
           </Field>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>

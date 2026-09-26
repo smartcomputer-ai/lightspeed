@@ -434,6 +434,7 @@ async fn queue_detached_promise_followups(
         ctx.state_mut(|state| {
             state.queue_admission(AgentAdmission {
                 command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                    requested_by: None,
                     notify_on_terminal: Vec::new(),
                     submission_id: Some(submission_id),
                     source: engine::RunRequestSource::Input { input },

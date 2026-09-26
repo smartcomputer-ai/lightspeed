@@ -53,11 +53,10 @@ state and routing:
 | Environment routing | The one environment gateway's internal URL and shared routing token. |
 | Provider transport | Required deployment fallbacks and network access for the roles performing discovery or generation. |
 
-Roles, listener addresses, and gateway authentication modes can differ by
-process. For example, a private `trusted-header` gateway for the Platform and
-an API-key gateway for direct clients can share stores and workers. They still
-belong to one deployment. [Authentication and access](authentication-and-tenancy.md)
-explains that topology.
+Roles and listener addresses can differ by process. Authenticated gateways
+serve both Platform service credentials and direct clients, each constrained by
+canonical principal rights and credential scope. See
+[Authentication and access](authentication-and-tenancy.md).
 
 If multiple deployments share a Temporal namespace, set all three queue
 variables independently. A deployment-specific `LIGHTSPEED_TASK_QUEUE` does
@@ -182,11 +181,10 @@ or [Incus VMs](../environments/incus-vms.md) for complete procedures.
 
 ### Chat connectors
 
-The connector host calls a private `trusted-header` runtime endpoint and the
-deployment's Temporal namespace. Its account requests include tenant headers,
-which single and API-key modes reject. It discovers channel
-accounts through the operator API and leases their credentials; provider bot
-tokens do not go into connector environment variables.
+The connector host uses `LIGHTSPEED_CONNECTOR_API_KEY` against an authenticated
+runtime and the deployment's Temporal namespace. It needs scoped service
+capabilities for discovery, leasing and inbound admission. Provider bot tokens
+are leased from core rather than configured on the connector host.
 
 WhatsApp additionally needs `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR` on
 persistent storage and a stable
@@ -211,9 +209,8 @@ traffic does not authorize tool discovery or execution.
 Configurator is a separately deployed MCP server that manages Lightspeed. Its
 mode must match its upstream gateway, and a non-loopback listener requires an
 explicit allowed-host configuration. The Platform's Configurator URL enables
-its setup flow; it does not start the service. The credentialless trusted-header
-loopback shortcut is for local development and tests, and should remain
-disabled in deployed configuration.
+its setup flow; it does not start the service. The setup provisions a dedicated
+universe service identity and key. The old credentialless path is retired.
 
 See [Tools and MCP](../using-lightspeed/tools-and-mcp.md) and the
 [Configurator variables](../reference/environment-variables.md#configurator-mcp)

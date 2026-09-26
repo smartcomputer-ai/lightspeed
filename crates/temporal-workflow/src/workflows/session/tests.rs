@@ -59,6 +59,7 @@ fn admission_failure_status_does_not_poison_later_admission() {
 #[test]
 fn request_run_with_audio_input_needs_preprocessing() {
     let command = CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+        requested_by: None,
         notify_on_terminal: Vec::new(),
         submission_id: Some(SubmissionId::new("submit_audio")),
         source: engine::RunRequestSource::Input {
@@ -387,6 +388,7 @@ fn continuation_state_round_trips_admission_failure_correlation() {
 /// used where a test only needs "some command carrying input".
 fn request_input_run(submission_id: &str) -> CoreAgentCommand {
     CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+        requested_by: None,
         notify_on_terminal: Vec::new(),
         submission_id: Some(SubmissionId::new(submission_id)),
         source: engine::RunRequestSource::Input {

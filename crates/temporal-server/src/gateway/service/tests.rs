@@ -555,7 +555,7 @@ fn test_auth_grant_record(
         provider_id: "static".to_owned(),
         provider_kind,
         exposure: auth::AuthGrantExposure::Brokered,
-        principal: auth::PrincipalRef::universe_default(),
+        created_by: Attribution::Local,
         display_name: None,
         subject_hint: None,
         scopes: Vec::new(),
@@ -2345,7 +2345,7 @@ fn auth_flow_views_carry_derived_status() {
         provider_id: "crm".to_owned(),
         provider_kind: auth::AuthProviderKind::McpOAuth,
         grant_exposure: auth::AuthGrantExposure::Brokered,
-        principal: auth::PrincipalRef::universe_default(),
+        created_by: Attribution::Local,
         state_hash: auth::state_hash("state-1"),
         pkce_verifier_secret: auth::SecretId::new("authsec_pkce"),
         redirect_uri: "http://127.0.0.1:18080/auth/callback".to_owned(),
@@ -2769,5 +2769,17 @@ fn environment_access_ladder_derives_the_union_tool_surface() {
             {"environmentId":"env_b","access":"exec"}
         ])),
         Some(engine::EnvironmentAccess::Exec),
+    );
+}
+
+#[test]
+fn a_missing_resource_names_only_its_kind_and_id() {
+    assert_eq!(
+        super::authorization::not_found(&ResourceRef::McpServer("crm".into())).message,
+        "MCP server not found: crm"
+    );
+    assert_eq!(
+        super::authorization::not_found(&ResourceRef::Environment("prod-1".into())).message,
+        "environment not found: prod-1"
     );
 }

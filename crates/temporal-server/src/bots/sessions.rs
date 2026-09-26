@@ -65,14 +65,18 @@ pub(super) fn retryable(message: impl std::fmt::Display) -> ActivityError {
     ActivityError::application(ApplicationFailure::new(anyhow::anyhow!("{message}")))
 }
 
-/// Classify a core API error. Invalid requests and missing referents never
-/// heal on retry; a rejection (a busy session), a conflict (a lost race), or
-/// an internal / transport failure may.
+/// Classify a core API error. Invalid requests, missing referents and
+/// refusals of the bot's own work never heal on retry: the failure is
+/// recorded at once. A rejection (a busy
+/// session), a conflict (a lost race), or an internal / transport failure
+/// may heal.
 pub(super) fn activity_error(context: &str, error: AgentApiError) -> ActivityError {
     let message = format!("{context}: {error}");
     if matches!(
         error.kind,
-        AgentApiErrorKind::InvalidRequest | AgentApiErrorKind::NotFound
+        AgentApiErrorKind::InvalidRequest
+            | AgentApiErrorKind::NotFound
+            | AgentApiErrorKind::Forbidden
     ) {
         non_retryable(message)
     } else {
@@ -232,12 +236,10 @@ async fn list_descendants(
     for _ in 0..DESCENDANT_MAX_PAGES {
         let page = api
             .list_sessions(SessionListParams {
-                metadata: Default::default(),
                 cursor: cursor.take(),
                 limit: Some(DESCENDANT_PAGE_LIMIT),
                 root_session_id: Some(root_session_id.to_owned()),
-                parent_session_id: None,
-                exclude_closed: false,
+                ..Default::default()
             })
             .await
             .map_err(|error| activity_error("list descendant sessions", error))?
@@ -458,6 +460,7 @@ pub async fn ensure_session(
     // its label (renames are a separate, label-only operation).
     if let Err(error) = api
         .start_managed_session(ManagedSessionStartParams {
+            access: None,
             session_id: Some(request.session_id.clone()),
             display_name: request.display_name.clone(),
             metadata: bot_session_metadata(&request.bot_id),
@@ -843,6 +846,10 @@ mod tests {
             .find(|run| matches!(run.status, RunStatus::Running | RunStatus::Parked))
             .cloned();
         SessionView {
+            access: api::ResourceAccessSummary {
+                visibility: api::Visibility::Universe,
+                created_by: Some(api::Attribution::Local),
+            },
             metadata: Default::default(),
             id: "bot:v1:triage".to_owned(),
             display_name: None,
@@ -1003,6 +1010,10 @@ mod tests {
         assert!(is_non_retryable(&activity_error(
             "x",
             AgentApiError::not_found("gone")
+        )));
+        assert!(is_non_retryable(&activity_error(
+            "x",
+            AgentApiError::forbidden()
         )));
         assert!(!is_non_retryable(&activity_error(
             "x",

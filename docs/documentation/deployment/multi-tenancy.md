@@ -1,7 +1,7 @@
 # Multitenancy
 
 One Lightspeed deployment can serve many universes. Each universe contains
-its own sessions, profiles, workspaces, bots, credentials, channels, and
+its own sessions, profiles, workspaces, bots, collections, credentials, channels, and
 environment records, while the deployment supplies shared runtime processes
 and infrastructure. This allows several teams or customers to use the same
 installation without placing their agent data in the same logical space.
@@ -126,29 +126,54 @@ boundaries. Files in a universe's VFS and files on a machine remain separate.
 
 ## Access inside a universe
 
-The Platform maintains people, organizations, memberships, and roles. It can
-give one user access to Acorn and Cedar while allowing another into only
-Acorn. Platform administrators can manage all universes. Its authenticated
-user directory exposes names, email addresses, and user IDs across the
-installation for account selection; each universe does not have an isolated
-identity directory.
+The core identity directory owns deployment-wide principals and groups, with
+explicit universe role assignments. Platform owns login and external mappings;
+every interactive runtime call asserts the mapped user through an authenticated
+service. DeploymentAdmin supplies no universe membership or session ownership.
+Universe administrators can assign Viewer, Contributor, Operator and Admin to
+people or groups. The directory is deployment-wide, not a separate identity realm
+inside each universe.
 
-The runtime does not reproduce the Platform membership checks. A request
-already admitted to ordinary universe methods is not further restricted by
-per-user resource ACLs. A principal attached to a credential or request does
-not make its sessions, files, or grants private from other callers authorized
-for those methods in the same universe.
+Within a universe, a session or bot also belongs to an audience. Standalone work
+has its own owner and access policy; a collection lets several sessions and bots
+share one. The policy is either universe-visible or restricted to its owner and
+people or groups with explicit grants. Bot conversations and delegated children
+inherit their root's audience. A restricted resource outside the caller's
+audience is omitted from lists and appears absent on direct reads, including to
+administrators without an explicit private-content capability.
 
-There are additional checks for service-scoped methods, which require a
-service-account principal in multitenant modes. This is a distinction between
-ordinary and trusted service access, rather than a general permissions system
-for individual resources.
+For example, Acorn can keep routine release work visible to everyone while a
+restricted investigation session is shared with selected colleagues. API clients
+can also group sessions and bots in a collection; collection UI is deferred.
+Sharing that collection makes the whole investigation available to a colleague
+who already belongs to Acorn. It does not give a Cedar member access, and it does
+not create a separate tenant: the investigation still uses Acorn's providers,
+credentials and shared infrastructure.
 
-Do not assume every Platform request carries the signed-in user's principal
-through to the runtime. Some paths record user identity explicitly, including
-API-key creation and authored message origins; ordinary Platform proxy calls
-can use the default runtime principal. The current behavior does not provide
-a complete user-attributed audit trail for all runtime operations.
+Audience and execution identity answer different questions. A root normally
+runs as Acorn's dedicated execution service, so shared work can survive a change
+of owner. If Acorn enables personal execution, its creator can instead choose
+**Me**. That identity is fixed for the root and inherited by its members. The
+runtime checks it at run admission and before each model call; personal work
+fails at the next such check if its owner is disabled or loses resource-use
+rights. Work running as the universe service does not stop simply because its
+owner leaves.
+
+Workspaces, environments and MCP servers remain universe resources. Restricting
+a session does not restrict files it writes into a shared workspace or machine.
+The web attachment editor makes that boundary visible. Reading stored message
+content also requires more than its hash: the caller names a readable resource
+that contains the blob, or reads their own upload. Workspace file reads resolve
+a path through the current workspace head.
+
+Operational governance remains distinct from reading. Operators and Admins may
+stop another person's sessions, and Admins may delete sessions and empty
+collections under their lifecycle rules, without obtaining their contents. A
+universe Admin can separately assign `read_private_content` to a person. Reads
+that rely on it are marked as privileged in the web app and sent to the access
+audit; ordinary reads by the same person stay ordinary. This grants no control
+or ownership. The [access guide](authentication-and-tenancy.md) explains sharing,
+execution, private-content access and revocation at each request boundary.
 
 ## Keep Platform and runtime records aligned
 

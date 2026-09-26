@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -127,9 +126,7 @@ pub(crate) struct McpToolCallRequest {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ConfiguratorTrustedHeaderPolicy {
-    endpoint: Option<Arc<str>>,
-}
+pub(crate) struct ConfiguratorTrustedHeaderPolicy;
 
 impl ConfiguratorTrustedHeaderPolicy {
     pub(crate) fn from_env() -> Result<Self, String> {
@@ -139,48 +136,14 @@ impl ConfiguratorTrustedHeaderPolicy {
                 .as_deref(),
         )
     }
-
     fn parse(value: Option<&str>) -> Result<Self, String> {
-        let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
-            return Ok(Self::default());
-        };
-        let endpoint = Url::parse(value).map_err(|error| {
-            format!("invalid LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL: {error}")
-        })?;
-        if endpoint.username() != ""
-            || endpoint.password().is_some()
-            || endpoint.fragment().is_some()
-        {
-            return Err(
-                "LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL must not contain credentials or a fragment"
-                    .to_owned(),
-            );
+        if value.is_some_and(|v| !v.trim().is_empty()) {
+            return Err("Configurator trusted-header authentication is retired; install a scoped service key".into());
         }
-        let host = endpoint.host_str().ok_or_else(|| {
-            "LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL must have a host".to_owned()
-        })?;
-        let loopback = host.eq_ignore_ascii_case("localhost")
-            || host
-                .parse::<IpAddr>()
-                .is_ok_and(|address| address.is_loopback());
-        if !loopback {
-            return Err(
-                "LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL is restricted to loopback"
-                    .to_owned(),
-            );
-        }
-        Ok(Self {
-            endpoint: Some(endpoint.to_string().into()),
-        })
+        Ok(Self)
     }
-
-    pub(crate) fn permits(&self, server_id: &str, server_url: &str) -> bool {
-        server_id == "lightspeed-configurator"
-            && Url::parse(server_url).ok().is_some_and(|endpoint| {
-                self.endpoint
-                    .as_deref()
-                    .is_some_and(|expected| expected == endpoint.as_str())
-            })
+    pub(crate) fn permits(&self, _server_id: &str, _server_url: &str) -> bool {
+        false
     }
 }
 
@@ -1389,13 +1352,14 @@ mod tests {
     }
 
     #[test]
-    fn trusted_header_policy_is_exact_loopback_only() {
-        let policy = ConfiguratorTrustedHeaderPolicy::parse(Some("http://127.0.0.1:18081/mcp"))
-            .expect("loopback policy");
-        assert!(policy.permits("lightspeed-configurator", "http://127.0.0.1:18081/mcp"));
-        assert!(!policy.permits("other", "http://127.0.0.1:18081/mcp"));
-        assert!(!policy.permits("lightspeed-configurator", "http://127.0.0.1:18081/other"));
-        assert!(ConfiguratorTrustedHeaderPolicy::parse(Some("https://example.com/mcp")).is_err());
+    fn retired_trusted_header_policy_fails_closed() {
+        assert!(
+            ConfiguratorTrustedHeaderPolicy::parse(Some("http://127.0.0.1:18081/mcp")).is_err()
+        );
+        assert!(
+            !ConfiguratorTrustedHeaderPolicy
+                .permits("lightspeed-configurator", "http://127.0.0.1:18081/mcp")
+        );
     }
 
     #[test]

@@ -1,14 +1,18 @@
 //! Deployment-scoped API key store.
 //!
-//! API keys resolve callers *to* a universe, so this store deliberately does
-//! not hang off a universe-bound [`crate::PgStore`]: it wraps the shared
-//! deployment pool directly, like [`crate::find_auth_flow_universe`].
+//! The store uses the deployment pool because authentication precedes
+//! universe resolution. A key's authority is its row: scope, groups and the
+//! actor flag. Keys change only by revocation.
 
-use auth::{ApiKeyError, ApiKeyRecord, ApiKeyStore, CreateApiKey, PrincipalRef};
+use std::collections::BTreeSet;
+
+use api::{AccessScope, MethodGroup};
+use auth::{ApiKeyError, ApiKeyRecord};
+use serde_json::json;
 use sqlx::{PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
 
-use crate::auth::{principal_kind_from_str, principal_kind_to_str};
+const KEY_COLUMNS: &str = "key_prefix, universe_id, groups, assert_actor, display_name, created_by, created_at_ms, revoked_at_ms, last_used_at_ms";
 
 #[derive(Clone)]
 pub struct PgApiKeyStore {
@@ -19,157 +23,143 @@ impl PgApiKeyStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
-}
 
-#[async_trait::async_trait]
-impl ApiKeyStore for PgApiKeyStore {
-    async fn create_api_key(&self, create: CreateApiKey) -> Result<(), ApiKeyError> {
-        let record = create.record;
-        let result = sqlx::query(
-            r#"
-            INSERT INTO api_keys (
-                key_hash, key_prefix, universe_id,
-                principal_kind, principal_id, display_name,
-                created_at_ms, revoked_at_ms, last_used_at_ms
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL)
-            ON CONFLICT DO NOTHING
-            "#,
+    /// Persist a minted key. A prefix already in use is `AlreadyExists`, so
+    /// the caller mints again.
+    pub async fn create_api_key(
+        &self,
+        key_hash: &str,
+        record: &ApiKeyRecord,
+    ) -> Result<(), ApiKeyError> {
+        let groups: Vec<&str> = record.groups.iter().map(|group| group.as_str()).collect();
+        let inserted = sqlx::query(
+            "INSERT INTO api_keys (key_hash, key_prefix, universe_id, groups, assert_actor, display_name, created_by, created_at_ms)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING",
         )
-        .bind(&create.key_hash)
+        .bind(key_hash)
         .bind(&record.key_prefix)
-        .bind(record.universe_id)
-        .bind(principal_kind_to_str(record.principal.kind))
-        .bind(record.principal.id.as_deref())
+        .bind(record.scope.universe_id())
+        .bind(groups)
+        .bind(record.assert_actor)
         .bind(record.display_name.as_deref())
+        .bind(json!(record.created_by))
         .bind(ms_to_i64(record.created_at_ms)?)
         .execute(&self.pool)
         .await
-        .map_err(map_sqlx_error)?;
-        if result.rows_affected() == 0 {
+        .map_err(map_sqlx_error)?
+        .rows_affected();
+        if inserted == 0 {
             return Err(ApiKeyError::AlreadyExists {
-                key_prefix: record.key_prefix,
+                key_prefix: record.key_prefix.clone(),
             });
         }
         Ok(())
     }
 
-    async fn resolve_api_key(
+    /// Resolve an unrevoked key by secret hash; `None` for unknown and
+    /// revoked keys alike.
+    pub async fn resolve_api_key(
         &self,
         key_hash: &str,
         observed_at_ms: u64,
     ) -> Result<Option<ApiKeyRecord>, ApiKeyError> {
-        let row = sqlx::query(
-            r#"
-            UPDATE api_keys
-            SET last_used_at_ms = $2
-            WHERE key_hash = $1 AND revoked_at_ms IS NULL
-            RETURNING key_prefix, universe_id, principal_kind, principal_id,
-                      display_name, created_at_ms, revoked_at_ms, last_used_at_ms
-            "#,
-        )
+        let Some(row) = sqlx::query(&format!(
+            "SELECT {KEY_COLUMNS} FROM api_keys WHERE key_hash = $1 AND revoked_at_ms IS NULL"
+        ))
         .bind(key_hash)
-        .bind(ms_to_i64(observed_at_ms)?)
         .fetch_optional(&self.pool)
         .await
-        .map_err(map_sqlx_error)?;
-        row.map(api_key_record_from_row).transpose()
+        .map_err(map_sqlx_error)?
+        else {
+            return Ok(None);
+        };
+        let record = record_from_row(&row)?;
+        // Usage is coarse on purpose: authentication stays a read.
+        if record.last_used_at_ms.is_none_or(|last| {
+            last.saturating_add(auth::API_KEY_LAST_USED_RESOLUTION_MS) <= observed_at_ms
+        }) {
+            sqlx::query(
+                "UPDATE api_keys SET last_used_at_ms = $2 WHERE key_hash = $1 AND \
+                 (last_used_at_ms IS NULL OR last_used_at_ms < $2)",
+            )
+            .bind(key_hash)
+            .bind(ms_to_i64(observed_at_ms)?)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        }
+        Ok(Some(record))
     }
 
-    async fn list_api_keys(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyError> {
-        let rows = sqlx::query(
-            r#"
-            SELECT key_prefix, universe_id, principal_kind, principal_id,
-                   display_name, created_at_ms, revoked_at_ms, last_used_at_ms
-            FROM api_keys
-            ORDER BY created_at_ms, key_prefix
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        rows.into_iter().map(api_key_record_from_row).collect()
-    }
-
-    async fn list_api_keys_for_universe(
+    /// Every key, or the keys of one scope.
+    pub async fn list_api_keys(
         &self,
-        universe_id: Uuid,
+        scope: Option<AccessScope>,
     ) -> Result<Vec<ApiKeyRecord>, ApiKeyError> {
-        let rows = sqlx::query(
-            r#"
-            SELECT key_prefix, universe_id, principal_kind, principal_id,
-                   display_name, created_at_ms, revoked_at_ms, last_used_at_ms
-            FROM api_keys
-            WHERE universe_id = $1
-            ORDER BY created_at_ms, key_prefix
-            "#,
-        )
+        let (filtered, universe_id) = match scope {
+            None => (false, None),
+            Some(scope) => (true, scope.universe_id()),
+        };
+        sqlx::query(&format!(
+            "SELECT {KEY_COLUMNS} FROM api_keys
+             WHERE NOT $1 OR universe_id IS NOT DISTINCT FROM $2
+             ORDER BY created_at_ms, key_prefix"
+        ))
+        .bind(filtered)
         .bind(universe_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(map_sqlx_error)?;
-        rows.into_iter().map(api_key_record_from_row).collect()
+        .map_err(map_sqlx_error)?
+        .iter()
+        .map(record_from_row)
+        .collect()
     }
 
-    async fn revoke_api_key(
+    /// Revoke a key by its display prefix. `None` for an unknown prefix; a
+    /// revoked key stays revoked at its first revocation time.
+    pub async fn revoke_api_key(
         &self,
         key_prefix: &str,
-        revoked_at_ms: u64,
-    ) -> Result<bool, ApiKeyError> {
-        let result = sqlx::query(
-            r#"
-            UPDATE api_keys
-            SET revoked_at_ms = COALESCE(revoked_at_ms, $2)
-            WHERE key_prefix = $1
-            "#,
-        )
-        .bind(key_prefix)
-        .bind(ms_to_i64(revoked_at_ms)?)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(result.rows_affected() > 0)
-    }
-
-    async fn revoke_api_key_for_universe(
-        &self,
-        universe_id: Uuid,
-        key_prefix: &str,
-        revoked_at_ms: u64,
+        now_ms: u64,
     ) -> Result<Option<ApiKeyRecord>, ApiKeyError> {
-        let row = sqlx::query(
-            r#"
-            UPDATE api_keys
-            SET revoked_at_ms = COALESCE(revoked_at_ms, $3)
-            WHERE universe_id = $1 AND key_prefix = $2
-            RETURNING key_prefix, universe_id, principal_kind, principal_id,
-                      display_name, created_at_ms, revoked_at_ms, last_used_at_ms
-            "#,
-        )
-        .bind(universe_id)
+        sqlx::query(&format!(
+            "UPDATE api_keys SET revoked_at_ms = COALESCE(revoked_at_ms, $2)
+             WHERE key_prefix = $1 RETURNING {KEY_COLUMNS}"
+        ))
         .bind(key_prefix)
-        .bind(ms_to_i64(revoked_at_ms)?)
+        .bind(ms_to_i64(now_ms)?)
         .fetch_optional(&self.pool)
         .await
-        .map_err(map_sqlx_error)?;
-        row.map(api_key_record_from_row).transpose()
+        .map_err(map_sqlx_error)?
+        .as_ref()
+        .map(record_from_row)
+        .transpose()
     }
 }
 
-fn api_key_record_from_row(row: PgRow) -> Result<ApiKeyRecord, ApiKeyError> {
-    let principal_kind: String = row.try_get("principal_kind").map_err(map_sqlx_error)?;
-    let principal_kind =
-        principal_kind_from_str(&principal_kind).map_err(|error| ApiKeyError::Store {
-            message: error.to_string(),
-        })?;
-    let universe_id: Uuid = row.try_get("universe_id").map_err(map_sqlx_error)?;
+fn record_from_row(row: &PgRow) -> Result<ApiKeyRecord, ApiKeyError> {
+    let universe_id: Option<Uuid> = row.try_get("universe_id").map_err(map_sqlx_error)?;
+    let groups = row
+        .try_get::<Vec<String>, _>("groups")
+        .map_err(map_sqlx_error)?
+        .iter()
+        .map(|name| {
+            MethodGroup::parse(name).ok_or_else(|| ApiKeyError::Store {
+                message: format!("unknown method group in api_keys row: {name}"),
+            })
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
     Ok(ApiKeyRecord {
         key_prefix: row.try_get("key_prefix").map_err(map_sqlx_error)?,
-        universe_id,
-        principal: PrincipalRef {
-            kind: principal_kind,
-            id: row.try_get("principal_id").map_err(map_sqlx_error)?,
-        },
+        scope: universe_id.map_or(AccessScope::Deployment, |universe_id| {
+            AccessScope::Universe { universe_id }
+        }),
+        groups,
+        assert_actor: row.try_get("assert_actor").map_err(map_sqlx_error)?,
+        created_by: serde_json::from_value(row.try_get("created_by").map_err(map_sqlx_error)?)
+            .map_err(|error| ApiKeyError::Store {
+                message: format!("decode api key created_by: {error}"),
+            })?,
         display_name: row.try_get("display_name").map_err(map_sqlx_error)?,
         created_at_ms: i64_to_ms(row.try_get("created_at_ms").map_err(map_sqlx_error)?)?,
         revoked_at_ms: row

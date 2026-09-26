@@ -248,11 +248,6 @@ impl GatewayAgentApi {
         after_seq: Option<u64>,
         include_artifacts: bool,
     ) -> Result<Vec<SessionJobReadEntryView>, AgentApiError> {
-        if handles.is_empty() {
-            return Err(AgentApiError::invalid_request(
-                "environments/jobs/read requires at least one job",
-            ));
-        }
         let mut entries = Vec::with_capacity(handles.len());
         for handle in handles {
             let resolved = match parse_job_handle(handle) {
@@ -325,11 +320,6 @@ impl GatewayAgentApi {
         scope: SessionJobCancelScopeView,
         force: bool,
     ) -> Result<Vec<SessionJobCancelEntryView>, AgentApiError> {
-        if handles.is_empty() {
-            return Err(AgentApiError::invalid_request(
-                "environments/jobs/cancel requires at least one job",
-            ));
-        }
         let mut entries = Vec::with_capacity(handles.len());
         for handle in handles {
             let resolved = match parse_job_handle(handle) {

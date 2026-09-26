@@ -86,7 +86,7 @@ record how their recovery points fit together.
 | Material | Why recovery needs it |
 | --- | --- |
 | Runtime PostgreSQL database and migration ledger | Universe records, sessions/events, checkpoints, profiles, workspace references, blob catalog and inline content, credentials, keys, bots, channels, and environment state. |
-| Platform PostgreSQL database and migration ledger | People, authentication, organizations, memberships, and mappings to runtime universe UUIDs. |
+| Platform PostgreSQL database and migration ledger | Login credentials/sessions, external identity and canonical user mappings, and universe display/routing metadata. |
 | Temporal persistence and namespace configuration | Workflow histories, timers, schedules, and in-flight orchestration. Runtime PostgreSQL records are not a documented replacement for lost Temporal state. |
 | Configured object-store content | The bytes referenced by object-backed blobs. Restoring their database catalog does not reconstruct missing objects. |
 | Runtime master key | Existing encrypted grants and secrets need the same `LIGHTSPEED_SECRETS_MASTER_KEY`. |

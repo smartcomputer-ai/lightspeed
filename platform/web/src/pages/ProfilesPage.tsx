@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { slugify } from "@lightspeed/platform-shared";
-import { ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import {
   api,
   type ProfileDocument,
@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { SettingsDisclosure } from "@/components/ui/settings-disclosure";
 import {
   Select,
   SelectContent,
@@ -44,27 +45,31 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LoadingNote, UniverseNotFound } from "@/components/page";
+import { DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
+import { useCreateParam } from "@/lib/create-param";
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
 import {
   resourceFeatureDisableReasons,
   setupResourceFeatureError,
 } from "@/lib/sessions/resource-features";
-import { canManage, useActiveUniverse } from "@/lib/universes";
+import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
+import { useActionPermissions } from "@/lib/permissions";
 
 /// Structured profile editor. Pane = profile list; detail = sectioned form
 /// with a reusable SessionConfig editor and a permanent Edit-as-JSON tab.
 /// Saves keep the profiles/put +
 /// expectedRevision flow — a stale editor gets a 409, not a clobber.
-export function ProfilesPage({ admin }: { admin: boolean }) {
+export function ProfilesPage(_props: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const { profileId } = useParams<{ profileId: string }>();
+  const canCreate = useActionPermissions(universe?.id).can("create_profile");
+  const [, setCreateOpen] = useCreateParam("profile");
 
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !canManage(universe, admin)) {
+  if (!universe || !universe.role) {
     return (
       <div className="p-6">
         <UniverseNotFound slug={slug} />
@@ -93,9 +98,12 @@ export function ProfilesPage({ admin }: { admin: boolean }) {
             profileId={profileId}
           />
         ) : (
-          <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-            Select a profile, or create one.
-          </div>
+          <DetailPrompt
+            icon={<SlidersHorizontal className="size-10 text-muted-foreground/60" />}
+            create={canCreate ? { label: "New profile", onClick: () => setCreateOpen(true) } : undefined}
+          >
+            Pick a profile{canCreate ? ", or create one" : ""}.
+          </DetailPrompt>
         )}
       </div>
     </div>
@@ -115,21 +123,25 @@ function ProfilePane({
     queryKey: ["profiles", universeId],
     queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
   });
-  const [createOpen, setCreateOpen] = useState(false);
+  const permissions = useActionPermissions(universeId);
+  const canCreate = permissions.can("create_profile");
+  const [createOpen, setCreateOpen] = useCreateParam("profile");
 
   return (
     <>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
         <h1 className="text-sm font-semibold">Profiles</h1>
-        <Button
+        {canCreate && (
+          <Button
           variant="ghost"
           size="icon-sm"
           className="ml-auto"
           onClick={() => setCreateOpen(true)}
           aria-label="New profile"
         >
-          <Plus />
-        </Button>
+            <Plus />
+          </Button>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {profiles.isLoading && <p className="p-4 text-sm text-muted-foreground">Loading…</p>}
@@ -137,10 +149,7 @@ function ProfilePane({
           <ReadError error={profiles.error} loading={!profiles.data} className="p-4" />
         )}
         {profiles.data && profiles.data.length === 0 && (
-          <p className="p-4 text-sm text-muted-foreground">
-            No profiles yet. Bots reference profiles by id — create one to give a
-            bot its configuration.
-          </p>
+          <ListNote>No profiles yet.</ListNote>
         )}
         <ul>
           {profiles.data?.map((profile) => (
@@ -156,6 +165,9 @@ function ProfilePane({
                   <span className="truncate font-medium">
                     {profile.displayName ?? profile.profileId}
                   </span>
+                  {!permissions.can("manage_profile") && (
+                    <span className="shrink-0 text-xs text-muted-foreground">Read only</span>
+                  )}
                   <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                     r{profile.revision}
                   </span>
@@ -168,13 +180,15 @@ function ProfilePane({
           ))}
         </ul>
       </div>
-      <NewProfileDialog
-        universeId={universeId}
-        slug={slug}
-        profiles={profiles.data ?? []}
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-      />
+      {canCreate && (
+        <NewProfileDialog
+          universeId={universeId}
+          slug={slug}
+          profiles={profiles.data ?? []}
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+        />
+      )}
     </>
   );
 }
@@ -188,6 +202,8 @@ function ProfileEditor({
   slug: string;
   profileId: string;
 }) {
+  const permissions = useActionPermissions(universeId);
+  const manage = permissions.can("manage_profile");
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const doc = useQuery({
@@ -220,6 +236,7 @@ function ProfileEditor({
   }, [doc.data]);
 
   const mutate = (fn: (d: ProfileDocument) => void) => {
+    if (!manage) return;
     setDraft((prev) => {
       if (!prev) return prev;
       const next = structuredClone(prev);
@@ -236,6 +253,7 @@ function ProfileEditor({
 
   const save = useMutation({
     mutationFn: async (document: ProfileDocument) => {
+      if (!manage) throw new Error("You do not have permission to edit this profile.");
       // The core reconciles bots applying this profile onto the new
       // revision on its own.
       await api("PUT", `/api/v1/universes/${universeId}/profiles/${profileId}`, document);
@@ -249,8 +267,10 @@ function ProfileEditor({
   });
 
   const remove = useMutation({
-    mutationFn: () =>
-      api("DELETE", `/api/v1/universes/${universeId}/profiles/${profileId}`),
+    mutationFn: () => {
+      if (!manage) throw new Error("You do not have permission to delete this profile.");
+      return api("DELETE", `/api/v1/universes/${universeId}/profiles/${profileId}`);
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["profiles", universeId] });
       navigate(`/u/${slug}/profiles`);
@@ -259,6 +279,7 @@ function ProfileEditor({
   });
 
   const submit = () => {
+    if (!manage) return;
     setError(null);
     let document = draft;
     if (tab === "json") {
@@ -346,10 +367,12 @@ function ProfileEditor({
               <TabsTrigger value="json" className="px-1.5 text-xs md:px-2 md:text-sm">JSON</TabsTrigger>
             </TabsList>
           </Tabs>
-          <Button size="sm" className="px-2 text-xs md:px-2.5 md:text-sm" disabled={!dirty || save.isPending} onClick={submit}>
-            {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
-          </Button>
-          <AlertDialog>
+          {manage && (
+            <Button size="sm" className="px-2 text-xs md:px-2.5 md:text-sm" disabled={!dirty || save.isPending} onClick={submit}>
+              {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
+            </Button>
+          )}
+          {manage && <AlertDialog>
             <AlertDialogTrigger
               render={
                 <Button variant="ghost" size="icon-sm" className="text-destructive" aria-label="Delete profile" />
@@ -375,29 +398,44 @@ function ProfileEditor({
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
-          </AlertDialog>
+          </AlertDialog>}
         </div>
       </header>
+      {!manage && (
+        <p className="border-b px-4 py-2 text-xs text-muted-foreground">
+          Read only — you can view this profile, but cannot change it.
+        </p>
+      )}
       {error && <p className="border-b px-4 py-2 text-sm text-destructive">{error}</p>}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === "json" ? (
           <textarea
             className="h-full w-full resize-none bg-transparent p-4 font-mono text-xs outline-none"
+            readOnly={!manage}
+            aria-label="Profile JSON"
             value={jsonText}
             onChange={(e) => setJsonText(e.target.value)}
             spellCheck={false}
           />
         ) : (
           <div className="mx-auto grid w-full max-w-5xl gap-8 px-4 py-6 md:px-8">
-            <GeneralSection draft={draft} mutate={mutate} />
-            <InstructionsSection draft={draft} mutate={mutate} />
-            <ConfigSection
-              universeId={universeId}
-              draft={draft}
-              mutate={mutate}
-              onValidityChange={setConfigError}
-              onRetentionValidityChange={setRetentionError}
-            />
+            <GeneralSection draft={draft} mutate={mutate} readOnly={!manage} />
+            <InstructionsSection draft={draft} mutate={mutate} readOnly={!manage} />
+            {manage ? (
+              <ConfigSection
+                universeId={universeId}
+                draft={draft}
+                mutate={mutate}
+                onValidityChange={setConfigError}
+                onRetentionValidityChange={setRetentionError}
+              />
+            ) : (
+              <Section title="Configuration">
+                <pre className="overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 text-xs">
+                  {JSON.stringify({ config: draft.config, metadata: draft.metadata, retention: draft.retention }, null, 2)}
+                </pre>
+              </Section>
+            )}
           </div>
         )}
       </div>
@@ -432,7 +470,7 @@ function Section({
 
 type Mutate = (fn: (d: ProfileDocument) => void) => void;
 
-function GeneralSection({ draft, mutate }: { draft: ProfileDocument; mutate: Mutate }) {
+function GeneralSection({ draft, mutate, readOnly }: { draft: ProfileDocument; mutate: Mutate; readOnly: boolean }) {
   return (
     <Section title="General">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -440,6 +478,7 @@ function GeneralSection({ draft, mutate }: { draft: ProfileDocument; mutate: Mut
           <FieldLabel htmlFor="profile-display-name">Display name</FieldLabel>
           <Input
             id="profile-display-name"
+            readOnly={readOnly}
             value={(draft.displayName as string) ?? ""}
             onChange={(e) =>
               mutate((d) => {
@@ -456,6 +495,7 @@ function GeneralSection({ draft, mutate }: { draft: ProfileDocument; mutate: Mut
           <FieldLabel htmlFor="profile-description">Description</FieldLabel>
           <Input
             id="profile-description"
+            readOnly={readOnly}
             value={(draft.description as string) ?? ""}
             onChange={(e) =>
               mutate((d) => {
@@ -476,9 +516,11 @@ function GeneralSection({ draft, mutate }: { draft: ProfileDocument; mutate: Mut
 function InstructionsSection({
   draft,
   mutate,
+  readOnly,
 }: {
   draft: ProfileDocument;
   mutate: Mutate;
+  readOnly: boolean;
 }) {
   const instructions = draft.instructions as
     | { type: "text"; text: string }
@@ -500,6 +542,7 @@ function InstructionsSection({
     <Section title="Instructions" description="System prompt applied to sessions.">
       <textarea
         className="min-h-32 w-full resize-y rounded-lg border border-input bg-transparent p-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+        readOnly={readOnly}
         value={instructions?.text ?? ""}
         onChange={(e) =>
           mutate((d) => {
@@ -598,6 +641,8 @@ function NewProfileDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const permissions = useActionPermissions(universeId);
+  const canCreate = permissions.can("create_profile");
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [displayName, setDisplayName] = useState("");
@@ -608,6 +653,7 @@ function NewProfileDialog({
 
   const create = useMutation({
     mutationFn: async () => {
+      if (!canCreate) throw new Error("You do not have permission to create profiles.");
       let document = newProfileDocument(profileId, displayName);
       if (sourceProfileId) {
         const source = await api<ProfileDocument>(
@@ -640,9 +686,11 @@ function NewProfileDialog({
     }
     create.mutate();
   };
+  const sourceName = profiles.find((profile) => profile.profileId === sourceProfileId)?.displayName
+    ?? sourceProfileId;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open && canCreate} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New profile</DialogTitle>
@@ -665,58 +713,71 @@ function NewProfileDialog({
               placeholder="Owner"
               autoFocus
             />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="new-profile-id">Profile id</FieldLabel>
-            <Input
-              id="new-profile-id"
-              value={profileId}
-              onChange={(e) => {
-                setProfileId(e.target.value);
-                setIdTouched(e.target.value.length > 0);
-              }}
-              placeholder="owner"
-              className="font-mono"
-            />
-            <FieldDescription>
-              What bots and tooling reference — cannot be changed later.
-            </FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="new-profile-source">Start from</FieldLabel>
-            <Select
-              value={sourceProfileId}
-              onValueChange={(value) => setSourceProfileId((value as string) ?? "")}
+            {/* The id follows the name until it is edited; it opens on its own when missing. */}
+            <SettingsDisclosure
+              summary={profileId
+                ? <>Id: <code className="font-mono">{profileId}</code></>
+                : "Id derived from the display name"}
+              action="Change"
+              label="Change profile id"
+              forceOpen={Boolean(error) && !profileId}
             >
-              <SelectTrigger id="new-profile-source" className="w-full">
-                <SelectValue>
-                  {sourceProfileId
-                    ? (profiles.find((profile) => profile.profileId === sourceProfileId)?.displayName
-                      ?? sourceProfileId)
-                    : "Empty profile"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">Empty profile</SelectItem>
-                {profiles.map((profile) => (
-                  <SelectItem key={profile.profileId} value={profile.profileId}>
-                    {profile.displayName ?? profile.profileId}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <FieldDescription>
-              {sourceProfileId
-                ? "Copies the profile’s current setup once. Later changes to it are not inherited."
-                : "Starts with no profile configuration."}
-            </FieldDescription>
+              <Field>
+                <FieldLabel htmlFor="new-profile-id">Profile id</FieldLabel>
+                <Input
+                  id="new-profile-id"
+                  value={profileId}
+                  onChange={(e) => {
+                    setProfileId(e.target.value);
+                    setIdTouched(e.target.value.length > 0);
+                  }}
+                  placeholder="owner"
+                  className="font-mono"
+                />
+                <FieldDescription>
+                  What bots and tooling reference — cannot be changed later.
+                </FieldDescription>
+              </Field>
+            </SettingsDisclosure>
           </Field>
+          <SettingsDisclosure
+            summary={sourceProfileId ? `Copies ${sourceName}` : "Starts empty"}
+            action="Change"
+            label="Change starting point"
+          >
+            <Field>
+              <FieldLabel htmlFor="new-profile-source">Start from</FieldLabel>
+              <Select
+                value={sourceProfileId}
+                onValueChange={(value) => setSourceProfileId((value as string) ?? "")}
+              >
+                <SelectTrigger id="new-profile-source" className="w-full">
+                  <SelectValue>
+                    {sourceProfileId ? sourceName : "Empty profile"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Empty profile</SelectItem>
+                  {profiles.map((profile) => (
+                    <SelectItem key={profile.profileId} value={profile.profileId}>
+                      {profile.displayName ?? profile.profileId}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                {sourceProfileId
+                  ? "Copies the profile’s current setup once. Later changes to it are not inherited."
+                  : "Starts with no profile configuration."}
+              </FieldDescription>
+            </Field>
+          </SettingsDisclosure>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={create.isPending}>
+            <Button type="submit" disabled={!canCreate || create.isPending}>
               {create.isPending ? "Creating…" : "Create"}
             </Button>
           </DialogFooter>

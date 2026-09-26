@@ -73,18 +73,11 @@ from an upstream runtime error. Sessions, profiles, workspaces, integrations,
 and setup controls require owner/admin or platform administrator access. The
 ordinary member role is narrower.
 
-For runtime errors, verify that the Platform calls a reachable private
-`trusted-header` gateway and that its mapped runtime UUID exists. The browser
-slug is not the runtime UUID. **Admin → Universes** can identify a missing
-runtime or Platform record; creating an empty missing universe does not
-restore its former contents.
-
-For a direct API client, confirm the listener's authentication mode. An
-`lsk_` key authenticates at an API-key gateway, and the client must not also
-send tenant/principal headers. A trusted-header listener does not switch
-modes because a bearer key is present. The
-[access guide](authentication-and-tenancy.md) covers keys, roles, and the
-separate offboarding steps for membership and runtime access.
+For runtime errors, verify the authenticated endpoint, Platform service key,
+canonical principal status and scoped permissions. The browser slug differs
+from the runtime universe UUID. After upgrading from legacy keys, issue new
+credentials bound to canonical principals. See the
+[access guide](authentication-and-tenancy.md) for assertions and offboarding.
 
 ## Session progress
 

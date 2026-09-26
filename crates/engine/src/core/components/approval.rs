@@ -23,7 +23,7 @@ pub enum ApprovalEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        decided_by: Option<ApprovalPrincipal>,
+        decided_by: Option<crate::Attribution>,
     },
     Cancelled {
         approval_id: ApprovalId,
@@ -65,13 +65,6 @@ pub enum ApprovalDecision {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ApprovalPrincipal {
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalDecisionCommand {
     pub approval_id: ApprovalId,
     pub run_id: RunId,
@@ -79,7 +72,8 @@ pub struct ApprovalDecisionCommand {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decided_by: Option<ApprovalPrincipal>,
+    /// Who decided, as the API boundary attributed the request.
+    pub decided_by: Option<crate::Attribution>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response: Option<ContextEntryInput>,
 }
@@ -116,7 +110,8 @@ pub struct ApprovalRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decided_by: Option<ApprovalPrincipal>,
+    /// Who decided, as the API boundary attributed the request.
+    pub decided_by: Option<crate::Attribution>,
 }
 
 pub fn plan_approval_next(

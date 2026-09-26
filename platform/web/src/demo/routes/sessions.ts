@@ -114,8 +114,24 @@ export function sessionRoutes(store: DemoStore): Hono {
       config,
       activeEnvironmentId: resolved.environmentId,
       instructions: instructionText(store, profile.instructions),
+      access: { visibility: "restricted", createdBy: { kind: "actor", id: store.currentUser.id } },
     });
     return c.json(session.view);
+  });
+
+  /// Shares an unshared root session and its sub-agents with the universe,
+  /// one way.
+  app.post("/:id/sessions/:sessionId/share", (c) => {
+    const found = lookup(c);
+    if (!found) return notFound(c, "not found in engine");
+    const view = found.session.view;
+    if (view.origin) return conflict(c, "a sub-agent's session follows its root session");
+    if (view.access?.visibility === "universe") return conflict(c, "the session is already shared");
+    const access = { ...view.access, visibility: "universe" as const };
+    for (const record of found.universe.sessions.values()) {
+      if (record.view.retention.rootSessionId === view.id) record.view.access = access;
+    }
+    return c.json({ access });
   });
 
   app.get("/:id/sessions/:sessionId", (c) => {

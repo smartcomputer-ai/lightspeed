@@ -208,7 +208,7 @@ function linear(name: string, args: Record<string, unknown>, detail: string, out
   return tool(`linear.${name}`, `linear.${name}`, args, mcpDisplay(`linear.${name}`, args, detail), output, isError);
 }
 
-const LINEAR_401 = "request failed: 401 Unauthorized — the Linear MCP server rejected the workspace token (rotated 2026-08-24). Reconnect the `linear` server on the Integrations page.";
+const LINEAR_401 = "request failed: 401 Unauthorized — the Linear MCP server rejected the workspace token (rotated 2026-08-24). Reconnect the `linear` server on the MCP servers page.";
 
 function closeAt(session: SessionRecord, atMs: number): void {
   closeSession(session, true, atMs);
@@ -292,6 +292,7 @@ function subagentSession(store: DemoStore, universe: UniverseState, init: Subage
 function lineageChild(session: SessionRecord): SessionSummaryView {
   const view = session.view;
   return {
+    access: view.access,
     id: view.id,
     displayName: view.displayName ?? null,
     createdAtMs: view.createdAtMs,
@@ -587,7 +588,7 @@ function seedProfiles(universe: UniverseState): void {
 // ---------------------------------------------------------------------------
 
 function seedMembers(store: DemoStore, universe: UniverseState): void {
-  universe.members.push(member(store, universe, "user-marco", "admin", ago(68 * DAY_MS)), member(store, universe, "user-priya", "member", ago(61 * DAY_MS)));
+  universe.members.push(member(store, universe, "user-marco", "admin", ago(68 * DAY_MS)), member(store, universe, "user-priya", "contributor", ago(61 * DAY_MS)));
   universe.apiKeys.push(
     {
       keyPrefix: "lsk_acme_cfg_9b21",
@@ -1030,7 +1031,7 @@ Humans merge. Nothing in the pipeline pushes to main.
 - A \`run_failed\` on pr-reviewer is usually a provider error; replay the event from
   the Activity tab once the provider recovers.
 - Linear returning 401 stops intake commenting but not the pipeline; the open
-  question lands in the spec instead. Reconnect Linear on the Integrations page.
+  question lands in the spec instead. Reconnect Linear on the MCP servers page.
 `;
 
 const SPECS_README = `# specs
@@ -1416,7 +1417,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "acme-dev",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "universeDefault" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: [],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1440,7 +1441,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "ops@acme.example",
       status: "needsReauth",
       exposure: "brokered",
-      principal: { kind: "user", id: "user-marco" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: ["read", "write"],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1458,7 +1459,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "intake · linear-webhook",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "universeDefault" },
+      createdBy: { kind: "actor", id: "user-ada" },
       scopes: [],
       hasAccessToken: true,
       hasRefreshToken: false,
@@ -1476,7 +1477,7 @@ function seedIntegrations(universe: UniverseState): void {
       subjectHint: "software-factory (workspace key)",
       status: "active",
       exposure: "brokered",
-      principal: { kind: "universeDefault" },
+      createdBy: { kind: "actor", id: "user-ada" },
       hasAccessToken: true,
       hasRefreshToken: false,
       lastLeasedAtMs: ago(3 * HOUR_MS),
@@ -2268,7 +2269,7 @@ function seedIntake(store: DemoStore, universe: UniverseState): void {
     steps: [
       {
         tools: [linear("list_issues", { filter: { labels: ["ready-for-build"], state: "Todo" } }, "ready-for-build, Todo", LINEAR_401, true)],
-        text: "No digest this week: Linear refused the workspace token with 401 — the key was rotated. Until someone reconnects the `linear` server on the Integrations page I can still write specs from the webhook payload, but I cannot list or comment on issues. Told Marco.",
+        text: "No digest this week: Linear refused the workspace token with 401 — the key was rotated. Until someone reconnects the `linear` server on the MCP servers page I can still write specs from the webhook payload, but I cannot list or comment on issues. Told Marco.",
       },
     ],
   }).id;
@@ -2318,7 +2319,7 @@ function seedIntake(store: DemoStore, universe: UniverseState): void {
         text: [
           `Spec written to \`${SPEC_PATH}\` and handed to planner (their #${SEQ.plannerSpec}). It builds on what is in the repo: the #472 limiter refills on every request, which is exactly the bug that got #482 reverted, so the spec pins refill to whole elapsed intervals and names the \`TakeResult\` type the tasks will share.`,
           "",
-          "One open question I could not ask: whether the limit covers `/api` only or every authenticated route (Stripe retries on `/webhooks/billing` would trip a global one). Linear returned 401 on the comment — the workspace key was rotated on Monday — so the question and the assumption I am proceeding on (`/api` only) are in the spec under *Open questions*. Reconnecting the `linear` server on the Integrations page fixes that for next time.",
+          "One open question I could not ask: whether the limit covers `/api` only or every authenticated route (Stripe retries on `/webhooks/billing` would trip a global one). Linear returned 401 on the comment — the workspace key was rotated on Monday — so the question and the assumption I am proceeding on (`/api` only) are in the spec under *Open questions*. Reconnecting the `linear` server on the MCP servers page fixes that for next time.",
         ].join("\n"),
       },
     ],
@@ -4369,7 +4370,7 @@ function statusReply(turn: number): DemoTurn {
   }
   if (turn === 2) {
     return {
-      text: `Two things would move it: replay pr-reviewer's #${SEQ.reviewerPr493} from its Activity tab now that the provider is back, and reconnect the Linear server on the Integrations page so intake can post the open question. Everything else is a merge button.`,
+      text: `Two things would move it: replay pr-reviewer's #${SEQ.reviewerPr493} from its Activity tab now that the provider is back, and reconnect the Linear server on the MCP servers page so intake can post the open question. Everything else is a merge button.`,
     };
   }
   return { text: "Status unchanged since the last summary. Ask for a specific bot or thread and I'll go into its events." };
@@ -4418,7 +4419,7 @@ export function seedSoftwareFactory(store: DemoStore): void {
     slug: SOFTWARE_FACTORY_SLUG,
     name: "Software Factory",
     lightspeedUniverseId: ENGINE_UNIVERSE_ID,
-    role: "owner",
+    role: "admin",
     createdAt: agoIso(70 * DAY_MS),
     responder,
   });

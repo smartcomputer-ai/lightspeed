@@ -50,6 +50,10 @@ pub struct SessionStartParams {
     )]
     #[schemars(schema_with = "optional_nullable_delete_after_close_ms_schema")]
     pub delete_after_close_ms: Option<Option<u64>>,
+    /// Audience of the new session, set atomically with its creation. Absent
+    /// means unshared until `session/share`; a retry keeps the original.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<AccessInput>,
 }
 
 /// Creation request for a session with immutable workflow ownership and
@@ -78,6 +82,9 @@ pub struct ManagedSessionStartParams {
     )]
     #[schemars(schema_with = "optional_nullable_delete_after_close_ms_schema")]
     pub delete_after_close_ms: Option<Option<u64>>,
+    /// Audience of the new session, as for `session/start`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<AccessInput>,
     /// Immutable workflow tools admitted only when the session is first
     /// created. This document is not part of `SessionConfig` and cannot be
     /// changed through `session/config/put`.
@@ -931,6 +938,16 @@ pub struct SessionListParams {
     /// Combines with the lineage filters.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
+    /// Only sessions whose root this actor created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    /// Only sessions whose root has this visibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<Visibility>,
+    /// Only sessions whose root is shared with the universe or was created
+    /// by this actor: what that actor sees as a non-administrator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_to: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -963,6 +980,9 @@ pub struct SessionSummaryView {
     /// Sub-agent lineage; absent for root sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<SessionOriginView>,
+    /// The audience of the session's root: whether it is shared with the
+    /// universe, and who created it.
+    pub access: ResourceAccessSummary,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -1323,6 +1343,9 @@ pub enum SessionEventKindView {
         run_id: RunId,
         submission_id: Option<String>,
         source: RunAcceptedSourceView,
+        /// Who asked, as the API boundary attributed the request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_by: Option<Attribution>,
     },
     RunStarted {
         run_id: RunId,
@@ -1331,9 +1354,15 @@ pub enum SessionEventKindView {
         run_id: RunId,
         steering_id: String,
         input: Vec<ContextEntryInputView>,
+        /// Who asked, as the API boundary attributed the request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_by: Option<Attribution>,
     },
     RunCancellationRequested {
         run_id: RunId,
+        /// Who asked, as the API boundary attributed the request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_by: Option<Attribution>,
     },
     ApprovalRequested {
         run_id: RunId,
@@ -1350,7 +1379,7 @@ pub enum SessionEventKindView {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        decided_by: Option<PrincipalRefView>,
+        decided_by: Option<Attribution>,
     },
     ApprovalCancelled {
         run_id: RunId,
@@ -1369,6 +1398,10 @@ pub enum SessionEventKindView {
     },
     RunCancelled {
         run_id: RunId,
+        /// Who cancelled a run that had not started; a started run records
+        /// its requester on the cancellation request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_by: Option<Attribution>,
     },
     PromiseCreated {
         promise_id: String,

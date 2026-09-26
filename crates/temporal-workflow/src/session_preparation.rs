@@ -29,6 +29,40 @@ impl SessionToolsetSource {
     }
 }
 
+/// The workspaces, environments and MCP servers a session configuration
+/// attaches, in document order and without repeats: what must exist in the
+/// universe when the configuration is admitted. A snapshot attachment names
+/// immutable content, not a resource, and is admitted as content instead.
+pub fn attached_resources(features: &engine::FeaturesConfig) -> Vec<api::ResourceRef> {
+    let workspaces = features
+        .vfs
+        .iter()
+        .flat_map(|vfs| &vfs.workspaces)
+        .filter_map(|attachment| match &attachment.target {
+            engine::WorkspaceAttachmentTarget::Workspace { workspace_id } => {
+                Some(api::ResourceRef::Workspace(workspace_id.clone()))
+            }
+            engine::WorkspaceAttachmentTarget::Snapshot { .. } => None,
+        });
+    let environments = features
+        .environments
+        .iter()
+        .flat_map(|environments| &environments.environments)
+        .map(|attachment| api::ResourceRef::Environment(attachment.environment_id.clone()));
+    let servers = features
+        .mcp
+        .iter()
+        .flat_map(|mcp| &mcp.servers)
+        .map(|attachment| api::ResourceRef::McpServer(attachment.server_id.clone()));
+    let mut resources = Vec::new();
+    for resource in workspaces.chain(environments).chain(servers) {
+        if !resources.contains(&resource) {
+            resources.push(resource);
+        }
+    }
+    resources
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionToolsetPreparation {
     pub source: SessionToolsetSource,
@@ -276,6 +310,66 @@ mod tests {
         assert_eq!(profile.environment_to_prepare(&state), None);
         profile.environment = None;
         assert_eq!(profile.environment_to_prepare(&empty), None);
+    }
+
+    #[test]
+    fn attached_resources_name_each_workspace_environment_and_server_once() {
+        let features = engine::FeaturesConfig {
+            vfs: Some(engine::VfsFeature {
+                workspaces: vec![
+                    engine::WorkspaceAttachment {
+                        path: "/repo".into(),
+                        target: engine::WorkspaceAttachmentTarget::Workspace {
+                            workspace_id: "repo".into(),
+                        },
+                        access: engine::WorkspaceAccess::Edit,
+                    },
+                    engine::WorkspaceAttachment {
+                        path: "/pinned".into(),
+                        target: engine::WorkspaceAttachmentTarget::Snapshot {
+                            snapshot_ref: format!("sha256:{}", "a".repeat(64)),
+                        },
+                        access: engine::WorkspaceAccess::Read,
+                    },
+                    engine::WorkspaceAttachment {
+                        path: "/repo-again".into(),
+                        target: engine::WorkspaceAttachmentTarget::Workspace {
+                            workspace_id: "repo".into(),
+                        },
+                        access: engine::WorkspaceAccess::Read,
+                    },
+                ],
+                ..Default::default()
+            }),
+            environments: Some(engine::EnvironmentsFeature {
+                environments: vec![engine::EnvironmentAttachment {
+                    environment_id: "prod-1".into(),
+                    default: true,
+                    access: engine::EnvironmentAccess::Read,
+                    working_directory: None,
+                }],
+                ..Default::default()
+            }),
+            mcp: Some(engine::McpFeature {
+                servers: vec![engine::McpServerAttachment {
+                    server_id: "crm".into(),
+                    tools: None,
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // Snapshots are content, not resources; a workspace mounted twice
+        // is one resource.
+        assert_eq!(
+            attached_resources(&features),
+            vec![
+                api::ResourceRef::Workspace("repo".into()),
+                api::ResourceRef::Environment("prod-1".into()),
+                api::ResourceRef::McpServer("crm".into()),
+            ]
+        );
+        assert!(attached_resources(&engine::FeaturesConfig::default()).is_empty());
     }
 
     fn operation(id: usize, submitted_at_ms: u64) -> SessionOperationRequest {

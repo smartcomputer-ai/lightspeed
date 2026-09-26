@@ -1,4 +1,4 @@
-import type { ChannelProvider, OperatorChannelAccountView } from "@lightspeed-ai/agent-client";
+import type { ChannelProvider, DeploymentChannelAccountView } from "@lightspeed-ai/agent-client";
 import type { CoreClient } from "../core/client.js";
 import type { AccountSelector } from "../core/identity.js";
 import type { AccountRunnerLike } from "./account-runner.js";
@@ -23,7 +23,7 @@ export interface ConnectorHostOptions {
 
 export interface ConnectorHostDeps {
   core: CoreClient;
-  createRunner: (account: OperatorChannelAccountView) => AccountRunnerLike;
+  createRunner: (account: DeploymentChannelAccountView) => AccountRunnerLike;
   log?: Log;
   now?: () => number;
 }
@@ -31,7 +31,7 @@ export interface ConnectorHostDeps {
 /**
  * One process serving many accounts across many universes. Every
  * `discoveryIntervalMs` the host asks the core for the enabled accounts
- * (`operator/channels/accounts/list`), narrows them to its providers and
+ * (`deployment/channels/accounts/list`), narrows them to its providers and
  * account list, and reconciles the running set: new accounts start, missing
  * or disabled ones stop, a changed revision or a dead runner restarts.
  */
@@ -141,11 +141,11 @@ export class ConnectorHost {
   private async pass(): Promise<void> {
     if (this.stopping) return;
     this.discovery.passes += 1;
-    let listed: OperatorChannelAccountView[];
+    let listed: DeploymentChannelAccountView[];
     try {
       const response = await this.deps.core
-        .operator()
-        .call("operator/channels/accounts/list", { includeDisabled: false });
+        .deployment()
+        .call("deployment/channels/accounts/list", { includeDisabled: false });
       listed = response.result.accounts ?? [];
     } catch (error) {
       this.discovery.lastError = errorMessage(error);
@@ -178,7 +178,7 @@ export class ConnectorHost {
     this.discovery.lastSuccessAtMs = this.now();
   }
 
-  private launch(account: OperatorChannelAccountView): void {
+  private launch(account: DeploymentChannelAccountView): void {
     if (this.stopping) return;
     const runner = this.deps.createRunner(account);
     this.runners.set(runner.key, runner);
@@ -201,7 +201,7 @@ export class ConnectorHost {
   }
 }
 
-function keyOf(account: OperatorChannelAccountView): string {
+function keyOf(account: DeploymentChannelAccountView): string {
   return `${account.universeId.toLowerCase()}/${account.accountId}`;
 }
 

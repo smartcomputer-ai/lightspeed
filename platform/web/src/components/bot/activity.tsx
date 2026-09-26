@@ -69,6 +69,7 @@ export function BotActivity({
   state,
   stateError,
   manage,
+  invoke,
 }: {
   universeId: string;
   slug: string;
@@ -76,6 +77,7 @@ export function BotActivity({
   state?: BotStateView;
   stateError?: string;
   manage: boolean;
+  invoke: boolean;
 }) {
   const queryClient = useQueryClient();
   const [eventOpen, setEventOpen] = useState(false);
@@ -162,7 +164,7 @@ export function BotActivity({
             {pages.hasNextPage ? "+" : ""} of {events.length}
             {pages.hasNextPage ? "+" : ""} loaded
           </span>
-          {manage && bot.closedAtMs == null && (
+          {invoke && bot.closedAtMs == null && (
             <Button variant="outline" size="xs" className="ml-auto" onClick={() => setEventOpen(true)}>
               <Webhook data-icon="inline-start" /> Send a test event
             </Button>
@@ -185,7 +187,7 @@ export function BotActivity({
           {!pages.isLoading && !pages.error && events.length === 0 && (
             <p className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
               Nothing has happened yet. Events arrive from the bot's triggers
-              {manage ? " — or send a test event to see it work." : "."}
+              {invoke ? " — or send a test event to see it work." : "."}
             </p>
           )}
           {!pages.isLoading && events.length > 0 && visible.length === 0 && (
@@ -204,7 +206,7 @@ export function BotActivity({
           )}
         </div>
       </div>
-      {manage && (
+      {invoke && (
         <SendEventDialog universeId={universeId} botId={bot.botId} open={eventOpen} onOpenChange={setEventOpen} />
       )}
     </div>

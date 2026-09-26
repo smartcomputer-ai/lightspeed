@@ -174,11 +174,23 @@ channels, and integrations evolve. The
 [controller page](tools-and-controller-workflows.md) explains the bindings,
 promises, and ownership that make these relationships durable.
 
-The Platform sits at another boundary. It owns people, login, organizations,
-memberships, and the browser application. Its PostgreSQL database is separate
-from the runtime database. The runtime remains usable through its public API
-without the Platform, and the Platform uses that API rather than importing
-reducer internals into browser clients.
+The Platform owns login, external identity mapping, human profiles and the browser
+application. Its separate database maps each account to an immutable canonical
+user UUID and keeps universe display/routing metadata. The
+[core identity registry](../deployment/identity-and-access.md) owns principals,
+groups, scoped roles and explicit capabilities. All interactive Platform calls
+assert their user through the service's `assert_user` capability; gateway and
+shared-service checks enforce that user's permissions and the resource's audience.
+Standalone sessions and bots have their own root policies; bot conversations
+and delegated children inherit access and execution. The API also supports collections for
+sharing one policy across related sessions and bots; their UI is deferred. Work
+normally runs as a dedicated universe service; enabled personal work runs as its
+owner. The runtime checks that principal at run admission and before each model
+call, so the person requesting a run and the principal carrying it out are
+explicitly separate. [Authentication and access](../deployment/authentication-and-tenancy.md)
+explains sharing, privileged reads and revocation in detail.
+Platform and CLI administration use the same core records. The runtime remains
+usable without Platform; public clients do not import reducer internals.
 
 ## Attach compute when the task needs it
 

@@ -24,7 +24,8 @@ use api::{
 use engine::SessionId;
 use support::live::{
     LIVE_TEST_LOCK, fake_worker_activities_with_stall_switch, final_assistant_text,
-    live_workflow_handle, require_storage_live_env, run_with_live_worker, wait_for_terminal_run,
+    live_workflow_handle, require_storage_live_env, run_with_live_worker_timeout,
+    wait_for_terminal_run,
 };
 use temporal_server::{
     default_model_from_env, gateway::GatewayAgentApi, pg_store_from_env,
@@ -48,9 +49,13 @@ async fn temporal_live_llm_activity_timeout_fails_the_run_not_the_session() -> a
     // result while the session workflow survives for the next run.
     let stalled = Arc::new(AtomicBool::new(true));
     let (activities, counters) = fake_worker_activities_with_stall_switch(stalled.clone()).await?;
-    run_with_live_worker(activities, move |client, task_queue, session_id| {
-        run_llm_timeout_live_client(client, task_queue, session_id, stalled, counters)
-    })
+    run_with_live_worker_timeout(
+        LLM_SCHEDULE_TO_CLOSE + LLM_START_TO_CLOSE + Duration::from_secs(120),
+        activities,
+        move |client, task_queue, session_id| {
+            run_llm_timeout_live_client(client, task_queue, session_id, stalled, counters)
+        },
+    )
     .await
 }
 
@@ -68,6 +73,7 @@ async fn run_llm_timeout_live_client(
         .build();
 
     api.start_session(SessionStartParams {
+        access: None,
         metadata: Default::default(),
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,

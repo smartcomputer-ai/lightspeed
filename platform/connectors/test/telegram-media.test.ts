@@ -27,7 +27,7 @@ describe("Telegram media activities", () => {
         result: { result: { blobs: [{ blobRef: `sha256:${"a".repeat(64)}`, bytes: bytes.byteLength }] } },
       });
     });
-    const core = new CoreClient({ endpoint: "http://lightspeed.test/rpc", fetch });
+    const core = new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://lightspeed.test/rpc", fetch });
     const activities = createTelegramMediaActivities({
       universeId: UNIVERSE_A,
       accountId: "primary",
@@ -61,7 +61,7 @@ describe("Telegram media activities", () => {
       universeId: UNIVERSE_A,
       accountId: "primary",
       botToken: token(),
-      core: new CoreClient({ endpoint: "http://lightspeed.test/rpc" }).forUniverse(UNIVERSE_A),
+      core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://lightspeed.test/rpc" }).forUniverse(UNIVERSE_A),
       api: { getFile },
     });
     const media = { fileId: "tg-file-1", kind: "image" as const, mime: "image/jpeg" };
@@ -84,7 +84,7 @@ describe("Telegram media activities", () => {
       universeId: UNIVERSE_A,
       accountId: "primary",
       botToken: rejected,
-      core: new CoreClient({ endpoint: "http://lightspeed.test/rpc" }).forUniverse(UNIVERSE_A),
+      core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://lightspeed.test/rpc" }).forUniverse(UNIVERSE_A),
       api: { getFile: async () => ({ file_path: "photo.jpg" }) },
       fetch: vi.fn(async () => new Response("unauthorized", { status: 401 })),
     });

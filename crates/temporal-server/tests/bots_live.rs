@@ -27,7 +27,7 @@ use api::{
     ProfileDocument, ProfileId, ProfileInstructions, SessionReadParams, SessionStatus,
     WebhookVerification,
 };
-use bots::ids::{bot_main_session_id, bot_schedule_id};
+use bots::ids::{bot_controller_workflow_id, bot_main_session_id, bot_schedule_id};
 use engine::{CoreAgentLlm, CoreAgentTools, storage::BlobStore};
 use support::live::{
     LIVE_TEST_LOCK, live_universe_id, openai_live_model, require_openai_live_env,
@@ -43,7 +43,7 @@ use temporal_server::{
     },
 };
 use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
-use temporalio_client::Client;
+use temporalio_client::{Client, WorkflowDescribeOptions};
 use temporalio_common::worker::WorkerTaskTypes;
 
 const WAIT: Duration = Duration::from_secs(90);
@@ -111,16 +111,24 @@ where
     let shutdown_bots = bots.shutdown_handle();
     let workers = async { tokio::try_join!(sessions_worker.run(), bots.run()).map(|_| ()) };
     tokio::pin!(workers);
-    let body = body(api.clone(), client.clone());
+    let body = temporal_server::gateway::request_context::with_request_context(
+        support::live::local_request_context().await?,
+        body(api.clone(), client.clone()),
+    );
     tokio::pin!(body);
     let result = tokio::select! {
         workers_result = workers.as_mut() => Err(anyhow::anyhow!("workers stopped early: {workers_result:?}")),
-        body_result = body.as_mut() => body_result,
+        body_result = support::live::bounded_live_test("bots_live", support::live::LIVE_TEST_BUDGET, body.as_mut()) => body_result,
     };
     shutdown_sessions();
     shutdown_bots();
-    let _ = tokio::time::timeout(Duration::from_secs(10), workers.as_mut()).await;
-    result
+    let shutdown_result = support::live::bounded_live_test(
+        "worker shutdown",
+        Duration::from_secs(10),
+        workers.as_mut(),
+    )
+    .await;
+    result.and(shutdown_result)
 }
 
 fn unique(prefix: &str) -> String {
@@ -224,8 +232,15 @@ async fn wait_for_outcomes(
             return Ok(events);
         }
         if started.elapsed() > WAIT {
+            let state = api
+                .read_bot_state(BotStateReadParams {
+                    bot_id: bot_id.clone(),
+                })
+                .await?
+                .result
+                .state;
             anyhow::bail!(
-                "timed out waiting for {expected} outcomes on bot {bot_id}; events: {events:#?}"
+                "timed out waiting for {expected} outcomes on bot {bot_id}; state: {state:#?}; events: {events:#?}"
             );
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -256,6 +271,44 @@ where
             anyhow::bail!("timed out waiting for bot {bot_id} controller state; last: {state:#?}");
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// Wait until the bot's controller shows `applied` and has nothing in
+/// flight: no activity pending and no workflow task scheduled. A test that
+/// ends right after a configuration change waits for this, or the session
+/// reconcile the change caused is still talking to the session worker when
+/// the workers shut down.
+async fn wait_for_controller_settled<F>(
+    api: &GatewayAgentApi,
+    client: &Client,
+    bot_id: &BotId,
+    applied: F,
+) -> anyhow::Result<()>
+where
+    F: Fn(&api::BotControllerSnapshot) -> bool,
+{
+    wait_for_controller(api, bot_id, |controller| controller.is_some_and(&applied)).await?;
+    let handle = client.get_workflow_handle::<temporal_workflow::BotControllerWorkflow>(
+        bot_controller_workflow_id(live_universe_id()?, bot_id),
+    );
+    let started = Instant::now();
+    loop {
+        let description = handle
+            .describe(WorkflowDescribeOptions::default())
+            .await?
+            .raw_description;
+        if description.pending_activities.is_empty() && description.pending_workflow_task.is_none()
+        {
+            return Ok(());
+        }
+        if started.elapsed() > WAIT {
+            anyhow::bail!(
+                "bot {bot_id} controller never settled: {} pending activities",
+                description.pending_activities.len()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -329,6 +382,123 @@ async fn bots_live_manual_event_runs_and_records_outcome() -> anyhow::Result<()>
             .result;
         assert!(duplicate.duplicate);
         assert_eq!(duplicate.event.seq, 1);
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires the local Temporal + PostgreSQL stack (source scripts/dev/env.sh)"]
+async fn bots_live_hmac_webhook_verifies_without_a_caller() -> anyhow::Result<()> {
+    run_bots_live(Llm::Fake, |api, _client| async move {
+        let profile_id = create_profile(&api, "You are a live-test bot.").await?;
+        let secret = format!("signing-{}", uuid::Uuid::new_v4().simple());
+        let grant_id = api
+            .import_auth_grant(api::AuthGrantImportParams {
+                grant_id: None,
+                provider_id: None,
+                exposure: api::AuthGrantExposure::Retrievable,
+                token: secret.clone(),
+                display_name: Some("Webhook signing secret".to_owned()),
+                subject_hint: None,
+                scopes: Vec::new(),
+                audience: None,
+                expires_at_ms: None,
+                metadata: None,
+            })
+            .await?
+            .result
+            .grant
+            .grant_id;
+        let trigger_id = BotTriggerId::new("signed");
+        let bot_id = create_bot(
+            &api,
+            &profile_id,
+            |_| {},
+            vec![BotTriggerInput {
+                trigger_id: trigger_id.clone(),
+                document: BotTriggerDocument {
+                    spec: BotTriggerSpec::Webhook {
+                        verification: WebhookVerification::HmacSha256 {
+                            grant_id,
+                            header: "x-signature".to_owned(),
+                            prefix: Some("sha256=".to_owned()),
+                            audience: None,
+                        },
+                        preset: None,
+                    },
+                    filter: None,
+                    route: None,
+                    coalesce: None,
+                    deliver: None,
+                    session_close_after_ms: None,
+                    enabled: true,
+                },
+                pairing_code: None,
+            }],
+        )
+        .await?;
+        let trigger = api
+            .read_bot_trigger(api::BotTriggerReadParams {
+                bot_id: bot_id.clone(),
+                trigger_id: trigger_id.clone(),
+            })
+            .await?
+            .result
+            .trigger;
+        let ingest_path = trigger.ingest_path.expect("webhook ingest path");
+        let token = ingest_path.rsplit('/').next().expect("token").to_owned();
+
+        // The public ingest route has no caller: run it outside the test's
+        // request context, exactly as the HTTP edge does. The stored trigger,
+        // not a caller, names the signing secret.
+        let deliver = |signature: String| {
+            let (api, bot_id, trigger_id, token) = (
+                api.clone(),
+                bot_id.clone(),
+                trigger_id.clone(),
+                token.clone(),
+            );
+            tokio::spawn(async move {
+                let headers = [("x-signature".to_owned(), signature)]
+                    .into_iter()
+                    .collect();
+                api.ingest_bot_webhook(
+                    bot_id.as_str(),
+                    trigger_id.as_str(),
+                    &token,
+                    headers,
+                    br#"{"kind":"deploy"}"#,
+                )
+                .await
+            })
+        };
+        let signed = format!(
+            "sha256={}",
+            bots::webhook::hmac_sha256_hex(&secret, br#"{"kind":"deploy"}"#)
+        );
+        let admitted = deliver(signed).await?;
+        assert!(
+            matches!(
+                admitted,
+                temporal_server::bots::hooks::WebhookIngestOutcome::Admitted { .. }
+            ),
+            "{admitted:?}"
+        );
+        let forged = deliver(format!(
+            "sha256={}",
+            bots::webhook::hmac_sha256_hex("not-the-secret", br#"{"kind":"deploy"}"#)
+        ))
+        .await?;
+        assert!(
+            !matches!(
+                forged,
+                temporal_server::bots::hooks::WebhookIngestOutcome::Admitted { .. }
+                    | temporal_server::bots::hooks::WebhookIngestOutcome::SecretUnavailable { .. }
+            ),
+            "{forged:?}"
+        );
+        wait_for_outcomes(&api, &bot_id, 1).await?;
         Ok(())
     })
     .await
@@ -574,6 +744,10 @@ async fn bots_live_schedule_trigger_reconciles_temporal_schedule() -> anyhow::Re
             handle.describe().await.is_err(),
             "schedule deleted with the trigger"
         );
+        // Disabling reconciles the main session; let it finish before the
+        // workers stop.
+        wait_for_controller_settled(&api, &client, &bot_id, |controller| !controller.enabled)
+            .await?;
         Ok(())
     })
     .await
@@ -647,6 +821,8 @@ async fn bots_live_close_and_delete_tear_down() -> anyhow::Result<()> {
             .await;
         assert!(refused.is_err(), "closed bots refuse events");
 
+        // Bot sessions are shared with their universe.
+        assert_eq!(session.access.visibility, api::Visibility::Universe);
         let deleted = api
             .delete_bot(BotDeleteParams {
                 bot_id: bot_id.clone(),

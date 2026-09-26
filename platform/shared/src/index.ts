@@ -20,17 +20,33 @@ export const universeUpdateSchema = z.object({
 });
 export type UniverseUpdateInput = z.infer<typeof universeUpdateSchema>;
 
+/// Member roles, least to most. A universe is an organization; its members
+/// hold exactly one of these.
+export const UNIVERSE_ROLES = ["viewer", "contributor", "operator", "admin"] as const;
+export const universeRoleSchema = z.enum(UNIVERSE_ROLES);
+export type UniverseRole = z.infer<typeof universeRoleSchema>;
+
+/// Whether `role` meets `required`.
+export function roleAtLeast(role: UniverseRole, required: UniverseRole): boolean {
+  return UNIVERSE_ROLES.indexOf(role) >= UNIVERSE_ROLES.indexOf(required);
+}
+
 export const memberAddSchema = z
   .object({
     userId: z.string().min(1).optional(),
     email: z.email().optional(),
-    role: z.enum(["owner", "admin", "member"]).default("member"),
+    role: universeRoleSchema.default("contributor"),
   })
   .refine((value) => !!value.userId || !!value.email, {
     message: "userId or email is required",
   });
 
 export type MemberAddInput = z.infer<typeof memberAddSchema>;
+
+export const memberUpdateSchema = z.object({
+  role: universeRoleSchema,
+});
+export type MemberUpdateInput = z.infer<typeof memberUpdateSchema>;
 
 export const workspaceCreateSchema = z.object({
   /// Gateway workspace id; minted from the display name (or randomly) when

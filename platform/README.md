@@ -155,12 +155,83 @@ The authoritative configuration reference is
 Platform server, connector host, Configurator MCP, and development-only
 settings.
 
-Platform admins manage invite-only user accounts under **Admin → Users**. They
-can update a user's name, verified sign-in email, platform role, and password;
-password resets revoke that user's active sessions. Signed-in users can update
-their own display name and password under **Account**. Self-service email
-changes stay disabled until the deployment provides an email-verification
-sender.
+The universe sidebar groups the work (Bots, Sessions, Profiles, Workspaces),
+**Resources** agents use (Environments, MCP servers), **Access** (Models,
+Credentials, API keys, Members) and the universe's **Settings** (General, Channels,
+Templates) at flat `/u/:slug/...` routes; bare `/u/:slug/settings` opens the
+first settings page the caller may see. Models holds model provider keys,
+compatible endpoints and coding-agent subscriptions. Credentials lists reusable
+tokens, environment secrets, GitHub App installations and custom OAuth grants;
+model and MCP server logins stay on their own pages, while credential pickers
+still offer every grant. Credentials, Channels and Templates are for Operators
+and Admins; API keys and General are for Admins.
+
+## People, universes and access
+
+The Platform owns people; core knows universes, keys and opaque actors, and
+records who asked for each run, steer, cancellation and approval.
+
+**Accounts.** Better Auth signs people in with email and password, and with
+GitHub when configured; public sign-up is closed. The first platform admin
+comes from `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
+`LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`. Platform admins (the Better Auth `admin`
+role) create accounts under **Admin → Users**, where they also change a user's
+name, verified email, platform-admin role and password; a password reset
+revokes the user's sessions. Signed-in users change their own name and
+password under **Account**. Self-service email changes wait for an
+email-verification sender.
+
+**Universes and roles.** A universe is an organization. Its members hold one of
+four roles, least to most:
+
+| Role | May |
+| --- | --- |
+| viewer | read shared work |
+| contributor | also start and continue sessions and runs, invoke bots, share their own sessions |
+| operator | also configure profiles, bots, environments, MCP servers, credentials and channels |
+| admin | also manage members and keys, and read, share and delete any session |
+
+A universe's creator is its admin, and a universe always keeps one. A platform
+admin acts as an admin in every universe. Universe admins manage members on
+**Members**; every member sees names and roles, and admins also see emails.
+The organization plugin's own endpoints are not served: membership changes only
+through the universe routes.
+
+**The gate.** The server decides before a request reaches core. Every core call
+a route makes for a member goes through one client
+(`server/src/runtime-client.ts`), which:
+
+- requires the member's role to meet the method's role, from
+  `server/src/routes/method-roles.ts`. That table is generated from the core
+  method manifest by `node platform/scripts/generate-method-roles.mjs`, and
+  `npm run check` fails when it is stale;
+- for a method that names a session, unless the member is an admin, requires the
+  session to be shared with the universe or created by the member; sharing and
+  deleting need its creator;
+- narrows a member's session list to shared work and their own; and
+- calls core with the Platform's deployment key, naming the universe and the
+  member as the actor.
+
+The Platform's own refusals are 403 and 404. Core refusing the Platform is a
+server fault (500 or 502), since the member was already admitted. The web's
+permission hints come from the same role and never replace these checks.
+
+**Unshared work.** Sessions start unshared: their creator and the universe's
+admins see them. **Share with universe** in the session header shares a session
+and its sub-agents, once and for good, and lists mark unshared sessions. Bots
+and their conversations are always shared. General settings says this once.
+
+**Keys.** `LIGHTSPEED_PLATFORM_API_KEY` is the Platform's deployment key, with
+every method group and allowed to assert actors (`server api-key bootstrap`).
+The runtime must run in `authenticated` mode, and connector hosts use their own
+`LIGHTSPEED_CONNECTOR_API_KEY`. Universe admins mint keys for their universe
+under **API keys** (every universe group, no actor). Platform admins see and
+mint every key under **Admin → API keys**, choosing what a key reaches (the
+deployment or one universe), the method groups it may call, and whether it
+speaks for people. A secret is shown once; keys never change, so revoke and mint
+instead. The Configurator template mints its own universe key with the
+configuration groups; anyone who can attach its MCP server configures the
+universe with that key. Operators see the template, and only Admins install it.
 
 ## Development
 
@@ -219,6 +290,9 @@ Development defaults use `admin@lightspeed.dev` and
 `lightspeed-dev-password`. Override them with
 `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`.
 These defaults are local-only and must never be used in a deployed environment.
+The default full launcher also seeds a Test universe with Operator, Contributor,
+and Viewer logins using the same initial password; see
+[development logins](../docs/documentation/development/local-development.md#development-logins).
 
 The server accepts the following primary configuration names:
 

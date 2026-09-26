@@ -81,6 +81,7 @@ async fn openai_responses_live_engine_prunes_and_reuses_provider_compaction() {
             session_id: session_id.clone(),
             observed_at_ms: 20,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                requested_by: None,
                 notify_on_terminal: Vec::new(),
                 submission_id: None,
                 source: engine::RunRequestSource::Input {
@@ -136,6 +137,7 @@ async fn openai_responses_live_engine_prunes_and_reuses_provider_compaction() {
             session_id,
             observed_at_ms: 30,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                requested_by: None,
                 notify_on_terminal: Vec::new(),
                 submission_id: None,
                 source: engine::RunRequestSource::Input {

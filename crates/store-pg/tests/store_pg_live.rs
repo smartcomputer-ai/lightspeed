@@ -4,8 +4,8 @@ use auth::{
     AuthFlowId, AuthFlowStore, AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
     AuthProviderKind, AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord,
     CreateOAuthClientRecord, FinishAuthFlow, GrantRefreshLock, ListAuthGrants, OAuthClientId,
-    OAuthClientStore, PrincipalRef, PutSecretRecord, SECRET_KIND_STATIC_BEARER, SecretId,
-    SecretStore, SecretValue, TokenEndpointAuthMethod, state_hash,
+    OAuthClientStore, PutSecretRecord, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore,
+    SecretValue, TokenEndpointAuthMethod, state_hash,
 };
 use engine::{
     BlobRef, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
@@ -628,7 +628,7 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
-async fn pg_live_operator_universe_lifecycle_stats_and_purge() {
+async fn pg_live_deployment_universe_lifecycle_stats_and_purge() {
     // inline_threshold 8: the second blob lands in the object store, so the
     // purge has real external bytes to sweep.
     let store = live_store("operator-universe", 8).await;
@@ -1900,7 +1900,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
         provider_id: "static".to_owned(),
         provider_kind: AuthProviderKind::StaticBearer,
         exposure: auth::AuthGrantExposure::Brokered,
-        principal: PrincipalRef::universe_default(),
+        created_by: api::Attribution::Local,
         display_name: Some("CRM MCP".to_owned()),
         subject_hint: None,
         scopes: Vec::new(),
@@ -2309,7 +2309,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
             provider_id: "static".to_owned(),
             provider_kind: AuthProviderKind::StaticBearer,
             exposure: auth::AuthGrantExposure::Brokered,
-            principal: PrincipalRef::universe_default(),
+            created_by: api::Attribution::Local,
             display_name: Some("CRM token".to_owned()),
             subject_hint: None,
             scopes: vec!["contacts.read".to_owned()],
@@ -2335,7 +2335,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
                     provider_id: "static".to_owned(),
                     provider_kind: AuthProviderKind::StaticBearer,
                     exposure: auth::AuthGrantExposure::Brokered,
-                    principal: PrincipalRef::universe_default(),
+                    created_by: api::Attribution::Local,
                     display_name: None,
                     subject_hint: None,
                     scopes: Vec::new(),
@@ -2454,7 +2454,7 @@ async fn pg_live_auth_flows_are_one_time_use() {
             provider_id: "crm".to_owned(),
             provider_kind: AuthProviderKind::McpOAuth,
             grant_exposure: auth::AuthGrantExposure::Brokered,
-            principal: PrincipalRef::universe_default(),
+            created_by: api::Attribution::Local,
             state_hash: state_hash(state),
             pkce_verifier_secret: SecretId::new("authsec_pkce_live"),
             redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
@@ -2528,7 +2528,7 @@ async fn pg_live_auth_flows_are_one_time_use() {
             provider_id: "crm".to_owned(),
             provider_kind: AuthProviderKind::McpOAuth,
             grant_exposure: auth::AuthGrantExposure::Brokered,
-            principal: PrincipalRef::universe_default(),
+            created_by: api::Attribution::Local,
             state_hash: state_hash("state-live-2"),
             pkce_verifier_secret: SecretId::new("authsec_pkce_live2"),
             redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
@@ -2558,7 +2558,7 @@ async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
             provider_id: "crm".to_owned(),
             provider_kind: AuthProviderKind::McpOAuth,
             exposure: auth::AuthGrantExposure::Brokered,
-            principal: PrincipalRef::universe_default(),
+            created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: None,
             scopes: Vec::new(),
@@ -2736,7 +2736,7 @@ async fn pg_live_grant_metadata_round_trips() {
             provider_id: "lightspeed-github".to_owned(),
             provider_kind: AuthProviderKind::GitHubApp,
             exposure: auth::AuthGrantExposure::Brokered,
-            principal: PrincipalRef::universe_default(),
+            created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: Some("acme".to_owned()),
             scopes: Vec::new(),
@@ -2849,7 +2849,7 @@ async fn pg_live_environment_credentials_round_trip() {
                 provider_id: provider.to_owned(),
                 provider_kind: kind,
                 exposure: auth::AuthGrantExposure::Brokered,
-                principal: PrincipalRef::universe_default(),
+                created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
                 scopes: Vec::new(),

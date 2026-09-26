@@ -7,6 +7,7 @@ const key = Buffer.alloc(32, 1).toString("base64");
 describe("connector host configuration", () => {
   it("defaults to every provider and every account", () => {
     const config = parseHostConfig({
+      LIGHTSPEED_CONNECTOR_API_KEY: "lsk_test_connector",
       LIGHTSPEED_API_URL: "http://127.0.0.1:18080/rpc",
       LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR: "/var/lib/wa",
       LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY: key,
@@ -30,6 +31,7 @@ describe("connector host configuration", () => {
       "LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR is required",
     );
     const telegramOnly = parseHostConfig({
+      LIGHTSPEED_CONNECTOR_API_KEY: "lsk_test_connector",
       LIGHTSPEED_API_URL: "http://core/rpc",
       LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram",
       LIGHTSPEED_CONNECTOR_ACCOUNTS: `${UNIVERSE_A}/tg-main, ${UNIVERSE_B}/tg-b,${UNIVERSE_A}/tg-main`,

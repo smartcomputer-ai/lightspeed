@@ -1,8 +1,8 @@
 //! JSON-RPC method and notification names.
 //!
 //! The first segment of a method name is its addressing scope: `session/`
-//! methods act inside one session (params carry `sessionId`), `operator/`
-//! methods (see [`crate::operator`]) address the deployment, and every other
+//! methods act inside one session (params carry `sessionId`), `deployment/`
+//! methods (see [`crate::deployment`]) address the deployment, and every other
 //! prefix is a universe-scoped catalog or stream. Collection segments are
 //! plural; uncountable facets (`context`, `mcp`) are singular; the
 //! verb is always the last segment.
@@ -25,6 +25,7 @@ pub const METHOD_SESSION_METADATA_PUT: &str = "session/metadata/put";
 pub const METHOD_SESSION_RETENTION_PUT: &str = "session/retention/put";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
 pub const METHOD_SESSION_DELETE: &str = "session/delete";
+pub const METHOD_SESSION_SHARE: &str = "session/share";
 
 // ── Sessions: facets (event log, tools, context, runs) ─────────────────────
 
@@ -76,6 +77,7 @@ pub const METHOD_VFS_SNAPSHOTS_COMMIT: &str = "vfs/snapshots/commit";
 pub const METHOD_VFS_SNAPSHOTS_READ: &str = "vfs/snapshots/read";
 pub const METHOD_VFS_WORKSPACES_CREATE: &str = "vfs/workspaces/create";
 pub const METHOD_VFS_WORKSPACES_READ: &str = "vfs/workspaces/read";
+pub const METHOD_VFS_WORKSPACES_FILES_READ: &str = "vfs/workspaces/files/read";
 pub const METHOD_VFS_WORKSPACES_LIST: &str = "vfs/workspaces/list";
 pub const METHOD_VFS_WORKSPACES_UPDATE: &str = "vfs/workspaces/update";
 pub const METHOD_VFS_WORKSPACES_DELETE: &str = "vfs/workspaces/delete";

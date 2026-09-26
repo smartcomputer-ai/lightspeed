@@ -198,6 +198,7 @@ async fn start(args: StartArgs) -> Result<()> {
             config: None,
             profile,
             delete_after_close_ms: args.delete_after_close_ms.map(Some),
+            access: None,
         })
         .await
         .map_err(api_error)?
@@ -370,6 +371,7 @@ async fn collect_sessions(
                 parent_session_id: selection.parent_session_id.clone(),
                 exclude_closed: false,
                 metadata: selection.metadata.clone(),
+                ..Default::default()
             })
             .await
             .map_err(api_error)?
@@ -530,6 +532,10 @@ mod tests {
             },
             managed: false,
             origin: None,
+            access: api::ResourceAccessSummary {
+                visibility: api::Visibility::Universe,
+                created_by: None,
+            },
             created_at_ms: 0,
             updated_at_ms: 0,
         };

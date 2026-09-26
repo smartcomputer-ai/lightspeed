@@ -20,6 +20,7 @@ function event(partial: Partial<BotEventView>): BotEventView {
 
 function bot(partial: Partial<BotListItem>): BotListItem {
   return {
+    access: { visibility: "universe" },
     botId: "triage",
     displayName: "Triage",
     profileId: "triage",

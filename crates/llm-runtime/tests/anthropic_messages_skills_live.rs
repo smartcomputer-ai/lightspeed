@@ -263,6 +263,7 @@ async fn anthropic_messages_live_selects_and_reads_the_matching_skill() {
             session_id,
             observed_at_ms: 20,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                requested_by: None,
                 notify_on_terminal: Vec::new(),
                 submission_id: None,
                 source: engine::RunRequestSource::Input {

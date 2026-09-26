@@ -13,9 +13,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startProcesses, waitForService as awaitService, tcpUp } from "./startup.mjs";
 
 const devDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(devDir, "..", "..");
@@ -73,19 +73,31 @@ for (const port of plan.ports) {
 }
 
 for (const preparation of plan.preparations) {
-  runChecked(preparation.name, preparation.command, preparation.args, preparation.env);
+  try {
+    runChecked(preparation.name, preparation.command, preparation.args, preparation.env);
+  } catch (error) {
+    console.error(`[prepare] ${error.message}`);
+    process.exit(1);
+  }
+}
+
+if (plan.profile === "full") {
+  const runtime = plan.processes.find((p) => p.name === "runtime");
+  if (runtime.env.LIGHTSPEED_AUTH_MODE === "authenticated" && !runtime.env.LIGHTSPEED_PLATFORM_API_KEY) {
+    console.log("[prepare] local development universe and Platform deployment key");
+    const result = spawnSync("cargo", ["run", "-p", "temporal-server", "--", "api-key", "bootstrap", "--universe-id", runtime.env.LIGHTSPEED_PG_UNIVERSE_ID], {
+      cwd: repoRoot, env: { ...runtime.env, RUST_LOG: "off" }, encoding: "utf8",
+    });
+    if (result.status !== 0) throw new Error(`development key bootstrap failed: ${result.stderr}`);
+    const credential = JSON.parse(result.stdout);
+    for (const processPlan of plan.processes) {
+      processPlan.env.LIGHTSPEED_PLATFORM_API_KEY = credential.secret;
+    }
+  }
 }
 
 try {
-  for (const processPlan of plan.processes) {
-    if (processPlan.startAfter) {
-      console.log(
-        `[startup] waiting for ${processPlan.startAfter.name} before ${processPlan.name}`,
-      );
-      await waitForService(processPlan.startAfter);
-    }
-    startProcess(processPlan);
-  }
+  await startProcesses(plan.processes, { start: startProcess, wait: waitForService });
   await waitForReadiness(plan);
 } catch (error) {
   console.error(`[readiness] ${error.message}`);
@@ -171,11 +183,7 @@ function createPlan(profile, sourceEnv) {
   const defaultConfiguratorMcpUrl = `http://127.0.0.1:${configuratorPort}/mcp`;
   const configuratorMcpUrl =
     sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL ?? defaultConfiguratorMcpUrl;
-  const configuratorInternalTrustedHeader =
-    sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER ??
-    (profile === "full" && !sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL
-      ? "true"
-      : "false");
+  const configuratorInternalTrustedHeader = "false";
   const runtimePort = addressPort(sourceEnv.LIGHTSPEED_GATEWAY_BIND, 18_080);
   const temporalAddress =
     sourceEnv.TEMPORAL_ADDRESS ?? `127.0.0.1:${sourceEnv.TEMPORAL_PORT ?? "7233"}`;
@@ -183,7 +191,7 @@ function createPlan(profile, sourceEnv) {
   // names; the frontend-only loop is `npm run demo` (in-browser backend).
   const platformApiUrl = runtimeRpc;
   const runtimeAuthMode =
-    sourceEnv.LIGHTSPEED_AUTH_MODE ?? (profile === "full" ? "trusted-header" : "single");
+    sourceEnv.LIGHTSPEED_AUTH_MODE ?? (profile === "full" ? "authenticated" : "single");
   // Local environment daemon: a directly attached `lightspeed-envd` on the
   // developer machine (no provider; registered as an external environment).
   const envdEnabled =
@@ -240,6 +248,9 @@ function createPlan(profile, sourceEnv) {
     LIGHTSPEED_PLATFORM_ADMIN_PASSWORD:
       sourceEnv.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD ??
       "lightspeed-dev-password",
+    LIGHTSPEED_PLATFORM_DEV_SEED:
+      sourceEnv.LIGHTSPEED_PLATFORM_DEV_SEED ??
+      (profile === "full" && runtimeAuthMode === "authenticated" ? "true" : "false"),
     LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL:
       configuratorMcpUrl,
     LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK:
@@ -313,6 +324,12 @@ function createPlan(profile, sourceEnv) {
         args: ["watch", "platform/server/src/main.ts"],
         cwd: repoRoot,
         env,
+        // First-login bootstrap checks the canonical administrator through RPC.
+        // Wait for the configured runtime in both full and platform-only loops.
+        startAfter: {
+          name: "runtime gateway",
+          url: new URL("health", platformApiUrl).href,
+        },
       },
       {
         name: "web",
@@ -419,9 +436,12 @@ function parseConnectors(value) {
 }
 
 // Provider tokens are leased from the core (`auth/grants/lease`), so a
-// Telegram connector needs no local credential. WhatsApp keeps its Baileys
+// Telegram connector leases provider credentials from core. WhatsApp keeps its Baileys
 // session on disk and seals media locators with a deployment key.
 function validateConnectorEnvironment(connectors, env) {
+  if (connectors.length > 0 && !env.LIGHTSPEED_CONNECTOR_API_KEY?.trim()) {
+    throw new TypeError("development connectors require LIGHTSPEED_CONNECTOR_API_KEY with scoped capabilities");
+  }
   if (!connectors.includes("whatsapp")) return;
   const missing = ["LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY"].filter(
     (name) => !env[name]?.trim(),
@@ -650,23 +670,8 @@ async function waitForReadiness(plan) {
   for (const service of plan.readiness) console.log(`  ready  ${service.name}`);
 }
 
-async function waitForService(service) {
-  const deadline = Date.now() + 60_000;
-  while (!stopping && Date.now() < deadline) {
-    const ready = service.url ? await httpUp(service.url) : await tcpUp(service.port);
-    if (ready) return;
-    await delay(250);
-  }
-  throw new Error(`${service.name} did not become ready within 60 seconds`);
-}
-
-async function httpUp(url) {
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
-    return response.ok;
-  } catch {
-    return false;
-  }
+function waitForService(service) {
+  return awaitService(service, { isStopping: () => stopping });
 }
 
 function runChecked(name, command, args, env) {
@@ -728,21 +733,6 @@ function waitForExit(child) {
   return new Promise((resolve) => child.once("exit", resolve));
 }
 
-function tcpUp(port) {
-  return new Promise((resolve) => {
-    const socket = net.connect({ port, host: "127.0.0.1", timeout: 500 });
-    socket.once("connect", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.once("error", () => resolve(false));
-    socket.once("timeout", () => {
-      socket.destroy();
-      resolve(false);
-    });
-  });
-}
-
 function printPlan(plan) {
   console.log(`profile: ${plan.profile}`);
   console.log(`infrastructure: ${plan.infra ? "postgres, pgadmin, minio, temporal" : "none"}`);
@@ -755,9 +745,13 @@ function printPlan(plan) {
     console.log(
       `process: ${processPlan.name} -> ${displayCommand(processPlan.command, processPlan.args)}`,
     );
+    if (processPlan.startAfter) {
+      console.log(`  after: ${processPlan.startAfter.name} -> ${processPlan.startAfter.url ?? processPlan.startAfter.port}`);
+    }
   }
   console.log(`connectors: ${plan.connectors.length > 0 ? plan.connectors.join(", ") : "none"}`);
   console.log(`runtime auth: ${plan.env.LIGHTSPEED_AUTH_MODE}`);
+  console.log(`development fixtures: ${plan.env.LIGHTSPEED_PLATFORM_DEV_SEED}`);
   console.log(
     `environment daemon: ${plan.envd ? `${plan.envd.endpoint} (workspace ${plan.envd.workspace})` : "off"}`,
   );
@@ -779,6 +773,10 @@ function printRunning(plan) {
     console.log(
       `  login         ${plan.env.LIGHTSPEED_PLATFORM_ADMIN_EMAIL} / ${plan.env.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD}`,
     );
+    if (plan.env.LIGHTSPEED_PLATFORM_DEV_SEED === "true") {
+      console.log("  Test logins   operator@lightspeed.dev, contributor@lightspeed.dev, viewer@lightspeed.dev");
+      console.log("  initial password  same as Admin (existing passwords are preserved)");
+    }
   }
   if (plan.profile === "demo") {
     console.log("  demo web      http://localhost:5175/demo/  (in-browser backend, scripted data, no sign-in)");

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { OperatorChannelAccountView } from "@lightspeed-ai/agent-client";
+import type { DeploymentChannelAccountView } from "@lightspeed-ai/agent-client";
 import { CoreClient } from "../src/core/client.js";
 import type { AccountRunnerLike } from "../src/host/account-runner.js";
 import { ConnectorHost } from "../src/host/host.js";
@@ -15,7 +15,7 @@ class FakeRunner implements AccountRunnerLike {
   stopped = 0;
   private hasFailed = false;
 
-  constructor(readonly account: OperatorChannelAccountView) {
+  constructor(readonly account: DeploymentChannelAccountView) {
     this.key = `${account.universeId}/${account.accountId}`;
     this.tracker = new ConnectorHealthTracker(account);
   }
@@ -42,13 +42,13 @@ class FakeRunner implements AccountRunnerLike {
 
 describe("connector host", () => {
   it("reconciles runners across discovery passes", async () => {
-    let listed: OperatorChannelAccountView[] = [
+    let listed: DeploymentChannelAccountView[] = [
       account({ accountId: "tg-main" }),
       account({ accountId: "wa-main", provider: "whatsapp", credentialGrantId: null }),
       account({ accountId: "tg-b", universeId: UNIVERSE_B }),
     ];
     const rpc = fakeRpc((method, params) => {
-      expect(method).toBe("operator/channels/accounts/list");
+      expect(method).toBe("deployment/channels/accounts/list");
       expect(params).toEqual({ includeDisabled: false });
       return { accounts: listed };
     });
@@ -61,7 +61,7 @@ describe("connector host", () => {
         health: null,
       },
       {
-        core: new CoreClient({ endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
+        core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
         createRunner: (candidate) => {
           const runner = new FakeRunner(candidate);
           const list = runners.get(runner.key) ?? [];
@@ -113,7 +113,7 @@ describe("connector host", () => {
     const host = new ConnectorHost(
       { providers: ["telegram", "whatsapp"], accounts: null, discoveryIntervalMs: 60_000, health: null },
       {
-        core: new CoreClient({ endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
+        core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
         createRunner: (candidate) => new FakeRunner(candidate),
         log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
       },
@@ -134,7 +134,7 @@ describe("connector host", () => {
     const host = new ConnectorHost(
       { providers: ["telegram"], accounts: null, discoveryIntervalMs: 60_000, health: { host: "127.0.0.1", port: 0 } },
       {
-        core: new CoreClient({ endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
+        core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
         createRunner: (candidate) => new FakeRunner(candidate),
         log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
       },
