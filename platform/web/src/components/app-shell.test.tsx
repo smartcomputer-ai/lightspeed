@@ -17,8 +17,8 @@ vi.mock("@/lib/universes", async (original) => ({
 vi.mock("@/components/universe-switcher", () => ({ UniverseSwitcher: () => null }));
 vi.mock("@/components/user-menu", () => ({ UserMenu: () => null }));
 
-const WORK = ["Bots", "Sessions", "Profiles", "Workspaces"];
-const RESOURCES = ["Environments", "MCP servers"];
+const WORK = ["Bots", "Sessions"];
+const SETUP = ["Profiles", "Workspaces", "Models", "Environments", "MCP servers"];
 
 let root: Root;
 let container: HTMLDivElement;
@@ -66,19 +66,19 @@ async function sidebarFor(role: string): Promise<Record<string, string[]>> {
   ]));
 }
 
-it.each(["viewer", "contributor"])("shows a %s the work, resources and readable access pages", async (role) => {
+it.each(["viewer", "contributor"])("shows a %s the work, the setup and readable access pages", async (role) => {
   expect(await sidebarFor(role)).toEqual({
     "": WORK,
-    Resources: RESOURCES,
-    Access: ["Models", "Members"],
+    Setup: SETUP,
+    Access: ["Members"],
   });
 });
 
 it("adds credentials, channels and templates for an Operator", async () => {
   expect(await sidebarFor("operator")).toEqual({
     "": WORK,
-    Resources: RESOURCES,
-    Access: ["Models", "Credentials", "Members"],
+    Setup: SETUP,
+    Access: ["Credentials", "Members"],
     Settings: ["Channels", "Templates"],
   });
 });
@@ -86,8 +86,8 @@ it("adds credentials, channels and templates for an Operator", async () => {
 it("adds API keys and general settings for an Admin", async () => {
   expect(await sidebarFor("admin")).toEqual({
     "": WORK,
-    Resources: RESOURCES,
-    Access: ["Models", "Credentials", "API keys", "Members"],
+    Setup: SETUP,
+    Access: ["Credentials", "API keys", "Members"],
     Settings: ["General", "Channels", "Templates"],
   });
 });
@@ -95,9 +95,9 @@ it("adds API keys and general settings for an Admin", async () => {
 it("links each page at its flat route", async () => {
   await sidebarFor("admin");
   expect([...container.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
-    "/u/test/bots", "/u/test/sessions", "/u/test/profiles", "/u/test/workspaces",
-    "/u/test/environments", "/u/test/mcp-servers",
-    "/u/test/models", "/u/test/credentials", "/u/test/api-keys", "/u/test/members",
+    "/u/test/bots", "/u/test/sessions",
+    "/u/test/profiles", "/u/test/workspaces", "/u/test/models", "/u/test/environments", "/u/test/mcp-servers",
+    "/u/test/credentials", "/u/test/api-keys", "/u/test/members",
     "/u/test/settings/general", "/u/test/settings/channels", "/u/test/settings/templates",
   ]);
 });

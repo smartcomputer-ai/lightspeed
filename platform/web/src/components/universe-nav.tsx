@@ -40,22 +40,24 @@ const SETTINGS_NAV: UniverseNavItem[] = [
   { path: "settings/templates", label: "Templates", icon: PackageOpen, action: "configure_resource" },
 ];
 
-/// The work itself, the resources agents use, access (model providers,
-/// credentials, keys and members), and the universe's settings. A group renders only when one of its items
-/// is visible.
+/// The work itself, the setup agents are made from, access (credentials,
+/// keys and members), and the universe's settings. A group renders only when
+/// one of its items is visible.
 export const UNIVERSE_NAV: UniverseNavGroup[] = [
   {
     // Unlabelled: the universe switcher above already names the universe.
     items: [
       { path: "bots", label: "Bots", icon: BotFaceIcon, action: "read" },
       { path: "sessions", label: "Sessions", icon: MessagesSquare, action: "read" },
-      { path: "profiles", label: "Profiles", icon: SlidersHorizontal, action: "read" },
-      { path: "workspaces", label: "Workspaces", icon: FolderGit2, action: "read" },
     ],
   },
   {
-    label: "Resources",
+    // What a session's setup attaches; a profile is the saved recipe.
+    label: "Setup",
     items: [
+      { path: "profiles", label: "Profiles", icon: SlidersHorizontal, action: "read" },
+      { path: "workspaces", label: "Workspaces", icon: FolderGit2, action: "read" },
+      { path: "models", label: "Models", icon: BrainCircuit, action: "read" },
       { path: "environments", label: "Environments", icon: Boxes, action: "read" },
       { path: "mcp-servers", label: "MCP servers", icon: Server, action: "read" },
     ],
@@ -63,7 +65,6 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
   {
     label: "Access",
     items: [
-      { path: "models", label: "Models", icon: BrainCircuit, action: "read" },
       { path: "credentials", label: "Credentials", icon: LockKeyhole, action: "configure_resource" },
       { path: "api-keys", label: "API keys", icon: KeyRound, action: "manage_access" },
       { path: "members", label: "Members", icon: Users, action: "read" },

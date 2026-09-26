@@ -46,7 +46,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
     <div className="flex min-h-0 min-w-0 flex-1">
       <aside
         className={cn(
-          "w-full shrink-0 flex-col border-r md:flex md:w-72",
+          "w-full shrink-0 flex-col border-r md:flex md:w-80",
           botId ? "hidden" : "flex",
         )}
       >
