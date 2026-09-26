@@ -23,7 +23,7 @@ export function HomeRedirect({ admin }: { admin: boolean }) {
   const last = lastUniverse();
   const target = mine.find((u) => u.slug === last) ?? mine[0];
   if (target) {
-    return <Navigate to={universeHome(target.slug)} replace />;
+    return <Navigate to={universeHome(target)} replace />;
   }
 
   return (

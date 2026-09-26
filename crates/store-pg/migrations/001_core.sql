@@ -183,6 +183,19 @@ CREATE INDEX IF NOT EXISTS sessions_retention_due_idx
 CREATE INDEX IF NOT EXISTS sessions_metadata_idx
     ON sessions USING gin (metadata_json jsonb_path_ops);
 
+-- What a session is doing now, for lists: a row only while a run is working
+-- or waiting for approvals, written with the events that change it. Idle
+-- sessions have no row; the event log remains authoritative.
+CREATE TABLE IF NOT EXISTS session_activity (
+    universe_id uuid NOT NULL,
+    session_id text NOT NULL,
+    activity text NOT NULL CHECK (activity IN ('working', 'waiting')),
+    since_ms bigint NOT NULL CHECK (since_ms >= 0),
+    PRIMARY KEY (universe_id, session_id),
+    FOREIGN KEY (universe_id, session_id)
+        REFERENCES sessions (universe_id, session_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS session_events (
     universe_id uuid NOT NULL,
     session_id text NOT NULL,

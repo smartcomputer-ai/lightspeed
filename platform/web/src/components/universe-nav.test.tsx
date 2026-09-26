@@ -28,7 +28,16 @@ const DESTINATIONS: [string, string][] = [
 ];
 
 it.each(DESTINATIONS)("resolves bare settings for a %s to %s", (role, path) => {
-  expect(settingsIndexPath("test", (action) => ROLE_ACTIONS[role]!.includes(action))).toBe(path);
+  expect(settingsIndexPath({ slug: "test" }, (action) => ROLE_ACTIONS[role]!.includes(action))).toBe(path);
+});
+
+it("skips a switched-off settings page, and lands on sessions when bots are off", () => {
+  const operator = (action: PermissionAction) => ROLE_ACTIONS.operator!.includes(action);
+  expect(settingsIndexPath({ slug: "test", features: { bots: true, channels: false } }, operator))
+    .toBe("/u/test/settings/templates");
+  const viewer = (action: PermissionAction) => ROLE_ACTIONS.viewer!.includes(action);
+  expect(settingsIndexPath({ slug: "test", features: { bots: false, channels: false } }, viewer))
+    .toBe("/u/test/sessions");
 });
 
 let root: Root;

@@ -49,6 +49,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { CronBuilder } from "./cron-builder";
 import { deliverySentence, deliveryShapeOf, describeCron, triggerSummary } from "./trigger-summary";
+import { useFeature } from "@/lib/universes";
 
 export const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -2416,7 +2417,7 @@ export function TriggerKindFields({
   }
 }
 
-/** The six ways a bot can be woken, as pickable cards. */
+/** The ways a bot can be woken, as pickable cards. */
 export function TriggerKindPicker({
   env,
   onPick,
@@ -2428,6 +2429,8 @@ export function TriggerKindPicker({
   className?: string;
   exclude?: TriggerKind[];
 }) {
+  // Chat accounts are the channels feature; with it off they are not offered.
+  const channelsOn = useFeature("channels");
   return (
     <div className={cn("grid content-start gap-3 sm:grid-cols-2", className)}>
       <TriggerKindChoice
@@ -2442,12 +2445,14 @@ export function TriggerKindPicker({
         description="When something happens elsewhere: GitHub, an alerting tool, your own systems."
         onClick={() => onPick("webhook")}
       />
-      <TriggerKindChoice
-        icon={<MessageCircle className="size-5" />}
-        title="Chat account"
-        description="Messages from people on Telegram or WhatsApp; each conversation becomes a thread."
-        onClick={() => onPick("chat")}
-      />
+      {channelsOn && !exclude.includes("chat") && (
+        <TriggerKindChoice
+          icon={<MessageCircle className="size-5" />}
+          title="Chat account"
+          description="Messages from people on Telegram or WhatsApp; each conversation becomes a thread."
+          onClick={() => onPick("chat")}
+        />
+      )}
       {!exclude.includes("bot") && (
         <TriggerKindChoice
           icon={<Inbox className="size-5" />}

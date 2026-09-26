@@ -60,7 +60,7 @@ export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean })
               />
             }
           >
-            <Avatar className="size-8 rounded-lg">
+            <Avatar className="size-8 shrink-0 rounded-lg">
               <AvatarFallback className="rounded-lg text-xs">
                 {initials(user.name)}
               </AvatarFallback>

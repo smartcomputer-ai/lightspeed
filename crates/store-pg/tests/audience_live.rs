@@ -2,7 +2,11 @@
 use std::{panic::AssertUnwindSafe, str::FromStr};
 
 use api::{Attribution, ResourceRef, Visibility};
-use engine::storage::{CreateSession, SessionOrigin, SessionOriginKind, SessionStore as _};
+use engine::StoredEvent;
+use engine::storage::{
+    AppendSessionEvents, CreateSession, ListSessions, SessionActivity, SessionOrigin,
+    SessionOriginKind, SessionStore as _, UncommittedStoredEvent,
+};
 use engine::{SessionId, SubagentLimits};
 use futures_util::FutureExt as _;
 use sqlx::{
@@ -72,15 +76,15 @@ async fn create(store: &PgStore, id: &str, parent: Option<&str>) {
 }
 
 async fn listed(store: &PgStore, filter: AccessFilter) -> Vec<String> {
+    listed_where(store, filter, ListSessions::default()).await
+}
+
+async fn listed_where(store: &PgStore, filter: AccessFilter, request: ListSessions) -> Vec<String> {
     let mut ids: Vec<String> = store
         .list_sessions_for(
-            engine::storage::ListSessions {
-                cursor: None,
+            ListSessions {
                 limit: 100,
-                root_session_id: None,
-                parent_session_id: None,
-                exclude_closed: false,
-                metadata: Default::default(),
+                ..request
             },
             &filter,
         )
@@ -195,28 +199,6 @@ async fn exercise(pool: &sqlx::PgPool) {
         .await,
         vec!["bob-shared", "bot:v1:helper:main"]
     );
-    assert_eq!(
-        listed(
-            &sessions,
-            AccessFilter {
-                created_by: Some("alice".into()),
-                ..Default::default()
-            }
-        )
-        .await,
-        vec!["agent_child", "draft"]
-    );
-    assert_eq!(
-        listed(
-            &sessions,
-            AccessFilter {
-                visibility: Some(Visibility::Restricted),
-                ..Default::default()
-            }
-        )
-        .await,
-        vec!["agent_child", "draft"]
-    );
     // Internal work sees shared work and its own root.
     assert_eq!(
         listed(
@@ -239,6 +221,144 @@ async fn exercise(pool: &sqlx::PgPool) {
         )
         .await,
         vec!["bob-shared", "bot:v1:helper:main"]
+    );
+
+    // Managed work can be left out of a list or listed alone, and trees
+    // listed by their roots; sub-agents follow their root either way.
+    create(&sessions, "bot-child", Some("bot:v1:helper:main")).await;
+    sqlx::query("UPDATE sessions SET managed = true WHERE session_id = 'bot:v1:helper:main'")
+        .execute(pool)
+        .await
+        .unwrap();
+    let lineage = |request: ListSessions| {
+        let sessions = sessions.clone();
+        async move { listed_where(&sessions, AccessFilter::default(), request).await }
+    };
+    let ids = |ids: &[&str]| ids.iter().map(|id| SessionId::new(*id)).collect::<Vec<_>>();
+    assert_eq!(
+        lineage(ListSessions {
+            managed: Some(false),
+            ..Default::default()
+        })
+        .await,
+        vec!["agent_child", "bob-shared", "draft"]
+    );
+    assert_eq!(
+        lineage(ListSessions {
+            managed: Some(true),
+            ..Default::default()
+        })
+        .await,
+        vec!["bot-child", "bot:v1:helper:main"]
+    );
+    assert_eq!(
+        lineage(ListSessions {
+            trees: ids(&["bot:v1:helper:main", "draft"]),
+            ..Default::default()
+        })
+        .await,
+        vec!["agent_child", "bot-child", "bot:v1:helper:main", "draft"]
+    );
+    assert_eq!(
+        lineage(ListSessions {
+            trees: ids(&["draft"]),
+            subagent: Some(true),
+            ..Default::default()
+        })
+        .await,
+        vec!["agent_child"]
+    );
+    assert_eq!(
+        lineage(ListSessions {
+            subagent: Some(false),
+            ..Default::default()
+        })
+        .await,
+        vec!["bob-shared", "bot:v1:helper:main", "draft"]
+    );
+    assert_eq!(
+        lineage(ListSessions {
+            parent: Some(SessionId::new("bot:v1:helper:main")),
+            ..Default::default()
+        })
+        .await,
+        vec!["bot-child"]
+    );
+    sqlx::query(
+        "UPDATE sessions SET lifecycle_status = 'closed', closed_at_seq = 1, closed_at_ms = 1
+         WHERE session_id = 'bob-shared'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        lineage(ListSessions {
+            closed: Some(true),
+            ..Default::default()
+        })
+        .await,
+        vec!["bob-shared"]
+    );
+    assert_eq!(
+        lineage(ListSessions {
+            closed: Some(false),
+            subagent: Some(false),
+            ..Default::default()
+        })
+        .await,
+        vec!["bot:v1:helper:main", "draft"]
+    );
+    sqlx::query(
+        "UPDATE sessions SET lifecycle_status = 'new', closed_at_seq = NULL, closed_at_ms = NULL
+         WHERE session_id = 'bob-shared'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    // The row keeps what a session is doing now, for lists.
+    let append = |kinds: &'static [&'static str]| {
+        let sessions = sessions.clone();
+        async move {
+            let id = SessionId::new("bob-shared");
+            let head = sessions.load_session(&id).await.unwrap().unwrap().head;
+            sessions
+                .append(AppendSessionEvents {
+                    session_id: id.clone(),
+                    expected_head: head,
+                    events: kinds
+                        .iter()
+                        .map(|kind| UncommittedStoredEvent {
+                            observed_at_ms: 5,
+                            joins: Default::default(),
+                            event: StoredEvent::new(*kind, 1, serde_json::json!({})),
+                        })
+                        .collect(),
+                })
+                .await
+                .unwrap();
+            sessions.load_session(&id).await.unwrap().unwrap().activity
+        }
+    };
+    assert_eq!(
+        append(&["lightspeed.core.run.started"]).await,
+        SessionActivity::Working
+    );
+    assert_eq!(
+        append(&[
+            "lightspeed.core.approval.requested",
+            "lightspeed.core.approval.run_parked"
+        ])
+        .await,
+        SessionActivity::Waiting
+    );
+    assert_eq!(
+        append(&[
+            "lightspeed.core.approval.decided",
+            "lightspeed.core.run.completed"
+        ])
+        .await,
+        SessionActivity::Idle
     );
 
     // Sharing is one way and only for root sessions; children follow.

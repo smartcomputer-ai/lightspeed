@@ -997,12 +997,9 @@ async fn load_session_snapshots(
     loop {
         let page = sessions
             .list_sessions(ListSessions {
-                metadata: Default::default(),
                 cursor,
                 limit: SESSION_PAGE_LIMIT,
-                root_session_id: None,
-                parent_session_id: None,
-                exclude_closed: false,
+                ..Default::default()
             })
             .await?;
         for record in page.sessions {
@@ -1717,6 +1714,7 @@ mod tests {
                             lifecycle_status: engine::storage::SessionLifecycleStatus::New,
                             closed_at_seq: None,
                             closed_at_ms: None,
+                            activity: Default::default(),
                             retention_root_session_id: session_id,
                             delete_after_close_ms: None,
                             delete_at_ms: None,

@@ -117,6 +117,7 @@ impl<'a> CoreAgentProjector<'a> {
             display_name: params.record.display_name.clone(),
             metadata: params.record.metadata.clone(),
             status: session_status(params.state),
+            activity: session_activity(params.state),
             closed_at_ms: params.record.closed_at_ms,
             retention: params.retention.clone(),
             managed: params.record.managed,
@@ -2013,6 +2014,27 @@ pub fn session_status(state: &CoreAgentState) -> ApiSessionStatus {
     }
 }
 
+/// What the session is doing now, from its state: the same value lists read
+/// from the stored projection.
+pub fn session_activity(state: &CoreAgentState) -> api::SessionActivity {
+    match (&state.lifecycle.status, state.runs.active.as_ref()) {
+        (CoreAgentStatus::Open, Some(run)) if run.pending_approvals().next().is_some() => {
+            api::SessionActivity::Waiting
+        }
+        (CoreAgentStatus::Open, Some(_)) => api::SessionActivity::Working,
+        _ => api::SessionActivity::Idle,
+    }
+}
+
+/// The stored list projection of a session's activity.
+pub fn record_activity(record: &engine::storage::SessionRecord) -> api::SessionActivity {
+    match record.activity {
+        engine::storage::SessionActivity::Idle => api::SessionActivity::Idle,
+        engine::storage::SessionActivity::Working => api::SessionActivity::Working,
+        engine::storage::SessionActivity::Waiting => api::SessionActivity::Waiting,
+    }
+}
+
 pub fn core_run_status_to_api_status(status: RunStatus) -> ApiRunStatus {
     match status {
         RunStatus::Active => ApiRunStatus::Running,
@@ -3568,6 +3590,7 @@ mod tests {
             lifecycle_status: engine::storage::SessionLifecycleStatus::New,
             closed_at_seq: None,
             closed_at_ms: None,
+            activity: Default::default(),
             retention_root_session_id: session_id.clone(),
             delete_after_close_ms: None,
             delete_at_ms: None,

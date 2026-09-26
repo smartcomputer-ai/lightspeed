@@ -25,6 +25,9 @@ export const universes = pgTable("universes", {
   status: text("status", { enum: ["active", "archived"] })
     .default("active")
     .notNull(),
+  /// Feature switches set away from their default (see the shared feature
+  /// registry); an empty map is every feature at its default.
+  features: jsonb("features").$type<Record<string, boolean>>().default({}).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

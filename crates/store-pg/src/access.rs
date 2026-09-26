@@ -103,10 +103,6 @@ pub(crate) fn actor_match(column: &str, bind: usize) -> String {
 /// asked; deciding who may see what belongs to whoever asserts actors.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AccessFilter {
-    /// Only work whose root this actor created.
-    pub created_by: Option<String>,
-    /// Only work whose root has this visibility.
-    pub visibility: Option<Visibility>,
     /// Only work shared with the universe or whose root this actor created.
     pub visible_to: Option<String>,
     /// Internal work: only work shared with the universe or under this root.
@@ -115,28 +111,21 @@ pub struct AccessFilter {
 
 impl AccessFilter {
     /// The predicates over session `s` and its root `r`, binding `$p` through
-    /// `$p+4`, and a binder for the values in order.
+    /// `$p+2`, and a binder for the values in order.
     pub(crate) fn session_clause(&self, p: usize) -> (String, AccessFilterBinds) {
         let clause = format!(
-            "AND (${p}::text IS NULL OR {created_by})
-             AND (${visibility}::text IS NULL OR {SESSION_VISIBILITY} = ${visibility})
-             AND (${visible}::text IS NULL OR {SESSION_VISIBILITY} = 'universe' OR {visible_to})
+            "AND (${p}::text IS NULL OR {SESSION_VISIBILITY} = 'universe' OR {visible_to})
              AND (${root_kind}::text IS NULL OR {SESSION_VISIBILITY} = 'universe'
                   OR (${root_kind} = 'session' AND {SESSION_BOT} IS NULL
                       AND COALESCE(s.origin_root_session_id, s.session_id) = ${root_id})
                   OR (${root_kind} = 'bot' AND {SESSION_BOT} = ${root_id}))",
-            created_by = actor_match("r.created_by", p),
-            visibility = p + 1,
-            visible = p + 2,
-            visible_to = actor_match("r.created_by", p + 2),
-            root_kind = p + 3,
-            root_id = p + 4,
+            visible_to = actor_match("r.created_by", p),
+            root_kind = p + 1,
+            root_id = p + 2,
         );
         (
             clause,
             AccessFilterBinds {
-                created_by: self.created_by.clone(),
-                visibility: self.visibility.map(Visibility::as_str),
                 visible_to: self.visible_to.clone(),
                 root_kind: self.within_root.as_ref().map(ResourceRef::kind),
                 root_id: self.within_root.as_ref().map(|root| root.id().to_owned()),
@@ -145,10 +134,8 @@ impl AccessFilter {
     }
 }
 
-/// The five values `AccessFilter::session_clause` binds, in order.
+/// The three values `AccessFilter::session_clause` binds, in order.
 pub(crate) struct AccessFilterBinds {
-    created_by: Option<String>,
-    visibility: Option<&'static str>,
     visible_to: Option<String>,
     root_kind: Option<&'static str>,
     root_id: Option<String>,
@@ -160,8 +147,6 @@ impl AccessFilterBinds {
         query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
     ) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
         query
-            .bind(self.created_by)
-            .bind(self.visibility)
             .bind(self.visible_to)
             .bind(self.root_kind)
             .bind(self.root_id)

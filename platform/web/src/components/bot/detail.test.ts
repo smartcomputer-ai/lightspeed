@@ -16,9 +16,21 @@ function controller(partial: Partial<BotControllerSnapshot>): BotControllerSnaps
   };
 }
 
-function state(partial: Partial<BotControllerSnapshot>, descendants?: SessionSummaryView[]): BotStateView {
-  return { controller: controller(partial), ...(descendants ? { descendants } : {}) };
+function state(partial: Partial<BotControllerSnapshot>, sessions?: SessionSummaryView[]): BotStateView {
+  return { controller: controller(partial), ...(sessions ? { sessions } : {}) };
 }
+
+/// A bot's own session as the state read lists it, doing `activity`.
+const own = (id: string, activity: SessionSummaryView["activity"]): SessionSummaryView => ({
+  id,
+  access: { visibility: "universe" },
+  activity,
+  lifecycleStatus: "open",
+  managed: true,
+  createdAtMs: 0,
+  updatedAtMs: 0,
+  retention: { rootSessionId: id },
+});
 
 const thread = (id: string, label: string, lastActiveAtMs: number): BotSessionSnapshot => ({
   sessionId: id,
@@ -38,6 +50,7 @@ const subagent = (
   id,
   displayName,
   access: { visibility: "universe" },
+  activity: "idle",
   lifecycleStatus: "open",
   managed: true,
   createdAtMs: 0,
@@ -71,13 +84,13 @@ describe("conversationTabs", () => {
           thread("t-2", "PR-2", 2),
           thread("t-4", "PR-4", 4),
         ],
-        activeDeliveries: [{ deliveryId: "d", seqs: [7], sessionId: "t-4", startedAtMs: 0 }],
       },
-      [subagent("sub-1", "reviewer", "t-4", 5)],
+      [own("t-4", "working"), own("t-3", "waiting"), subagent("sub-1", "reviewer", "t-4", 5)],
     );
     const tabs = conversationTabs(current, undefined);
     expect(tabs.inline.map((tab) => tab.label)).toEqual(["Main", "PR-4", "PR-3", "PR-2"]);
-    expect(tabs.inline[1]?.live).toBe(true);
+    // Each tab shows what its session is doing, however the run started.
+    expect(tabs.inline.map((tab) => tab.activity)).toEqual(["idle", "working", "waiting", "idle"]);
     expect(tabs.overflow.map((tab) => tab.label)).toEqual(["PR-1", "reviewer"]);
     expect(tabs.overflow[1]?.hint).toBe("sub-agent of PR-4");
   });

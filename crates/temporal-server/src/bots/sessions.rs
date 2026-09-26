@@ -238,7 +238,8 @@ async fn list_descendants(
             .list_sessions(SessionListParams {
                 cursor: cursor.take(),
                 limit: Some(DESCENDANT_PAGE_LIMIT),
-                root_session_id: Some(root_session_id.to_owned()),
+                trees: vec![root_session_id.to_owned()],
+                subagent: Some(true),
                 ..Default::default()
             })
             .await
@@ -733,6 +734,19 @@ pub async fn close_session(
             Err(error) => return Err(activity_error("close descendant session", error)),
         }
     }
+    // A reset can race with removal of the session row while its Temporal
+    // workflow still exists. Retire that orphan before advancing generation;
+    // session/close would refuse a target whose ownership row is gone.
+    if api
+        .retire_missing_owned_bot_session(&request.session_id)
+        .await
+        .map_err(|error| activity_error("check session before close", error))?
+    {
+        return Ok(BotCloseSessionResult {
+            closed: true,
+            descendants_closed,
+        });
+    }
     let closed = match api
         .close_session(SessionCloseParams {
             session_id: request.session_id.clone(),
@@ -854,6 +868,7 @@ mod tests {
             id: "bot:v1:triage".to_owned(),
             display_name: None,
             status,
+            activity: api::SessionActivity::Idle,
             managed: true,
             config_revision: 1,
             config: None,

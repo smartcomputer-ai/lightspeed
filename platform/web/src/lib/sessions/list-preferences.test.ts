@@ -5,22 +5,20 @@ import {
   parseMetadataPair,
   readSessionMetadataFilter,
   readSessionListPreferences,
-  sessionListActiveFilterCount,
+  hiddenSessionsNote,
   searchParamsWithMetadataFilter,
   writeSessionMetadataFilter,
   writeSessionListPreferences,
 } from "./list-preferences";
 
 describe("session list preferences", () => {
-  it("counts enabled filters but not display preferences", () => {
-    expect(sessionListActiveFilterCount(
-      {},
-      DEFAULT_SESSION_LIST_PREFERENCES,
-    )).toBe(0);
-    expect(sessionListActiveFilterCount(
-      { campaign: "nightly", agent: "lightspeed" },
-      { showClosed: false, showSubagents: true },
-    )).toBe(3);
+  it("names what the list's scope hides", () => {
+    expect(hiddenSessionsNote(DEFAULT_SESSION_LIST_PREFERENCES)).toBe("Managed sessions are hidden.");
+    expect(hiddenSessionsNote({ showClosed: false, showSubagents: true, showManagedSessions: false }))
+      .toBe("Closed and managed sessions are hidden.");
+    expect(hiddenSessionsNote({ showClosed: false, showSubagents: false, showManagedSessions: false }))
+      .toBe("Closed, sub-agent and managed sessions are hidden.");
+    expect(hiddenSessionsNote({ showClosed: true, showSubagents: true, showManagedSessions: true })).toBeNull();
   });
 
   it("reads valid values and falls back field by field", () => {
@@ -34,6 +32,8 @@ describe("session list preferences", () => {
     })).toEqual({
       showClosed: false,
       showSubagents: true,
+      // Absent: managed work stays on its manager's page.
+      showManagedSessions: false,
       showSessionIds: true,
       metadataKeys: ["campaign", "owner"],
     });
@@ -49,18 +49,19 @@ describe("session list preferences", () => {
     };
     writeSessionListPreferences(
       "universe-a",
-      { showClosed: false, showSubagents: true, showSessionIds: false, metadataKeys: ["campaign"] },
+      { showClosed: false, showSubagents: true, showManagedSessions: true, showSessionIds: false, metadataKeys: ["campaign"] },
       storage,
     );
     writeSessionListPreferences(
       "universe-b",
-      { showClosed: true, showSubagents: false, showSessionIds: true, metadataKeys: ["owner"] },
+      { showClosed: true, showSubagents: false, showManagedSessions: false, showSessionIds: true, metadataKeys: ["owner"] },
       storage,
     );
     expect(readSessionListPreferences("universe-a", storage))
       .toEqual({
         showClosed: false,
         showSubagents: true,
+        showManagedSessions: true,
         showSessionIds: false,
         metadataKeys: ["campaign"],
       });
@@ -68,6 +69,7 @@ describe("session list preferences", () => {
       .toEqual({
         showClosed: true,
         showSubagents: false,
+        showManagedSessions: false,
         showSessionIds: true,
         metadataKeys: ["owner"],
       });

@@ -82,6 +82,7 @@ export function SessionSettingsDialog({
           session={session}
           runActive={runActive}
           enabled={open}
+          onApplied={() => onOpenChange(false)}
         />
       </DialogContent>
     </Dialog>
@@ -94,12 +95,15 @@ function LiveSessionSetup({
   session,
   runActive,
   enabled,
+  onApplied,
 }: {
   universeId: string;
   sessionId: string;
   session: SessionView | undefined;
   runActive: boolean;
   enabled: boolean;
+  /** Called once the whole setup has applied; the dialog closes then. */
+  onApplied: () => void;
 }) {
   const queryClient = useQueryClient();
   const options = useSessionConfigEditorOptions(universeId, enabled);
@@ -274,6 +278,7 @@ function LiveSessionSetup({
     },
     onSuccess: async () => {
       setError(null);
+      onApplied();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["session-instructions", universeId, sessionId] }),
         queryClient.invalidateQueries({ queryKey: ["environments", universeId] }),

@@ -1,7 +1,8 @@
-import type { UniverseRole } from "@lightspeed/platform-shared";
+import type { FeatureStates, UniverseRole } from "@lightspeed/platform-shared";
 import type {
   Attribution,
   ResourceAccessSummary,
+  SessionActivity,
   ContextEntryView,
   RunSummaryView,
   RunStatus,
@@ -81,6 +82,8 @@ export interface Universe {
   /// Own membership role; null for platform admins browsing a universe
   /// they are not a member of.
   role?: UniverseRole | null;
+  /// What is switched on in this universe, requirements applied.
+  features: FeatureStates;
 }
 
 /// Engine-side universe inventory entry (deployment/universes/list view).
@@ -423,6 +426,8 @@ export interface SessionOrigin {
 
 export interface SessionSummary {
   access: ResourceAccessSummary;
+  /// What the session is doing now: idle, working, or waiting for approval.
+  activity: SessionActivity;
   id: string;
   displayName?: string | null;
   /// Descriptive key/value metadata; absent or empty when none was set.
@@ -463,6 +468,8 @@ export interface ManagedWorkflowTool {
 
 export interface SessionView {
   access: ResourceAccessSummary;
+  /// What the session is doing now: idle, working, or waiting for approval.
+  activity: SessionActivity;
   id: string;
   displayName?: string | null;
   metadata?: Record<string, string>;

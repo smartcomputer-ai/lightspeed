@@ -4,8 +4,10 @@ import { and, eq, ne } from "drizzle-orm";
 import { LightspeedRpcError } from "@lightspeed-ai/agent-client";
 import { schema } from "@lightspeed/platform-db";
 import {
+  effectiveFeatures,
   memberAddSchema,
   memberUpdateSchema,
+  mergeFeatureOverrides,
   slugify,
   universeCreateSchema,
   universeRoleSchema,
@@ -21,6 +23,12 @@ import { deploymentClientFor, withGateway } from "./gateway.js";
 const { universes, organization, member, user } = schema;
 
 type UniverseRow = typeof universes.$inferSelect;
+
+/// A universe as the API shows it: its row, where features are what is on
+/// now (defaults and requirements applied), not the stored switches.
+function universeView(row: UniverseRow, slug: string | null, role: UniverseRole | string | null) {
+  return { ...row, features: effectiveFeatures(row.features), slug, role };
+}
 
 /// A universe the signed-in user may address, and as whom.
 export interface UniverseAccess {
@@ -99,7 +107,7 @@ async function createUniverseRows(
       .insert(universes)
       .values({ organizationId: orgId, lightspeedUniverseId, name })
       .returning();
-    return { ...universe!, slug, role: "admin" as const };
+    return universeView(universe!, slug, "admin");
   });
 }
 
@@ -148,7 +156,7 @@ export function universeRoutes(ctx: AppContext) {
         .from(universes)
         .innerJoin(organization, eq(organization.id, universes.organizationId))
         .leftJoin(member, and(eq(member.organizationId, universes.organizationId), eq(member.userId, session.user.id)));
-      return c.json(rows.map((r) => ({ ...r.universe, slug: r.slug, role: r.role })));
+      return c.json(rows.map((r) => universeView(r.universe, r.slug, r.role)));
     }
     const rows = await ctx.db
       .select({ universe: universes, slug: organization.slug, role: member.role })
@@ -156,7 +164,7 @@ export function universeRoutes(ctx: AppContext) {
       .innerJoin(organization, eq(organization.id, universes.organizationId))
       .innerJoin(member, eq(member.organizationId, universes.organizationId))
       .where(eq(member.userId, session.user.id));
-    return c.json(rows.map((r) => ({ ...r.universe, slug: r.slug, role: r.role })));
+    return c.json(rows.map((r) => universeView(r.universe, r.slug, r.role)));
   });
 
   app.post("/", async (c) => {
@@ -386,7 +394,7 @@ export function universeRoutes(ctx: AppContext) {
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return c.json({ ...access.universe, slug: access.slug, role: access.role });
+    return c.json(universeView(access.universe, access.slug, access.role));
   });
 
   app.patch("/:id", async (c) => {
@@ -402,15 +410,24 @@ export function universeRoutes(ctx: AppContext) {
       return body.response;
     }
     // Display name lives on both rows (the organization is the sign-in face
-    // of the universe); the slug never changes — links stay stable.
+    // of the universe); the slug never changes — links stay stable. Feature
+    // switches merge into what the universe stored.
+    const { features, ...fields } = body.data;
     const updated = await ctx.db.transaction(async (tx) => {
-      if (body.data.name) {
-        await tx.update(organization).set({ name: body.data.name }).where(eq(organization.id, access.universe.organizationId));
+      if (fields.name) {
+        await tx.update(organization).set({ name: fields.name }).where(eq(organization.id, access.universe.organizationId));
       }
-      const [row] = await tx.update(universes).set(body.data).where(eq(universes.id, access.universe.id)).returning();
-      return row;
+      const [row] = await tx
+        .update(universes)
+        .set({
+          ...fields,
+          ...(features ? { features: mergeFeatureOverrides(access.universe.features, features) } : {}),
+        })
+        .where(eq(universes.id, access.universe.id))
+        .returning();
+      return row!;
     });
-    return c.json({ ...updated, slug: access.slug, role: access.role });
+    return c.json(universeView(updated, access.slug, access.role));
   });
 
   /// Every member sees who else is in the universe and their role; emails

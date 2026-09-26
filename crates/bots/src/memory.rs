@@ -212,6 +212,8 @@ impl BotStore for InMemoryBotStore {
                     .filter(|event| event.is_pending())
                     .count() as u64,
                 last_event: state.last_event_of(&bot.bot_id),
+                // This store holds no sessions.
+                activity: api::SessionActivity::Idle,
             })
             .collect())
     }

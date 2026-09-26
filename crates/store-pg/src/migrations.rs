@@ -40,6 +40,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "environment_registration_keys",
     "environments",
     "mcp_servers",
+    "session_activity",
     "session_checkpoints",
     "session_events",
     "sessions",

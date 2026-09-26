@@ -16,6 +16,11 @@ export function sessionMenuMetadataEntries(
 
 /** Compact, read-only session identity shared by the bot and Sessions menus. */
 export function SessionMenuIdentity({ sessionId }: { sessionId: string }) {
+  return <MenuIdentity noun="session" id={sessionId} />;
+}
+
+/** A menu's read-only id with a copy button, labelled by what it names. */
+export function MenuIdentity({ noun, id }: { noun: string; id: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -24,22 +29,22 @@ export function SessionMenuIdentity({ sessionId }: { sessionId: string }) {
   }, [copied]);
   return (
     <DropdownMenuGroup>
-      <DropdownMenuLabel>Session</DropdownMenuLabel>
+      <DropdownMenuLabel>{capitalized(noun)} ID</DropdownMenuLabel>
       <div className="flex min-w-0 items-center gap-2 px-2 pb-1.5">
         <code
           className="block min-w-0 flex-1 truncate text-xs text-foreground"
-          title={sessionId}
+          title={id}
         >
-          {sessionId}
+          {id}
         </code>
         <button
           type="button"
           className="grid size-6 shrink-0 place-items-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-          aria-label={copied ? "Session id copied" : "Copy session id"}
-          title={copied ? "Copied" : "Copy session id"}
+          aria-label={copied ? `${capitalized(noun)} id copied` : `Copy ${noun} id`}
+          title={copied ? "Copied" : `Copy ${noun} id`}
           onClick={() => {
             void navigator.clipboard
-              .writeText(sessionId)
+              .writeText(id)
               .then(() => setCopied(true))
               .catch(() => undefined);
           }}
@@ -49,6 +54,10 @@ export function SessionMenuIdentity({ sessionId }: { sessionId: string }) {
       </div>
     </DropdownMenuGroup>
   );
+}
+
+function capitalized(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
 /** Optional metadata appendix; includes its own separator for last position. */

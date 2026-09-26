@@ -55,6 +55,7 @@ import {
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { useActionPermissions } from "@/lib/permissions";
+import { ListPane } from "@/components/list-pane";
 
 /// Structured profile editor. Pane = profile list; detail = sectioned form
 /// with a reusable SessionConfig editor and a permanent Edit-as-JSON tab.
@@ -79,14 +80,9 @@ export function ProfilesPage(_props: { admin: boolean }) {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      <aside
-        className={cn(
-          "w-full shrink-0 flex-col border-r md:flex md:w-80",
-          profileId ? "hidden" : "flex",
-        )}
-      >
+      <ListPane detailOpen={Boolean(profileId)}>
         <ProfilePane universeId={universe.id} slug={slug!} activeId={profileId} />
-      </aside>
+      </ListPane>
       <div
         className={cn("min-w-0 flex-1 flex-col", profileId ? "flex" : "hidden md:flex")}
       >

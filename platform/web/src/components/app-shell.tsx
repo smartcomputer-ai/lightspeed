@@ -1,5 +1,5 @@
 import { useActionPermissions } from "@/lib/permissions";
-import { useEffect, type ComponentType } from "react";
+import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import {
   ArrowLeft,
@@ -29,7 +29,10 @@ import {
 } from "@/components/ui/sidebar";
 import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
-import { UNIVERSE_NAV } from "@/components/universe-nav";
+import { UNIVERSE_NAV, navItemVisible } from "@/components/universe-nav";
+import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
+import { useUserPreferences } from "@/lib/user-preferences";
+import { cn } from "@/lib/utils";
 import { isMobileDetailRoute } from "@/lib/shell-navigation";
 import type { SessionUser } from "@/auth";
 import { rememberUniverse, useUniverses } from "@/lib/universes";
@@ -69,8 +72,8 @@ function ModeHeader({ title }: { title: string }) {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton size="lg" render={<Link to="/" />}>
-          <div className="flex size-8 items-center justify-center rounded-lg border">
+        <SidebarMenuButton size="lg" render={<Link to="/" />} tooltip="Back">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border">
             <ArrowLeft className="size-4" />
           </div>
           <div className="grid flex-1 text-left leading-tight">
@@ -108,6 +111,23 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
     }
   }, [active]);
 
+  // The main menu's width can be dragged, and dragged narrow enough it
+  // folds to icons; both are kept per account.
+  const { sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed } = useUserPreferences();
+  const sidebarResize = useResizableWidth({
+    stored: sidebarWidth,
+    fallback: 256,
+    min: 192,
+    max: 384,
+    collapse: {
+      collapsed: sidebarCollapsed,
+      below: 160,
+      collapsedWidth: 48,
+      onCollapse: setSidebarCollapsed,
+    },
+    onCommit: setSidebarWidth,
+  });
+
   const mobileTitle =
     mode === "admin"
       ? "Platform admin"
@@ -116,8 +136,17 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         : (active?.name ?? "Lightspeed");
 
   return (
-    <SidebarProvider>
-      <Sidebar>
+    <SidebarProvider
+      open={!sidebarResize.collapsed}
+      onOpenChange={(open) => setSidebarCollapsed(!open)}
+      style={{ "--sidebar-width": `${sidebarResize.width}px` } as CSSProperties}
+      // A drag moves the menu with the pointer, not behind its animation.
+      className={cn(
+        sidebarResize.resizing
+          && "[&_[data-slot=sidebar-container]]:transition-none [&_[data-slot=sidebar-gap]]:transition-none",
+      )}
+    >
+      <Sidebar collapsible="icon">
         <SidebarHeader>
           {mode === "universe" ? (
             <UniverseSwitcher active={active} admin={admin} />
@@ -127,7 +156,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         </SidebarHeader>
         <SidebarContent>
           {mode === "universe" && active && UNIVERSE_NAV.map((group, index) => {
-            const items = group.items.filter((item) => permissions.can(item.action));
+            const items = group.items.filter((item) => navItemVisible(item, permissions.can, active.features));
             if (items.length === 0) return null;
             return (
               <SidebarGroup key={group.label ?? index}>
@@ -171,19 +200,19 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
               <SidebarGroupContent>
                 <SidebarMenu>
                   <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("profile")}>
+                    <SidebarMenuButton onClick={() => scrollToSection("profile")} tooltip="Profile">
                       <UserRound />
                       <span>Profile</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("security")}>
+                    <SidebarMenuButton onClick={() => scrollToSection("security")} tooltip="Security">
                       <KeyRound />
                       <span>Security</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("appearance")}>
+                    <SidebarMenuButton onClick={() => scrollToSection("appearance")} tooltip="Appearance">
                       <Palette />
                       <span>Appearance</span>
                     </SidebarMenuButton>
@@ -196,6 +225,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         <SidebarFooter>
           <UserMenu user={user} admin={admin} />
         </SidebarFooter>
+        <ResizeHandle label="Resize menu" handle={sidebarResize.handle} />
       </Sidebar>
       <SidebarInset className="max-h-svh">
         {!isMobileDetailRoute(location.pathname) && (

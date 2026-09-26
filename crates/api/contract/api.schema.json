@@ -4983,6 +4983,14 @@
         "access": {
           "$ref": "#/definitions/ResourceAccessSummary"
         },
+        "activity": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SessionActivity"
+            }
+          ],
+          "description": "What the bot's sessions are doing now: waiting when one waits for an\napproval, else working when one is running, else idle."
+        },
         "botId": {
           "$ref": "#/definitions/BotId"
         },
@@ -5118,7 +5126,8 @@
         "updatedAtMs",
         "access",
         "triggerCount",
-        "pendingCount"
+        "pendingCount",
+        "activity"
       ],
       "type": "object"
     },
@@ -5394,9 +5403,9 @@
           ],
           "description": "Absent when the controller workflow is not running (a bot that never\nreceived an event, or a closed bot whose workflow completed)."
         },
-        "descendants": {
+        "sessions": {
           "default": [],
-          "description": "Sub-agent sessions delegated under the bot's sessions.",
+          "description": "The bot's sessions and their sub-agents, most recently updated\nfirst, each with what it is doing now. Bounded at 2,000 sessions;\nthe least recently updated fall off a larger tree.",
           "items": {
             "$ref": "#/definitions/SessionSummaryView"
           },
@@ -13258,6 +13267,27 @@
       ],
       "type": "object"
     },
+    "SessionActivity": {
+      "description": "What a session is doing now. A queued run counts as idle until it starts;\na closed session is idle.",
+      "oneOf": [
+        {
+          "enum": [
+            "idle"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "working",
+          "description": "A run has started and not yet ended.",
+          "type": "string"
+        },
+        {
+          "const": "waiting",
+          "description": "The active run is parked on approvals: it needs a person.",
+          "type": "string"
+        }
+      ]
+    },
     "SessionCloseParams": {
       "properties": {
         "force": {
@@ -15344,10 +15374,10 @@
     },
     "SessionListParams": {
       "properties": {
-        "createdBy": {
-          "description": "Only sessions whose root this actor created.",
+        "closed": {
+          "description": "Only closed sessions (`true`), or only new and open ones (`false`).\nAbsent lists both. Every filter here narrows the list, and an absent\none does not filter.",
           "type": [
-            "string",
+            "boolean",
             "null"
           ]
         },
@@ -15358,10 +15388,6 @@
             "null"
           ]
         },
-        "excludeClosed": {
-          "description": "Exclude closed sessions. New sessions that have not run yet remain in\nthe result alongside open sessions.",
-          "type": "boolean"
-        },
         "limit": {
           "format": "uint32",
           "minimum": 0,
@@ -15370,37 +15396,40 @@
             "null"
           ]
         },
+        "managed": {
+          "description": "Only work whose root a lifecycle controller manages (`true`), or\nwork nobody manages (`false`); sub-agents follow their root. Absent\nlists both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "metadata": {
           "additionalProperties": {
             "type": "string"
           },
-          "description": "Only sessions matching every entry (AND semantics). A non-empty value\nrequires an exact key/value pair; an empty value requires key presence.\nCombines with the lineage filters.",
+          "description": "Only sessions matching every entry (AND semantics). A non-empty value\nrequires an exact key/value pair; an empty value requires key presence.",
           "type": "object"
         },
-        "parentSessionId": {
-          "description": "Only sub-agent sessions delegated directly by this session.",
+        "parent": {
+          "description": "Only sub-agent sessions this session delegated directly.",
           "type": [
             "string",
             "null"
           ]
         },
-        "rootSessionId": {
-          "description": "Only sub-agent sessions whose lineage root is this session.",
+        "subagent": {
+          "description": "Only sub-agent sessions (`true`), or only root sessions (`false`).\nAbsent lists both.",
           "type": [
-            "string",
+            "boolean",
             "null"
           ]
         },
-        "visibility": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Visibility"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Only sessions whose root has this visibility."
+        "trees": {
+          "description": "Only these root sessions and all their sub-agents.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "visibleTo": {
           "description": "Only sessions whose root is shared with the universe or was created\nby this actor: what that actor sees as a non-administrator.",
@@ -15802,6 +15831,14 @@
           ],
           "description": "The audience of the session's root: whether it is shared with the\nuniverse, and who created it."
         },
+        "activity": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SessionActivity"
+            }
+          ],
+          "description": "What the session is doing now: idle, working on a run, or waiting for\nan approval."
+        },
         "closedAtMs": {
           "format": "uint64",
           "minimum": 0,
@@ -15861,6 +15898,7 @@
       "required": [
         "id",
         "lifecycleStatus",
+        "activity",
         "retention",
         "managed",
         "access",
@@ -15910,6 +15948,14 @@
             "revision": 0,
             "tools": []
           }
+        },
+        "activity": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SessionActivity"
+            }
+          ],
+          "description": "What the session is doing now: idle, working on a run, or waiting for\nan approval. Lists carry the same value."
         },
         "closedAtMs": {
           "format": "uint64",
@@ -16004,6 +16050,7 @@
       "required": [
         "id",
         "status",
+        "activity",
         "retention",
         "access",
         "managed",

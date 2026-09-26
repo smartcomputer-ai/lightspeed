@@ -22,6 +22,7 @@ import { useCreateParam } from "@/lib/create-param";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { useActionPermissions } from "@/lib/permissions";
+import { ListPane } from "@/components/list-pane";
 
 const ROSTER_REFRESH_MS = 5_000;
 
@@ -44,12 +45,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
   const create = permissions.can("create_bot");
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      <aside
-        className={cn(
-          "w-full shrink-0 flex-col border-r md:flex md:w-72",
-          botId ? "hidden" : "flex",
-        )}
-      >
+      <ListPane detailOpen={Boolean(botId)}>
         <BotsPane
           universeId={universe.id}
           slug={slug!}
@@ -57,7 +53,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
           create={create}
           onCreate={() => setCreateOpen(true)}
         />
-      </aside>
+      </ListPane>
       <section className={cn("min-w-0 flex-1 flex-col", botId ? "flex" : "hidden md:flex")}>
         {botId ? (
           <BotWorkspace
@@ -100,10 +96,12 @@ export function rosterLine(bot: BotListItem): { text: string; tone: BotTone } {
     };
   }
   const last = bot.lastEvent;
+  if (bot.activity === "waiting") return { text: "Waiting for approval", tone: "waiting" };
   if (bot.pendingCount > 0) {
     const on = last && last.outcome == null ? ` on #${last.seq}` : "";
     return { text: `Working${on} · ${last?.kind ?? "event"}`, tone: "live" };
   }
+  if (bot.activity === "working") return { text: "Working", tone: "live" };
   if (!last) return { text: "Waiting for its first event", tone: "idle" };
   const failed = last.outcome === "run_failed" || last.outcome === "blocked";
   const detail = last.outcomeDetail?.trim() || last.kind;

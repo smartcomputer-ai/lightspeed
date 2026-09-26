@@ -213,6 +213,7 @@ export function newSession(
   const view: SessionView = {
     id,
     access,
+    activity: "idle",
     displayName: init.displayName ?? null,
     metadata: init.metadata ?? {},
     createdAtMs: at,
@@ -367,6 +368,7 @@ export function startRun(
     run.status = "running";
     run.startedAtMs = Date.now();
     session.view.status = "active";
+    session.view.activity = "working";
     pushEvent(session, { type: "runStarted", runId: run.id }, joins);
     session.turns += 1;
     applyEntries(
@@ -453,6 +455,7 @@ export function finishRun(
     );
   }
   if (session.view.status !== "closed") session.view.status = "idle";
+  session.view.activity = "idle";
   const next = session.queue.shift();
   if (next) next.begin();
 }
@@ -531,6 +534,7 @@ export function closeSession(session: SessionRecord, force: boolean, at = Date.n
   session.queue = [];
   if (active) finishRun(session, active, "cancelled", at);
   session.view.status = "closed";
+  session.view.activity = "idle";
   session.view.closedAtMs = at;
   if (session.view.retention.rootSessionId === session.view.id) {
     const duration = session.view.retention.deleteAfterCloseMs;

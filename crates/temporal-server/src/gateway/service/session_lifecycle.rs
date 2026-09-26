@@ -700,6 +700,7 @@ mod tests {
                 lifecycle_status: Default::default(),
                 closed_at_seq: None,
                 closed_at_ms: None,
+                activity: Default::default(),
                 retention_root_session_id: session_id,
                 delete_after_close_ms: None,
                 delete_at_ms: None,

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMatch } from "react-router-dom";
+import { FEATURES, type FeatureKey, type FeatureStates } from "@lightspeed/platform-shared";
 import { api, type Universe } from "@/api";
 
 const LAST_UNIVERSE_KEY = "lightspeed:last-universe";
@@ -33,9 +34,17 @@ export function useActiveUniverse(): {
   };
 }
 
-/// Landing page inside a universe.
-export function universeHome(slug: string): string {
-  return `/u/${slug}/bots`;
+/// Landing page inside a universe: its bots, or its sessions when bots are
+/// switched off.
+export function universeHome(universe: { slug: string; features?: FeatureStates }): string {
+  return `/u/${universe.slug}/${universe.features?.bots === false ? "sessions" : "bots"}`;
+}
+
+/// Whether a feature is on in the active universe. Switched-off features
+/// are hidden, not enforced; before the universe loads, the default holds.
+export function useFeature(feature: FeatureKey): boolean {
+  const { universe } = useActiveUniverse();
+  return universe?.features?.[feature] ?? FEATURES[feature].default;
 }
 
 export function rememberUniverse(slug: string) {

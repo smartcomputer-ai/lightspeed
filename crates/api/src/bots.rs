@@ -243,6 +243,9 @@ pub struct BotListItem {
     pub pending_count: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_event: Option<BotEventView>,
+    /// What the bot's sessions are doing now: waiting when one waits for an
+    /// approval, else working when one is running, else idle.
+    pub activity: SessionActivity,
 }
 
 // ── Triggers ────────────────────────────────────────────────────────────────
@@ -1004,9 +1007,11 @@ pub struct BotStateView {
     /// received an event, or a closed bot whose workflow completed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controller: Option<BotControllerSnapshot>,
-    /// Sub-agent sessions delegated under the bot's sessions.
+    /// The bot's sessions and their sub-agents, most recently updated
+    /// first, each with what it is doing now. Bounded at 2,000 sessions;
+    /// the least recently updated fall off a larger tree.
     #[serde(default)]
-    pub descendants: Vec<SessionSummaryView>,
+    pub sessions: Vec<SessionSummaryView>,
 }
 
 // ── Methods ─────────────────────────────────────────────────────────────────

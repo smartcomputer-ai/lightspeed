@@ -1165,12 +1165,10 @@ mod tests {
         let listed = h
             .sessions
             .list_sessions(engine::storage::ListSessions {
-                metadata: Default::default(),
-                cursor: None,
                 limit: 10,
-                root_session_id: Some(SessionId::new("parent")),
-                parent_session_id: None,
-                exclude_closed: false,
+                trees: vec![SessionId::new("parent")],
+                subagent: Some(true),
+                ..Default::default()
             })
             .await
             .expect("list")

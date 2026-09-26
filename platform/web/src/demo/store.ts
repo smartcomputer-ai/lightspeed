@@ -1,6 +1,6 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
-import type { UniverseRole } from "@lightspeed/platform-shared";
+import { effectiveFeatures, type FeatureOverrides, type UniverseRole } from "@lightspeed/platform-shared";
 import type {
   BlobContent,
   ChannelsStatus,
@@ -128,6 +128,9 @@ export interface BotRecord {
 
 export interface UniverseState {
   universe: Universe;
+  /// The feature switches set away from their default, as the Platform
+  /// stores them; `universe.features` is what they add up to.
+  featureOverrides: FeatureOverrides;
   members: Member[];
   apiKeys: UniverseApiKey[];
   profiles: Map<string, ProfileDocument>;
@@ -241,7 +244,9 @@ export class DemoStore {
         status: "active",
         createdAt,
         role,
+        features: effectiveFeatures({}),
       },
+      featureOverrides: {},
       members: [],
       apiKeys: [],
       profiles: new Map(),
@@ -312,6 +317,7 @@ export function sessionSummary(record: SessionRecord): SessionSummary {
     managed: view.managed,
     origin: view.origin ?? null,
     access: view.access,
+    activity: view.activity,
   };
 }
 

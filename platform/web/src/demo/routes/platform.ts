@@ -2,7 +2,7 @@
 /// universe API keys. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
-import { memberUpdateSchema, slugify, universeRoleSchema } from "@lightspeed/platform-shared";
+import { effectiveFeatures, featureOverridesSchema, memberUpdateSchema, mergeFeatureOverrides, slugify, universeRoleSchema } from "@lightspeed/platform-shared";
 import type { EngineUniverse, Member, Universe, UniverseApiKey } from "@/api";
 import type { DemoStore, UniverseState } from "../store";
 import { conflict, badRequest, notFound, nowIso, readBody, universeFor } from "./common";
@@ -91,7 +91,13 @@ export function platformRoutes(store: DemoStore): Hono {
   app.patch("/universes/:id", async (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const body = await readBody<Partial<Pick<Universe, "name" | "status" | "gatewayUrl">>>(c);
+    const body = await readBody<Partial<Pick<Universe, "name" | "status" | "gatewayUrl"> & { features: unknown }>>(c);
+    if (body.features !== undefined) {
+      const features = featureOverridesSchema.safeParse(body.features);
+      if (!features.success) return c.json({ error: "unknown feature" }, 400);
+      state.featureOverrides = mergeFeatureOverrides(state.featureOverrides, features.data);
+      state.universe.features = effectiveFeatures(state.featureOverrides);
+    }
     if (typeof body.name === "string" && body.name.trim()) state.universe.name = body.name.trim();
     if (body.status === "active" || body.status === "archived") state.universe.status = body.status;
     if (body.gatewayUrl !== undefined) state.universe.gatewayUrl = body.gatewayUrl || null;

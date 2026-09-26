@@ -55,6 +55,7 @@ import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
+import { ListPane } from "@/components/list-pane";
 
 /// U4b: workspace explorer + functional editor. Pane = workspace picker +
 /// file tree of the head snapshot; detail = file editor (text), preview
@@ -82,19 +83,14 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
 
   return (
     <div className="flex min-h-0 flex-1">
-      <aside
-        className={cn(
-          "w-full shrink-0 flex-col border-r md:flex md:w-80",
-          filePath ? "hidden" : "flex",
-        )}
-      >
+      <ListPane detailOpen={Boolean(filePath)}>
         <WorkspacePane
           universeId={universe.id}
           slug={slug!}
           workspaceId={workspaceId}
           filePath={filePath}
         />
-      </aside>
+      </ListPane>
       <section
         className={cn("min-w-0 flex-1 flex-col", filePath ? "flex" : "hidden md:flex")}
       >

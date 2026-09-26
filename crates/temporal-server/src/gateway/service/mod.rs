@@ -212,6 +212,7 @@ fn session_summary_view(
     access: ResourceAccessSummary,
 ) -> SessionSummaryView {
     let retention = session_retention_view(&record, root);
+    let activity = api_projection::record_activity(&record);
     SessionSummaryView {
         access,
         id: record.session_id.as_str().to_owned(),
@@ -222,6 +223,7 @@ fn session_summary_view(
             engine::storage::SessionLifecycleStatus::Open => SessionLifecycleStatus::Open,
             engine::storage::SessionLifecycleStatus::Closed => SessionLifecycleStatus::Closed,
         },
+        activity,
         closed_at_ms: record.closed_at_ms,
         retention,
         managed: record.managed,
@@ -2325,23 +2327,18 @@ impl AgentApiService for GatewayAgentApi {
             .as_deref()
             .map(decode_session_list_cursor)
             .transpose()?;
-        let root_session_id = params
-            .root_session_id
+        let parent = params
+            .parent
             .map(SessionId::try_new)
             .transpose()
-            .map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid rootSessionId: {error}"))
-            })?;
-        let parent_session_id = params
-            .parent_session_id
+            .map_err(|error| AgentApiError::invalid_request(format!("invalid parent: {error}")))?;
+        let trees = params
+            .trees
+            .into_iter()
             .map(SessionId::try_new)
-            .transpose()
-            .map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid parentSessionId: {error}"))
-            })?;
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AgentApiError::invalid_request(format!("invalid trees: {error}")))?;
         let filter = self.access_filter(store_pg::AccessFilter {
-            created_by: params.created_by,
-            visibility: params.visibility,
             visible_to: params.visible_to,
             within_root: None,
         });
@@ -2351,9 +2348,11 @@ impl AgentApiService for GatewayAgentApi {
                 engine::storage::ListSessions {
                     cursor,
                     limit,
-                    root_session_id,
-                    parent_session_id,
-                    exclude_closed: params.exclude_closed,
+                    closed: params.closed,
+                    managed: params.managed,
+                    subagent: params.subagent,
+                    parent,
+                    trees,
                     metadata: params.metadata,
                 },
                 &filter,

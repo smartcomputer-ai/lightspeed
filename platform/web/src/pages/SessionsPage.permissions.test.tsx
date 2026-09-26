@@ -53,11 +53,16 @@ it("keeps the session list readable without showing create or bulk controls to a
   expect(container.querySelector('[aria-label="New session"]')).toBeNull();
   expect(container.querySelector('[aria-label="Select sessions"]')).toBeNull();
 });
-it("marks unshared work in the list", async () => {
+it("leaves managed work to its manager unless asked", async () => {
+  await show();
+  const listed = mocks.api.mock.calls.map(([, path]) => String(path)).find((path) => path.includes("/sessions?"));
+  expect(listed).toContain("managed=false");
+});
+it("marks shared work in the list and leaves private work unmarked", async () => {
   await show();
   const rows = [...container.querySelectorAll("a")].filter((link) => link.textContent?.includes("own") || link.textContent?.includes("other"));
-  expect(rows.find((row) => row.textContent?.includes("own"))?.textContent).toContain("Unshared");
-  expect(rows.find((row) => row.textContent?.includes("other"))?.textContent).not.toContain("Unshared");
+  expect(rows.find((row) => row.textContent?.includes("own"))?.querySelector('[aria-label="Shared"]')).toBeNull();
+  expect(rows.find((row) => row.textContent?.includes("other"))?.querySelector('[aria-label="Shared"]')).not.toBeNull();
 });
 it("offers bulk actions to a contributor over the listed sessions", async () => {
   await show();

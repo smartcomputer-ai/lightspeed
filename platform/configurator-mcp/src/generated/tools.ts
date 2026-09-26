@@ -1155,10 +1155,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "createdBy": {
-          "description": "Only sessions whose root this actor created.",
+        "closed": {
+          "description": "Only closed sessions (`true`), or only new and open ones (`false`).\nAbsent lists both. Every filter here narrows the list, and an absent\none does not filter.",
           "type": [
-            "string",
+            "boolean",
             "null"
           ]
         },
@@ -1169,10 +1169,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "null"
           ]
         },
-        "excludeClosed": {
-          "description": "Exclude closed sessions. New sessions that have not run yet remain in\nthe result alongside open sessions.",
-          "type": "boolean"
-        },
         "limit": {
           "format": "uint32",
           "minimum": 0,
@@ -1181,37 +1177,40 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "null"
           ]
         },
+        "managed": {
+          "description": "Only work whose root a lifecycle controller manages (`true`), or\nwork nobody manages (`false`); sub-agents follow their root. Absent\nlists both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "metadata": {
           "additionalProperties": {
             "type": "string"
           },
-          "description": "Only sessions matching every entry (AND semantics). A non-empty value\nrequires an exact key/value pair; an empty value requires key presence.\nCombines with the lineage filters.",
+          "description": "Only sessions matching every entry (AND semantics). A non-empty value\nrequires an exact key/value pair; an empty value requires key presence.",
           "type": "object"
         },
-        "parentSessionId": {
-          "description": "Only sub-agent sessions delegated directly by this session.",
+        "parent": {
+          "description": "Only sub-agent sessions this session delegated directly.",
           "type": [
             "string",
             "null"
           ]
         },
-        "rootSessionId": {
-          "description": "Only sub-agent sessions whose lineage root is this session.",
+        "subagent": {
+          "description": "Only sub-agent sessions (`true`), or only root sessions (`false`).\nAbsent lists both.",
           "type": [
-            "string",
+            "boolean",
             "null"
           ]
         },
-        "visibility": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Visibility"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Only sessions whose root has this visibility."
+        "trees": {
+          "description": "Only these root sessions and all their sub-agents.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "visibleTo": {
           "description": "Only sessions whose root is shared with the universe or was created\nby this actor: what that actor sees as a non-administrator.",
@@ -1221,17 +1220,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         }
       },
-      "type": "object",
-      "definitions": {
-        "Visibility": {
-          "description": "Who sees a root's tree. Sessions start unshared (`restricted`) and are\nshared with the universe once, one way; everything else is shared.",
-          "enum": [
-            "universe",
-            "restricted"
-          ],
-          "type": "string"
-        }
-      }
+      "type": "object"
     }
   },
   {

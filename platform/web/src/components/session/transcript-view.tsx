@@ -22,7 +22,7 @@ import { TranscriptEntrance } from "./transcript-motion";
 export function TranscriptEntryView({
   entry,
   loadFullText,
-  showRunStatistics = true,
+  showRunStatistics = false,
 }: {
   entry: TranscriptEntry;
   loadFullText?: FullTextLoader;
