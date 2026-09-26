@@ -126,6 +126,7 @@ import {
   writeSessionMetadataFilter,
   writeSessionListPreferences,
 } from "@/lib/sessions/list-preferences";
+import { ListPane } from "@/components/list-pane";
 
 /// U4a+U4d: master-detail session chat. Pane = paged session list plus
 /// New session (sub-agent tree expansion arrives with engine D1 parent
@@ -153,14 +154,9 @@ export function SessionsPage({ admin }: { admin: boolean }) {
 
   return (
     <div className="flex min-h-0 min-w-0 max-w-full flex-1">
-      <aside
-        className={cn(
-          "w-full shrink-0 flex-col border-r md:flex md:w-80",
-          sessionId ? "hidden" : "flex",
-        )}
-      >
+      <ListPane detailOpen={Boolean(sessionId)}>
         <SessionList key={universe.id} universeId={universe.id} slug={slug!} activeId={sessionId} />
-      </aside>
+      </ListPane>
       <section className={cn("min-w-0 flex-1 flex-col", sessionId ? "flex" : "hidden md:flex")}>
         <ProviderReadinessBanner universeId={universe.id} slug={slug!} />
         {sessionId ? (

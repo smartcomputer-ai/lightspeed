@@ -1,5 +1,5 @@
 import { useActionPermissions } from "@/lib/permissions";
-import { useEffect, type ComponentType } from "react";
+import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import {
   ArrowLeft,
@@ -30,6 +30,9 @@ import {
 import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
 import { UNIVERSE_NAV } from "@/components/universe-nav";
+import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
+import { useUserPreferences } from "@/lib/user-preferences";
+import { cn } from "@/lib/utils";
 import { isMobileDetailRoute } from "@/lib/shell-navigation";
 import type { SessionUser } from "@/auth";
 import { rememberUniverse, useUniverses } from "@/lib/universes";
@@ -108,6 +111,16 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
     }
   }, [active]);
 
+  // The main menu's width can be dragged; it is kept per account.
+  const { sidebarWidth, setSidebarWidth } = useUserPreferences();
+  const sidebarResize = useResizableWidth({
+    stored: sidebarWidth,
+    fallback: 256,
+    min: 192,
+    max: 384,
+    onCommit: setSidebarWidth,
+  });
+
   const mobileTitle =
     mode === "admin"
       ? "Platform admin"
@@ -116,7 +129,14 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         : (active?.name ?? "Lightspeed");
 
   return (
-    <SidebarProvider>
+    <SidebarProvider
+      style={{ "--sidebar-width": `${sidebarResize.width}px` } as CSSProperties}
+      // A drag moves the menu with the pointer, not behind its animation.
+      className={cn(
+        sidebarResize.resizing
+          && "[&_[data-slot=sidebar-container]]:transition-none [&_[data-slot=sidebar-gap]]:transition-none",
+      )}
+    >
       <Sidebar>
         <SidebarHeader>
           {mode === "universe" ? (
@@ -196,6 +216,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         <SidebarFooter>
           <UserMenu user={user} admin={admin} />
         </SidebarFooter>
+        <ResizeHandle label="Resize menu" handle={sidebarResize.handle} />
       </Sidebar>
       <SidebarInset className="max-h-svh">
         {!isMobileDetailRoute(location.pathname) && (

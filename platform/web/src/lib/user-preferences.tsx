@@ -9,17 +9,35 @@ export interface UserPreferences {
   /** Fold a finished run's tool calls, thinking, and interim notes behind
    * one strip; applies when a session or older history loads. */
   collapseCompletedRuns: boolean;
+  /** The main menu's dragged width in pixels; null keeps the default. */
+  sidebarWidth: number | null;
+  /** The dragged width of every page's list column, so it holds from page
+   * to page; null keeps the default. */
+  listWidth: number | null;
 }
 
-const DEFAULTS: UserPreferences = { showRunStatistics: true, collapseCompletedRuns: true };
+const DEFAULTS: UserPreferences = {
+  showRunStatistics: true,
+  collapseCompletedRuns: true,
+  sidebarWidth: null,
+  listWidth: null,
+};
+
+function storedWidth(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : null;
+}
 
 const Context = createContext<UserPreferences & {
   setShowRunStatistics: (show: boolean) => void;
   setCollapseCompletedRuns: (collapse: boolean) => void;
+  setSidebarWidth: (width: number | null) => void;
+  setListWidth: (width: number | null) => void;
 }>({
   ...DEFAULTS,
   setShowRunStatistics: () => {},
   setCollapseCompletedRuns: () => {},
+  setSidebarWidth: () => {},
+  setListWidth: () => {},
 });
 
 export function readUserPreferences(userId: string): UserPreferences {
@@ -32,6 +50,8 @@ export function readUserPreferences(userId: string): UserPreferences {
         ? record.showRunStatistics : DEFAULTS.showRunStatistics,
       collapseCompletedRuns: typeof record.collapseCompletedRuns === "boolean"
         ? record.collapseCompletedRuns : DEFAULTS.collapseCompletedRuns,
+      sidebarWidth: storedWidth(record.sidebarWidth),
+      listWidth: storedWidth(record.listWidth),
     };
   } catch {
     return DEFAULTS;
@@ -68,6 +88,8 @@ function AccountPreferences({ userId, children }: { userId: string; children: Re
         ...preferences,
         setShowRunStatistics: (showRunStatistics) => update({ showRunStatistics }),
         setCollapseCompletedRuns: (collapseCompletedRuns) => update({ collapseCompletedRuns }),
+        setSidebarWidth: (sidebarWidth) => update({ sidebarWidth }),
+        setListWidth: (listWidth) => update({ listWidth }),
       }}
     >
       {children}
