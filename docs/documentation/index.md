@@ -43,7 +43,8 @@ what, where those rules are enforced, and how agent execution differs from a
 person's access to the web app.
 
 Use [People and roles](access-and-security/people-and-roles.md) to manage
-members, [API keys and service access](access-and-security/api-keys-and-service-access.md)
+members, [Company sign-in (SSO)](access-and-security/single-sign-on.md) to connect
+your identity provider, [API keys and service access](access-and-security/api-keys-and-service-access.md)
 to connect programs, and [Tenant isolation and data protection](access-and-security/tenant-isolation-and-data-protection.md)
 to assess a deployment.
 

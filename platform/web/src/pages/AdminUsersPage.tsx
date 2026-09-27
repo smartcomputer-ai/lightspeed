@@ -2,7 +2,8 @@ import { ReadError } from "@/components/read-error";
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus } from "lucide-react";
-import { authClient, type SessionUser } from "@/auth";
+import { authClient, useLoginConfig, type SessionUser } from "@/auth";
+import { api } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,15 +35,16 @@ import {
 } from "@/components/ui/table";
 import { LoadingNote, PageHeader } from "@/components/page";
 
-interface UserRow {
-  id: string;
-  name: string;
-  email: string;
-  role?: string | null;
+interface UserRow extends SessionUser {
   createdAt?: string | Date;
 }
 
 export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
+  const config = useLoginConfig();
+  const [showAudit, setShowAudit] = useState(false);
+  const audit = useQuery({ queryKey: ["admin", "audit"], enabled: showAudit, queryFn: () => api<Array<{
+    id: string; createdAt: string; action: string; actorId: string | null; targetId: string | null; outcome: string;
+  }>>("GET", "/api/v1/admin/audit") });
   const users = useQuery({
     queryKey: ["admin", "users"],
     queryFn: async () => {
@@ -63,18 +65,19 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
     <>
       <PageHeader
         title="Users"
-        description="Platform accounts. Signup is closed — accounts are created here."
+        description={config.data?.sso ? "Company users appear after their first admitted sign-in. Manage universe roles on Members." : "Platform accounts. Signup is closed — accounts are created here."}
         actions={
-          <Button onClick={() => setCreateOpen(true)}>
+          config.data && config.data.password !== "off" && <Button onClick={() => setCreateOpen(true)}>
             <Plus data-icon="inline-start" />
-            Create user
+            {config.data.sso ? "Create emergency admin" : "Create user"}
           </Button>
         }
       />
-      <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} sso={config.data?.sso ?? false} />
       <EditUserDialog
         user={editing}
         currentUserId={currentUser.id}
+        passwordMode={config.data?.password}
         onOpenChange={(open) => {
           if (!open) setEditing(null);
         }}
@@ -89,6 +92,8 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
+                <TableHead>Access</TableHead>
+                <TableHead>Last company check</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="w-0" />
               </TableRow>
@@ -104,6 +109,12 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
                     ) : (
                       <span className="text-muted-foreground">user</span>
                     )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {user.banned ? "Suspended" : user.identitySource === "company" ? user.companyAdmitted ? "Company account" : "Company access absent" : user.emergencyAdmin ? "Emergency admin" : "Local account"}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {user.providerCheckedAt ? new Date(user.providerCheckedAt).toLocaleString() : "—"}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {user.createdAt
@@ -126,6 +137,20 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
           </Table>
         </TableCard>
       )}
+      <details onToggle={(event) => setShowAudit(event.currentTarget.open)}>
+        <summary className="cursor-pointer font-medium">Recent access changes</summary>
+        <p className="my-3 text-sm text-muted-foreground">The latest 100 recorded access events. Records survive user and session deletion.</p>
+        {audit.error && <ReadError error={audit.error} loading={!audit.data} />}
+        {audit.isFetching && <LoadingNote />}
+        {audit.data && <TableCard><Table>
+          <TableHeader><TableRow><TableHead>When</TableHead><TableHead>Action</TableHead><TableHead>Actor</TableHead><TableHead>Target</TableHead><TableHead>Outcome</TableHead></TableRow></TableHeader>
+          <TableBody>{audit.data.map((event) => <TableRow key={event.id}>
+            <TableCell>{new Date(event.createdAt).toLocaleString()}</TableCell><TableCell>{auditAction(event.action)}</TableCell>
+            <TableCell>{users.data?.find((user) => user.id === event.actorId)?.email ?? event.actorId ?? "System"}</TableCell>
+            <TableCell>{users.data?.find((user) => user.id === event.targetId)?.email ?? event.targetId ?? "—"}</TableCell><TableCell>{event.outcome}</TableCell>
+          </TableRow>)}</TableBody>
+        </Table></TableCard>}
+      </details>
     </>
   );
 }
@@ -133,10 +158,12 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
 function EditUserDialog({
   user,
   currentUserId,
+  passwordMode,
   onOpenChange,
 }: {
   user: UserRow | null;
   currentUserId: string;
+  passwordMode?: "local" | "break-glass" | "off";
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
@@ -149,6 +176,8 @@ function EditUserDialog({
 
   const open = user !== null;
   const isCurrentUser = user?.id === currentUserId;
+  const company = user?.identitySource === "company";
+  const passwordAllowed = !company && passwordMode !== "off" && (passwordMode === "local" || user?.emergencyAdmin === true);
 
   useEffect(() => {
     if (!user) return;
@@ -173,6 +202,18 @@ function EditUserDialog({
     onOpenChange(false);
     reset();
   };
+
+  const accessChange = useMutation({
+    mutationFn: async (action: "suspend" | "reinstate" | "revoke") => {
+      if (!user) return;
+      const result = action === "revoke" ? await authClient.admin.revokeUserSessions({ userId: user.id })
+        : action === "reinstate" ? await authClient.admin.unbanUser({ userId: user.id })
+        : await authClient.admin.banUser({ userId: user.id });
+      if (result.error) throw new Error(result.error.message ?? "Access change failed");
+    },
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["admin"] }); close(); },
+    onError: (err) => setError(err.message),
+  });
 
   const edit = useMutation({
     mutationFn: async () => {
@@ -205,21 +246,16 @@ function EditUserDialog({
         if (result.error) {
           throw new Error(result.error.message ?? "failed to set password");
         }
-        const revoked = await authClient.admin.revokeUserSessions({ userId: user.id });
-        if (revoked.error) {
-          throw new Error(
-            `Password changed, but sessions could not be signed out: ${revoked.error.message ?? "unknown error"}`,
-          );
-        }
+
       }
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin"] });
       const signedOutSelf = isCurrentUser && Boolean(password);
       const refreshedSelf = isCurrentUser && hasProfileChanges;
       close();
       if (signedOutSelf) {
-        window.location.assign("/login");
+        window.location.assign(`${import.meta.env.BASE_URL}login`);
       } else if (refreshedSelf) {
         window.location.reload();
       }
@@ -257,8 +293,7 @@ function EditUserDialog({
         <DialogHeader>
           <DialogTitle>Edit user</DialogTitle>
           <DialogDescription>
-            Update the platform account for {user?.email}. A password reset signs the
-            user out of every session.
+            {company ? `Identity and platform role for ${user?.email} are managed by the company. Universe roles are managed on Members.` : `Update the platform account for ${user?.email}. A password reset signs the user out of every session.`}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-5">
@@ -268,6 +303,7 @@ function EditUserDialog({
               <Input
                 id="edit-user-name"
                 value={name}
+                disabled={company}
                 onChange={(event) => setName(event.target.value)}
                 required
                 autoFocus
@@ -279,6 +315,7 @@ function EditUserDialog({
                 id="edit-user-email"
                 type="email"
                 value={email}
+                disabled={company}
                 onChange={(event) => setEmail(event.target.value)}
                 required
               />
@@ -291,7 +328,7 @@ function EditUserDialog({
               <Select
                 value={role}
                 onValueChange={(value) => setRole(value as string)}
-                disabled={isCurrentUser}
+                disabled={isCurrentUser || company || user?.emergencyAdmin === true}
               >
                 <SelectTrigger id="edit-user-role" className="w-full">
                   <SelectValue />
@@ -310,7 +347,7 @@ function EditUserDialog({
             </Field>
           </div>
 
-          <div className="grid gap-4 border-t pt-5">
+          {passwordAllowed && <div className="grid gap-4 border-t pt-5">
             <div>
               <p className="font-medium">Reset password</p>
               <p className="text-sm text-muted-foreground">
@@ -341,6 +378,14 @@ function EditUserDialog({
                 required={Boolean(password)}
               />
             </Field>
+          </div>}
+
+          <div className="grid gap-2 border-t pt-5">
+            <p className="text-sm text-muted-foreground">Suspension blocks Platform access and signs out every device. Core API keys must be revoked separately.</p>
+            {!isCurrentUser && <Button type="button" variant="outline" disabled={accessChange.isPending} onClick={() => accessChange.mutate(user?.banned ? "reinstate" : "suspend")}>
+              {user?.banned ? "Reinstate access" : "Suspend access"}
+            </Button>}
+            <Button type="button" variant="outline" disabled={accessChange.isPending} onClick={() => accessChange.mutate("revoke")}>Sign out all sessions</Button>
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
@@ -364,9 +409,11 @@ function EditUserDialog({
 function CreateUserDialog({
   open,
   onOpenChange,
+  sso,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  sso: boolean;
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
@@ -389,7 +436,8 @@ function CreateUserDialog({
         name,
         email,
         password,
-        role: role as "user" | "admin",
+        role: sso ? "admin" : role as "user" | "admin",
+        ...(sso ? { data: { emergencyAdmin: true } } : {}),
       });
       if (result.error) {
         throw new Error(result.error.message ?? "failed to create user");
@@ -397,7 +445,7 @@ function CreateUserDialog({
       return result.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin"] });
       onOpenChange(false);
       reset();
     },
@@ -414,10 +462,9 @@ function CreateUserDialog({
     <Dialog open={open} onOpenChange={(next) => { onOpenChange(next); if (!next) reset(); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create user</DialogTitle>
+          <DialogTitle>{sso ? "Create emergency admin" : "Create user"}</DialogTitle>
           <DialogDescription>
-            Creates a platform account. Share the password out of band — users can
-            change it under Account.
+            {sso ? "Creates a separate local administrator for emergency access. Use an email distinct from company sign-in accounts and store the password securely." : "Creates a platform account. Share the password out of band — users can change it under Account."}
           </DialogDescription>
         </DialogHeader>
           <form onSubmit={submit} className="grid gap-4">
@@ -455,7 +502,7 @@ function CreateUserDialog({
               </Field>
               <Field>
                 <FieldLabel htmlFor="user-role">Role</FieldLabel>
-                <Select value={role} onValueChange={(value) => setRole(value as string)}>
+                <Select value={sso ? "admin" : role} disabled={sso} onValueChange={(value) => setRole(value as string)}>
                   <SelectTrigger id="user-role" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
@@ -479,4 +526,18 @@ function CreateUserDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function auditAction(action: string): string {
+  const labels: Record<string, string> = {
+    "company.access": "Company access updated", "company.sign_in": "Company sign-in",
+    "emergency.sign_in": "Emergency sign-in", "password.sign_in": "Password sign-in",
+    "user.suspend": "User suspended", "user.reinstate": "User reinstated",
+    "session.revoke_all": "All sessions signed out", "member.add": "Universe member added",
+    "member.role": "Universe role changed", "member.remove": "Universe member removed",
+    "key.create": "API key created", "key.revoke": "API key revoked",
+    "create_user": "User created", "update_user": "User updated", "set_user_password": "Password reset",
+    "emergency.designate": "Emergency admin designated", "emergency.create": "Emergency admin created",
+  };
+  return labels[action] ?? action;
 }

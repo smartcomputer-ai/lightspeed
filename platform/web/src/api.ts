@@ -66,6 +66,9 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
   const text = await res.text();
   const json: unknown = text ? JSON.parse(text) : null;
   if (!res.ok) {
+    if (res.status === 401 && !window.location.pathname.endsWith("/login")) {
+      window.location.assign(`${import.meta.env.BASE_URL}login?expired=1`);
+    }
     throw new ApiError(res.status, json);
   }
   return json as T;

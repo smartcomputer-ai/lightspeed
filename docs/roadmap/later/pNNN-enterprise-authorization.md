@@ -7,7 +7,8 @@ The first attempt, a full authorization system inside core, was built and
 cut back; [the retrospective](../archive/p176-p178-access-retrospective.md)
 tells that story and lists what does not come back unasked.
 
-The first SSO delivery is scoped in the two scheduled slices below. The
+The first SSO delivery is implemented and locally validated in the two slices
+below; deployment-provider acceptance remains pending. The
 remaining items wait for a deployment that needs them; they are not
 prerequisites for company sign-in.
 
@@ -64,6 +65,11 @@ Core API keys continue to serve CLI, API and MCP clients with independent
 authority. Offboarding a person does not revoke keys they retained; those
 need separate revocation. Already admitted requests and runs may finish,
 and shared bots continue. There is no automatic inactivity deactivation.
+
+The first delivery also includes durable records for access changes,
+membership edits, emergency sign-ins and Platform key operations, visible
+under Users. Comprehensive gateway auditing, retention and export remain
+separate work.
 
 ## Later work
 

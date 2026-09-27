@@ -5,6 +5,7 @@ import {
   timestamp,
   boolean,
   index,
+  integer,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
@@ -23,7 +24,14 @@ export const user = pgTable("user", {
   banned: boolean("banned").default(false),
   banReason: text("ban_reason"),
   banExpires: timestamp("ban_expires", { withTimezone: true }),
-});
+  identitySource: text("identity_source").default("local").notNull(),
+  oidcIssuer: text("oidc_issuer"),
+  oidcSubject: text("oidc_subject"),
+  companyAdmitted: boolean("company_admitted").default(false).notNull(),
+  providerCheckedAt: timestamp("provider_checked_at", { withTimezone: true }),
+  emergencyAdmin: boolean("emergency_admin").default(false).notNull(),
+  accessVersion: integer("access_version").default(0).notNull(),
+}, (table) => [uniqueIndex("user_oidc_identity_idx").on(table.oidcIssuer, table.oidcSubject)]);
 
 export const session = pgTable(
   "session",
@@ -42,6 +50,7 @@ export const session = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     activeOrganizationId: text("active_organization_id"),
     impersonatedBy: text("impersonated_by"),
+    accessVersion: integer("access_version").default(0).notNull(),
   },
   (table) => [index("session_userId_idx").on(table.userId)],
 );

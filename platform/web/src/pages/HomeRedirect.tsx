@@ -33,7 +33,7 @@ export function HomeRedirect({ admin }: { admin: boolean }) {
         <p className="text-sm text-muted-foreground">
           {admin
             ? "Create your first universe to get started."
-            : "You are not a member of any universe yet — ask your admin for an invite."}
+            : "You have not been added to a universe yet. Ask a platform or universe admin to add you."}
         </p>
         {admin && (
           <div>

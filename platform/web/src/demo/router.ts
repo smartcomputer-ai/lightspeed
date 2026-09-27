@@ -17,6 +17,8 @@ import { workspaceRoutes } from "./routes/workspaces";
 export function createDemoRouter(store: DemoStore): Hono {
   const app = new Hono();
   app.get("/health", (c) => c.json({ ok: true, demo: true }));
+  app.get("/api/login-config", (c) => c.json({ sso: false, providerId: null, password: "local", autoSignIn: false }));
+  app.get("/api/v1/admin/audit", (c) => c.json([]));
   app.route("/api/auth", authRoutes(store));
   // The public webhook ingress lives outside /api, exactly like the core's
   // POST /hooks/bots/{universe}/{bot}/{trigger}/{token} route.

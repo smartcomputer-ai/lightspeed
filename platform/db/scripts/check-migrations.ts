@@ -85,6 +85,9 @@ async function requirePlatformShape(pool: pg.Pool): Promise<void> {
   await requireTable(pool, "user");
   await requireTable(pool, "organization");
   await requireTable(pool, "member");
+  await requireTable(pool, "identity_audit");
+  await requireColumn(pool, "user", "oidc_subject");
+  await requireColumn(pool, "session", "access_version");
   await requireColumn(pool, "universes", "lightspeed_universe_id");
   for (const table of [
     "bots",
@@ -128,9 +131,15 @@ async function checkUpgrade(
     await requireTable(handle.pool, "universes");
     const baselineIndex = journal.entries.findIndex((entry) => entry.tag === upgradeFrom);
     await requireLedgerLength(handle.pool, baselineIndex + 1);
+    await handle.pool.query(`INSERT INTO "user" (id, name, email) VALUES ('retained-user', 'Retained user', 'retained@example.test')`);
     await migrateDb(handle);
     await requirePlatformShape(handle.pool);
     await requireLedgerLength(handle.pool, journal.entries.length);
+    const retained = await handle.pool.query(`SELECT identity_source, company_admitted, emergency_admin, access_version FROM "user" WHERE id = 'retained-user'`);
+    const user = retained.rows[0];
+    if (!user || user.identity_source !== "local" || user.company_admitted !== false || user.emergency_admin !== false || user.access_version !== 0) {
+      throw new Error("identity migration must retain local users without granting company or emergency access");
+    }
   } finally {
     await handle.pool.end();
   }

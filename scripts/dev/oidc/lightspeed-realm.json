@@ -1,0 +1,112 @@
+{
+  "realm": "lightspeed",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "groups": [
+    {
+      "name": "lightspeed-users"
+    },
+    {
+      "name": "lightspeed-admins"
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "lightspeed-platform",
+      "name": "Lightspeed Platform",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "lightspeed-local-oidc-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3000/api/auth/callback/*",
+        "http://localhost:5173/api/auth/callback/*",
+        "http://localhost:3030/api/auth/callback/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:3030"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": [
+        "profile",
+        "email"
+      ],
+      "protocolMappers": [
+        {
+          "name": "application-groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "sso-user",
+      "email": "sso-user@lightspeed.dev",
+      "emailVerified": true,
+      "firstName": "sso-user",
+      "lastName": "Local",
+      "enabled": true,
+      "groups": [
+        "lightspeed-users"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "lightspeed-local-password",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "sso-admin",
+      "email": "sso-admin@lightspeed.dev",
+      "emailVerified": true,
+      "firstName": "sso-admin",
+      "lastName": "Local",
+      "enabled": true,
+      "groups": [
+        "lightspeed-admins"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "lightspeed-local-password",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "sso-denied",
+      "email": "sso-denied@lightspeed.dev",
+      "emailVerified": true,
+      "firstName": "sso-denied",
+      "lastName": "Local",
+      "enabled": true,
+      "groups": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "lightspeed-local-password",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

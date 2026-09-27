@@ -99,7 +99,7 @@ function credential(keyGroups: string[], keySource?: "minted" | "existing") {
     }),
   } as unknown as LightspeedClient;
   const ctx = {
-    db: { update: () => ({ set: () => ({ where: async () => undefined }) }) },
+    db: { update: () => ({ set: () => ({ where: async () => undefined }) }), insert: () => ({ values: async () => undefined }) },
   } as unknown as AppContext;
   const verify = (secret: string) => ({
     call: vi.fn(async () => {
@@ -114,6 +114,7 @@ function credential(keyGroups: string[], keySource?: "minted" | "existing") {
     run: (choice: KeyChoice) => ensureCredential(
       ctx, "installation", { lightspeedUniverseId: "33333333-3333-4333-8333-333333333333" },
       client, deployment, verify, state, mcpUrl, choice,
+      { actorId: "admin", universeId: "universe" },
     ),
   };
 }

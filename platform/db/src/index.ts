@@ -6,6 +6,7 @@ import pg from "pg";
 import * as schema from "./schema/index.js";
 
 export { schema };
+export { identityUserFields, identitySessionFields } from "./auth-fields.js";
 export type Db = NodePgDatabase<typeof schema>;
 
 export interface DbHandle {

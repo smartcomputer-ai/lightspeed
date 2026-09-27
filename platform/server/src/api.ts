@@ -1,6 +1,6 @@
 import { withGateway } from "./routes/gateway.js";
 import { Hono } from "hono";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import { schema } from "@lightspeed/platform-db";
 import type { AppContext, ApiVariables } from "./context.js";
 import { botRoutes } from "./routes/bots.js";
@@ -13,12 +13,15 @@ import { universeRoutes } from "./routes/universes.js";
 import { registerWebApp } from "./static.js";
 import { isPlatformAdmin } from "./context.js";
 import { readChannelsStatus } from "./channels-status.js";
+import { publicAuthConfig } from "./auth.js";
+import { sessionAllowed } from "./auth-access.js";
 
 export function buildApp(ctx: AppContext) {
   const app = new Hono();
   app.onError((error, c) => withGateway(c, async () => { throw error; }));
 
   app.get("/health", (c) => c.json({ ok: true }));
+  app.get("/api/login-config", (c) => c.json(publicAuthConfig(ctx.env)));
 
   // Organization membership changes only through the universe routes, which
   // keep the last admin and the four roles; the plugin's endpoints are not
@@ -33,7 +36,7 @@ export function buildApp(ctx: AppContext) {
     const session = await ctx.auth.api.getSession({
       headers: c.req.raw.headers,
     });
-    if (!session) {
+    if (!session || !sessionAllowed(session, ctx.env)) {
       return c.json({ error: "unauthorized" }, 401);
     }
     if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
@@ -67,7 +70,8 @@ export function buildApp(ctx: AppContext) {
         name: schema.user.name,
         email: schema.user.email,
       })
-      .from(schema.user);
+      .from(schema.user)
+      .where(ctx.env.oidc ? or(eq(schema.user.identitySource, "company"), eq(schema.user.emergencyAdmin, true)) : undefined);
     return c.json(rows);
   });
 
@@ -76,6 +80,13 @@ export function buildApp(ctx: AppContext) {
       return c.json({ error: "platform admin required" }, 403);
     }
     return c.json({ connectors: await readChannelsStatus(ctx.env.channelsHealthUrls) });
+  });
+
+  api.get("/admin/audit", async (c) => {
+    if (!isPlatformAdmin(c.get("session"))) return c.json({ error: "platform admin required" }, 403);
+    const rows = await ctx.db.select().from(schema.identityAudit)
+      .orderBy(desc(schema.identityAudit.createdAt), desc(schema.identityAudit.id)).limit(100);
+    return c.json(rows);
   });
 
   api.route("/universes", universeRoutes(ctx));

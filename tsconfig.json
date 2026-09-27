@@ -22,6 +22,7 @@
     "platform/shared/src/**/*.ts",
     "platform/server/src/**/*.ts",
     "platform/server/test/**/*.ts",
+    "platform/server/scripts/**/*.ts",
     "platform/cli/src/**/*.ts"
   ]
 }

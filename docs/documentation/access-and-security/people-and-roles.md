@@ -37,10 +37,19 @@ Admin membership in Acorn does not make them a Platform admin.
 
 ## Create an account and add a member
 
-The browser sign-in page accepts an email address and password. Public password
-signup is disabled; a Platform admin creates the account before a universe
-Admin adds it to the team. For the first account on a deployment, follow
-[Bootstrap the Platform](api-keys-and-service-access.md#bootstrap-the-platform).
+With company sign-in configured, opening Lightspeed starts sign-in automatically
+by default when you have no active session. A deployment can instead require a
+click to start sign-in. The login page also offers **Sign in with your
+company account** for manual sign-in. Your provider handles internal single
+sign-on and any external password or MFA
+prompt. The company grants ordinary application access or Platform admin
+access. A first admitted sign-in creates the account; an ordinary account has
+no universe membership until an admin adds it on **Members**. Your company
+profile and Platform admin status are refreshed at each company sign-in.
+
+Without company sign-in, use an email address and password. Public signup is
+disabled. A Platform admin creates the account as follows; the first account
+comes from [Bootstrap the Platform](api-keys-and-service-access.md#bootstrap-the-platform).
 
 1. As a Platform admin, open **Platform admin → Users → Create user**. Enter the person's
    **Name**, **Email**, and initial **Password**. Leave **Role** as `user` unless
@@ -62,11 +71,32 @@ controls to change or remove their membership.*
 Creating the account alone gives an ordinary user no universe membership. The
 member picker selects existing accounts; it does not send an invitation.
 
-The server can optionally configure GitHub OAuth through Better Auth, but the
-current browser sign-in page exposes only email and password. External accounts
-are not automatically linked to existing local accounts by matching email.
-Organization SSO, SCIM provisioning, and email invitation workflows are not
-implemented yet.
+Company accounts are identified by the provider's exact issuer and subject,
+not by email. The provider must supply a unique email. Matching a local
+account's email never links the two accounts. Company sign-in preserves local
+universe memberships; each universe uses the same four roles without needing
+its own directory group. SCIM and email invitation workflows are deferred.
+
+For provider registration, entitlement claims and emergency-access setup,
+follow [Company sign-in (SSO)](single-sign-on.md).
+
+## Session expiry and suspension
+
+With company sign-in configured, sessions expire after eight hours by default.
+Activity does not extend them; company users return to the provider to sign in
+again. Explicit local emergency admins use **Admins** when
+password access is enabled. See [Company sign-in](single-sign-on.md#session-expiry-and-suspension)
+for renewal, outages and provider revocation behavior.
+
+Under **Platform admin → Users**, admins can suspend a person, reinstate them,
+or sign out all their sessions. Suspension blocks new sign-ins and subsequent
+requests immediately and persists until an admin lifts it. Reinstatement
+requires a fresh login; it does not revive old sessions. Users shows identity
+source, application access and the last successful provider check.
+
+Suspension preserves local memberships and historical records. There is no
+automatic deactivation for inactivity. Running work and core API keys require
+separate cancellation or revocation.
 
 ## Change or remove access
 

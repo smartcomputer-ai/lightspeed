@@ -5,6 +5,7 @@ import type { MethodGroup } from "@lightspeed-ai/agent-client";
 import { schema } from "@lightspeed/platform-db";
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";
+import { auditIdentity } from "../identity-audit.js";
 import { parseBody } from "../http.js";
 import { deploymentClientFor, withGateway } from "./gateway.js";
 
@@ -63,6 +64,7 @@ export function apiKeyAdminRoutes(ctx: AppContext) {
         ...(input.groups ? { groups: input.groups as MethodGroup[] } : {}),
         assertActor: input.assertActor,
       });
+      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: response.result.apiKey.keyPrefix, universeId: input.scope.kind === "universe" ? input.scope.universeId : null });
       return c.json(response.result, 201);
     });
   });
@@ -71,6 +73,7 @@ export function apiKeyAdminRoutes(ctx: AppContext) {
     const response = await deploymentClientFor(ctx).call("deployment/api-keys/revoke", {
       keyPrefix: c.req.param("keyPrefix"),
     });
+    await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.revoke", targetId: c.req.param("keyPrefix") });
     return c.json(response.result.apiKey);
   }));
 

@@ -15,6 +15,13 @@
       "when": 1790407734828,
       "tag": "0001_universe_features",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790531942445,
+      "tag": "0002_company_identity",
+      "breakpoints": true
     }
   ]
 }

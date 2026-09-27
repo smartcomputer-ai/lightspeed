@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Monitor, Moon, Sun } from "lucide-react";
-import { authClient, type SessionUser } from "@/auth";
+import { authClient, useLoginConfig, type SessionUser } from "@/auth";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -16,12 +16,13 @@ import { PageHeader } from "@/components/page";
 import { useTheme, type Theme } from "@/lib/theme";
 
 export function AccountPage({ user }: { user: SessionUser }) {
+  const config = useLoginConfig();
   return (
     <>
       <PageHeader title="Account" description="Your profile, password, and appearance." />
       <div className="grid gap-6">
         <ProfileCard user={user} />
-        <PasswordCard />
+        {user.identitySource === "company" ? <p className="text-sm text-muted-foreground">Your profile and sign-in are managed by your company.</p> : config.data?.password !== "off" && (!config.data?.sso || user.emergencyAdmin) && <PasswordCard />}
         <ThemeCard />
       </div>
     </>
@@ -56,7 +57,7 @@ function ProfileCard({ user }: { user: SessionUser }) {
             <FieldLabel htmlFor="account-email">Email</FieldLabel>
             <Input id="account-email" value={user.email} disabled />
             <FieldDescription>
-              A platform admin can change your verified sign-in address.
+              {user.identitySource === "company" ? "Managed by your company." : "A platform admin can change your verified sign-in address."}
             </FieldDescription>
           </Field>
           <Field>
@@ -64,6 +65,7 @@ function ProfileCard({ user }: { user: SessionUser }) {
             <Input
               id="account-name"
               value={name}
+              disabled={user.identitySource === "company"}
               onChange={(e) => setName(e.target.value)}
               required
             />
@@ -73,7 +75,7 @@ function ProfileCard({ user }: { user: SessionUser }) {
           <div>
             <Button
               type="submit"
-              disabled={save.isPending || name.trim() === user.name || !name.trim()}
+              disabled={user.identitySource === "company" || save.isPending || name.trim() === user.name || !name.trim()}
             >
               {save.isPending ? "Saving…" : "Save"}
             </Button>

@@ -12,6 +12,7 @@ import { schema } from "@lightspeed/platform-db";
 import type { UniverseSetupState } from "@lightspeed/platform-db/schema";
 import type { AppContext, ApiVariables } from "../context.js";
 import { parseBody } from "../http.js";
+import { auditIdentity } from "../identity-audit.js";
 import { universeKeyClient } from "../runtime-client.js";
 import { deploymentClientFor, engineClientFor } from "./gateway.js";
 import { universeForSession, type UniverseAccess } from "./universes.js";
@@ -229,7 +230,7 @@ async function installConfigurator(
   let state = { ...installation.state };
 
   const verify = (secret: string) => universeKeyClient(ctx.env, universe.gatewayUrl, secret);
-  state = await ensureCredential(ctx, installation.id, universe, client, deployment, verify, state, mcpUrl, key);
+    state = await ensureCredential(ctx, installation.id, universe, client, deployment, verify, state, mcpUrl, key, { actorId: access.member.userId, universeId: universe.id });
   state = await ensureMcpServer(
     ctx,
     installation.id,
@@ -271,6 +272,7 @@ export async function ensureCredential(
   state: UniverseSetupState,
   mcpUrl: string,
   choice: KeyChoice,
+  audit: { actorId: string; universeId: string },
 ): Promise<UniverseSetupState> {
   const keys = (await deployment.call("deployment/api-keys/list", {
     scope: { kind: "universe", universeId: universe.lightspeedUniverseId },
@@ -290,6 +292,7 @@ export async function ensureCredential(
     }
     if (current && minted && current.keyPrefix !== keeping) {
       await deployment.call("deployment/api-keys/revoke", { keyPrefix: current.keyPrefix });
+      await auditIdentity(ctx.db, { ...audit, action: "key.revoke", targetId: current.keyPrefix });
     }
   };
 
@@ -312,9 +315,11 @@ export async function ensureCredential(
         groups,
         assertActor: false,
       });
+      await auditIdentity(ctx.db, { ...audit, action: "key.create", targetId: created.result.apiKey.keyPrefix });
       const grantId = await importGrant(client, created.result.secret, mcpUrl).catch(async (error: unknown) => {
         await deployment
           .call("deployment/api-keys/revoke", { keyPrefix: created.result.apiKey.keyPrefix })
+          .then(() => auditIdentity(ctx.db, { ...audit, action: "key.revoke", targetId: created.result.apiKey.keyPrefix }))
           .catch(() => undefined);
         throw error;
       });

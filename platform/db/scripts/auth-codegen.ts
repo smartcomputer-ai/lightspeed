@@ -7,11 +7,14 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { admin } from "better-auth/plugins/admin";
 import { bearer } from "better-auth/plugins/bearer";
 import { organization } from "better-auth/plugins/organization";
+import { identityUserFields, identitySessionFields } from "../src/auth-fields.js";
 
 const db = drizzle("postgres://codegen-only");
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg" }),
   emailAndPassword: { enabled: true },
+  user: { additionalFields: identityUserFields },
+  session: { additionalFields: identitySessionFields },
   plugins: [organization(), admin(), bearer()],
 });

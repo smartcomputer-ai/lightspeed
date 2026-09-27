@@ -1,7 +1,7 @@
 # P182 — Session expiry and access revocation
 
-**Status:** Scope agreed, 2026-09-27; implementation not started. Platform
-only; core is unchanged. Follows
+**Status:** Implemented with P181 and locally validated, 2026-09-27.
+Deployment-provider revocation acceptance remains pending; core is unchanged. Follows
 [single sign-on and application access](p181-single-sign-on-and-directory-membership.md).
 Both belong in the first SSO delivery described in
 [enterprise authorization](later/pNNN-enterprise-authorization.md).
@@ -43,7 +43,8 @@ Platform request, including auth/admin endpoints, without a cookie cache
 that could keep revoked access alive.
 
 At expiry, APIs return an authentication failure and the browser starts
-company sign-in again. Successful login refreshes admission and
+company sign-in again by default. With
+`LIGHTSPEED_PLATFORM_OIDC_AUTO_SIGN_IN=false`, the login page waits for a click. Successful login refreshes admission and
 platform-admin status before issuing a session. Other sessions use that
 updated access state on their next request, but keep their original expiry.
 Local universe memberships are not recomputed from provider claims.
@@ -145,10 +146,13 @@ offboarding must not be described as removing all access for key holders.
 
 ### 7. Record access changes
 
-Log changes to company admission and platform-admin status, local membership
-changes, and suspension/reinstatement, including the acting admin where
-applicable. Never log tokens. A durable audit trail and export remain
-deferred as in P180.
+Persist changes to company admission and platform-admin status, local
+membership edits, suspension/reinstatement, session revocation, emergency
+sign-ins and key creation/revocation through Platform routes. Include acting
+admin, target, time, outcome and safe details. Records have no foreign keys
+and survive user and session deletion; Users displays the latest 100. Never
+record provider tokens, passwords or whole request bodies. Comprehensive
+gateway-operation auditing, export and retention controls remain deferred.
 
 ## Persistence
 
@@ -198,6 +202,20 @@ SCIM, provisioning before first sign-in, personal tokens and Platform-user
 CLI/MCP login, access-review export, and stopping already admitted work on
 revocation. Group-driven universe access requires a separate design if it
 is needed later.
+
+## Delivery record
+
+Absolute expiry is enforced in session creation and every protected request,
+with sliding renewal and cookie caching disabled under OIDC. Local suspension
+increments a persistent session version as well as deleting sessions, so an
+in-flight login cannot leave usable old access after reinstatement. Current
+admission and roles govern existing sessions on their next request.
+
+Signed-provider and local Keycloak tests cover admission loss, demotion,
+restoration, disabled-provider renewal, outage behavior, emergency access,
+local role edits, retained audit events, and expired cookie/bearer sessions.
+The deployment provider's propagation and reauthentication policy remain an
+acceptance step; no automatic deactivation or core-key cascade was added.
 
 ## Current seams
 

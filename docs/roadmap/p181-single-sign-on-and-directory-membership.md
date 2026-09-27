@@ -1,7 +1,7 @@
 # P181 — Single sign-on and application access
 
-**Status:** Scope agreed, 2026-09-27; implementation not started. Platform
-only; core is unchanged. Builds on
+**Status:** Implemented and locally validated, 2026-09-27. Deployment-provider
+acceptance remains pending; core is unchanged. Builds on
 [Platform: organizations, roles and unshared work](p180-platform-organizations-roles-and-unshared-work.md).
 [Session expiry and access revocation](p182-deprovisioning-and-directory-updates.md)
 completes the first SSO delivery described in
@@ -209,10 +209,11 @@ user-authorized MCP access are deferred.
 
 ## Configuration
 
-Illustrative names, following the existing Platform settings:
+Implemented settings; the [environment reference](../documentation/reference/environment-variables.md#platform-server) gives defaults and validation:
 
 ```text
 LIGHTSPEED_PLATFORM_OIDC_ISSUER
+LIGHTSPEED_PLATFORM_OIDC_DISCOVERY_URL    optional metadata URL override
 LIGHTSPEED_PLATFORM_OIDC_CLIENT_ID
 LIGHTSPEED_PLATFORM_OIDC_CLIENT_SECRET
 LIGHTSPEED_PLATFORM_OIDC_SCOPES          openid profile email (default)
@@ -223,6 +224,8 @@ LIGHTSPEED_PLATFORM_OIDC_CLAIMS_TOKEN    id (default) | access
 LIGHTSPEED_PLATFORM_OIDC_RESOURCE        optional requested application resource
 LIGHTSPEED_PLATFORM_OIDC_AUDIENCE        required when reading access-token claims
 LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN     break-glass (default with OIDC) | off
+LIGHTSPEED_PLATFORM_OIDC_SESSION_MAX_AGE_SECONDS  28800 (default)
+LIGHTSPEED_PLATFORM_OIDC_AUTO_SIGN_IN     true (default) | false
 ```
 
 P182 adds the absolute session limit. Provider settings are deployment
@@ -285,6 +288,39 @@ the schema following
 Group-driven universe access, SCIM, provisioning before first sign-in,
 SAML, multiple providers, trusted identity proxies, and personal CLI/MCP
 authentication. None is required for this first delivery.
+
+## Delivery record
+
+- Better Auth server and web consumers upgraded to `1.7.6`; Generic OAuth
+  integrates one deployment-configured provider with PKCE and nonce.
+- Generated Platform migration `0002_company_identity` adds issuer/subject
+  identity, explicit emergency admins, admission/check metadata, revocation
+  versions and durable access records. Platform schema revision is 3.
+- Normal unauthenticated app visits start company sign-in automatically by
+  default. Deployment setting `LIGHTSPEED_PLATFORM_OIDC_AUTO_SIGN_IN=false`
+  makes sign-in manual, including renewal; `/api/login-config` supplies this
+  runtime setting without a frontend rebuild.
+  Explicit login, logout and failed sign-in keep a manual page with admin
+  access. A per-tab attempt guard prevents repeated automatic redirects.
+- Company sign-in, emergency login, profile restrictions, local memberships,
+  Users controls and the no-universe state are connected end to end.
+- P182's absolute expiry, admission loss, admin demotion and persistent local
+  suspension are included. Session versions close suspension/login races.
+- The agreed small durable audit trail records access and membership changes,
+  emergency sign-ins and Platform key operations, with recent events on Users.
+  Comprehensive gateway-operation auditing and retention/export remain later.
+- Signed-provider integration tests cover both entitlement sources, protocol
+  rejection, identity collision, token non-persistence, local roles, emergency
+  password changes, protected auth routes and cookie/bearer expiry. The local
+  Keycloak check exercises real code exchange, silent renewal and revocation.
+- Fresh and retained-user PostgreSQL migration checks cover installation and
+  upgrade. Existing local authentication is covered separately without OIDC.
+
+Actual deployment acceptance still needs the target provider registration,
+claims and internal/external login policy. Verify its disabled-account and
+entitlement propagation with existing company SSO cookies before committing
+to an end-to-end offboarding bound. Local Keycloak results do not establish
+that provider's behavior.
 
 ## Current seams
 

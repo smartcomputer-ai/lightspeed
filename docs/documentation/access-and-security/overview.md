@@ -78,17 +78,26 @@ requested a run, steering, or cancellation, and who decided a tool approval.
 An attribution can name an asserted actor, an API key, a local caller, or the
 runtime controller responsible for internal work.
 
-These records explain an individual session's history. Lightspeed does not yet
-have a separate durable Platform audit trail for membership changes, access
-refusals, and administrative operations. Session attribution is subject to
-session retention and deletion; it is not an audit archive that survives
-deleting the session. Enterprise SSO, directory synchronization, SCIM, and
-member invitations are also not implemented in the current product.
+The Platform also keeps a durable access history for company admission and
+admin-status changes, emergency sign-ins, suspension, session revocation,
+local membership edits, and key creation/revocation through Platform routes.
+Platform admins can view the latest 100 records under **Users → Recent access
+changes**. Records contain identifiers, action, time, outcome and safe details;
+they survive deletion of users and sessions. Provider tokens and passwords
+are never included.
+
+This is a small access trail. Comprehensive gateway-operation auditing,
+retention controls and export are deferred. Core operations made directly
+with an API key do not pass through this trail. Core session attribution
+remains subject to session retention and deletion. Company OIDC sign-in is
+supported; directory synchronization, SCIM and member invitations are deferred.
 
 ## Choose the next detail
 
 - [People and roles](people-and-roles.md): sign in, add members, assign roles,
   and understand the effect of removing access.
+- [Company sign-in (SSO)](single-sign-on.md): configure your identity provider,
+  emergency access, and session renewal and revocation.
 - [Private and shared work](private-and-shared-work.md): investigate privately,
   share a session, and understand access to bots and delegated work.
 - [API keys and service access](api-keys-and-service-access.md): configure

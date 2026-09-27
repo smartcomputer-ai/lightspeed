@@ -1,0 +1,12 @@
+name: lightspeed-oidc
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.4
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: lightspeed-local-admin
+    ports:
+      - "127.0.0.1:18090:8080"
+    volumes:
+      - ./lightspeed-realm.json:/opt/keycloak/data/import/lightspeed-realm.json:ro

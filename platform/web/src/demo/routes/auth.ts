@@ -103,6 +103,15 @@ export function authRoutes(store: DemoStore): Hono {
     }
     return c.json({ success: true });
   });
+  for (const action of ["ban-user", "unban-user"]) {
+    app.post(`/admin/${action}`, async (c) => {
+      const body = await readBody<{ userId?: string }>(c);
+      const user = body.userId ? store.users.get(body.userId) : undefined;
+      if (!user) return c.json({ message: "user not found" }, 404);
+      user.banned = action === "ban-user";
+      return c.json({ user });
+    });
+  }
 
   return app;
 }

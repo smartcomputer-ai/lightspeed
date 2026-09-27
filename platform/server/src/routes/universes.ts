@@ -16,6 +16,7 @@ import {
 } from "@lightspeed/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";
+import { auditIdentity } from "../identity-audit.js";
 import { parseBody } from "../http.js";
 import type { Member } from "../runtime-client.js";
 import { deploymentClientFor, withGateway } from "./gateway.js";
@@ -309,6 +310,7 @@ export function universeRoutes(ctx: AppContext) {
         groups: body.data.groups as MethodGroup[],
         assertActor: false,
       });
+      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: response.result.apiKey.keyPrefix, universeId: access.universe.id });
       return c.json(response.result, 201);
     });
   });
@@ -330,6 +332,7 @@ export function universeRoutes(ctx: AppContext) {
         return c.json({ error: "not found" }, 404);
       }
       const response = await client.call("deployment/api-keys/revoke", { keyPrefix });
+      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.revoke", targetId: keyPrefix, universeId: access.universe.id });
       return c.json(response.result.apiKey);
     });
   });
@@ -484,7 +487,8 @@ export function universeRoutes(ctx: AppContext) {
     if (existing) {
       return c.json({ error: "already a member" }, 409);
     }
-    const [created] = await ctx.db
+    const created = await ctx.db.transaction(async (tx) => {
+      const [created] = await tx
       .insert(member)
       .values({
         id: crypto.randomUUID(),
@@ -494,6 +498,9 @@ export function universeRoutes(ctx: AppContext) {
         createdAt: new Date(),
       })
       .returning();
+      await auditIdentity(tx, { actorId: c.get("session").user.id, action: "member.add", targetId: target.id, universeId: access.universe.id, details: { role: body.data.role } });
+      return created;
+    });
     return c.json(created, 201);
   });
 
@@ -513,11 +520,15 @@ export function universeRoutes(ctx: AppContext) {
     if (body.data.role !== "admin" && (await isLastAdmin(ctx, access.universe.organizationId, memberId))) {
       return c.json({ error: "a universe keeps at least one admin" }, 409);
     }
-    const [updated] = await ctx.db
+    const updated = await ctx.db.transaction(async (tx) => {
+      const [updated] = await tx
       .update(member)
       .set({ role: body.data.role })
       .where(and(eq(member.id, memberId), eq(member.organizationId, access.universe.organizationId)))
       .returning();
+      if (updated) await auditIdentity(tx, { actorId: c.get("session").user.id, action: "member.role", targetId: updated.userId, universeId: access.universe.id, details: { role: body.data.role } });
+      return updated;
+    });
     if (!updated) {
       return c.json({ error: "not found" }, 404);
     }
@@ -536,10 +547,14 @@ export function universeRoutes(ctx: AppContext) {
     if (await isLastAdmin(ctx, access.universe.organizationId, memberId)) {
       return c.json({ error: "a universe keeps at least one admin" }, 409);
     }
-    const deleted = await ctx.db
+    const deleted = await ctx.db.transaction(async (tx) => {
+      const deleted = await tx
       .delete(member)
       .where(and(eq(member.id, memberId), eq(member.organizationId, access.universe.organizationId)))
-      .returning({ id: member.id });
+      .returning({ id: member.id, userId: member.userId });
+      if (deleted[0]) await auditIdentity(tx, { actorId: c.get("session").user.id, action: "member.remove", targetId: deleted[0].userId, universeId: access.universe.id });
+      return deleted;
+    });
     if (deleted.length === 0) {
       return c.json({ error: "not found" }, 404);
     }

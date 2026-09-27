@@ -115,6 +115,8 @@ environment gateway. The local `dev.sh` stack has different defaults and is
 intended for development.
 
 Continue with [Configuration](configuration.md) for service settings,
+[Company sign-in (SSO)](../access-and-security/single-sign-on.md) for the Platform
+identity provider,
 [Operations](operations.md) for monitoring and scaling, and
 [Upgrades and recovery](upgrades-and-recovery.md) for maintenance. Use
 [Troubleshooting](troubleshooting.md) to follow failures across components.

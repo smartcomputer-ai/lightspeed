@@ -22,7 +22,7 @@ function setup(role: string) {
   for (const step of ["from", "innerJoin", "where"]) chain[step] = () => chain;
   chain.limit = async () => queue.shift() ?? [];
   const ctx = {
-    db: { select: () => chain },
+    db: { insert: () => ({ values: async () => undefined }), select: () => chain },
     env: { lightspeedApiUrl: "https://core.example/rpc", lightspeedApiKey: "lsk_platform" },
   } as unknown as AppContext;
   const app = new Hono<{ Variables: ApiVariables }>();

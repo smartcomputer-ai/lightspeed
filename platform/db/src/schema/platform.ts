@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { organization, user } from "./auth.js";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
@@ -8,6 +8,18 @@ const updatedAt = () =>
     .defaultNow()
     .$onUpdate(() => new Date())
     .notNull();
+
+// Attribution must survive deletion of the referenced identity or resource.
+export const identityAudit = pgTable("identity_audit", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  createdAt: createdAt(),
+  actorId: text("actor_id"),
+  action: text("action").notNull(),
+  targetId: text("target_id"),
+  universeId: text("universe_id"),
+  outcome: text("outcome").notNull(),
+  details: jsonb("details").$type<Record<string, string | boolean | null>>().default({}).notNull(),
+}, (table) => [index("identity_audit_created_idx").on(table.createdAt)]);
 
 /// A platform universe: one better-auth organization plus its Lightspeed
 /// linkage. `lightspeedUniverseId` is the id stamped as

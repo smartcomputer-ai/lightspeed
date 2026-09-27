@@ -68,6 +68,7 @@ export default defineConfig({
         { label: 'Access and security', collapsed: true, items: [
           { slug: 'access-and-security/overview' },
           { slug: 'access-and-security/people-and-roles' },
+          { slug: 'access-and-security/single-sign-on' },
           { slug: 'access-and-security/private-and-shared-work' },
           { slug: 'access-and-security/api-keys-and-service-access' },
           { slug: 'access-and-security/agent-and-tool-access' },

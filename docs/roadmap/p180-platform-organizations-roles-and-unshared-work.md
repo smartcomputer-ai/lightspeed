@@ -1,6 +1,6 @@
 # P180 — Platform: organizations, roles and unshared work
 
-**Status:** In progress, 2026-09-26: steps 1 to 5 done; audit and
+**Status:** In progress, 2026-09-26: steps 1 to 5 done; comprehensive gateway audit and
 invitations deferred, customer documents held, live Platform validation and
 the merge open (see [what is left](#what-is-left)). Second half of the
 version 0.1 access design; builds on the contract that
@@ -193,7 +193,7 @@ greenfield rule:
   `member.role` constrained to the four roles.
 - `universes` (organization id, core universe id, gateway URL) restored.
 - `user.corePrincipalId` dropped.
-- `identity_audit` added (deferred, see step 4).
+- `identity_audit` added with the first SSO delivery for access, membership and key changes; comprehensive gateway-operation coverage remains deferred.
 - `universes.features`: the feature switches an admin changed.
 
 ## Implementation order
@@ -216,11 +216,12 @@ greenfield rule:
 4. [x] Keys admin area: platform admins list, mint (scope, groups,
        `assert_actor`) and revoke every core key under Admin → API keys;
        universe API keys are for universe admins.
-   [ ] Deferred for now: `identity_audit` (decision 6) and member
-       invitations. Until then accounts are created under Admin → Users and
-       added on Members; the session log and `created_by` columns are the
-       only records, and nothing outlives a deleted session. Both return
-       before customer data is loaded.
+   [x] The first SSO delivery adds `identity_audit` for access and membership
+       changes, emergency sign-ins and Platform key operations. Rows outlive
+       users and sessions; Users shows the latest 100.
+   [ ] Comprehensive gateway-operation auditing from decision 6 and member
+       invitations remain deferred. Company users first sign in through SSO;
+       local accounts use Admin → Users, and Members assigns local roles.
 5. [x] `platform/README.md`.
    [x] Per-universe feature switches (decision 8).
    [x] Product manual: the Access and security section and surrounding guides
@@ -266,10 +267,10 @@ written; the live core suites cover the core half.
 
 ## What is left
 
-1. `identity_audit` and member invitations (step 4), before customer data
-   is loaded.
-2. The live Platform suite above, without its audit rows until the audit
-   trail exists.
+1. Comprehensive gateway-operation audit coverage and member invitations
+   (step 4). The small access trail shipped with SSO does not close decision 6.
+2. The broader live Platform suite above. The SSO integration suite now covers
+   identity, membership changes and their durable audit rows.
 3. The customer documents below. The product manual and core's user
    documentation are updated in Access and security.
 4. A development database reset, then the Temporal live suites, since

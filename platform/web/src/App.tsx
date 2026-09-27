@@ -1,4 +1,5 @@
 import { PermissionIdentityProvider } from "@/lib/permissions";
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import type { SessionUser } from "./auth.js";
@@ -30,6 +31,7 @@ import { SetupsPage } from "@/pages/SetupsPage";
 import { WorkspacesPage } from "@/pages/WorkspacesPage";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
 import { FeatureGate } from "@/components/feature-gate";
+import { finishAutomaticSignIn } from "@/lib/automatic-sign-in";
 
 function UniverseIndexRedirect() {
   const { universe } = useActiveUniverse();
@@ -41,6 +43,16 @@ function UniverseIndexRedirect() {
 
 export function App() {
   const session = authClient.useSession();
+  useEffect(() => {
+    if (session.data) finishAutomaticSignIn();
+  }, [session.data?.session.id]);
+  useEffect(() => {
+    const expiresAt = session.data?.session.expiresAt;
+    if (!expiresAt) return;
+    const timer = setTimeout(() => window.location.assign(`${import.meta.env.BASE_URL}login?expired=1`),
+      Math.min(Math.max(new Date(expiresAt).getTime() - Date.now(), 0), 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [session.data?.session.expiresAt]);
   const location = useLocation();
   const me = useQuery({ queryKey: ["me", session.data?.user.id], enabled: !!session.data,
     queryFn: () => api<{ user: SessionUser }>("GET", "/api/v1/me"), retry: false,
@@ -63,7 +75,7 @@ export function App() {
   }
 
   if (!session.data) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login?auto=1" replace />;
   }
 
   if (!me.data) return <div className="p-8">{me.error ? me.error.message : "Loading permissions…"}</div>;

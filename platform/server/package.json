@@ -5,21 +5,24 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:sso": "tsx scripts/check-sso.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
     "@lightspeed-ai/agent-client": "*",
     "@lightspeed/platform-db": "*",
     "@lightspeed/platform-shared": "*",
-    "better-auth": "^1.2.0",
+    "better-auth": "1.7.6",
     "drizzle-orm": "^0.45.0",
     "hono": "^4.7.0",
+    "jose": "6.2.3",
     "pg": "^8.16.0",
     "tsx": "^4.20.0",
     "zod": "^4.4.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@types/pg": "^8.15.0",
     "vitest": "^3.2.0"
   },

@@ -235,7 +235,8 @@ machines without Incus.
 
 These variables configure the TypeScript management API/web server under
 `platform/server`. Its database and authentication are separate concerns from
-the Rust runtime database and gateway authentication.
+the Rust runtime database and gateway authentication. For provider setup and
+acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-sign-on.md).
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
@@ -245,9 +246,23 @@ the Rust runtime database and gateway authentication.
 | `LIGHTSPEED_PLATFORM_BASE_URL` | `http://localhost:3000` | Public Platform origin used by authentication and trusted-origin checks. |
 | `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS` | Empty list | Comma-separated additional browser origins accepted by Better Auth. The development supervisor supplies both `http://127.0.0.1:5173` and `http://localhost:5173`. |
 | `PORT` | `3000` | Platform HTTP listen port. |
-| `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` | Unset | Bootstrap administrator email. Applied only with the password and only while the users table is empty. |
+| `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` | Unset | Seeds an emergency local admin with the password when the users table is empty. Also designates an existing local password admin as emergency access, without elevating roles or resetting its password. |
 | `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` | Unset | Bootstrap administrator password. Applied only with the email and only while the users table is empty. |
-| `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` | Unset | GitHub login client ID. GitHub login is enabled only when both GitHub variables are present. |
+| `LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN` | `break-glass` with OIDC; `local` without | `break-glass` permits only designated local emergency admins; `off` disables password sign-in and changes. `local` is rejected with OIDC. |
+| `LIGHTSPEED_PLATFORM_OIDC_ISSUER` | Unset | Exact OIDC issuer. Setting any OIDC variable enables configuration validation; incomplete configuration fails startup. HTTPS is required except loopback HTTP for development. |
+| `LIGHTSPEED_PLATFORM_OIDC_DISCOVERY_URL` | `<issuer>/.well-known/openid-configuration` | Metadata URL override, including providers with a separate discovery path. Must describe the exact issuer. HTTPS except loopback HTTP. |
+| `LIGHTSPEED_PLATFORM_OIDC_CLIENT_ID` | Required with OIDC | Confidential application client ID. |
+| `LIGHTSPEED_PLATFORM_OIDC_CLIENT_SECRET` | Required with OIDC | Client secret used by the server's code exchange. |
+| `LIGHTSPEED_PLATFORM_OIDC_SCOPES` | `openid profile email` | Whitespace-separated scopes. Must include `openid`; `offline_access` is rejected. |
+| `LIGHTSPEED_PLATFORM_OIDC_GROUPS_CLAIM` | `groups` | Exact claim name holding one string or an array of strings; no splitting or group-name parsing. |
+| `LIGHTSPEED_PLATFORM_OIDC_USER_GROUP` | Required with OIDC | Exact ordinary application-admission entitlement. |
+| `LIGHTSPEED_PLATFORM_OIDC_ADMIN_GROUP` | Required with OIDC | Exact Platform admin entitlement, sufficient by itself and distinct from the ordinary value. |
+| `LIGHTSPEED_PLATFORM_OIDC_CLAIMS_TOKEN` | `id` | Read entitlements from the verified ID token, or `access` for a separately verified JWT access token. Identity always requires an ID token. |
+| `LIGHTSPEED_PLATFORM_OIDC_RESOURCE` | Unset | Optional resource parameter sent to the authorization endpoint. |
+| `LIGHTSPEED_PLATFORM_OIDC_AUDIENCE` | Required when claims token is `access` | Expected JWT access-token audience; separate from resource selection. |
+| `LIGHTSPEED_PLATFORM_OIDC_AUTO_SIGN_IN` | `true` with OIDC | Automatically start company sign-in on unauthenticated app visits and session expiry. `false` waits for a click. Explicit `/app/login` remains manual. Restart the Platform and refresh the browser after changes; no frontend rebuild is needed. |
+| `LIGHTSPEED_PLATFORM_OIDC_SESSION_MAX_AGE_SECONDS` | `28800` | Absolute session lifetime with OIDC, including emergency sessions. Integer from 60 to 86400; requests cannot extend it. |
+| `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` | Unset | GitHub login client ID. GitHub login is enabled only when both GitHub variables are present and OIDC is absent. |
 | `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_SECRET` | Unset | GitHub login client secret. |
 | `LIGHTSPEED_API_URL` | Unset | Runtime endpoint bound to the Platform service key. Per-universe overrides must match it exactly. |
 | `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL` | Unset | Public Configurator MCP endpoint installed by the Configurator setup. The setup is unavailable when omitted. |

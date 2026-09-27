@@ -100,16 +100,32 @@ its channels, keeps running.
 The Platform owns people; core knows universes, keys and opaque actors, and
 records who asked for each run, steer, cancellation and approval.
 
-**Accounts.** The browser signs people in with email and password; public
-sign-up is closed. The server can configure GitHub OAuth through Better Auth,
-but the current sign-in page has no GitHub button. The first platform admin
-comes from `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
-`LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`. Platform admins (the Better Auth `admin`
-role) create accounts under **Platform admin → Users**, where they also change a user's
-name, verified email, platform-admin role and password; a password reset
-revokes the user's sessions. Signed-in users change their own name and
-password under **Account**. Self-service email changes wait for an
-email-verification sender.
+**Accounts.** With a company OIDC provider configured, the browser offers company
+sign-in using authorization code + PKCE and nonce. Two exact entitlements
+control ordinary application access and Platform admin access. Company
+profiles and admin status follow the provider; universe memberships remain
+local. Users are bound to issuer and subject, with no email-based linking or
+stored provider tokens. Better Auth server and web consumers use `1.7.6` and
+the Generic OAuth plugin.
+
+Local password login remains available to explicit emergency Platform admins,
+starting with the bootstrap account. `LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN=off`
+disables it. Without OIDC, existing local account creation and password login
+remain available; signup stays closed and the server can still configure
+GitHub OAuth. See [Company sign-in (SSO)](../docs/documentation/access-and-security/single-sign-on.md)
+for provider registration and emergency access,
+[People and roles](../docs/documentation/access-and-security/people-and-roles.md)
+for user administration, and the
+[local OIDC fixture](../docs/documentation/development/local-development.md#company-sign-in-with-local-keycloak)
+for development.
+
+**Revocation and history.** With OIDC, sessions expire absolutely after eight
+hours by default and activity cannot renew them. Every authenticated request
+checks current admission, suspension and permissions. **Users** supports
+suspension, reinstatement and signing out all sessions, and shows the latest
+100 durable access events. Membership changes apply on the next request;
+provider login preserves them. Core keys and already admitted work remain
+independent and require separate revocation or cancellation.
 
 **Universes and roles.** A universe is an organization. Its members hold one of
 four roles, least to most:

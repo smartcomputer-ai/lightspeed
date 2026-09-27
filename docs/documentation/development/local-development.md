@@ -71,6 +71,64 @@ accounts and memberships in the Platform database. A supplied key needs
 `deployment/universes` access for that step and the usual Platform permissions
 for interactive work.
 
+## Company sign-in with local Keycloak
+
+The optional fixture in `scripts/dev/oidc/` uses a loopback-only Keycloak
+container with a confidential client and PKCE required. From the repository
+root, start it and export the Platform configuration in the same terminal:
+
+```bash
+docker compose -f scripts/dev/oidc/compose.yaml up -d
+export LIGHTSPEED_PLATFORM_OIDC_ISSUER=http://localhost:18090/realms/lightspeed
+export LIGHTSPEED_PLATFORM_OIDC_CLIENT_ID=lightspeed-platform
+export LIGHTSPEED_PLATFORM_OIDC_CLIENT_SECRET=lightspeed-local-oidc-secret
+export LIGHTSPEED_PLATFORM_OIDC_USER_GROUP=lightspeed-users
+export LIGHTSPEED_PLATFORM_OIDC_ADMIN_GROUP=lightspeed-admins
+export LIGHTSPEED_PLATFORM_BASE_URL=http://localhost:5173
+export LIGHTSPEED_PLATFORM_DEV_SEED=false
+./dev.sh full
+```
+
+Open `http://localhost:5173/app/`; company sign-in starts automatically if you
+have no active session. Use hostname `localhost` for this fixture's registered
+redirects. The imported accounts
+share password `lightspeed-local-password`:
+
+| Keycloak username | Admission |
+| --- | --- |
+| `sso-user` | Ordinary application access; initially no universe memberships |
+| `sso-admin` | Platform admin, with only the admin entitlement |
+| `sso-denied` | No application entitlement; sign-in is refused |
+
+Add `sso-user` to a universe through **Members** after its first sign-in.
+For the existing bootstrap admin, open `http://localhost:5173/app/login`
+directly and choose **Admins**. The fixture credentials and HTTP configuration are for local use only.
+
+To try the manual login page, set
+`LIGHTSPEED_PLATFORM_OIDC_AUTO_SIGN_IN=false` before starting `./dev.sh full`.
+Restart the launcher and refresh the browser after changing it; leave it unset
+or set it to `true` for automatic company sign-in. No frontend rebuild is needed.
+
+Run the explicit live authentication check once Keycloak has started:
+
+```bash
+LIGHTSPEED_PLATFORM_OIDC_TEST_ISSUER=http://localhost:18090/realms/lightspeed \
+  npm run test:sso --workspace @lightspeed/platform-server
+```
+
+This uses a disposable in-process PostgreSQL database and the real provider's
+code exchange. It checks admission, silent SSO renewal, admin demotion,
+entitlement removal, disabled accounts, absolute expiry and emergency access.
+It temporarily changes the fixture users and restores them afterward; don't
+run simultaneous manual sign-in tests against the same fixture. The ordinary
+server tests separately exercise invalid signed responses, access-token
+claims, local memberships and protected auth routes without a live provider.
+
+Stop just this provider with
+`docker compose -f scripts/dev/oidc/compose.yaml down`. Remove the exported OIDC
+variables and restart the Platform to return to local authentication. Company
+accounts remain distinct from local password accounts.
+
 ## Choose the processes you need
 
 Launcher profiles select local processes. They are separate from the agent

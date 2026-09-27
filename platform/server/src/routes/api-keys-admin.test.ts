@@ -22,7 +22,7 @@ function setup(platformRole: string | undefined) {
   }));
   const query = { from: () => query, where: () => query, limit: async () => [universe] };
   const ctx = {
-    db: { select: (fields: unknown) => { expect(fields).toHaveProperty("lightspeedUniverseId", schema.universes.lightspeedUniverseId); return query; } },
+    db: { insert: () => ({ values: async () => undefined }), select: (fields: unknown) => { expect(fields).toHaveProperty("lightspeedUniverseId", schema.universes.lightspeedUniverseId); return query; } },
     env: { lightspeedApiUrl: "https://core.example/rpc", lightspeedApiKey: "lsk_platform" },
   } as unknown as AppContext;
   const app = new Hono<{ Variables: ApiVariables }>();

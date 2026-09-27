@@ -56,6 +56,28 @@ not guarantee compatibility with saved session configuration or workflow
 histories. Use matching clients and review daemon changes even when protocol
 mismatch would not trigger an automatic daemon update.
 
+## Enable company sign-in on an existing Platform
+
+The company-identity migration adds identity provenance, session revocation
+versions and durable access records. Existing users remain local and keep
+their memberships; the migration does not grant company or emergency access.
+The current Platform schema revision is 3. Startup applies the generated
+Platform migrations before serving requests.
+
+Before enabling OIDC, designate an existing local password admin through
+`LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and verify its emergency login. Use a
+separate email from the company account: existing local and company accounts
+are never linked by email. Resolve any email collision explicitly before
+company sign-in; no automatic identity or membership transfer is provided.
+Ordinary local accounts and their old sessions cannot access an SSO-enabled
+Platform. Keep their records until you have reviewed the required migration.
+
+Configure and test the provider as described in
+[Company sign-in (SSO)](../access-and-security/single-sign-on.md).
+Verify successful and denied login, both entitlements, emergency access,
+suspension and expiry before opening access. Disabling OIDC does not turn
+company accounts into password accounts.
+
 ## Preserve a complete recovery set
 
 Lightspeed has no integrated backup/restore command. Use the backup procedures
@@ -65,7 +87,7 @@ record how their recovery points fit together.
 | Material | Why recovery needs it |
 | --- | --- |
 | Runtime PostgreSQL database and migration ledger | Universe records, sessions/events, checkpoints, profiles, workspace references, blob catalog and inline content, credentials, keys, bots, channels, and environment state. |
-| Platform PostgreSQL database and migration ledger | Login accounts and sessions, external login records, universe memberships and roles, and universe display/routing metadata. |
+| Platform PostgreSQL database and migration ledger | Login accounts and sessions, external login records, universe memberships and roles, universe display/routing metadata, and durable access history. |
 | Temporal persistence and namespace configuration | Workflow histories, timers, schedules, and in-flight orchestration. Runtime PostgreSQL records are not a documented replacement for lost Temporal state. |
 | Configured object-store content | The bytes referenced by object-backed blobs. Restoring their database catalog does not reconstruct missing objects. |
 | Runtime master key | Existing encrypted secret values and grant tokens need the same `LIGHTSPEED_SECRETS_MASTER_KEY`. |

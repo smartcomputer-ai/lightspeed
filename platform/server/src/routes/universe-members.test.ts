@@ -1,3 +1,4 @@
+import { schema } from "@lightspeed/platform-db";
 import { Hono } from "hono";
 import { expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
@@ -22,7 +23,7 @@ function setup(role: string | null, reads: unknown[][] = [], platformRole?: stri
   const writes: string[] = [];
   const db = {
     select: () => chain,
-    insert: () => { writes.push("insert"); return { values: () => chain }; },
+    insert: (table: unknown) => table === schema.identityAudit ? { values: async () => undefined } : (() => { writes.push("insert"); return { values: () => chain }; })(),
     update: () => { writes.push("update"); return chain; },
     delete: () => { writes.push("delete"); return chain; },
   };
@@ -31,7 +32,7 @@ function setup(role: string | null, reads: unknown[][] = [], platformRole?: stri
     c.set("session", { user: { id: "caller", role: platformRole } } as ApiVariables["session"]);
     await next();
   });
-  app.route("/", universeRoutes({ db } as unknown as AppContext));
+  app.route("/", universeRoutes({ db: { ...db, transaction: async (work: (tx: typeof db) => Promise<unknown>) => work(db) } } as unknown as AppContext));
   const request = (path: string, method = "GET", body?: unknown) => app.request(`/platform-universe${path}`, {
     method, headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}),
   });
