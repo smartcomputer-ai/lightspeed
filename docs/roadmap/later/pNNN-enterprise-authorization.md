@@ -42,6 +42,13 @@ Two Platform-only slices, delivered together:
   an absolute session limit, provider reauthentication, immediate local
   suspension, and the boundary between stopping access and stopping work.
 
+The first slice includes upgrading Better Auth to `1.7.6` and using its
+Generic OAuth plugin with one configured OIDC provider, authorization code
+flow, PKCE and nonce binding. Require a verified ID token and check the two
+application entitlements before issuing a session. The SSO roadmap records
+the package comparison and required integration hooks; `@better-auth/sso`
+can be reconsidered for SAML or customer-managed provider connections.
+
 The same OIDC flow supports a brief internal SSO redirect and external
 credential/MFA prompts according to provider policy. The initial deployment
 must verify how its provider handles disabled accounts and lost entitlements

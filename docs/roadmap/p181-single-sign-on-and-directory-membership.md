@@ -85,23 +85,49 @@ code flow with PKCE:
 5. At the absolute session limit, require another provider login as P182
    specifies. Existing company SSO may avoid another prompt.
 
-Evaluate Better Auth's `@better-auth/sso` plugin first, configured for one
-deployment-controlled OIDC provider. Disable automatic organization
-provisioning: it must not create universe memberships. Do not expose
-self-service provider registration or domain routing. Verify the selected
-package version against the protocol and admission requirements; use the
-generic OAuth plugin only for a demonstrated integration need, rather
-than writing custom authentication plumbing to avoid the SSO package.
-See [Better Auth's SSO integration](https://better-auth.com/docs/plugins/sso).
+Use Better Auth's [Generic OAuth plugin](https://better-auth.com/docs/plugins/generic-oauth),
+configured strictly for OIDC with one deployment-controlled provider.
+Upgrade Better Auth from the installed `1.6.29` to
+[`1.7.6`](https://github.com/better-auth/better-auth/releases/tag/v1.7.6)
+as part of this implementation, including the server and client consumers.
+Better Auth handles the protocol; Lightspeed implements admission,
+platform-admin status and session revocation. Provider login does not
+provision universe memberships.
+
+Configure discovery, `pkce: true`, `requireIdTokenVerification: true` and
+keep OIDC nonce binding enabled. A small `getUserInfo` hook must require a
+returned ID token and read identity claims after Better Auth verifies it.
+`requireIdTokenVerification` requires usable verification metadata, but
+does not itself reject a token response without an ID token. Do not accept
+UserInfo-only authentication. Use `user.validateUserInfo` to check fresh
+admission claims for both new and returning users before session creation;
+apply provider-derived access and admin status before issuing the session.
+
+The package evaluation on 2026-09-27 compared both plugins at `1.7.6`.
+[`@better-auth/sso`](https://better-auth.com/docs/plugins/sso) supports a
+single provider and has a useful transactional `resolveUser` hook, but its
+[OIDC flow](https://raw.githubusercontent.com/better-auth/better-auth/v1.7.6/packages/sso/src/routes/sso.ts)
+does not implement nonce binding. Generic OAuth implements it and fits
+deployment configuration without SSO provider-management tables or routes.
+Nonce is optional in the [OIDC code-flow specification](https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest);
+it is an explicit requirement here. Reconsider the SSO plugin if SAML or
+customer-managed provider connections become requirements.
+
+Local tests with a mocked provider confirmed both plugins reject invalid
+signatures and missing entitlements before creating users or sessions.
+They also confirmed Generic OAuth's nonce checks and, with the explicit
+ID-token hook, rejection of missing ID tokens. These checks establish the
+package choice; real-provider integration remains part of delivery.
 
 Validate token signatures, issuer, audience and lifetime, and bind the
 callback to the login attempt with state, PKCE and an OIDC nonce. Token
 decoding alone is insufficient.
 
-Prefer identity and entitlement claims in the ID token. AD FS can expose
-access-token claims there through `allatclaims`. If the deployment supplies
-entitlements only in a JWT access token, validate it against the provider's
-keys and configured resource audience and bind it to the same login.
+Read identity from the ID token and prefer entitlement claims there too.
+AD FS can expose access-token claims there through `allatclaims`. If the
+deployment supplies entitlements only in a JWT access token, validate it
+against the provider's keys and configured resource audience and bind it
+to the same login.
 Resource selection in the request is distinct from audience validation;
 configure the required resource parameter as well as the expected audience.
 
@@ -210,32 +236,41 @@ effective application admission, provider-derived admin status and the last
 successful provider check. Local emergency-admin status must be distinct
 from a company-derived admin grant.
 
-No directory-rule table, membership source model or group-membership mirror
-is needed. Generate any Platform migrations from the schema following
+No SSO provider table, directory-rule table, membership source model or
+group-membership mirror is needed. Generate any Platform migrations from
+the schema following
 [the Platform migration guide](../documentation/development/changing-contracts.md#platform-migrations).
 
 ## Implementation order
 
-1. Validate the SSO package and provider contract: discovery, client
-   authentication, PKCE, resource/scopes and sanitized identity/entitlement
-   claims. Develop against local Keycloak; exercise a real test registration
-   as soon as one is available.
-2. Implement OIDC admission, stable account recognition, profile updates
+1. Upgrade Better Auth to `1.7.6`, align its consumers and verify existing
+   authentication and administration behavior.
+2. Integrate Generic OAuth and validate the provider contract: discovery,
+   client authentication, PKCE, nonce, required ID token, resource/scopes and
+   sanitized identity/entitlement claims. Develop against local Keycloak;
+   exercise a real test registration as soon as one is available.
+3. Implement OIDC admission, stable account recognition, profile updates
    and emergency password login.
-3. Connect SSO-created users to existing Users and Members pages; preserve
+4. Connect SSO-created users to existing Users and Members pages; preserve
    local membership editing and add the no-universe state.
-4. Complete P182 before delivering SSO. Update deployment documentation and
+5. Complete P182 before delivering SSO. Update deployment documentation and
    `platform/README.md` with user review.
 
 ## Validation
 
-- Admission: user only, admin only, both and neither; invalid/missing claims
-  refuse access. Admin-only access does not require the user entitlement.
+- Upgrade: existing local sign-in, bootstrap, session handling and admin and
+  universe-member operations still work; GitHub remains available without
+  OIDC when configured.
+- Admission: user only, admin only, both and neither, for new and returning
+  users; invalid/missing claims refuse access before session creation.
+  Admin-only access does not require the user entitlement.
 - Identity: email changes preserve identity; reused email and issuer changes
   cannot attach another subject to an existing account.
-- Protocol: invalid signature, issuer, audience, expiry, state or nonce is
-  refused; PKCE is used. Verify resource selection and both supported claim
-  sources. Provider tokens are neither persisted nor exposed.
+- Protocol: reject missing ID tokens, invalid signatures, issuer, audience,
+  expiry or state, and missing/mismatched nonces; PKCE is used.
+  UserInfo cannot bypass the required ID token. Verify resource selection
+  and both supported entitlement claim sources. Provider tokens are neither
+  persisted nor exposed.
 - Membership: SSO users can be assigned local roles; universe admins cannot
   edit another universe or grant platform-admin status. Provider login
   preserves local memberships. A normal user starts with no universes.
