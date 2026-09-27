@@ -1,216 +1,255 @@
-# P181 — Single sign-on and directory membership
+# P181 — Single sign-on and application access
 
-**Status:** Proposed, 2026-09-26. Platform only; core is unchanged. Builds
-on [Platform: organizations, roles and unshared work](p180-platform-organizations-roles-and-unshared-work.md).
-[Deprovisioning and directory updates](p182-deprovisioning-and-directory-updates.md)
-follows it and keeps what this slice grants current. First item of
+**Status:** Scope agreed, 2026-09-27; implementation not started. Platform
+only; core is unchanged. Builds on
+[Platform: organizations, roles and unshared work](p180-platform-organizations-roles-and-unshared-work.md).
+[Session expiry and access revocation](p182-deprovisioning-and-directory-updates.md)
+completes the first SSO delivery described in
 [enterprise authorization](later/pNNN-enterprise-authorization.md).
 
 ## Outcome
 
-> People sign in with their company account. Which universes they join, and
-> with which role, follows from their groups in the company directory. The
-> company's own access-request process decides who is in those groups;
-> Lightspeed has no access-request process of its own.
+> The company grants access to Lightspeed as a user or a platform admin.
+> People sign in with their company account. Platform admins and universe
+> admins assign their universe memberships and roles inside Lightspeed.
 
-A deployment administrator writes a handful of rules once ("members of this
-group are contributors in that universe"). From then on nobody adds members
-by hand: a person who was granted the group signs in and finds their
-universes.
+There are two company entitlements: ordinary Lightspeed access and
+platform-admin access. They may have separate IT requests and approval
+processes. Lightspeed reads the resulting claims; it does not implement
+those request processes.
 
-## Why
-
-Today people are created by a platform admin under Admin → Users with a
-password, and added to universes on Members. That does not survive contact
-with an enterprise:
-
-- Enterprises sign in through their identity provider and will not issue
-  application passwords.
-- Access to an internal application is requested and approved in the
-  company's own tooling (a ticket, an approval chain, an access review). The
-  approval's effect is membership in a directory group; applications read
-  that group, they do not keep their own list.
-- Offboarding and access reviews work on those groups. An application whose
-  members are kept by hand is an exception the security team has to track.
-
-So the question "how does a person join a universe, and with what role" is
-answered by the directory, and this slice is the translation.
+Universe access stays in the existing Platform membership model. Creating
+a universe requires no new directory group, provider registration or
+company access request. There are no subgroup mappings or group-driven
+universe assignments in this slice.
 
 ## The setup this is designed for
 
-A common enterprise arrangement, and the first one this must work with:
+One company identity provider per deployment, using OIDC. The initial
+integration must accommodate an on-premises federation service such as
+AD FS; local Keycloak supplies the development test provider.
 
-- An on-premises directory behind a federation service that speaks OpenID
-  Connect. Other providers in scope: Entra ID, Okta, Keycloak, Google
-  Workspace; anything that issues standard OIDC tokens.
-- An application is registered with the provider through an IT request: a
-  client id and secret, redirect URLs, and which claims the tokens carry.
-- For each application, the company creates groups that stand for its access
-  levels, and people request membership in them. The provider is configured
-  to put the application's groups into a `groups` claim; unrelated groups are
-  filtered out.
-- Some providers put custom claims such as groups only into the access
-  token, and return next to nothing from their userinfo endpoint.
-- Some internal applications sit behind an authenticating reverse proxy that
-  signs people in and forwards their identity in headers. Lightspeed does
-  not: see decision 2.
+The application registration supplies a client id and secret, redirect
+URLs, any target resource, and the claims for identity and the two access
+entitlements. Corporate IT controls who receives those entitlements.
+
+On managed internal devices, the provider may sign the person in after a
+brief redirect. On external or unmanaged devices, it may require
+credentials and MFA. The Platform uses the same OIDC flow in both cases;
+those authentication requirements belong to the provider.
 
 ## Decisions
 
-### 1. One provider per deployment, configured by the deployment
+### 1. Company entitlements control application admission
 
-The provider is deployment configuration, not data: issuer URL, client id,
-client secret, requested scopes, and the name of the groups claim (`groups`
-by default). Secrets stay in the environment like the other Platform
-settings. Several providers, or one per organization with email-domain
-routing, are later work; the first deployments belong to one company.
+Deployment configuration names the claim containing the application's
+access groups or roles, plus the values meaning user and platform admin.
+For example:
 
-### 2. The Platform is the OIDC client, with no proxy in front
+| Validated entitlement | Platform access |
+| --- | --- |
+| `lightspeed-users` | Sign in as an ordinary user; universe access follows local memberships |
+| `lightspeed-platform-admins` | Sign in as a platform admin, with the existing authority over all universes |
+| Both | Platform admin |
+| Neither | Refuse Platform access |
 
-The Platform is registered with the provider as a confidential client and
-runs the authorization code flow with PKCE, through Better Auth's generic
-OAuth plugin (already in the installed `better-auth`). Better Auth's
-separate SSO package is built for per-organization providers with domain
-routing, which one provider per deployment does not need.
+The admin entitlement is sufficient by itself. It does not depend on a
+second request for ordinary access. Group/role values are exact, opaque
+strings, not conventions parsed from their names. The two configured
+values must be distinct.
 
-An authenticating reverse proxy in front of the Platform is not supported.
-It covers only browsers, while API clients, the CLI and MCP clients reach
-the Platform with bearer tokens; it would split session renewal between two
-components (see P182); and trusting identity headers is safe only if nothing
-can reach the Platform around the proxy.
+A valid company identity alone is insufficient. The provider should
+restrict access to the application, and the Platform validates the
+configured admission entitlement before creating a session. Missing,
+malformed or incomplete entitlement claims cannot reuse old admission or
+admin status. Unrelated groups have no effect.
 
-Claims are read from the ID token, verified as part of the flow, not from
-the userinfo endpoint, which some providers leave nearly empty. Where a
-provider issues custom claims only in the access token, the deployment
-either asks for them in the ID token (for some providers a scope, such as
-AD FS's `allatclaims`) or reads them from the access token, verified against
-the provider's published keys with the configured audience. Either way the
-result is one identity:
+On every successful provider login, refresh application admission and
+platform-admin status before issuing the session. A company-managed
+account's platform-admin role cannot be assigned manually in Lightspeed.
+P182 defines how lost admission and admin status affect existing sessions.
 
-```text
-VerifiedIdentity { issuer, subject, email?, name?, username?, groups[] }
-```
+### 2. The Platform owns OIDC login
+
+The Platform is a confidential OIDC client and uses the authorization
+code flow with PKCE:
+
+1. Redirect the browser to the company provider.
+2. Exchange the returned code on the server and validate the identity and
+   application entitlements.
+3. Find or create the Platform user by issuer and subject, refresh profile
+   and application access, then create a secure, HttpOnly session cookie.
+4. On subsequent requests, check the Platform session, suspension status
+   and current permissions before calling core. Do not call the provider
+   on each request.
+5. At the absolute session limit, require another provider login as P182
+   specifies. Existing company SSO may avoid another prompt.
+
+Evaluate Better Auth's `@better-auth/sso` plugin first, configured for one
+deployment-controlled OIDC provider. Disable automatic organization
+provisioning: it must not create universe memberships. Do not expose
+self-service provider registration or domain routing. Verify the selected
+package version against the protocol and admission requirements; use the
+generic OAuth plugin only for a demonstrated integration need, rather
+than writing custom authentication plumbing to avoid the SSO package.
+See [Better Auth's SSO integration](https://better-auth.com/docs/plugins/sso).
+
+Validate token signatures, issuer, audience and lifetime, and bind the
+callback to the login attempt with state, PKCE and an OIDC nonce. Token
+decoding alone is insufficient.
+
+Prefer identity and entitlement claims in the ID token. AD FS can expose
+access-token claims there through `allatclaims`. If the deployment supplies
+entitlements only in a JWT access token, validate it against the provider's
+keys and configured resource audience and bind it to the same login.
+Resource selection in the request is distinct from audience validation;
+configure the required resource parameter as well as the expected audience.
+
+Do not depend on userinfo supplying custom claims. Retain the resulting
+identity and access state, not provider tokens; do not request offline
+access or implement background token refresh. Tokens must not appear in
+UI or logs.
+
+Authentication through proxy-supplied identity headers is deferred.
+Ordinary reverse proxies for TLS and routing remain compatible.
 
 ### 3. A person is the provider's subject
 
-A person is identified by issuer and subject, never by email or username:
-both change on marriage or reorganisation, and email is reused. Email, name
-and preferred username are profile fields refreshed at every sign-in.
-Account linking stays off: an SSO account never attaches to an existing
-local account by email.
+Bind the exact issuer and subject to a stable Platform user id. Email,
+name and username are profile fields refreshed at login. Account linking
+by email stays off, including linking to an existing local account.
+Changing the configured issuer must not take over an existing identity.
 
-### 4. Password sign-in becomes break-glass
+The current Better Auth user model requires a unique email. Require the
+provider to supply one for this first slice. A collision with another
+account fails explicitly; it never causes an implicit link. A missing
+display name can fall back to username or email.
 
-With a provider configured, password and GitHub sign-in are off, except for
-platform admins created locally (the bootstrap admin), so a deployment whose
-provider is down can still be administered. A deployment may switch password
-sign-in off entirely.
+### 4. Password login is for explicit emergency admins
 
-### 5. Rules map groups to universes and roles
+With OIDC configured, normal users sign in through the company provider
+and GitHub login is off. Password login remains available to explicitly
+designated local platform-admin accounts, starting with the bootstrap
+admin, so provider outages do not prevent administration. A deployment
+may disable password login entirely.
 
-A rule is `group → universe, role`, or `group → platform admin`. A person's
-membership in a universe is the highest role among the rules their groups
-match; no match, no membership. Platform admin status follows the same way.
+Company-admin entitlement does not enable password login. Enforce this
+at password creation/reset and account-linking endpoints as well as at
+sign-in. Local emergency accounts remain outside provider-derived access
+updates, but have bounded, revocable sessions and can be suspended.
+Without OIDC, existing local account behavior remains available.
 
-```text
-research-contributors   → Research, contributor
-research-leads          → Research, admin
-support-agents          → Support, operator
-lightspeed-admins       → platform admin
-```
+### 5. Universe membership stays in Lightspeed
 
-Rules live in the Platform database and are managed by platform admins
-under Admin → Directory. Universe admins see which rules feed their
-universe, read-only: pointing a group at a universe grants access to its
-content, which is a deployment decision. Universes are still created by
-platform admins; a group never creates one.
+Platform admins manage membership in any universe. Universe admins manage
+membership only in their own universe. Both use the existing Members page
+to assign one of `viewer`, `contributor`, `operator` or `admin`.
 
-Group values are opaque, exact strings from the configured claim. Providers
-send names or identifiers; the rule uses whatever the provider sends. To make
-rules writable without guessing, Admin → Users shows the groups each person
-presented at their last sign-in. Tokens are never stored or shown.
+These are ordinary local memberships, including for SSO users. Provider
+login never adds, removes or changes them. Existing last-admin protection
+and universe-creation behavior continue to apply. Every request uses the
+current local role, so membership edits affect existing sessions on their
+next request.
 
-### 6. Directory memberships are recomputed at sign-in
+Admins select from users who have completed an admitted sign-in. A first
+login creates the user record without requiring a local password.
+Provisioning people before their first sign-in is deferred.
 
-Each membership records its source: `directory` or `manual`. At every
-sign-in and renewal, the Platform recomputes the person's directory memberships from the rules and
-their groups: adds, changes the role, or removes. Manual memberships are
-never touched by this; they are the exceptions a universe admin adds by hand,
-for someone the directory does not cover.
+An admitted ordinary user with no memberships sees that they have not
+been added to a universe and should contact a universe or platform admin.
+Application admission alone grants no universe membership. The existing
+platform-admin role still grants access across universes.
 
-On Members, a directory membership shows the rule that grants it, and its
-role and removal are disabled there: change it in the directory. A person
-with both keeps the higher role.
+### 6. Use the existing administration surfaces
 
-Last-admin protection applies to manual changes only. The directory is the
-authority for directory memberships; platform admins can always act on any
-universe.
+- **Admin → Users:** known users, company-managed versus local identity,
+  effective application access, last provider check and suspension controls.
+- **Universe → Members:** local memberships and roles.
+- **Deployment configuration:** provider registration settings, the two
+  admission values, session lifetime and emergency password-login policy.
 
-### 7. Signed in with no universe
+There is no Directory page, group-mapping editor or per-universe directory
+configuration in this delivery.
 
-A person whose groups match no rule is signed in and sees a page that says so
-and how to request access. The deployment configures that text and link,
-since access is requested in the company's own process, not in Lightspeed.
+### 7. CLI and MCP continue to use core keys
+
+Authorized admins can mint core API keys for the core CLI, API clients and
+Configurator MCP. Their authority is independent of the creator's
+Platform session, company admission and local memberships. P182 makes
+their separate revocation explicit.
+
+SSO login for the Platform administration CLI, personal API tokens and
+user-authorized MCP access are deferred.
 
 ## Configuration
 
-Illustrative names, in the style of the existing Platform settings:
+Illustrative names, following the existing Platform settings:
 
 ```text
-LIGHTSPEED_PLATFORM_OIDC_ISSUER          https://login.example.com
+LIGHTSPEED_PLATFORM_OIDC_ISSUER
 LIGHTSPEED_PLATFORM_OIDC_CLIENT_ID
 LIGHTSPEED_PLATFORM_OIDC_CLIENT_SECRET
 LIGHTSPEED_PLATFORM_OIDC_SCOPES          openid profile email (default)
-LIGHTSPEED_PLATFORM_OIDC_GROUPS_CLAIM    groups (default)
-LIGHTSPEED_PLATFORM_OIDC_CLAIMS_TOKEN    id (default) | access   (decision 2)
-LIGHTSPEED_PLATFORM_OIDC_AUDIENCE        the access token's audience, when read
+LIGHTSPEED_PLATFORM_OIDC_GROUPS_CLAIM    groups (or the provider's role claim)
+LIGHTSPEED_PLATFORM_OIDC_USER_GROUP      ordinary application access
+LIGHTSPEED_PLATFORM_OIDC_ADMIN_GROUP     platform-admin access
+LIGHTSPEED_PLATFORM_OIDC_CLAIMS_TOKEN    id (default) | access
+LIGHTSPEED_PLATFORM_OIDC_RESOURCE        optional requested application resource
+LIGHTSPEED_PLATFORM_OIDC_AUDIENCE        required when reading access-token claims
 LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN     break-glass (default with OIDC) | off
-LIGHTSPEED_PLATFORM_ACCESS_REQUEST_URL   shown with the no-universe page
 ```
+
+P182 adds the absolute session limit. Provider settings are deployment
+configuration; they are not per-universe data.
 
 ## Persistence
 
-Platform database, migrations edited in place:
+Keep the existing Platform users, accounts, sessions and local membership
+tables. Add only what is needed for issuer/subject binding, identity source,
+effective application admission, provider-derived admin status and the last
+successful provider check. Local emergency-admin status must be distinct
+from a company-derived admin grant.
 
-- `directory_rules`: id, group, universe (null for platform admin), role,
-  created by, created at; unique on group and universe.
-- `member.source`: `manual` or `directory`.
-- `user.directory_groups` and `user.directory_seen_at`: what the person
-  presented at their last sign-in, for Admin → Users and for P182.
-- Better Auth's `account` row holds issuer and subject, as it does for
-  GitHub today.
+No directory-rule table, membership source model or group-membership mirror
+is needed. Generate any Platform migrations from the schema following
+[the Platform migration guide](../documentation/development/changing-contracts.md#platform-migrations).
 
 ## Implementation order
 
-1. OIDC sign-in with the generic OAuth plugin; subject-keyed accounts;
-   profile refresh; break-glass password sign-in.
-2. Rules, `member.source`, recomputation at sign-in, platform admin from a
-   group; Admin → Directory; the no-universe page.
-3. Members shows directory memberships as such; Admin → Users shows
-   presented groups.
-4. `platform/README.md`, and deployment documentation for registering the
-   Platform with a provider (redirect URL, claims in the ID or access token,
-   groups filter).
+1. Validate the SSO package and provider contract: discovery, client
+   authentication, PKCE, resource/scopes and sanitized identity/entitlement
+   claims. Develop against local Keycloak; exercise a real test registration
+   as soon as one is available.
+2. Implement OIDC admission, stable account recognition, profile updates
+   and emergency password login.
+3. Connect SSO-created users to existing Users and Members pages; preserve
+   local membership editing and add the no-universe state.
+4. Complete P182 before delivering SSO. Update deployment documentation and
+   `platform/README.md` with user review.
 
 ## Validation
 
-- Unit: rule evaluation picks the highest role and ignores unmatched groups;
-  recomputation adds, changes and removes directory memberships and leaves
-  manual ones alone; a person with no match has no universes; a changed email
-  keeps the same person.
-- Claims from the access token: a token with a bad signature, wrong issuer,
-  wrong audience or past expiry is refused; a valid one yields its groups.
-- Live: sign in through a local Keycloak with two users and three groups;
-  memberships and roles follow the rules; moving a user between groups and
-  signing in again moves them; password sign-in is refused for a directory
-  user and accepted for the break-glass admin.
+- Admission: user only, admin only, both and neither; invalid/missing claims
+  refuse access. Admin-only access does not require the user entitlement.
+- Identity: email changes preserve identity; reused email and issuer changes
+  cannot attach another subject to an existing account.
+- Protocol: invalid signature, issuer, audience, expiry, state or nonce is
+  refused; PKCE is used. Verify resource selection and both supported claim
+  sources. Provider tokens are neither persisted nor exposed.
+- Membership: SSO users can be assigned local roles; universe admins cannot
+  edit another universe or grant platform-admin status. Provider login
+  preserves local memberships. A normal user starts with no universes.
+- Local Keycloak: exercise both entitlements, local membership changes and
+  renewal; refuse password login for company users, including company
+  admins, while allowing the designated emergency admin.
+- Deployment acceptance: validate internal SSO and, when enabled, external
+  provider-controlled credentials/MFA; complete P182's revocation checks.
 
 ## Later
 
-SAML; several providers, or one per organization with domain routing; an
-authenticating proxy in front of the Platform, if a deployment requires one;
-universe admins managing rules for their own universe; group-driven
-universe creation; invitations for people outside the directory.
+Group-driven universe access, SCIM, provisioning before first sign-in,
+SAML, multiple providers, trusted identity proxies, and personal CLI/MCP
+authentication. None is required for this first delivery.
 
 ## Current seams
 

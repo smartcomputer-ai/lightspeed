@@ -7,8 +7,9 @@ The first attempt, a full authorization system inside core, was built and
 cut back; [the retrospective](../archive/p176-p178-access-retrospective.md)
 tells that story and lists what does not come back unasked.
 
-Lightspeed is greenfield. Nothing here is designed yet; each item waits for
-a user who needs it.
+The first SSO delivery is scoped in the two scheduled slices below. The
+remaining items wait for a deployment that needs them; they are not
+prerequisites for company sign-in.
 
 ## Where 0.1 draws the line
 
@@ -27,19 +28,45 @@ Later work keeps that split: identity and people in the Platform, tenancy
 and the runtime's own guards in core. A new rule goes into core only when
 core alone can enforce it.
 
+## First SSO delivery
+
+Two Platform-only slices, delivered together:
+
+- [Single sign-on and application access](../p181-single-sign-on-and-directory-membership.md):
+  OIDC sign-in with the Platform as the client. The company grants ordinary
+  Lightspeed access or platform-admin access, potentially through separate
+  IT requests. Platform admins and universe admins manage local universe
+  memberships and the four roles on Members. Explicit local emergency
+  admins keep password login. No directory group is needed per universe.
+- [Session expiry and access revocation](../p182-deprovisioning-and-directory-updates.md):
+  an absolute session limit, provider reauthentication, immediate local
+  suspension, and the boundary between stopping access and stopping work.
+
+The same OIDC flow supports a brief internal SSO redirect and external
+credential/MFA prompts according to provider policy. The initial deployment
+must verify how its provider handles disabled accounts and lost entitlements
+before claiming an end-to-end revocation bound.
+
+SSO renewal refreshes application admission and platform-admin status;
+it preserves locally assigned universe memberships. Losing company
+admission blocks Platform access even while those memberships remain
+recorded. Admin → Users and Universe → Members provide administration;
+there is no Directory page or group-mapping editor in the first delivery.
+
+Core API keys continue to serve CLI, API and MCP clients with independent
+authority. Offboarding a person does not revoke keys they retained; those
+need separate revocation. Already admitted requests and runs may finish,
+and shared bots continue. There is no automatic inactivity deactivation.
+
 ## Later work
 
-**Identity and provisioning** — next, as two slices:
+**Identity and provisioning**
 
-- [Single sign-on and directory membership](../p181-single-sign-on-and-directory-membership.md):
-  OIDC sign-in with the Platform as the client, and directory
-  groups mapped to universes and roles.
-- [Deprovisioning and directory updates](../p182-deprovisioning-and-directory-updates.md):
-  bounded sessions, SCIM, and what deactivation does to a person's access
-  and work.
-
-After those: SAML, several providers, and human API keys issued by the
-Platform and proxied to core.
+- Optional group-driven universe access, if a deployment needs it.
+- SCIM provisioning and directory updates, when a deployment requires push.
+- SAML, several providers, and authentication through trusted proxy headers.
+- Personal API tokens issued by the Platform and proxied to core, and
+  CLI/MCP access with a Platform user's permissions and revocation.
 
 **Sharing and visibility**
 

@@ -297,11 +297,12 @@ written; the live core suites cover the core half.
 
 ## Later
 
-- Sign-in through the company's identity provider with directory groups
-  mapped to universes and roles
+- Sign-in through the company's identity provider with application admission
+  and platform-admin entitlements; universe memberships stay local
   ([P181](p181-single-sign-on-and-directory-membership.md)), and
-  deprovisioning and SCIM
+  bounded sessions and suspension
   ([P182](p182-deprovisioning-and-directory-updates.md)).
+- SCIM provisioning and directory updates, when a deployment requires them.
 - Human API keys issued by the Platform and proxied to core.
 - Unshare; Operator visibility of unshared running work; private bots.
 - The Configurator acting as the requester, once core propagates the actor

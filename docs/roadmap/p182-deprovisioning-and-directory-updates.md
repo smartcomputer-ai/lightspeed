@@ -1,173 +1,203 @@
-# P182 — Deprovisioning and directory updates
+# P182 — Session expiry and access revocation
 
-**Status:** Proposed, 2026-09-26. Platform only; core is unchanged. Follows
-[single sign-on and directory membership](p181-single-sign-on-and-directory-membership.md),
-whose rules and directory memberships it keeps current. Second item of
+**Status:** Scope agreed, 2026-09-27; implementation not started. Platform
+only; core is unchanged. Follows
+[single sign-on and application access](p181-single-sign-on-and-directory-membership.md).
+Both belong in the first SSO delivery described in
 [enterprise authorization](later/pNNN-enterprise-authorization.md).
 
 ## Outcome
 
-> When the company disables someone's account or takes them out of a group,
-> their Lightspeed access follows within a stated time, without anyone
-> touching Lightspeed. Role changes in the directory apply the same way.
+> Company application access must be checked again within a configured
+> interval. Platform admins can suspend a person's Platform access
+> immediately. Universe membership remains managed inside Lightspeed.
 
-P181 recomputes a person's memberships when they sign in. That grants access
-correctly but does not take it away from someone who never signs in again:
-a Platform session lasts days, and a disabled person's session keeps working
-until it expires. Security reviews ask one question here: how long after
-we disable someone can they still get in, and who has to remember to act.
-This slice makes the answer a number, and makes the answer to the second
-part "nobody".
+P181 checks company admission and platform-admin entitlement at login.
+This slice bounds how long those checks remain usable and provides local
+suspension. Core API keys retain their independent authority.
 
-## Why two paths
+## Scope
 
-Providers differ in whether they tell applications about changes:
+Use the OIDC login again at a fixed session limit. There is no SCIM endpoint,
+directory polling, background token refresh or inactivity deactivation.
+Someone who has not visited for months can remain in the user list; an
+expired session grants no access.
 
-- **Push (SCIM 2.0).** Entra ID, Okta and other cloud providers push user and
-  group changes to an application's SCIM endpoint as they happen.
-- **No push.** On-premises federation services and many OIDC providers do
-  not speak SCIM. An application learns about a change only when the person
-  signs in again or a token is refreshed.
-
-The first deployments may have either, so both are supported, and both feed
-the same recomputation P181 defines. SCIM makes changes prompt; the bounded
-session is what makes a promise possible without it.
+The provider decides whether renewal is a brief redirect or requires
+credentials and MFA. Internal and external use have the same Platform
+session behavior.
 
 ## Decisions
 
-### 1. Sessions are bounded by the provider
+### 1. Sessions have an absolute limit
 
-With a provider configured, a Platform session lasts at most a set time
-(8 hours by default, configurable) and is then renewed only through the
-provider. The browser is sent back to the provider, which signs a person who
-is still signed in there straight back in without a prompt, and P181's
-recomputation runs on the fresh claims. A disabled person cannot renew, and a
-person removed from a group renews without the membership.
+With OIDC configured, each company user's Platform session lasts at most
+8 hours by default, configurable through
+`LIGHTSPEED_PLATFORM_OIDC_SESSION_MAX_AGE_SECONDS` (28800 by default).
+Measure from the successful provider check. Activity, cookie refresh and
+bearer requests must not extend it.
 
-So without SCIM the promise is: **a person removed in the directory loses
-access at the latest one session lifetime later.** Admin → Directory states
-the configured value.
+Disable Better Auth's ordinary sliding renewal for these sessions. Check
+expiry, application admission and suspension on every authenticated
+Platform request, including auth/admin endpoints, without a cookie cache
+that could keep revoked access alive.
 
-A failed renewal says nothing to the Platform: the person is stopped at the
-provider and never comes back. Their memberships then linger in the
-database, unusable but listed on Members, until decision 3 deactivates them
-for inactivity.
+At expiry, APIs return an authentication failure and the browser starts
+company sign-in again. Successful login refreshes admission and
+platform-admin status before issuing a session. Other sessions use that
+updated access state on their next request, but keep their original expiry.
+Local universe memberships are not recomputed from provider claims.
 
-API requests signed with a Platform bearer session follow the same bound.
+Failed renewal, provider unavailability or unusable claims cannot create
+or extend a session. Unexpired sessions remain usable during a provider
+outage. Local emergency accounts retain bounded, revocable password
+sessions that do not depend on provider availability.
 
-### 2. SCIM, when the provider pushes
+Signing out revokes the current Platform session. It does not promise
+company-wide logout or logout on other devices; suspension revokes every
+Platform session of the person.
 
-The Platform serves a SCIM 2.0 endpoint for Users and Groups, authenticated
-by a bearer token a platform admin creates under Admin → Directory and gives
-to the provider. The token is shown once and can be revoked.
+### 2. Loss of company admission blocks all Platform access
 
-- **Users.** Create records the person ahead of their first sign-in, keyed
-  by the provider's external id, so admins see them before they arrive.
-  Update refreshes name, email and username. `active: false` or delete
-  deactivates (decision 3).
-- **Groups.** Membership changes, renames and deletes recompute the directory
-  memberships of every affected person at once, through the same rules.
+If a validated provider response contains neither application entitlement,
+mark company admission absent, remove provider-derived platform-admin
+status, revoke all of that user's Platform sessions and refuse login.
+Local universe memberships remain recorded, but cannot authorize requests
+without application admission.
 
-Better Auth's SCIM package is evaluated first; if it does not fit the
-membership model, a small SCIM subset is written against these two
-resources only. Either way, SCIM is an input to the recomputation, never a
-second membership model.
+If the admin entitlement disappears while ordinary user admission remains,
+remove platform-admin status. The person's local universe roles then
+determine access on the next request, including in other sessions.
 
-### 3. What deactivation does
+The provider may instead reject a disabled or unassigned person without
+returning to Lightspeed. In that case existing sessions stop at their
+absolute limit. The Platform cannot infer the reason from the person's
+absence and does not auto-deactivate or delete them.
 
-Deactivation happens for one of three reasons, recorded with it:
+Restored company admission permits a fresh login, unless local suspension
+still applies. It restores access through any retained local memberships;
+it does not resurrect expired or revoked sessions. Admins can independently
+remove those memberships in Lightspeed.
 
-- **Directory:** SCIM sends `active: false` or deletes the user.
-- **Inactive:** the provider has not signed the person in for a set period
-  (30 days by default, configurable), which is how departures show up
-  without SCIM.
-- **Admin:** a platform admin deactivates them under Admin → Users.
+### 3. Verify the provider's revocation behavior
 
-Deactivation:
+While granting Platform access, Lightspeed limits the age of the provider
+check. An end-to-end offboarding bound also depends on directory propagation
+and the provider enforcing current account status and application
+entitlements when an existing company SSO session returns.
 
-- Ends every Platform session of the person at once.
-- Removes all their memberships, manual ones included.
-- Blocks sign-in. An inactive person is reactivated by signing in
-  successfully, since that is the provider vouching for them; a directory
-  deactivation lifts when SCIM marks them active; an admin deactivation
-  only when an admin lifts it.
-- Keeps the user row. Core's records name the person by user id (who
-  created a session or bot, who asked for a run, who decided an approval),
-  and those names must still resolve after they leave.
+Before deployment acceptance, verify disabled accounts, loss of both
+entitlements, and loss of admin entitlement while ordinary access remains.
+Include browsers with an existing company SSO cookie. State the resulting
+bound with any provider delay; do not infer universal removal within eight
+hours from the Platform setting alone.
 
-It leaves their work where it is:
+If the provider retains stale access, resolve its reauthentication policy
+or agree another revocation mechanism before claiming that bound. Admin →
+Users shows the last successful provider check, without treating absence
+as deactivation.
 
-- Their private sessions stay private. Admins can already read, share or
-  delete them; nothing is shared or deleted automatically. Retention applies
-  as for any other session.
-- Runs already started run to their end. Every new request goes through the
-  Platform and is refused.
-- Bots they created keep running: bots are shared and run under the
-  universe. Their creator shows as deactivated, so an operator knows whose
-  bot to adopt.
-- Universe API keys are not personal and stay. When personal keys exist,
-  deactivation revokes them.
+### 4. A Platform admin can suspend access immediately
 
-Reactivation is the same person again (same subject), with memberships
-recomputed at their next sign-in.
+Suspension under Admin → Users is a persistent local block:
 
-### 4. Role changes are membership changes
+- Revoke all the person's Platform sessions and refuse new authenticated
+  requests and sign-ins, including password login for a local account.
+- Provider entitlements and local membership changes cannot lift the block.
+  Only a Platform administrator can do so.
+- Keep the user and membership records. Historical attribution still
+  resolves; suspension overrides every role.
+- Lifting suspension restores no session. A company user must sign in again
+  and pass the current admission check; a local user must authenticate with
+  their password. Retained local memberships then apply.
 
-Moving someone from a contributor group to an admin group, or the reverse,
-is recomputation like any other: SCIM applies it at once, and without SCIM
-it applies at the next sign-in or renewal. A demotion takes effect on the next request after
-the recomputation, because the Platform reads the role per request.
+Use Better Auth's existing ban/session-revocation support where it meets
+these rules, with no automatic expiry or inactivity timer. Ensure login
+and suspension cannot race to leave usable access after the block takes
+effect.
 
-### 5. Nothing waits for someone to act
+### 5. Universe membership changes take effect locally
 
-No path requires an administrator in Lightspeed to notice a departure. The
-directory is the authority; Admin → Users shows when each person was last
-seen by the provider and when they were deactivated, for access reviews.
+A platform admin can edit membership in any universe; a universe admin can
+edit their own. Removal or role changes apply on the next request across
+all the affected user's sessions, without waiting for a provider check.
+Company login does not restore a locally removed membership.
 
-Every membership change and deactivation belongs in the Platform's audit
-trail. That trail is deferred in P180; until it exists these changes are
-logged, and this slice must not be the reason it slips: the first customer
-with SCIM will ask for it.
+Existing last-admin protection continues to apply to local membership
+changes. Company admission and provider-derived platform-admin status
+remain authoritative even when removing them reduces available access.
+
+### 6. Existing work and core keys remain independent
+
+- Private sessions are not automatically shared or deleted; administrators
+  retain their existing access.
+- Admitted requests, including bounded long-poll reads, may finish. The
+  next request is checked again.
+- Runs already started and shared bots continue. Revocation does not cancel
+  jobs, kill processes or recall credentials delivered to tools.
+- Company offboarding, local suspension and membership changes do not
+  revoke core API keys. They carry their own scope and method groups.
+
+If a departing person retained a key, an administrator must separately
+revoke or rotate it. Explicit key revocation rejects subsequent core
+requests; already admitted work follows the same boundary above. Platform
+offboarding must not be described as removing all access for key holders.
+
+### 7. Record access changes
+
+Log changes to company admission and platform-admin status, local membership
+changes, and suspension/reinstatement, including the acting admin where
+applicable. Never log tokens. A durable audit trail and export remain
+deferred as in P180.
 
 ## Persistence
 
-Platform database, migrations edited in place:
+Use the existing session expiry and administrative ban fields where
+possible, plus P181's identity source, effective application access and last
+provider-check metadata. Add only the provenance needed to enforce absolute
+expiry and distinguish local emergency accounts.
 
-- `user.directory_external_id` (SCIM), `user.deactivated_at`,
-  `user.deactivation_reason` (`directory`, `inactive`, `admin`).
-- `scim_tokens`: hash, prefix, created by, created at, revoked at.
-- `user.directory_seen_at` from P181 doubles as "last seen".
+No SCIM tables, group mappings, membership-source model or inactivity
+deactivation state are needed. Generate Platform migrations following
+[the Platform migration guide](../documentation/development/changing-contracts.md#platform-migrations).
 
 ## Implementation order
 
-1. Bounded sessions with provider renewal; deactivation by an admin and
-   for inactivity, with reactivation rules; deactivated creators shown on
-   bots.
-2. SCIM Users and Groups with bearer tokens; Admin → Directory token
-   management.
-3. `platform/README.md` and deployment documentation: the session bound,
-   what deactivation does, and how to point a provider's SCIM client at the
-   Platform.
+1. Absolute session expiry and browser reauthentication, covering bearer
+   sessions and every protected Platform route.
+2. Apply admission loss and admin demotion across existing sessions.
+   Preserve local membership records and enforce their current roles.
+3. Admin suspension/reinstatement and display of the last provider check.
+4. Validate the deployment provider's revocation behavior and agreed
+   interval. Update deployment documentation and `platform/README.md`
+   with user review, including separate API-key revocation.
 
 ## Validation
 
-- Unit: deactivation ends sessions, removes all memberships and keeps the
-  user row; a SCIM group change recomputes exactly the affected people; a
-  revoked SCIM token is refused; reactivation restores directory memberships
-  at the next sign-in and not before.
-- Live against a local Keycloak: a user removed from a group loses the
-  universe after renewal; with a short session bound, a signed-in user who
-  is disabled at the provider is out within that bound; with a short
-  inactivity period, that user is then deactivated and their memberships
-  removed. SCIM through a test client: `active: false` ends a live
-  browser session on its next request; a group removal removes the
-  membership immediately.
+- With a controlled clock, repeated browser and bearer requests cannot
+  extend the provider-check limit. Outages and failed renewal grant no
+  extra time; unexpired sessions remain usable.
+- Neither entitlement blocks access and revokes all sessions while keeping
+  local memberships. Admin demotion leaves only ordinary admission and
+  local roles. Restored admission requires fresh login.
+- Suspension blocks all devices and protected auth/admin routes on their
+  next request, blocks both login methods, and survives concurrent login
+  or membership changes. Reinstatement restores no session; idle users
+  are never auto-deactivated.
+- Local membership edits affect all existing sessions immediately on their
+  next request and are preserved through SSO renewal.
+- Against local Keycloak and then the deployment provider, test account
+  disablement and both entitlement-removal cases with an existing company
+  SSO cookie and a short Platform session limit.
+- Core keys and admitted work remain independent; explicit key revocation
+  still rejects the next core request.
 
 ## Later
 
-Revoking personal API keys on deactivation, once they exist; access-review
-export; SCIM for Platform-side teams when teams exist; ending runs a
-deactivated person started, if a customer asks.
+SCIM, provisioning before first sign-in, personal tokens and Platform-user
+CLI/MCP login, access-review export, and stopping already admitted work on
+revocation. Group-driven universe access requires a separate design if it
+is needed later.
 
 ## Current seams
 
