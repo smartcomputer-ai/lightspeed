@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import type { SessionUser } from "./auth.js";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { authClient, isPlatformAdmin } from "./auth.js";
+import { authClient, isPlatformAdmin, useLoginConfig } from "./auth.js";
 import { AppShell } from "@/components/app-shell";
 import { SettingsIndexRedirect } from "@/components/universe-nav";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
@@ -43,6 +43,8 @@ function UniverseIndexRedirect() {
 
 export function App() {
   const session = authClient.useSession();
+  const loginConfig = useLoginConfig();
+  const automaticSignIn = loginConfig.data?.sso === true && loginConfig.data.autoSignIn;
   useEffect(() => {
     if (session.data) finishAutomaticSignIn();
   }, [session.data?.session.id]);
@@ -63,10 +65,15 @@ export function App() {
   // flips true), and a loading gate here would remount the form and wipe
   // half-typed credentials on every tab switch.
   if (!session.data && location.pathname === "/login") {
+    const params = new URLSearchParams(location.search);
+    if (!loginConfig.isPending && !automaticSignIn && params.has("auto")) {
+      params.delete("auto");
+      return <Navigate to={{ pathname: "/login", search: params.toString(), hash: location.hash }} replace />;
+    }
     return <LoginPage />;
   }
 
-  if (session.isPending && !session.data) {
+  if (!session.data && (session.isPending || loginConfig.isPending)) {
     return (
       <div className="flex min-h-svh items-center justify-center text-sm text-muted-foreground">
         Loading…
@@ -75,7 +82,7 @@ export function App() {
   }
 
   if (!session.data) {
-    return <Navigate to="/login?auto=1" replace />;
+    return <Navigate to={automaticSignIn ? "/login?auto=1" : "/login"} replace />;
   }
 
   if (!me.data) return <div className="p-8">{me.error ? me.error.message : "Loading permissions…"}</div>;
