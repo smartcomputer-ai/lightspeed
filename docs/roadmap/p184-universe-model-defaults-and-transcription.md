@@ -1,7 +1,7 @@
 # P184 — Universe model defaults and standalone transcription
 
 **Status:** Universe defaults, Platform model settings, standalone transcription,
-and channel voice preparation implemented, 2026-09-28. Web dictation remains.
+channel voice preparation, and web dictation implemented, 2026-09-29.
 Builds on [CLI session model routing](cli-session-model-routing.md) and
 [the runtime CLI](p183-first-class-runtime-cli.md). Supersedes the placement
 of transcription inside session admission in
@@ -497,8 +497,35 @@ and unique Temporal queues. They cover default pinning across changes,
 idempotency conflicts, requester isolation, transcoding, session provenance,
 transient retry, acknowledged cancellation, ordinary CAS expiry, bot-event
 retention, and channel redelivery with spoken command text. A real OpenAI audio
-transcription also passed. Web recording and dictation tests belong to the next
-slice.
+transcription also passed. Web recording and dictation validation follows below.
+
+Web dictation now records through lazy-loaded `extendable-media-recorder`,
+choosing a browser-supported WebM, MP4, or Ogg format. The composer requests
+microphone access only on an explicit click, caps recordings at ten minutes
+and 25 MiB, and releases tracks on completion, cancellation, errors, and
+navigation. Upload/start/read/cancel routes use the member-scoped runtime client;
+web admission always uses the universe speech default.
+
+The transcript appends to the latest editable draft and never sends itself.
+Retry keeps the recording in memory and rejoins an admitted job after transport
+failure. Cancel, send, and navigation prevent late completion from changing a
+draft. Reviewed text uses ordinary session input without audio provenance.
+The demo uses a clearly labeled sample recording and transcript.
+
+Models → Defaults contains separate agent-run and speech-to-text rows below
+Providers. Operators can configure either slot; Contributors can transcribe.
+Dictation is disabled until the speech default is set and is also subject to
+session input permissions and known provider/browser readiness. OpenAI discovery
+maps supported file-transcription families to the audio protocol, bypasses the
+agent-only age filter for those routes, and keeps them out of agent pickers.
+Custom providers continue to use their declared API kinds and manual choices.
+
+Validation passed: 572 web tests, 162 Platform server tests, 13 Rust model
+discovery tests, eight API contract tests, TypeScript checks, and production
+and demo builds. Browser checks covered speech suggestions, editable transcript
+preview, clearing the default, and mobile layout. A real Chromium recorder
+produced WebM audio from a generated audio stream and released its tracks;
+physical microphones and Safari were not exercised in this slice.
 
 ## Acceptance and validation
 

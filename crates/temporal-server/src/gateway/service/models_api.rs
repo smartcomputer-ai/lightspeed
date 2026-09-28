@@ -23,6 +23,7 @@ const OPENAI_PROVIDER_ID: &str = "openai";
 const ANTHROPIC_PROVIDER_ID: &str = "anthropic";
 const OPENAI_RESPONSES_API_KIND: &str = "openai:responses";
 const OPENAI_COMPLETIONS_API_KIND: &str = "openai:completions";
+const OPENAI_AUDIO_API_KIND: &str = "openai:audio-transcriptions";
 const ANTHROPIC_MESSAGES_API_KIND: &str = "anthropic:messages";
 const MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(15);
 const MODEL_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(10);
@@ -184,11 +185,7 @@ impl ModelDiscoveryService {
                 ))
         });
         if selectable_only {
-            models.retain(|model| {
-                model.provider_id != OPENAI_PROVIDER_ID
-                    || (is_openai_selectable_model(&model.model)
-                        && is_openai_recent_model(model.created_at_ms, model.fetched_at_ms))
-            });
+            models.retain(is_selectable_model_route);
         }
         ModelListResponse { models, providers }
     }
@@ -244,7 +241,11 @@ impl ModelDiscoveryService {
                     models,
                     provider_success(
                         OPENAI_PROVIDER_ID,
-                        &[OPENAI_RESPONSES_API_KIND, OPENAI_COMPLETIONS_API_KIND],
+                        &[
+                            OPENAI_RESPONSES_API_KIND,
+                            OPENAI_COMPLETIONS_API_KIND,
+                            OPENAI_AUDIO_API_KIND,
+                        ],
                         fetched_at_ms,
                         source,
                         credential,
@@ -255,7 +256,11 @@ impl ModelDiscoveryService {
                 Vec::new(),
                 provider_failure(
                     OPENAI_PROVIDER_ID,
-                    &[OPENAI_RESPONSES_API_KIND, OPENAI_COMPLETIONS_API_KIND],
+                    &[
+                        OPENAI_RESPONSES_API_KIND,
+                        OPENAI_COMPLETIONS_API_KIND,
+                        OPENAI_AUDIO_API_KIND,
+                    ],
                     &error,
                     source,
                 ),
@@ -492,19 +497,48 @@ fn model_endpoint(config: &auth::AuthProviderConfig) -> Option<&auth::ModelEndpo
     }
 }
 
-fn openai_model_views(model: openai::Model, fetched_at_ms: i64) -> [ModelView; 2] {
+fn is_selectable_model_route(model: &ModelView) -> bool {
+    model.provider_id != OPENAI_PROVIDER_ID
+        || model.api_kind == OPENAI_AUDIO_API_KIND
+        || (is_openai_selectable_model(&model.model)
+            && is_openai_recent_model(model.created_at_ms, model.fetched_at_ms))
+}
+
+// The Models API omits endpoint capabilities. These file-transcription families
+// accept the plain JSON transcription request supported by our audio adapter.
+// Diarization and realtime-only models require different request options.
+fn is_openai_transcription_model(model: &str) -> bool {
+    [
+        "whisper-1",
+        "gpt-transcribe",
+        "gpt-4o-transcribe",
+        "gpt-4o-mini-transcribe",
+    ]
+    .iter()
+    .any(|family| is_model_family(model, family))
+}
+
+fn openai_model_views(model: openai::Model, fetched_at_ms: i64) -> Vec<ModelView> {
     let created_at_ms = unix_seconds_to_millis(model.created);
     let capabilities = openai_model_capabilities(&model.id);
-    [OPENAI_RESPONSES_API_KIND, OPENAI_COMPLETIONS_API_KIND].map(|api_kind| ModelView {
-        provider_id: OPENAI_PROVIDER_ID.to_owned(),
-        api_kind: api_kind.to_owned(),
-        display_name: model.id.clone(),
-        model: model.id.clone(),
-        capabilities: capabilities.clone(),
-        created_at_ms,
-        source: ModelSource::Provider,
-        fetched_at_ms,
-    })
+    let api_kinds: &[&str] = if is_openai_transcription_model(&model.id) {
+        &[OPENAI_AUDIO_API_KIND]
+    } else {
+        &[OPENAI_RESPONSES_API_KIND, OPENAI_COMPLETIONS_API_KIND]
+    };
+    api_kinds
+        .iter()
+        .map(|api_kind| ModelView {
+            provider_id: OPENAI_PROVIDER_ID.to_owned(),
+            api_kind: (*api_kind).to_owned(),
+            display_name: model.id.clone(),
+            model: model.id.clone(),
+            capabilities: capabilities.clone(),
+            created_at_ms,
+            source: ModelSource::Provider,
+            fetched_at_ms,
+        })
+        .collect()
 }
 
 fn unix_seconds_to_millis(seconds: Option<i64>) -> Option<i64> {
@@ -1060,7 +1094,10 @@ mod tests {
         );
 
         assert_eq!(
-            views.clone().map(|view| view.api_kind),
+            views
+                .iter()
+                .map(|view| view.api_kind.clone())
+                .collect::<Vec<_>>(),
             [
                 OPENAI_RESPONSES_API_KIND.to_owned(),
                 OPENAI_COMPLETIONS_API_KIND.to_owned(),
@@ -1076,6 +1113,40 @@ mod tests {
                         .to_vec()
                 )
             );
+        }
+    }
+
+    #[test]
+    fn speech_discovery_uses_the_audio_route_without_the_agent_age_filter() {
+        for id in [
+            "whisper-1",
+            "gpt-transcribe",
+            "gpt-4o-transcribe",
+            "gpt-4o-mini-transcribe",
+            "gpt-4o-mini-transcribe-2025-12-15",
+        ] {
+            let views = openai_model_views(
+                openai::Model {
+                    id: id.to_owned(),
+                    created: Some(1),
+                    object: None,
+                    owned_by: None,
+                },
+                OPENAI_SELECTABLE_MAX_AGE_MS * 2,
+            );
+            assert_eq!(views.len(), 1, "{id}");
+            assert_eq!(views[0].api_kind, OPENAI_AUDIO_API_KIND, "{id}");
+            assert!(is_selectable_model_route(&views[0]), "{id}");
+            assert_eq!(views[0].capabilities.reasoning_efforts, None);
+        }
+        for id in [
+            "gpt-4o-transcribe-diarize",
+            "gpt-live-transcribe",
+            "gpt-realtime-whisper",
+            "gpt-6-sol",
+            "gpt-4o-mini-tts",
+        ] {
+            assert!(!is_openai_transcription_model(id), "{id}");
         }
     }
 

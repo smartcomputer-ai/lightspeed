@@ -74,6 +74,12 @@ describe("model picker ordering", () => {
     expect(modelPickerOptions(aggregator, undefined, "openai:responses", "openrouter")).toEqual([]);
   });
 
+  it("excludes transcription routes from the agent model picker", () => {
+    const agent = option("agent", 1);
+    const speech = option("speech", 2, "openai:audio-transcriptions");
+    expect(modelPickerOptions([speech, agent])).toEqual([agent]);
+  });
+
   it("collapses API-kind variants while preserving an existing or pinned route", () => {
     const responses = option("gpt-5.5", 1_800_000_000_000);
     const completions = option(

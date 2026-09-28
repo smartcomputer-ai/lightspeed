@@ -1,5 +1,8 @@
-import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowUp, LoaderCircle, Square } from "lucide-react";
+import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowUp, LoaderCircle, Mic, Square, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { useDictation } from "@/lib/use-dictation";
+import { isDemoDictation } from "@/lib/audio-capture";
 import { Button } from "@/components/ui/button";
 import { readSessionDraft, writeSessionDraft } from "@/lib/sessions/draft";
 
@@ -20,6 +23,7 @@ const steerKeyLabel = isMac ? "⌘↵" : "Ctrl+↵";
 /// the composer read-only for transcript inspection.
 export function SessionComposer({
   draftKey,
+  dictation,
   runActive,
   canSteer,
   canStop = false,
@@ -33,6 +37,7 @@ export function SessionComposer({
 }: {
   /// Stable universe + session storage key; also used as the React key.
   draftKey: string;
+  dictation?: { universeId: string; disabledReason?: string; settingsHref?: string };
   /// A run is running, cancelling, or queued: Enter queues, ⌘/Ctrl+Enter
   /// steers.
   runActive: boolean;
@@ -53,11 +58,24 @@ export function SessionComposer({
   onStop: () => void;
 }) {
   const [text, setText] = useState(() => readSessionDraft(draftKey));
+  const textRef = useRef(text);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const [dictationNotice, setDictationNotice] = useState<string>();
   const updateText = (value: string) => {
+    textRef.current = value;
+    setDictationNotice(undefined);
     setText(value);
     // Write on input rather than on unmount, so navigation cannot lose edits.
     writeSessionDraft(draftKey, value);
   };
+
+  const voice = useDictation(dictation?.universeId, Boolean(dictation && !dictation.disabledReason && !disabled), (transcript) => {
+    const current = textRef.current;
+    updateText(`${current}${current && !/\s$/.test(current) ? " " : ""}${transcript}`);
+    setDictationNotice("Dictation added. Review and edit before sending.");
+    textarea.current?.focus();
+  });
+  const voiceBusy = ["requesting", "recording", "transcribing"].includes(voice.phase);
 
   const submit = (steer: boolean) => {
     const trimmed = text.trim();
@@ -68,6 +86,7 @@ export function SessionComposer({
     // (the text stays in the box) rather than silently queued — the
     // difference matters to the reader.
     const mode: ComposerMode | null = !runActive ? null : steer ? "steer" : "queue";
+    if (mode !== "steer" || canSteer) voice.cancel();
     onSend(trimmed, mode);
     if (mode !== "steer" || canSteer) {
       updateText("");
@@ -100,6 +119,7 @@ export function SessionComposer({
         )}
         <div className="flex items-center gap-2">
         <textarea
+          ref={textarea}
           disabled={disabled}
           value={text}
           onChange={(event) => updateText(event.target.value)}
@@ -109,6 +129,14 @@ export function SessionComposer({
           rows={1}
           className="field-sizing-content max-h-40 min-h-9 min-w-0 flex-1 resize-none rounded-md border bg-background px-3 py-2 text-base md:text-sm [@media(pointer:coarse)]:text-base outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         />
+        {dictation && <span title={dictation.disabledReason ?? "Dictate a message, then review before sending"}>
+          <Button variant="outline" size="icon"
+            disabled={disabled || !!dictation.disabledReason || voice.phase === "requesting" || voice.phase === "transcribing"}
+            aria-label={voice.phase === "recording" ? "Stop recording" : "Dictate message"}
+            onClick={() => { setDictationNotice(undefined); void (voice.phase === "recording" ? voice.stop() : voice.start()); }}>
+            {voice.phase === "recording" ? <Square className="text-destructive" /> : voiceBusy ? <LoaderCircle className="animate-spin" /> : <Mic />}
+          </Button>
+        </span>}
         {runActive && canStop && (
           <Button
             variant="outline"
@@ -135,6 +163,18 @@ export function SessionComposer({
           <ArrowUp />
         </Button>
         </div>
+        {dictation && !disabled && <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span role="status" aria-live="polite">{dictation.disabledReason ?? (
+            voice.phase === "recording" ? `${isDemoDictation ? "Demo recording" : "Recording"} ${Math.floor(voice.seconds / 60)}:${String(voice.seconds % 60).padStart(2, "0")} · Stop to transcribe`
+            : voice.phase === "requesting" ? "Waiting for microphone permission…"
+            : voice.phase === "transcribing" ? "Transcribing… You can keep editing."
+            : dictationNotice ?? (isDemoDictation ? "Demo dictation adds a sample transcript." : "")
+          )}</span>
+          {dictation.disabledReason && dictation.settingsHref && <Link className="underline underline-offset-2" to={dictation.settingsHref}>Models</Link>}
+          {voice.error && <span role="alert" className="text-destructive">{voice.error}</span>}
+          {voice.canRetry && <Button variant="outline" size="sm" onClick={voice.retry}>Retry transcription</Button>}
+          {(voiceBusy || voice.phase === "error") && <Button variant="ghost" size="sm" onClick={voice.cancel}><X />Cancel dictation</Button>}
+        </div>}
       </div>
     </div>
   );

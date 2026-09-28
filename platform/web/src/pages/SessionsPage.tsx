@@ -1,3 +1,4 @@
+import { useDictationAvailability } from "@/lib/use-dictation";
 import { ShareSessionDialog, SharingMark, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
 import { ActivityDot, activityLabel } from "@/components/activity-dot";
 import { SessionActionsMenu } from "@/components/session/session-actions-menu";
@@ -1302,6 +1303,7 @@ export function SessionDetail({
   /** Where lineage links go; defaults to the Sessions page. */
   sessionHref?: (sessionId: string) => string;
 }) {
+  const dictation = useDictationAvailability(universeId);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const tail = useSessionTail(universeId, sessionId);
@@ -2103,6 +2105,7 @@ export function SessionDetail({
         <QueuedRunsBar items={queuedItems} onCancel={canStop ? (runId) => void cancelQueued(runId) : undefined} />
       )}
       <SessionComposer
+        dictation={{ ...dictation, settingsHref: `/u/${slug}/models` }}
         key={sessionDraftKey(universeId, sessionId)}
         draftKey={sessionDraftKey(universeId, sessionId)}
         runActive={runActive}

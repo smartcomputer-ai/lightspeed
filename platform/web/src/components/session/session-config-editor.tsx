@@ -1,3 +1,4 @@
+import { AGENT_MODEL_API_KINDS } from "@lightspeed/platform-shared";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import type { WorkspaceAttachmentDraft } from "@/api";
 import {
@@ -1001,6 +1002,7 @@ export function modelPickerOptions(
     apiKind === "openai:responses" ? 0 : apiKind === "openai:completions" ? 1 : 2;
 
   for (const option of models) {
+    if (!(AGENT_MODEL_API_KINDS as readonly string[]).includes(option.apiKind)) continue;
     if (pinnedApiKind && option.apiKind !== pinnedApiKind) continue;
     if (pinnedProviderId && option.providerId !== pinnedProviderId) continue;
     const key = JSON.stringify([option.providerId, option.model]);

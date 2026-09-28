@@ -137,3 +137,4 @@ export function mergeFeatureOverrides(stored: unknown, changes: FeatureOverrides
   return merged;
 }
 export { AGENT_MODEL_API_KINDS, modelDefaultsPutSchema } from "./model-defaults.js";
+export { MAX_DICTATION_AUDIO_BYTES, MAX_DICTATION_SECONDS, transcriptionStartSchema, transcriptionUploadSchema } from "./transcriptions.js";

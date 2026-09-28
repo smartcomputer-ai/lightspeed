@@ -35,12 +35,12 @@ beforeEach(() => {
   actions = ["read", "configure_resource"];
   discoveryFails = false;
   mocks.role = "operator";
-  mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: { expectedRevision: number; model: ModelDefaults["agentRun"] }) => {
+  mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: { slot: "agentRun" | "speechToText"; expectedRevision: number; model: ModelDefaults["agentRun"] }) => {
     if (path.endsWith("/access")) return { actions, resources: [] };
     if (path.endsWith("/models/defaults")) {
       if (method === "PUT") {
         if (body!.expectedRevision !== defaults.revision) throw new ApiError(409, { error: "defaults changed" });
-        defaults = { ...defaults, revision: defaults.revision + 1, agentRun: body!.model };
+        defaults = { ...defaults, revision: defaults.revision + 1, [body!.slot]: body!.model };
       }
       return defaults;
     }
@@ -49,7 +49,7 @@ beforeEach(() => {
     if (path.endsWith("/integrations/model-keys")) return { ...legacy, providerId: "openai", credentialId: "model:openai", usableForModels: true };
     if (path.endsWith("/models")) {
       if (discoveryFails) throw new Error("discovery unavailable");
-      return { models: [], providers: [{ providerId: "openai", apiKinds: ["openai:responses"], credential: "configured", credentialSource: "deployment" }] };
+      return { models: [{ providerId: "openai", apiKind: "openai:audio-transcriptions", model: "speech-model", capabilities: {} }, { providerId: "openai", apiKind: "openai:responses", model: "agent-model", capabilities: {} }], providers: [{ providerId: "openai", apiKinds: ["openai:responses", "openai:audio-transcriptions"], credential: "configured", credentialSource: "deployment" }] };
     }
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -180,4 +180,23 @@ it("offers default selection after adding a provider without changing it automat
   await click("Choose default model");
   expect(document.body.textContent).toContain("Default model for agent runs");
   expect(document.body.querySelector<HTMLInputElement>('input[placeholder="Model name"]')!.value).toBe("gpt-6-sol");
+});
+
+it("configures speech separately from the agent default and clears only speech", async () => {
+  await show();
+  const row = () => container.querySelector('[role="group"][aria-label="Speech-to-text"]')!;
+  expect(row().textContent).toContain("No default selected");
+  await act(async () => row().querySelector<HTMLButtonElement>("button")!.click());
+  const provider = document.body.querySelector<HTMLInputElement>('input[placeholder="Provider ID"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(provider, "openai");
+    provider.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await enterModel("speech-model");
+  await click("Save default");
+  expect(defaults).toMatchObject({ revision: 8, agentRun: { model: "gpt-6-sol" }, speechToText: { providerId: "openai", apiKind: "openai:audio-transcriptions", model: "speech-model" } });
+  expect(row().textContent).toContain("Provider configured");
+  await act(async () => [...row().querySelectorAll("button")].find((button) => button.textContent === "Clear")!.click());
+  expect(defaults).toMatchObject({ revision: 9, agentRun: { model: "gpt-6-sol" }, speechToText: null });
+  expect(mocks.api.mock.calls.filter(([method]) => method === "PUT").map(([, , body]) => body.slot)).toEqual(["speechToText", "speechToText"]);
 });

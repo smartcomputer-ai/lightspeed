@@ -12001,7 +12001,7 @@
         "description": "Direct provider model discovery. Results may be served from a brief\nprocess-local cache; clients refresh by calling this method.",
         "properties": {
           "selectableOnly": {
-            "description": "Apply Lightspeed's small, conservative selectable-model policy. It\nremoves OpenAI model-id families that are clearly not text-generation\nroutes (embeddings, moderation, image/video, speech, and realtime).\nIt is an ID policy, not a provider capability claim.",
+            "description": "Apply Lightspeed's small, conservative selectable-model policy. It\nkeeps supported file-transcription routes and filters clearly unrelated\nOpenAI families from agent suggestions (embeddings, moderation, image/video,\nspeech synthesis, and realtime). Agent suggestions also have an age limit.\nClients select routes by API kind for their intended use. This is an ID\npolicy, not a provider capability claim.",
             "type": "boolean"
           }
         },

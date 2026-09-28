@@ -2,6 +2,7 @@ import { UniverseSlugCacheConflict } from "../universe-slugs.js";
 import { deploymentClient, GatewayUnconfigured, GateRefusal, memberClient } from "../runtime-client.js";
 import { Hono } from "hono";
 import { z } from "zod";
+import { bodyLimit } from "hono/body-limit";
 import {
   LightspeedClient,
   LightspeedRpcError,
@@ -25,7 +26,7 @@ import {
   type SessionConfig,
 } from "@lightspeed-ai/agent-client";
 import { schema } from "@lightspeed/platform-db";
-import { modelDefaultsPutSchema, roleAtLeast, slugify, workspaceCreateSchema } from "@lightspeed/platform-shared";
+import { MAX_DICTATION_AUDIO_BYTES, transcriptionStartSchema, transcriptionUploadSchema, modelDefaultsPutSchema, roleAtLeast, slugify, workspaceCreateSchema } from "@lightspeed/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
 import { parseBody } from "../http.js";
 import {
@@ -939,6 +940,46 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
+  app.post("/:id/transcriptions/audio", bodyLimit({ maxSize: 36 * 1024 * 1024 }), async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    const body = await parseBody(c, transcriptionUploadSchema);
+    if (!body.ok) return body.response;
+    if (Buffer.from(body.data.bytesBase64, "base64").length > MAX_DICTATION_AUDIO_BYTES) {
+      return c.json({ error: "Recording exceeds the 25 MiB limit." }, 413);
+    }
+    return withGateway(c, async () => {
+      const response = await engineClientFor(ctx, access).call("blobs/put", { blobs: [body.data] });
+      return c.json(response.result);
+    });
+  });
+  app.post("/:id/transcriptions", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    const body = await parseBody(c, transcriptionStartSchema);
+    if (!body.ok) return body.response;
+    return withGateway(c, async () => {
+      const response = await engineClientFor(ctx, access).call("transcriptions/start", body.data);
+      return c.json(response.result.transcription);
+    });
+  });
+  app.get("/:id/transcriptions/:transcriptionId", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    return withGateway(c, async () => {
+      const response = await engineClientFor(ctx, access).call("transcriptions/read", { transcriptionId: c.req.param("transcriptionId") });
+      return c.json(response.result.transcription);
+    });
+  });
+  app.post("/:id/transcriptions/:transcriptionId/cancel", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    return withGateway(c, async () => {
+      const response = await engineClientFor(ctx, access).call("transcriptions/cancel", { transcriptionId: c.req.param("transcriptionId") });
+      return c.json(response.result.transcription);
+    });
+  });
+
   app.get("/:id/models/defaults", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
@@ -959,7 +1000,7 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
-  /// Provider-discovered model routes for the session-config model picker.
+  /// Provider-discovered routes for agent and speech model pickers.
   /// Lightspeed owns credential injection and sanitizes per-provider errors.
   app.get("/:id/models", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));

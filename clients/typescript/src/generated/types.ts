@@ -7688,9 +7688,11 @@ export interface ModelDefaultsReadParams {}
 export interface ModelListParams {
   /**
    * Apply Lightspeed's small, conservative selectable-model policy. It
-   * removes OpenAI model-id families that are clearly not text-generation
-   * routes (embeddings, moderation, image/video, speech, and realtime).
-   * It is an ID policy, not a provider capability claim.
+   * keeps supported file-transcription routes and filters clearly unrelated
+   * OpenAI families from agent suggestions (embeddings, moderation, image/video,
+   * speech synthesis, and realtime). Agent suggestions also have an age limit.
+   * Clients select routes by API kind for their intended use. This is an ID
+   * policy, not a provider capability claim.
    */
   selectableOnly?: boolean;
 }

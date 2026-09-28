@@ -11,6 +11,7 @@ import { mcpRoutes } from "./routes/mcp";
 import { platformRoutes } from "./routes/platform";
 import { profileRoutes } from "./routes/profiles";
 import { secretRoutes } from "./routes/secrets";
+import { transcriptionRoutes } from "./routes/transcriptions";
 import { sessionRoutes } from "./routes/sessions";
 import { workspaceRoutes } from "./routes/workspaces";
 
@@ -29,6 +30,7 @@ export function createDemoRouter(store: DemoStore): Hono {
   api.route("/", adminRoutes(store));
   for (const routes of [
     sessionRoutes,
+    transcriptionRoutes,
     profileRoutes,
     workspaceRoutes,
     environmentRoutes,

@@ -1188,9 +1188,11 @@ function seedIntegrations(universe: UniverseState): void {
 
   const fetchedAtMs = ago(9 * MINUTE_MS);
   const efforts = ["none", "low", "medium", "high", "xhigh"];
-  universe.modelDefaults = { revision: 1, agentRun: { ...OPUS }, speechToText: null };
+  const speech = { providerId: "openai", apiKind: "openai:audio-transcriptions", model: "gpt-4o-mini-transcribe" };
+  universe.modelDefaults = { revision: 1, agentRun: { ...OPUS }, speechToText: speech };
   universe.models = {
     models: [
+      modelOption(speech, "GPT-4o Mini Transcribe", {}, fetchedAtMs),
       modelOption(OPUS, "Claude Opus 5", { maxInputTokens: 1_000_000, maxOutputTokens: 128_000, parallelToolUse: true, reasoningEfforts: [...efforts, "max"] }, fetchedAtMs),
       modelOption(SONNET, "Claude Sonnet 5", { maxInputTokens: 1_000_000, maxOutputTokens: 64_000, parallelToolUse: true, reasoningEfforts: efforts }, fetchedAtMs),
       modelOption({ ...SONNET, model: "claude-haiku-5" }, "Claude Haiku 5", { maxInputTokens: 400_000, maxOutputTokens: 64_000, parallelToolUse: true, reasoningEfforts: efforts }, fetchedAtMs),
@@ -1198,7 +1200,7 @@ function seedIntegrations(universe: UniverseState): void {
     ],
     providers: [
       modelDiscovery("anthropic", ["anthropic:messages"], "configured", "universe", fetchedAtMs),
-      modelDiscovery("openai", ["openai:responses"], "configured", "universe", fetchedAtMs),
+      modelDiscovery("openai", ["openai:responses", "openai:audio-transcriptions"], "configured", "universe", fetchedAtMs),
     ],
   };
 

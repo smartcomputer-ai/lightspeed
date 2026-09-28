@@ -13,11 +13,13 @@ export type ModelReadiness = {
 export function summarizeProviderReadiness(
   model: ModelConfig | null | undefined,
   providers: ModelProviderDiscovery[] | undefined,
+  purpose: "agentRun" | "speechToText" = "agentRun",
 ): ModelReadiness {
   if (model === undefined) return { state: "unknown", blocked: false, message: "Model settings could not be checked." };
   if (model === null) return { state: "unset", blocked: true, message: "No model selected. Choose a model or set the universe default." };
-  if (!model.providerId || !model.model || !(AGENT_MODEL_API_KINDS as readonly string[]).includes(model.apiKind)) {
-    return { state: "unsupported", blocked: true, message: "This model selection cannot be used for agent runs." };
+  const supported = purpose === "speechToText" ? model.apiKind === "openai:audio-transcriptions" : (AGENT_MODEL_API_KINDS as readonly string[]).includes(model.apiKind);
+  if (!model.providerId || !model.model || !supported) {
+    return { state: "unsupported", blocked: true, message: `This model selection cannot be used for ${purpose === "agentRun" ? "agent runs" : "speech-to-text"}.` };
   }
   if (!providers) return { state: "unknown", blocked: false, message: "Provider status could not be checked." };
   const provider = providers.find((entry) => entry.providerId === model.providerId);
