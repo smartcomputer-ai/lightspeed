@@ -172,6 +172,24 @@ async fn exercise(pool: &sqlx::PgPool) {
     )
     .await;
 
+    allowed(
+        headers(&deployment_key, None, None),
+        api::METHOD_DEPLOYMENT_UNIVERSES_SLUG_PUT,
+    )
+    .await;
+    for denied in [
+        headers(&universe_key, None, None),
+        headers(&connector, None, None),
+        headers(&deployment_key, Some(other), None),
+    ] {
+        assert_eq!(
+            refused(denied, api::METHOD_DEPLOYMENT_UNIVERSES_SLUG_PUT)
+                .await
+                .kind,
+            AgentApiErrorKind::Forbidden
+        );
+    }
+
     // Only a key allowed to assert actors names one, and only a well-formed
     // one.
     let context = allowed(

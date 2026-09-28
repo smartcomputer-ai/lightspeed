@@ -31,7 +31,7 @@ import {
   UniverseNotFound,
 } from "@/components/page";
 import { Switch } from "@/components/ui/switch";
-import { FEATURES, FEATURE_KEYS, type FeatureKey } from "@lightspeed/platform-shared";
+import { universeSlugSchema, FEATURES, FEATURE_KEYS, type FeatureKey } from "@lightspeed/platform-shared";
 import { useActiveUniverse } from "@/lib/universes";
 
 export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
@@ -50,6 +50,7 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
       <PageHeader title="General" description="Universe name, features, identifiers, and lifecycle." />
       <div className="grid gap-6">
         <RenameCard universe={universe} />
+        <SlugCard key={`${universe.id}/${universe.slug}`} universe={universe} />
         <FeaturesCard universe={universe} />
         <IdentifiersCard universe={universe} />
         <DangerZone universe={universe} />
@@ -105,6 +106,42 @@ function FeaturesCard({ universe }: { universe: Universe }) {
   );
 }
 
+export function SlugCard({ universe }: { universe: Universe }) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [slug, setSlug] = useState(universe.slug);
+  const rename = useMutation({
+    mutationFn: () => api<Universe>("PUT", `/api/v1/universes/${universe.id}/slug`, { slug: slug.trim() }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<Universe[]>(["universes"], rows => rows?.map(row => row.id === updated.id ? updated : row));
+      setSlug(updated.slug);
+      navigate(`/u/${updated.slug}/settings/general`, { replace: true });
+      void queryClient.invalidateQueries({ queryKey: ["universes"] });
+    },
+  });
+  const valid = universeSlugSchema.safeParse(slug.trim()).success;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Slug</CardTitle>
+        <CardDescription>Changes the runtime slug and this universe's URL. Existing links may stop working.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form className="flex max-w-md items-end gap-3" onSubmit={event => { event.preventDefault(); if (valid) rename.mutate(); }}>
+          <Field className="flex-1">
+            <FieldLabel htmlFor="universe-slug">Runtime slug</FieldLabel>
+            <Input id="universe-slug" value={slug} onChange={event => setSlug(event.target.value)} required maxLength={128} />
+          </Field>
+          <Button type="submit" disabled={rename.isPending || !valid || slug.trim() === universe.slug}>
+            {rename.isPending ? "Saving…" : "Save slug"}
+          </Button>
+        </form>
+        {rename.error && <p role="alert" className="mt-2 text-sm text-destructive">{rename.error.message}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
 function RenameCard({ universe }: { universe: Universe }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(universe.name);
@@ -125,8 +162,7 @@ function RenameCard({ universe }: { universe: Universe }) {
       <CardHeader>
         <CardTitle>Name</CardTitle>
         <CardDescription>
-          The display name shown in the switcher. The URL slug never changes —
-          links stay stable.
+          The display name shown in the switcher. Changing it does not change the URL slug.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -166,7 +202,7 @@ function IdentifiersCard({ universe }: { universe: Universe }) {
       </CardHeader>
       <CardContent className="grid gap-3 text-sm">
         <div className="grid gap-1">
-          <span className="text-muted-foreground">URL slug (immutable)</span>
+          <span className="text-muted-foreground">URL slug</span>
           <code className="w-fit rounded-md bg-muted px-2 py-0.5 font-mono text-xs">
             {universe.slug}
           </code>

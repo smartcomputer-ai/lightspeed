@@ -16,6 +16,7 @@ pub const DEPLOYMENT_METHOD_PREFIX: &str = "deployment/";
 pub const METHOD_DEPLOYMENT_UNIVERSES_CREATE: &str = "deployment/universes/create";
 pub const METHOD_DEPLOYMENT_UNIVERSES_LIST: &str = "deployment/universes/list";
 pub const METHOD_DEPLOYMENT_UNIVERSES_READ: &str = "deployment/universes/read";
+pub const METHOD_DEPLOYMENT_UNIVERSES_SLUG_PUT: &str = "deployment/universes/slug/put";
 pub const METHOD_DEPLOYMENT_UNIVERSES_DELETE: &str = "deployment/universes/delete";
 pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST: &str =
     "deployment/environment-provider-bindings/list";
@@ -99,6 +100,21 @@ pub struct DeploymentUniverseReadParams {
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentUniverseReadResponse {
     pub universe: DeploymentUniverseView,
+}
+
+/// Set or change an existing universe's deployment-unique slug. The UUID and
+/// resources remain unchanged; URLs using the previous slug may stop working.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DeploymentUniverseSlugPutParams {
+    pub universe_id: String,
+    /// 1-128 ASCII characters: an alphanumeric first character, followed by
+    /// alphanumerics, underscores, hyphens, dots or colons.
+    pub slug: String,
+    /// For adoption: assign only if unnamed, or succeed if already equal.
+    /// Reject a different existing slug instead of renaming it.
+    #[serde(default)]
+    pub only_if_unset: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -400,6 +416,11 @@ pub trait DeploymentApiService: Send + Sync {
         params: DeploymentUniverseReadParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError>;
 
+    async fn put_universe_slug(
+        &self,
+        params: DeploymentUniverseSlugPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError>;
+
     async fn delete_universe(
         &self,
         params: DeploymentUniverseDeleteParams,
@@ -553,6 +574,8 @@ deployment_api_methods! {
         ["List universes", "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_READ => read_universe(DeploymentUniverseReadParams) -> DeploymentUniverseReadResponse =>
         ["Read a universe", "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage."], access: MethodAccess::Deployment,
+    METHOD_DEPLOYMENT_UNIVERSES_SLUG_PUT => put_universe_slug(DeploymentUniverseSlugPutParams) -> DeploymentUniverseReadResponse =>
+        ["Set a universe slug", "Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_DELETE => delete_universe(DeploymentUniverseDeleteParams) -> DeploymentUniverseDeleteResponse =>
         ["Purge a universe", "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_API_KEYS_CREATE => create_api_key(DeploymentApiKeyCreateParams) -> DeploymentApiKeyCreateResponse =>

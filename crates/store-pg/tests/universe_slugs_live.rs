@@ -81,6 +81,56 @@ async fn exercise(pool: &sqlx::PgPool) {
     assert!(
         matches!(error, store_pg::PgStoreError::Postgres(sqlx::Error::Database(error)) if error.is_unique_violation())
     );
+    assert_eq!(
+        store_pg::put_universe_slug(pool, Uuid::new_v4(), "absent", false)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store_pg::put_universe_slug(pool, id, "new-name", true)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("development")
+    );
+    assert_eq!(
+        store_pg::put_universe_slug(pool, id, "new-name", false)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("new-name")
+    );
+    assert_eq!(
+        store_pg::put_universe_slug(pool, id, "new-name", true)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("new-name")
+    );
+    // The old slug is released; unique collisions leave the current slug intact.
+    assert_eq!(
+        store_pg::put_universe_slug(pool, fresh_id, "development", false)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("development")
+    );
+    let error = store_pg::put_universe_slug(pool, id, "development", false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, store_pg::PgStoreError::Postgres(sqlx::Error::Database(error)) if error.is_unique_violation())
+    );
+    assert_eq!(slug(pool, id).await.as_deref(), Some("new-name"));
+    // Two adopters racing to name an unnamed universe both observe the winner.
+    let race_id = Uuid::new_v4();
+    store_pg::create_universe(pool, race_id).await.unwrap();
+    let (left, right) = tokio::join!(
+        store_pg::put_universe_slug(pool, race_id, "race-left", true),
+        store_pg::put_universe_slug(pool, race_id, "race-right", true),
+    );
+    assert_eq!(left.unwrap(), right.unwrap());
 }
 
 async fn slug(pool: &sqlx::PgPool, id: Uuid) -> Option<String> {

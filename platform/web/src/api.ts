@@ -78,7 +78,7 @@ export interface Universe {
   id: string;
   lightspeedUniverseId: string;
   name: string;
-  /// Immutable URL segment (Platform display metadata).
+  /// Cached runtime slug used as the Platform URL segment.
   slug: string;
   gatewayUrl: string | null;
   status: "active" | "archived";
@@ -92,6 +92,7 @@ export interface Universe {
 
 /// Engine-side universe inventory entry (deployment/universes/list view).
 export interface EngineUniverse {
+  slug?: string | null;
   universeId: string;
   sessions: number;
   workspaces: number;
@@ -99,6 +100,11 @@ export interface EngineUniverse {
   blobBytes: number;
   createdAtMs: number;
   lastActivityAtMs?: number | null;
+}
+
+export interface UniverseSlugSyncResult {
+  updated: number;
+  skipped: number;
 }
 
 /// Admin reconciliation: each platform row's engine status, plus engine

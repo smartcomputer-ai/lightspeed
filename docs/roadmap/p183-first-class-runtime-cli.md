@@ -488,5 +488,41 @@ was not part of this validation.
 The development launcher now supplies the `development` slug. Host provisioning
 fills a missing slug without renaming an existing universe, including on older
 development databases. Human-readable CLI universe output marks unnamed rows
-as `(no slug)`. Platform creation still sends only the core UUID; its URL slug
-remains separate from the runtime slug.
+as `(no slug)`. Platform now requests a runtime slug at creation and caches the returned
+value for URL lookup. Adoption uses the existing runtime slug; unnamed
+universes require an explicit conditional assignment before linking.
+
+Runtime slugs remain optional and are now changeable through
+`deployment/universes/slug/put` and `lightspeed universe set-slug`. UUIDs, keys,
+sessions and saved CLI selection remain stable. The previous slug is released;
+old URLs are not preserved as aliases. Adoption uses `onlyIfUnset` to avoid
+renaming a universe that another caller named concurrently. Runtime uniqueness
+and validation apply to both creation and changes.
+
+Platform universe listing and reads use only its database. Creation, adoption
+and renaming through general settings cache the runtime operation's returned
+slug immediately, without fetching the deployment inventory. CLI or direct API
+renames are picked up through the Platform administrator's **Sync from runtime**
+action (`POST /api/v1/universes/sync-slugs`). There is no periodic polling or
+automatic global sync on startup or reads. Explicit sync failures report an
+error and leave the cache intact. Cache changes are transactional, including
+swapped slugs. Platform no longer adds suffixes independently.
+Cross-deployment duplicate slugs cannot share one Platform URL namespace and
+produce an explicit conflict. Missing/unnamed legacy links retain their last
+cached lookup value and are reported as skipped for admin review; the explicit repair endpoint assigns a
+missing runtime slug or refreshes an existing one. Development seeding handles
+the legacy Test universe and preserves runtime renames on subsequent starts.
+
+
+Slug follow-up validation covers API contracts and CLI requests, Platform
+creation/adoption and explicit cache sync (including swapped values and unavailable
+runtime), and the creation/adoption dialogs. Route tests prove ordinary list/read
+requests make zero runtime calls, sync requires a Platform administrator, and
+renaming requires a universe administrator and caches only a successful runtime
+response. UI tests cover explicit sync and navigation to a renamed universe;
+demo routes support the same actions. Live PostgreSQL tests verify
+renaming, uniqueness, released old slugs, conditional assignment races and
+key-scope enforcement. An earlier local full-stack acceptance run created a universe
+through Platform, renamed it through the CLI, verified runtime slug propagation,
+rejected a collision and adopted named and unnamed runtime universes.
+Temporary universes were removed and test-started host processes stopped.

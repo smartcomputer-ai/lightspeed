@@ -1,3 +1,4 @@
+import { UniverseSlugCacheConflict } from "../universe-slugs.js";
 import { deploymentClient, GatewayUnconfigured, GateRefusal, memberClient } from "../runtime-client.js";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -2092,6 +2093,7 @@ export async function withGateway(
   try {
     return await fn();
   } catch (error) {
+    if (error instanceof UniverseSlugCacheConflict) return c.json({ error: error.message }, 409);
     if (error instanceof GatewayUnconfigured) {
       return c.json({ error: error.message }, 501);
     }

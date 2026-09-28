@@ -2,7 +2,7 @@
 /// universe API keys. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
-import { effectiveFeatures, featureOverridesSchema, memberUpdateSchema, mergeFeatureOverrides, slugify, universeRoleSchema } from "@lightspeed/platform-shared";
+import { effectiveFeatures, featureOverridesSchema, memberUpdateSchema, mergeFeatureOverrides, slugify, universeRoleSchema, universeSlugSchema } from "@lightspeed/platform-shared";
 import type { MethodGroup } from "@lightspeed-ai/agent-client";
 import type { EngineUniverse, Member, Universe } from "@/api";
 import { universeApiKey, type DemoStore, type UniverseState } from "../store";
@@ -23,9 +23,9 @@ export function platformRoutes(store: DemoStore): Hono {
     const body = await readBody<{ name?: string; slug?: string }>(c);
     const name = body.name?.trim();
     if (!name) return badRequest(c, "validation failed — name: required");
-    const base = body.slug?.trim() || slugify(name);
-    let slug = base;
-    for (let i = 2; store.universeBySlug(slug); i++) slug = `${base}-${i}`;
+    const slug = body.slug?.trim() || slugify(name);
+    if (!universeSlugSchema.safeParse(slug).success) return badRequest(c, "invalid universe slug");
+    if (store.universeBySlug(slug) || store.orphanEngineUniverses.some(o => o.slug === slug)) return conflict(c, "universe slug is already in use");
     const state = store.addUniverse({ slug, name, role: "admin" });
     return c.json(state.universe, 201);
   });
@@ -43,8 +43,12 @@ export function platformRoutes(store: DemoStore): Hono {
     }),
   );
 
+  // Demo runtime and Platform share one in-memory inventory, so its cache
+  // is already current; the explicit action still mirrors the real API.
+  app.post("/universes/sync-slugs", c => c.json({ updated: 0, skipped: 0 }));
+
   app.post("/universes/adopt", async (c) => {
-    const body = await readBody<{ lightspeedUniverseId?: string; name?: string }>(c);
+    const body = await readBody<{ lightspeedUniverseId?: string; name?: string; slug?: string }>(c);
     const engineId = body.lightspeedUniverseId?.trim();
     const name = body.name?.trim();
     if (!engineId || !name) return badRequest(c, "validation failed — lightspeedUniverseId and name are required");
@@ -53,12 +57,18 @@ export function platformRoutes(store: DemoStore): Hono {
     }
     const orphanIndex = store.orphanEngineUniverses.findIndex((o) => o.universeId === engineId);
     if (orphanIndex < 0) return notFound(c, "engine universe not found");
-    const orphan = store.orphanEngineUniverses.splice(orphanIndex, 1)[0] as EngineUniverse;
+    const orphan = store.orphanEngineUniverses[orphanIndex] as EngineUniverse;
+    if (orphan.slug && body.slug && body.slug !== orphan.slug) return conflict(c, "adoption must use the existing runtime slug; rename it separately in runtime");
+    const slug = orphan.slug ?? body.slug?.trim();
+    if (!slug || !universeSlugSchema.safeParse(slug).success) return badRequest(c, "a valid slug is required to adopt an unnamed runtime universe");
+    if (store.universeBySlug(slug) || store.orphanEngineUniverses.some(o => o.universeId !== engineId && o.slug === slug)) return conflict(c, "universe slug is already in use");
+    orphan.slug = slug;
+    store.orphanEngineUniverses.splice(orphanIndex, 1);
     const state = store.addUniverse({
-      slug: slugify(name),
+      slug,
       name,
       lightspeedUniverseId: engineId,
-      role: null,
+      role: "admin",
       createdAt: new Date(orphan.createdAtMs).toISOString(),
     });
     return c.json(state.universe, 201);
@@ -87,6 +97,19 @@ export function platformRoutes(store: DemoStore): Hono {
   app.get("/universes/:id", (c) => {
     const state = universeFor(store, c);
     return state ? c.json(state.universe) : notFound(c);
+  });
+
+  app.put("/universes/:id/slug", async c => {
+    const state = universeFor(store, c);
+    if (!state) return notFound(c);
+    const body = await readBody<{ slug?: string }>(c);
+    const parsed = universeSlugSchema.safeParse(body.slug);
+    if (!parsed.success) return badRequest(c, "invalid universe slug");
+    const slug = parsed.data;
+    const existing = store.universeBySlug(slug);
+    if ((existing && existing !== state) || store.orphanEngineUniverses.some(orphan => orphan.slug === slug)) return conflict(c, "universe slug is already in use");
+    state.universe.slug = slug;
+    return c.json(state.universe);
   });
 
   app.patch("/universes/:id", async (c) => {

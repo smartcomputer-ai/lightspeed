@@ -169,16 +169,8 @@ impl DeploymentApiService for GatewayDeploymentApi {
     ) -> Result<AgentApiOutcome<DeploymentUniverseCreateResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_CREATE, async {
             let universe_id = parse_universe_id(&params.universe_id)?;
-            if params.slug.as_ref().is_some_and(|slug| {
-                slug.is_empty()
-                    || slug.len() > 128
-                    || !slug
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
-            }) {
-                return Err(AgentApiError::invalid_request(
-                    "slug must contain 1-128 letters, digits, hyphens or underscores",
-                ));
+            if let Some(slug) = &params.slug {
+                validate_universe_slug(slug)?;
             }
             let created = store_pg::create_universe_with_slug(
                 self.pool(),
@@ -186,7 +178,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 params.slug.as_deref(),
             )
             .await
-            .map_err(map_store_error)?;
+            .map_err(map_universe_store_error)?;
             let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
                 AgentApiError::internal(format!("universe disappeared after create: {universe_id}"))
             })?;
@@ -409,6 +401,34 @@ impl DeploymentApiService for GatewayDeploymentApi {
             environment: super::service::environment_providers::environment_view(&environment),
         }))
         }).await
+    }
+
+    async fn put_universe_slug(
+        &self,
+        params: api::DeploymentUniverseSlugPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_SLUG_PUT, async {
+            let id = parse_universe_id(&params.universe_id)?;
+            validate_universe_slug(&params.slug)?;
+            let slug =
+                store_pg::put_universe_slug(self.pool(), id, &params.slug, params.only_if_unset)
+                    .await
+                    .map_err(map_universe_store_error)?
+                    .ok_or_else(|| AgentApiError::not_found("universe not found"))?;
+            if slug != params.slug {
+                return Err(AgentApiError::conflict(
+                    "universe already has a different slug",
+                ));
+            }
+            let universe = self
+                .read_universe_view(id)
+                .await?
+                .ok_or_else(|| AgentApiError::not_found("universe not found"))?;
+            Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
+                universe,
+            }))
+        })
+        .await
     }
 
     async fn list_universes(
@@ -765,6 +785,30 @@ fn map_api_key_error(error: auth::ApiKeyError) -> AgentApiError {
     }
 }
 
+fn validate_universe_slug(slug: &str) -> Result<(), AgentApiError> {
+    if slug.is_empty()
+        || slug.len() > 128
+        || !slug.as_bytes()[0].is_ascii_alphanumeric()
+        || !slug
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"_.:-".contains(&c))
+    {
+        return Err(AgentApiError::invalid_request(
+            "slug must start with a letter or digit and contain 1-128 ASCII letters, digits, underscores, hyphens, dots or colons",
+        ));
+    }
+    Ok(())
+}
+
+fn map_universe_store_error(error: store_pg::PgStoreError) -> AgentApiError {
+    if let store_pg::PgStoreError::Postgres(sqlx::Error::Database(ref db)) = error
+        && db.is_unique_violation()
+    {
+        return AgentApiError::conflict("universe slug is already in use");
+    }
+    map_store_error(error)
+}
+
 fn map_store_error(error: store_pg::PgStoreError) -> AgentApiError {
     AgentApiError::internal(error.to_string())
 }
@@ -778,4 +822,27 @@ fn admit(method: &str) -> Result<super::request_context::RequestContext, AgentAp
         return Err(AgentApiError::forbidden());
     }
     Ok(context)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn universe_slugs_follow_the_store_format() {
+        for slug in ["test", "My.Universe:one_two-3", "0"] {
+            assert!(validate_universe_slug(slug).is_ok());
+        }
+        for slug in ["", "-test", "with space", "a/b", "ümlaut"] {
+            assert_eq!(
+                validate_universe_slug(slug).unwrap_err().kind,
+                api::AgentApiErrorKind::InvalidRequest
+            );
+        }
+        assert!(validate_universe_slug(&"a".repeat(128)).is_ok());
+        assert_eq!(
+            validate_universe_slug(&"a".repeat(129)).unwrap_err().kind,
+            api::AgentApiErrorKind::InvalidRequest
+        );
+    }
 }

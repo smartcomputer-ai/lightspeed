@@ -74,6 +74,9 @@ impl Runtime {
                     "deployment/universes/list" => {
                         json!({"universes":[{"universeId":"00000000-0000-0000-0000-000000000001","slug":"one","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0},{"universeId":"00000000-0000-0000-0000-000000000002","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0}]})
                     }
+                    "deployment/universes/slug/put" => {
+                        json!({"universe":{"universeId":body["params"]["universeId"],"slug":body["params"]["slug"],"createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0}})
+                    }
                     "models/list" => json!({"models":[],"providers":[]}),
                     _ => panic!("unexpected method {method}"),
                 };
@@ -267,6 +270,8 @@ fn named_connections_universe_selection_and_per_command_override() {
     let universes = success(cli(dir, &["universe", "list"], None));
     assert!(universes.contains("00000000-0000-0000-0000-000000000001  one"));
     assert!(universes.contains("00000000-0000-0000-0000-000000000002  (no slug)"));
+    let renamed = success(cli(dir, &["universe", "set-slug", "one", "renamed"], None));
+    assert!(renamed.contains("00000000-0000-0000-0000-000000000001  renamed"));
     let status = success(cli(dir, &["connect", "status", "--json"], None));
     assert_eq!(
         serde_json::from_str::<Value>(&status).unwrap()["selectedUniverse"],

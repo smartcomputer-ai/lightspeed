@@ -42,7 +42,7 @@ function setup(role: string, stored: Record<string, boolean>) {
     c.set("session", { user: { id: "caller" } } as ApiVariables["session"]);
     await next();
   });
-  app.route("/", universeRoutes({ db } as unknown as AppContext));
+  app.route("/", universeRoutes({ db, env: {} } as unknown as AppContext));
   const request = (method = "GET", body?: unknown) => app.request("/platform-universe", {
     method, headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}),
   });

@@ -66,6 +66,25 @@ pub async fn create_universe_with_slug(
     Ok(result.rows_affected() > 0)
 }
 
+/// Set a slug without changing the universe identity. With only_if_unset,
+/// preserve a concurrent assignment; callers reject a different returned slug.
+/// None means the universe does not exist.
+pub async fn put_universe_slug(
+    pool: &PgPool,
+    universe_id: Uuid,
+    slug: &str,
+    only_if_unset: bool,
+) -> Result<Option<String>, PgStoreError> {
+    Ok(sqlx::query_scalar(
+        "UPDATE universes SET slug = CASE WHEN $3 THEN COALESCE(slug, $2) ELSE $2 END WHERE universe_id = $1 RETURNING slug",
+    )
+    .bind(universe_id)
+    .bind(slug)
+    .bind(only_if_unset)
+    .fetch_optional(pool)
+    .await?)
+}
+
 pub async fn read_universe_stats(
     pool: &PgPool,
     universe_id: Uuid,

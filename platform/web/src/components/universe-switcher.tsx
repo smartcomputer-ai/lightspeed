@@ -1,3 +1,4 @@
+import { slugify, universeSlugSchema } from "@lightspeed/platform-shared";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -120,21 +121,26 @@ export function NewUniverseDialog({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [slugEdited, setSlugEdited] = useState(false);
 
   const create = useMutation({
-    mutationFn: (input: { name: string }) =>
+    mutationFn: (input: { name: string; slug: string }) =>
       api<Universe>("POST", "/api/v1/universes", input),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ["universes"] });
       onOpenChange(false);
       setName("");
+      setSlug("");
+      setSlugEdited(false);
       navigate(universeHome(created));
     },
   });
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    create.mutate({ name });
+    if (!universeSlugSchema.safeParse(slug.trim()).success) return;
+    create.mutate({ name: name.trim(), slug: slug.trim() });
   };
 
   return (
@@ -152,11 +158,17 @@ export function NewUniverseDialog({
             <Input
               id="new-universe-name"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => { setName(e.target.value); if (!slugEdited) setSlug(slugify(e.target.value)); }}
               placeholder="My Universe"
               autoFocus
               required
             />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="new-universe-slug">Slug</FieldLabel>
+            <Input id="new-universe-slug" value={slug} required maxLength={128}
+              onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }} placeholder="my-universe" />
+            <p className="text-sm text-muted-foreground">Unique in runtime and used in Platform URLs.</p>
           </Field>
           {create.error && (
             <p className="text-sm text-destructive">{create.error.message}</p>
@@ -165,7 +177,7 @@ export function NewUniverseDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={create.isPending || !name.trim()}>
+            <Button type="submit" disabled={create.isPending || !name.trim() || !universeSlugSchema.safeParse(slug.trim()).success}>
               {create.isPending ? "Creating…" : "Create"}
             </Button>
           </DialogFooter>

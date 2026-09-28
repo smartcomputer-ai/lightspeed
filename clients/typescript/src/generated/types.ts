@@ -7119,6 +7119,26 @@ export interface DeploymentUniverseReadParams {
   universeId: string;
 }
 /**
+ * Set or change an existing universe's deployment-unique slug. The UUID and
+ * resources remain unchanged; URLs using the previous slug may stop working.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentUniverseSlugPutParams".
+ */
+export interface DeploymentUniverseSlugPutParams {
+  /**
+   * For adoption: assign only if unnamed, or succeed if already equal.
+   * Reject a different existing slug instead of renaming it.
+   */
+  onlyIfUnset?: boolean;
+  /**
+   * 1-128 ASCII characters: an alphanumeric first character, followed by
+   * alphanumerics, underscores, hyphens, dots or colons.
+   */
+  slug: string;
+  universeId: string;
+}
+/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EnvironmentCloseParams".
  */

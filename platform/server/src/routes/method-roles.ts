@@ -167,5 +167,6 @@ export const UNMEMBERED_METHODS: ReadonlySet<string> = new Set([
   "deployment/universes/delete",
   "deployment/universes/list",
   "deployment/universes/read",
+  "deployment/universes/slug/put",
   "initialize",
 ]);

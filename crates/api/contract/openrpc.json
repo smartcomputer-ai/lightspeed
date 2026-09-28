@@ -8680,6 +8680,28 @@
         ],
         "type": "object"
       },
+      "DeploymentUniverseSlugPutParams": {
+        "description": "Set or change an existing universe's deployment-unique slug. The UUID and\nresources remain unchanged; URLs using the previous slug may stop working.",
+        "properties": {
+          "onlyIfUnset": {
+            "default": false,
+            "description": "For adoption: assign only if unnamed, or succeed if already equal.\nReject a different existing slug instead of renaming it.",
+            "type": "boolean"
+          },
+          "slug": {
+            "description": "1-128 ASCII characters: an alphanumeric first character, followed by\nalphanumerics, underscores, hyphens, dots or colons.",
+            "type": "string"
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId",
+          "slug"
+        ],
+        "type": "object"
+      },
       "DeploymentUniverseView": {
         "description": "Per-universe stats view. Counts are cheap aggregates computed at read\ntime, not maintained counters — approximate under concurrent writes.",
         "properties": {
@@ -21174,6 +21196,33 @@
         }
       },
       "summary": "Read a universe",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/universes",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.",
+      "name": "deployment/universes/slug/put",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/DeploymentUniverseSlugPutParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentUniverseReadResponse"
+        }
+      },
+      "summary": "Set a universe slug",
       "x-lightspeed-access": {
         "kind": "deployment"
       },

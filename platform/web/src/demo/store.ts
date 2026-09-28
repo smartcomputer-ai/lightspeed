@@ -291,6 +291,7 @@ export class DemoStore {
     for (const workspace of state.workspaces.values()) blobBytes += workspace.row.bytes;
     return {
       universeId: state.universe.lightspeedUniverseId,
+      slug: state.universe.slug,
       sessions: state.sessions.size,
       workspaces: state.workspaces.size,
       profiles: state.profiles.size,

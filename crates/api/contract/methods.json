@@ -2947,6 +2947,30 @@
       "access": {
         "kind": "deployment"
       },
+      "description": "Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.",
+      "group": "deployment/universes",
+      "method": "deployment/universes/slug/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/DeploymentUniverseSlugPutParams"
+        },
+        "type": "DeploymentUniverseSlugPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentUniverseReadResponse"
+        },
+        "type": "AgentApiOutcome<DeploymentUniverseReadResponse>"
+      },
+      "role": null,
+      "scope": "deployment",
+      "summary": "Set a universe slug",
+      "target": null
+    },
+    {
+      "access": {
+        "kind": "deployment"
+      },
       "description": "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
       "group": "deployment/universes",
       "method": "deployment/universes/delete",

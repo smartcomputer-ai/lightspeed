@@ -101,6 +101,7 @@ lightspeed connect status
 lightspeed connect use production
 lightspeed universe list
 lightspeed universe use personal
+lightspeed universe set-slug personal my-personal
 lightspeed --connection production --universe staging session list
 lightspeed connect remove production
 ```
@@ -129,6 +130,11 @@ universe selection. `connect list` and `connect status` support `--json`.
 | Deployment key | Select by core UUID or slug. Listing/slugs require `deployment/universes`; explicit UUIDs work without listing permission. |
 | Universe key | The key selects its universe. Conflicting overrides fail; no universe header is sent. |
 | Single mode | The server selects its configured universe; no identity headers are sent. |
+
+Runtime slugs are optional and unique within a deployment. `universe set-slug`
+assigns or changes one without changing the UUID, resources, keys or saved CLI
+selection. Renaming releases the old slug; old Platform URLs can stop working
+or refer to another universe if that slug is reused.
 
 Deployment operations omit the universe header even when a universe is
 selected. Keys remain constrained by their allowed groups. A direct runtime
@@ -191,7 +197,22 @@ These are integration credentials, not personal Platform login tokens.
 
 To add Platform, give it its own deployment service key with the required
 method groups and actor assertion. Use Platform's administrator adoption flow
-to link an existing runtime universe. Its IDs, profiles and sessions stay in
-the runtime; Platform creates its organization and membership records. This
+to link an existing runtime universe. Platform uses the runtime slug for its
+URLs and caches it for lookups. Creation sends the requested slug to runtime;
+adoption preserves an existing slug or requires one to be assigned to an unnamed
+universe before linking. Platform does not invent a different slug on collision.
+Ordinary universe lists and reads use Platform's database without contacting
+runtime. Creation, adoption and renaming through Platform's general settings
+immediately cache the slug returned by runtime. After a CLI or direct API rename,
+a Platform administrator must use **Sync from runtime** on the **Universes**
+page to update the cached URLs. There is no periodic or background slug refresh.
+A failed sync reports an error and preserves the cache; missing or unnamed
+runtime universes are reported as skipped for review. During runtime outages,
+the cached universe list remains available for membership administration.
+Linked universes across different runtime deployments must have distinct slugs
+within one Platform.
+
+IDs, profiles and sessions stay in the runtime; Platform creates only its
+organization and membership records. This
 association does not automatically share private sessions. Direct CLI access
 continues to work while Platform is stopped.

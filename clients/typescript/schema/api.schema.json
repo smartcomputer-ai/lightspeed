@@ -8680,6 +8680,28 @@
       ],
       "type": "object"
     },
+    "DeploymentUniverseSlugPutParams": {
+      "description": "Set or change an existing universe's deployment-unique slug. The UUID and\nresources remain unchanged; URLs using the previous slug may stop working.",
+      "properties": {
+        "onlyIfUnset": {
+          "default": false,
+          "description": "For adoption: assign only if unnamed, or succeed if already equal.\nReject a different existing slug instead of renaming it.",
+          "type": "boolean"
+        },
+        "slug": {
+          "description": "1-128 ASCII characters: an alphanumeric first character, followed by\nalphanumerics, underscores, hyphens, dots or colons.",
+          "type": "string"
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "slug"
+      ],
+      "type": "object"
+    },
     "DeploymentUniverseView": {
       "description": "Per-universe stats view. Counts are cheap aggregates computed at read\ntime, not maintained counters — approximate under concurrent writes.",
       "properties": {

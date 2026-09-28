@@ -2,14 +2,13 @@ import { z } from "zod";
 
 /// Input shapes shared by the API (validation) and the CLI (request typing).
 
+/// Runtime slugs are deployment-unique; the UUID remains stable on rename.
+export const universeSlugSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
+
 export const universeCreateSchema = z.object({
   name: z.string().min(1).max(100),
-  /// URL-safe org slug; derived from name when omitted.
-  slug: z
-    .string()
-    .regex(/^[a-z0-9][a-z0-9-]*$/)
-    .max(60)
-    .optional(),
+  /// Requested runtime slug; derived from name when omitted.
+  slug: universeSlugSchema.optional(),
 });
 export type UniverseCreateInput = z.infer<typeof universeCreateSchema>;
 

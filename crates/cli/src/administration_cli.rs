@@ -26,6 +26,11 @@ enum UniverseCommand {
     Read {
         target: String,
     },
+    /// Assign or change a runtime slug. Existing URLs may stop working.
+    SetSlug {
+        target: String,
+        slug: String,
+    },
 }
 pub async fn universe(args: UniverseArgs) -> Result<()> {
     let active = connection::ACTIVE.get().context("no connection")?;
@@ -62,6 +67,29 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                     api::DeploymentUniverseCreateParams {
                         universe_id: id.unwrap_or_else(uuid::Uuid::new_v4).to_string(),
                         slug,
+                    },
+                )
+                .await?
+                .result;
+            if args.json {
+                print_json(&response)?;
+            } else {
+                println!(
+                    "{}  {}",
+                    response.universe.universe_id,
+                    response.universe.slug.as_deref().unwrap_or("(no slug)")
+                );
+            }
+        }
+        UniverseCommand::SetSlug { target, slug } => {
+            let id = connection::resolve_universe(active, &target).await?;
+            let response: api::DeploymentUniverseReadResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_UNIVERSES_SLUG_PUT,
+                    api::DeploymentUniverseSlugPutParams {
+                        universe_id: id,
+                        slug,
+                        only_if_unset: false,
                     },
                 )
                 .await?

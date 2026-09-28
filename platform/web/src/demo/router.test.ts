@@ -61,6 +61,30 @@ const universeReads = [
 ];
 
 describe("demo router", () => {
+  it("carries runtime slugs through creation and adoption without local suffixes", async () => {
+    const { store, call } = await boot();
+    const created = await call("POST", "/api/v1/universes", { name: "Display", slug: "chosen" });
+    expect(created.status).toBe(201);
+    expect(created.json).toMatchObject({ slug: "chosen" });
+    expect((await call("POST", "/api/v1/universes", { name: "Another", slug: "chosen" })).status).toBe(409);
+    const named = { universeId: "11111111-1111-4111-8111-111111111111", slug: "from-runtime", sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
+    const unnamed = { ...named, universeId: "22222222-2222-4222-8222-222222222222", slug: undefined };
+    store.orphanEngineUniverses.push(named, unnamed);
+    const adopted = await call("POST", "/api/v1/universes/adopt", { name: "Unrelated name", lightspeedUniverseId: named.universeId });
+    expect(adopted.status).toBe(201);
+    expect(adopted.json).toMatchObject({ slug: "from-runtime", lightspeedUniverseId: named.universeId });
+    expect((await call("POST", "/api/v1/universes/adopt", { name: "Unnamed", lightspeedUniverseId: unnamed.universeId })).status).toBe(400);
+    expect(store.orphanEngineUniverses.some(u => u.universeId === unnamed.universeId)).toBe(true);
+    expect((await call("POST", "/api/v1/universes/adopt", { name: "Unnamed", lightspeedUniverseId: unnamed.universeId, slug: "now-named" })).status).toBe(201);
+    const universe = created.json as Universe;
+    expect((await call("PUT", `/api/v1/universes/${universe.id}/slug`, { slug: "from-runtime" })).status).toBe(409);
+    const renamed = await call("PUT", `/api/v1/universes/${universe.id}/slug`, { slug: "renamed" });
+    expect(renamed.status).toBe(200);
+    expect(renamed.json).toMatchObject({ id: universe.id, lightspeedUniverseId: universe.lightspeedUniverseId, slug: "renamed" });
+    expect((await call("GET", "/api/v1/universes")).json).toEqual(expect.arrayContaining([expect.objectContaining({ id: universe.id, slug: "renamed" })]));
+    expect((await call("POST", "/api/v1/universes/sync-slugs", {})).json).toEqual({ updated: 0, skipped: 0 });
+  });
+
   it("keeps seeded final replies outside each run's collapsible activity", async () => {
     const { store } = await boot();
     let checked = 0;

@@ -123,6 +123,7 @@ export const METHODS = [
   "deployment/universes/create",
   "deployment/universes/list",
   "deployment/universes/read",
+  "deployment/universes/slug/put",
   "deployment/universes/delete",
   "deployment/api-keys/create",
   "deployment/api-keys/list",
@@ -845,6 +846,12 @@ export const METHOD_INFO = {
     access: {"kind":"deployment"},
     summary: "Read a universe",
     description: "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
+  },
+  "deployment/universes/slug/put": {
+    scope: "deployment",
+    access: {"kind":"deployment"},
+    summary: "Set a universe slug",
+    description: "Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.",
   },
   "deployment/universes/delete": {
     scope: "deployment",
@@ -1996,6 +2003,15 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
   };
   /**
+   * Set a universe slug
+   *
+   * Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.
+   */
+  "deployment/universes/slug/put": {
+    params: Api.DeploymentUniverseSlugPutParams;
+    result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
+  };
+  /**
    * Purge a universe
    *
    * Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.
@@ -3056,6 +3072,14 @@ export const rpc = {
    */
   deploymentUniversesRead(client: RpcCaller, params: Api.DeploymentUniverseReadParams): Promise<Api.AgentApiOutcomeOfDeploymentUniverseReadResponse> {
     return client.call("deployment/universes/read", params);
+  },
+  /**
+   * Set a universe slug
+   *
+   * Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.
+   */
+  deploymentUniversesSlugPut(client: RpcCaller, params: Api.DeploymentUniverseSlugPutParams): Promise<Api.AgentApiOutcomeOfDeploymentUniverseReadResponse> {
+    return client.call("deployment/universes/slug/put", params);
   },
   /**
    * Purge a universe

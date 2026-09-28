@@ -3423,6 +3423,17 @@ impl DeploymentApiService for TestDeploymentService {
         }))
     }
 
+    async fn put_universe_slug(
+        &self,
+        params: DeploymentUniverseSlugPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+        let mut universe = test_deployment_universe(&params.universe_id);
+        universe.slug = Some(params.slug);
+        Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
+            universe,
+        }))
+    }
+
     async fn delete_universe(
         &self,
         params: DeploymentUniverseDeleteParams,
