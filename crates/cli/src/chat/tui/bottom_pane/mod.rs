@@ -443,6 +443,30 @@ impl BottomPaneState {
                 .add_modifier(Modifier::BOLD)
         };
         let mut spans = vec![Span::styled(self.status.clone(), status_style)];
+        if let Some(connection) = crate::connection::ACTIVE.get() {
+            let bound = connection
+                .caller
+                .as_ref()
+                .and_then(|c| c.scope.universe_id())
+                .map(|id| id.to_string());
+            let universe = connection
+                .universe
+                .as_deref()
+                .or(bound.as_deref())
+                .unwrap_or("unselected");
+            let name = connection.name.as_deref().unwrap_or("runtime");
+            let name = if name.chars().count() > 20 {
+                format!("{}…", name.chars().take(20).collect::<String>())
+            } else {
+                name.to_owned()
+            };
+            let universe = if uuid::Uuid::parse_str(universe).is_ok() {
+                &universe[..8]
+            } else {
+                universe
+            };
+            spans.push(Span::raw(format!(" | {} / {}", name, universe)));
+        }
         if let Some(settings) = &self.settings {
             spans.push(Span::raw("  "));
             spans.push(Span::styled(

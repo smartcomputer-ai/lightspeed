@@ -64,6 +64,7 @@ pub fn export_schemas() -> ExportedSchemas {
             reference_scope = Some(spec.scope);
             let title = match spec.scope {
                 crate::MethodScope::Universe => "Universe methods",
+                crate::MethodScope::Connection => "Connection methods",
                 crate::MethodScope::Service => "Service methods",
                 crate::MethodScope::Deployment => "Deployment methods",
             };

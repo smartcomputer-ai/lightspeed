@@ -104,6 +104,7 @@ pub async fn authenticate(
     Ok(RequestContext {
         scope: target,
         key: Some(KeyContext {
+            scope: key.scope,
             prefix: key.key_prefix,
             groups: key.groups,
         }),
@@ -121,6 +122,8 @@ fn target_scope(
     selected: Option<Uuid>,
 ) -> Option<AccessScope> {
     match (method, key, selected) {
+        (MethodScope::Connection, _, None) => Some(key),
+        (MethodScope::Connection, _, Some(_)) => None,
         (MethodScope::Deployment, AccessScope::Deployment, None) => Some(AccessScope::Deployment),
         (MethodScope::Deployment, _, _) => None,
         (_, AccessScope::Universe { universe_id }, None) => {
@@ -141,6 +144,17 @@ mod tests {
     fn universe(id: u128) -> AccessScope {
         AccessScope::Universe {
             universe_id: Uuid::from_u128(id),
+        }
+    }
+
+    #[test]
+    fn connection_discovery_needs_no_selected_universe_and_never_accepts_one() {
+        for key in [AccessScope::Deployment, universe(1)] {
+            assert_eq!(target_scope(MethodScope::Connection, key, None), Some(key));
+            assert_eq!(
+                target_scope(MethodScope::Connection, key, Some(Uuid::from_u128(1))),
+                None
+            );
         }
     }
 

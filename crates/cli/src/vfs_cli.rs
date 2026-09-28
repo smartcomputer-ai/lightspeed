@@ -31,7 +31,7 @@ enum VfsCommand {
 #[derive(Args, Debug, Clone)]
 struct SnapshotArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the snapshot summary as JSON.
     #[arg(long)]
@@ -64,7 +64,7 @@ struct SnapshotArgs {
 #[derive(Args, Debug, Clone)]
 struct MaterializeArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the materialization summary as JSON.
     #[arg(long)]
@@ -98,7 +98,7 @@ enum WorkspaceCommand {
 #[derive(Args, Debug, Clone)]
 struct WorkspaceCreateArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the workspace summary as JSON.
     #[arg(long)]
@@ -117,7 +117,7 @@ struct WorkspaceCreateArgs {
 #[derive(Args, Debug, Clone)]
 struct WorkspaceListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the workspace list as JSON.
     #[arg(long)]
@@ -127,7 +127,7 @@ struct WorkspaceListArgs {
 #[derive(Args, Debug, Clone)]
 struct WorkspaceReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the workspace summary as JSON.
     #[arg(long)]
@@ -139,7 +139,7 @@ struct WorkspaceReadArgs {
 #[derive(Args, Debug, Clone)]
 struct WorkspaceUpdateArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the workspace summary as JSON.
     #[arg(long)]
@@ -159,7 +159,7 @@ struct WorkspaceUpdateArgs {
 #[derive(Args, Debug, Clone)]
 struct WorkspaceDeleteArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the deleted workspace summary as JSON.
     #[arg(long)]
@@ -187,7 +187,7 @@ enum MountCommand {
 #[derive(Args, Debug, Clone)]
 struct MountPutArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the mount summary as JSON.
     #[arg(long)]
@@ -228,7 +228,7 @@ impl From<MountAccess> for api::WorkspaceAccess {
 #[derive(Args, Debug, Clone)]
 struct MountDeleteArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the deleted mount summary as JSON.
     #[arg(long)]
@@ -244,7 +244,7 @@ struct MountDeleteArgs {
 #[derive(Args, Debug, Clone)]
 struct MountListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit mounts as JSON.
     #[arg(long)]

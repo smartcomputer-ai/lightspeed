@@ -70,11 +70,21 @@ create`.
 In authenticated mode, the gateway checks the key's status, scope, and allowed
 method groups on each request. A universe key selects its own universe and
 must omit `x-lightspeed-universe`. A deployment key sends that header for
-universe/service methods and omits it for deployment methods.
+universe/service methods and omits it for deployment methods and `initialize`.
 `x-lightspeed-actor` requires the key's `assertActor` flag and supplies attribution,
 not a person's permissions. The removed `x-lightspeed-principal` header is
 rejected. Single mode rejects all credential, universe, and actor headers.
 See [API keys and service access](../access-and-security/api-keys-and-service-access.md).
+
+### Explicit API-key provisioning
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LIGHTSPEED_BOOTSTRAP_API_KEY` | Unset (generate a key) | Secret input to `lightspeed-server api-key provision`, also accepted on first development setup. Must be `lsk_` plus 32 random bytes in unpadded base64url. Stores the hash in the normal key store; does not bypass revocation or enable provisioning on ordinary production startup. |
+
+The development opt-out is the launcher option `--no-api-key-bootstrap`, not
+an environment variable. It skips API-key provisioning without disabling
+migrations or universe setup.
 
 ### Default model and provider transport
 
@@ -152,11 +162,16 @@ are given together.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_API_URL` | **Required unless `--api-url` is supplied** | Lightspeed JSON-RPC endpoint, normally ending in `/rpc`. Also used as the Platform server's fallback gateway URL. |
+| `LIGHTSPEED_API_URL` | Required unless a saved connection or `--api-url` supplies it | Lightspeed JSON-RPC endpoint, normally ending in `/rpc`. Also used as the Platform server's fallback gateway URL. |
 | `LIGHTSPEED_API_KEY` | Unset | Bearer key sent to an authenticated gateway. |
-| `LIGHTSPEED_UNIVERSE` | Unset | Value sent as `x-lightspeed-universe` for universe selection with a deployment key. |
+| `LIGHTSPEED_UNIVERSE` | Unset | Universe UUID or core slug overriding saved selection. Only deployment keys may switch universes; slugs require universe-list permission. |
+| `LIGHTSPEED_CONFIG_DIR` | `$XDG_CONFIG_HOME/lightspeed`, otherwise `$HOME/.config/lightspeed` | Saved CLI connection metadata and protected owned credential files. |
 | `LIGHTSPEED_CHAT_REASONING_EFFORT` | `high` | Default effort: `low`, `medium`, `high`, or `none`. Invalid values fall back to `high`. |
 | `LIGHTSPEED_CHAT_MAX_TOKENS` | Unset | Optional positive integer maximum output-token setting for new sessions. |
+
+`--connection NAME` selects a saved endpoint and credential together, ignoring
+ambient connection variables. `--universe` overrides selection for one call.
+See [Use Lightspeed from the terminal](../using-lightspeed/cli.md).
 
 CLI options such as `--api-key-env`, `--private-key-env`, `--token-env`, and
 `--client-secret-env` intentionally accept an arbitrary environment-variable
@@ -337,7 +352,7 @@ Never reuse their credentials in a deployed environment.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_AUTH_MODE` | `authenticated` for `full`; `single` otherwise | Full development explicitly bootstraps a local service credential when no Platform key is supplied. |
+| `LIGHTSPEED_AUTH_MODE` | `authenticated` | Both `full` and `runtime` provision a CLI key and connection handoff by default; full also provisions a separate Platform key when needed. Explicit `single` remains supported for runtime-only local use. |
 | `LIGHTSPEED_CHANNELS_CONNECTORS` | Empty | Providers the `full` development profile hands to one connector host process (`LIGHTSPEED_CONNECTOR_PROVIDERS`). Values: `telegram`, `whatsapp`, or both. WhatsApp additionally needs `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY`; the session directory defaults to `.lightspeed-dev/whatsapp-auth`. |
 | `PORT` | `3000` | Platform server port. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | Configurator port used by the supervisor. |

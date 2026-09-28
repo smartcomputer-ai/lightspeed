@@ -101,11 +101,12 @@ Existing passwords and universe content are preserved. Set
 `LIGHTSPEED_PLATFORM_DEV_SEED=false` to opt out; see
 [development logins](../../docs/documentation/development/local-development.md#development-logins).
 
-The `full` profile defaults to authenticated runtime access. Without a configured
-`LIGHTSPEED_PLATFORM_API_KEY`, the launcher bootstraps the configured universe
-and mints a deployment key with every method group and actor assertion, passing
-the secret to child processes in memory.
-The `runtime` profile defaults to `single` for direct CLI development.
+Both `full` and `runtime` default to authenticated runtime access. The launcher
+ensures the configured universe and provisions a persistent CLI deployment
+key, plus a separate Platform key with actor assertion when needed. Run
+`lightspeed connect dev` from the checkout to import the protected handoff in
+`.lightspeed/cli/`. Pass `--no-api-key-bootstrap` to manage API keys yourself.
+Explicit `LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available.
 
 Platform waits for the configured runtime's HTTP health endpoint before starting,
 including in the `platform` profile. Its universe operations need that runtime,
@@ -351,11 +352,12 @@ network. From the host machine, use `localhost:15432` instead:
 postgres://lightspeed:lightspeed@localhost:15432/lightspeed
 ```
 
-The full authenticated development profile runs `server api-key bootstrap` for
-the development universe: it creates the universe if needed, revokes the
-previous launcher key, and mints a deployment key with every method group that
-may assert actors. The launcher passes its secret to the Platform as
-`LIGHTSPEED_PLATFORM_API_KEY`; the Platform asserts the signed-in user as the
-actor on interactive requests.
+Development uses `server api-key provision` for CLI and Platform keys. Keys
+are stored normally and remain revocable; ordinary restarts reuse their
+protected local files. CLI keys have all method groups and no actor assertion;
+Platform keys additionally assert actors. The Platform receives its key as
+`LIGHTSPEED_PLATFORM_API_KEY`. See the
+[terminal guide](../../docs/documentation/using-lightspeed/cli.md) for connection
+setup and explicit repair after revocation or a database reset.
 The greenfield identity migration refuses a populated old Platform schema;
 reset disposable Platform state explicitly instead of importing old permissions.

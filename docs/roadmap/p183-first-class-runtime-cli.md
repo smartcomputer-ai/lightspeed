@@ -1,6 +1,6 @@
 # P183 — First-class runtime CLI
 
-**Status:** Proposed, 2026-09-28. Implementation has not started.
+**Status:** Implemented, 2026-09-28. Validation results are recorded below.
 Builds on [core universes, keys and actors](p179-core-universes-keys-and-actors.md)
 and [CLI session model routing](cli-session-model-routing.md).
 
@@ -19,7 +19,7 @@ automation, and production administration. An administrator on a Linux
 terminal must be able to work with an authorized deployment or universe key
 without a browser, Platform login, or desktop credential service.
 
-## Current foundation and gaps
+## Starting point before implementation
 
 - `./dev.sh runtime` already starts the runtime and its infrastructure without
   Platform. Its default is local `single` mode; authenticated runtime access
@@ -94,7 +94,7 @@ status output, logs, or command-line arguments. Noninteractive commands must
 work without prompts and return actionable errors when configuration is missing.
 
 Use one `connect` command group with explicit subcommands. This is the agreed
-interface for implementation; these commands do not exist yet:
+implemented interface:
 
 ```bash
 lightspeed connect add production --url https://runtime.example/rpc
@@ -155,7 +155,7 @@ it does not replace per-request authorization.
 
 ### 4. Make universe selection explicit and scoped to a connection
 
-Proposed command shape:
+Command shape:
 
 ```bash
 lightspeed universe list
@@ -244,7 +244,7 @@ When no CLI handoff is available, direct the user to `connect add` with
 their own credential. Use this CLI option rather than an environment-variable
 toggle for automatic API-key bootstrap.
 
-The proposed user flow is to start one of those profiles, then run from the
+The user flow is to start one of those profiles, then run from the
 checkout in another terminal:
 
 ```bash
@@ -276,7 +276,7 @@ HTTP key-minting endpoint is introduced.
 
 Use the same key provisioning implementation for development and real
 authenticated deployments. Accept an operator-supplied bootstrap secret from
-protected provisioning input, including the proposed
+protected provisioning input, including
 `LIGHTSPEED_BOOTSTRAP_API_KEY`, or generate one on first development setup.
 The environment variable supplies a secret; it is not a bootstrap enable/disable
 switch. Register the key's hash and metadata in the ordinary runtime key
@@ -352,24 +352,24 @@ clients where the caller has access.
 ## Delivery and progress
 
 - [x] Record the agreed additive runtime/Platform direction and initial scope.
-- [ ] Extend the handshake and public contract for authority inspection before
+- [x] Extend the handshake and public contract for authority inspection before
   universe selection; regenerate API artifacts and consumers.
-- [ ] Implement the `connect add/use/list/status/remove` subcommands, global
+- [x] Implement the `connect add/use/list/status/remove` subcommands, global
   `--connection` override, shared connection resolution, headless credential
   handling and method-aware request headers.
-- [ ] Unify supplied/generated bootstrap key provisioning through the normal
+- [x] Unify supplied/generated bootstrap key provisioning through the normal
   key store, preserving revocation and explicit replacement.
-- [ ] Default both runtime-only and full startup to authenticated mode with
+- [x] Default both runtime-only and full startup to authenticated mode with
   automatic development bootstrap; add the `--no-api-key-bootstrap` opt-out.
-- [ ] Add the checkout-local launcher handoff and `connect dev`, including
+- [x] Add the checkout-local launcher handoff and `connect dev`, including
   explicit single mode; keep CLI and Platform credentials independent across
   restarts.
-- [ ] Add universe selection and the necessary deployment administration
+- [x] Add universe selection and the necessary deployment administration
   commands; isolate TUI/session state by connection and universe.
-- [ ] Complete provider configuration and model discovery from the CLI.
-- [ ] Verify Platform association with existing core universes and close any
+- [x] Complete provider configuration and model discovery from the CLI.
+- [x] Verify Platform association with existing core universes and close any
   adoption gap needed to preserve their IDs and resources.
-- [ ] Publish terminal-only and CLI-with-Platform walkthroughs and validate
+- [x] Publish terminal-only and CLI-with-Platform walkthroughs and validate
   the acceptance scenarios below.
 
 ## Acceptance and validation
@@ -426,3 +426,60 @@ End-to-end acceptance must cover:
 Provider-backed acceptance and credentialed infrastructure tests are explicit
 live checks, separate from ordinary unit and mock HTTP suites. Follow the
 repository's serialization rules for Temporal live tests.
+
+
+## Implementation and verification
+
+The runtime handshake now has connection scope and reports the original key
+scope independently of a request target. Rust contracts, TypeScript clients
+and Platform method roles were regenerated. Both CLI and TypeScript clients
+omit universe headers for connection and deployment methods.
+
+The CLI resolves its connection once per process, provides the agreed
+`connect` subcommands, universe selection and administration, key
+administration, custom provider configuration and model discovery. Protected
+credential files support headless operation without a desktop keychain.
+Provider identity and API-kind session invariants are unchanged. The terminal
+walkthrough is in [Use Lightspeed from the terminal](../documentation/using-lightspeed/cli.md).
+
+The host `api-key provision` command uses the normal hashed key store for
+supplied or generated secrets. The launcher uses it for separate persistent
+CLI and Platform credentials, defaults both profiles to authenticated mode,
+and supports `--no-api-key-bootstrap`. Existing keys must remain present,
+active and compatible; launcher reuse cannot recreate a key lost in a database
+reset or resurrect a revoked key. Explicit replacement is documented.
+
+Platform's existing administrator adoption endpoint already links a core
+universe to organization and membership records without replacing runtime
+resources. Route tests now cover the stable universe ID, explicit admin
+membership, and refusal for non-admin callers or absent runtime universes.
+No additional Platform onboarding mechanism was needed.
+
+Validation performed:
+
+- Rust CLI, API, authentication, key-store and gateway unit tests, actual CLI
+  subprocess tests against HTTP fixtures, and generated API artifact checks.
+  Coverage includes method-aware headers, bound-universe refusals, credential
+  precedence, endpoint changes, private files and connection lifecycle.
+- Launcher tests cover persistent independent keys, opt-out, supplied
+  credentials, missing credentials, revocation failure and explicit single
+  mode. TypeScript checks and affected client/Platform tests cover consumers
+  and adoption. Documentation checks pass.
+- Serialized PostgreSQL key-store and gateway live suites verify provisioning,
+  idempotency, authority mismatch, revocation and authentication enforcement.
+- Against the real local PostgreSQL/Temporal runtime with Platform absent:
+  imported the development connection, created two temporary universes,
+  configured a credentialless local model endpoint, ran a session, reopened
+  its transcript, switched universes and checked isolation. Restricted
+  deployment and universe keys worked within their scope and failed after
+  revocation. Test universes were deleted and temporary keys revoked.
+- Started the full profile and verified the original CLI key survived while
+  Platform used its own key. Stopped Platform and verified direct CLI access.
+  Explicit single-mode import and session access, transition back to
+  authenticated mode, and restart with bootstrap disabled also passed.
+
+The live model endpoint was a local protocol fixture; no external paid model
+credentials were used. The headless CLI checks ran as noninteractive
+subprocesses on macOS, not on a separate Linux host. Platform adoption was
+verified at its HTTP route boundary with mocked stores; browser interaction
+was not part of this validation.

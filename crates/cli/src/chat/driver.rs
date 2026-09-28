@@ -80,7 +80,7 @@ pub(crate) struct ChatArgs {
     #[arg(long = "mount-path", default_value = "/workspace")]
     mount_path: String,
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Show full completed tool call arguments and results in the TUI.
     #[arg(long)]

@@ -60,48 +60,41 @@ use api::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
-/// Gateway auth headers from the environment, applied to every request:
-/// `LIGHTSPEED_API_KEY` becomes `Authorization: Bearer …` (api-key
-/// deployments) and `LIGHTSPEED_UNIVERSE` becomes `x-lightspeed-universe`
-/// (trusted-header deployments behind a proxy that forwards it). Both are
-/// optional; a plain `single`-mode gateway needs neither.
-fn auth_headers_from_env() -> reqwest::header::HeaderMap {
-    let mut headers = reqwest::header::HeaderMap::new();
-    if let Ok(api_key) = std::env::var("LIGHTSPEED_API_KEY") {
-        let api_key = api_key.trim();
-        if !api_key.is_empty()
-            && let Ok(mut value) =
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {api_key}"))
-        {
-            value.set_sensitive(true);
-            headers.insert(reqwest::header::AUTHORIZATION, value);
-        }
-    }
-    if let Ok(universe) = std::env::var("LIGHTSPEED_UNIVERSE") {
-        let universe = universe.trim();
-        if !universe.is_empty()
-            && let Ok(value) = reqwest::header::HeaderValue::from_str(universe)
-        {
-            headers.insert("x-lightspeed-universe", value);
-        }
-    }
-    headers
-}
-
 pub(crate) struct HttpAgentApi {
     endpoint: String,
     client: reqwest::Client,
+    connection: crate::connection::ResolvedConnection,
     next_id: AtomicU64,
 }
 
 impl HttpAgentApi {
     pub(crate) fn new(endpoint: impl Into<String>) -> Self {
+        let endpoint = endpoint.into();
+        let connection = crate::connection::ACTIVE.get().cloned().unwrap_or_else(|| {
+            crate::connection::ResolvedConnection {
+                name: None,
+                endpoint,
+                secret: std::env::var("LIGHTSPEED_API_KEY")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty()),
+                universe: std::env::var("LIGHTSPEED_UNIVERSE")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty()),
+                caller: None,
+            }
+        });
+        Self::with_connection(connection)
+    }
+
+    pub(crate) fn with_connection(connection: crate::connection::ResolvedConnection) -> Self {
         Self {
-            endpoint: endpoint.into(),
+            endpoint: connection.endpoint.clone(),
             client: reqwest::Client::builder()
-                .default_headers(auth_headers_from_env())
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(std::time::Duration::from_secs(10))
                 .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
+                .expect("HTTP client"),
+            connection,
             next_id: AtomicU64::new(1),
         }
     }
@@ -617,7 +610,7 @@ impl HttpAgentApi {
             .await
     }
 
-    async fn request<P, R>(
+    pub(crate) async fn request<P, R>(
         &self,
         method: &str,
         params: P,
@@ -637,10 +630,29 @@ impl HttpAgentApi {
         let response = self
             .client
             .post(&self.endpoint)
+            .headers(
+                self.connection
+                    .headers(method)
+                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?,
+            )
             .json(&request)
             .send()
             .await
-            .map_err(|error| AgentApiError::internal(format!("API request failed: {error}")))?
+            .map_err(|error| AgentApiError::internal(format!("runtime unavailable: {error}")))?;
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(AgentApiError::new(
+                AgentApiErrorKind::Unauthenticated,
+                "runtime rejected the API key; verify the connection or replace a revoked key",
+            ));
+        }
+        if status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AgentApiError::new(
+                AgentApiErrorKind::Forbidden,
+                "key scope or method groups do not permit this operation",
+            ));
+        }
+        let response = response
             .error_for_status()
             .map_err(|error| AgentApiError::internal(format!("API request failed: {error}")))?
             .json::<JsonRpcResponse>()

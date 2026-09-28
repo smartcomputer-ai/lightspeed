@@ -48,7 +48,7 @@ enum AuthModelCommand {
 #[derive(Args, Debug, Clone)]
 struct AuthModelBindArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the created provider as JSON.
     #[arg(long)]
@@ -72,7 +72,7 @@ struct AuthModelBindArgs {
 #[command(group(ArgGroup::new("api_key_source").required(true)))]
 struct AuthModelAddArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the created provider as JSON.
     #[arg(long)]
@@ -89,6 +89,18 @@ struct AuthModelAddArgs {
     /// Read the API key from stdin.
     #[arg(long = "api-key-stdin", group = "api_key_source")]
     api_key_stdin: bool,
+    /// A compatible provider's API base URL.
+    #[arg(long)]
+    base_url: Option<String>,
+    /// Supported API kind; repeat for multiple kinds. Requires --base-url.
+    #[arg(long = "api-kind", requires = "base_url")]
+    api_kinds: Vec<String>,
+    /// Non-secret extra header as NAME=VALUE; repeat as needed.
+    #[arg(long = "header", requires = "base_url")]
+    headers: Vec<String>,
+    /// Register a credentialless endpoint.
+    #[arg(long, group = "api_key_source", requires = "base_url")]
+    no_auth: bool,
     /// Optional display name.
     #[arg(long = "display-name")]
     display_name: Option<String>,
@@ -109,7 +121,7 @@ impl std::fmt::Debug for AuthModelAddArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthModelListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit providers as JSON.
     #[arg(long)]
@@ -119,7 +131,7 @@ struct AuthModelListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthModelRemoveArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the removed provider as JSON.
     #[arg(long)]
@@ -165,7 +177,7 @@ enum AuthGithubAppCommand {
 #[command(group(ArgGroup::new("private_key_source").required(true)))]
 struct AuthGithubAppAddArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the created provider as JSON.
     #[arg(long)]
@@ -210,7 +222,7 @@ impl std::fmt::Debug for AuthGithubAppAddArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubAppListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit providers as JSON.
     #[arg(long)]
@@ -220,7 +232,7 @@ struct AuthGithubAppListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubAppReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the provider as JSON.
     #[arg(long)]
@@ -232,7 +244,7 @@ struct AuthGithubAppReadArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubAppRemoveArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the removed provider as JSON.
     #[arg(long)]
@@ -258,7 +270,7 @@ enum AuthGithubInstallationCommand {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubInstallationListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit installations as JSON.
     #[arg(long)]
@@ -271,7 +283,7 @@ struct AuthGithubInstallationListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubInstallationGrantArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the grant as JSON.
     #[arg(long)]
@@ -312,7 +324,7 @@ enum AuthGrantCommand {
 #[command(group(ArgGroup::new("token_source").required(true)))]
 struct AuthGrantImportArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the imported grant as JSON.
     #[arg(long)]
@@ -366,7 +378,7 @@ impl std::fmt::Debug for AuthGrantImportArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGrantListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit grants as JSON.
     #[arg(long)]
@@ -379,7 +391,7 @@ struct AuthGrantListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGrantReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the grant as JSON.
     #[arg(long)]
@@ -391,7 +403,7 @@ struct AuthGrantReadArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGrantRevokeArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the revoked grant as JSON.
     #[arg(long)]
@@ -441,7 +453,7 @@ enum AuthClientCommand {
 #[command(group(ArgGroup::new("client_secret_source")))]
 struct AuthClientAddArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the created client as JSON.
     #[arg(long)]
@@ -531,7 +543,7 @@ impl std::fmt::Debug for AuthClientAddArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthClientListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit clients as JSON.
     #[arg(long)]
@@ -541,7 +553,7 @@ struct AuthClientListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthClientReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the client as JSON.
     #[arg(long)]
@@ -553,7 +565,7 @@ struct AuthClientReadArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthClientRemoveArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the removed client as JSON.
     #[arg(long)]
@@ -565,7 +577,7 @@ struct AuthClientRemoveArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthLoginArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the final flow status as JSON.
     #[arg(long)]
@@ -1029,14 +1041,49 @@ fn resolve_model_api_key(args: &AuthModelAddArgs) -> Result<String> {
 }
 
 async fn model_add(args: AuthModelAddArgs) -> Result<()> {
-    let api_key = resolve_model_api_key(&args)?;
+    let credential = if args.no_auth {
+        None
+    } else {
+        Some(resolve_model_api_key(&args)?)
+    };
+    let endpoint = args
+        .base_url
+        .as_ref()
+        .map(|url| -> Result<api::ModelEndpointConfig> {
+            if args.api_kinds.is_empty() {
+                anyhow::bail!("--base-url requires at least one --api-kind");
+            }
+            let headers = args
+                .headers
+                .iter()
+                .map(|header| {
+                    let (name, value) = header
+                        .split_once('=')
+                        .context("header must be NAME=VALUE")?;
+                    Ok((name.to_owned(), value.to_owned()))
+                })
+                .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
+            Ok(api::ModelEndpointConfig {
+                base_url: url.clone(),
+                headers,
+                api_kinds: args.api_kinds.clone(),
+            })
+        })
+        .transpose()?;
+    let config = if args.no_auth {
+        api::AuthProviderConfigInput::ModelEndpoint {
+            endpoint: endpoint.context("--no-auth requires --base-url")?,
+        }
+    } else {
+        api::AuthProviderConfigInput::ModelApiKey { endpoint }
+    };
     let api = HttpAgentApi::new(args.api_url.clone());
     let response = api
         .create_auth_provider(api::AuthProviderCreateParams {
             provider_id: Some(model_provider_row_id(&args.provider_id)),
             display_name: args.display_name.clone(),
-            config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
-            credential: Some(api_key),
+            config,
+            credential,
         })
         .await
         .map_err(crate::api_client::api_error)?
@@ -1083,7 +1130,14 @@ async fn model_list(args: AuthModelListArgs) -> Result<()> {
     let providers: Vec<_> = response
         .providers
         .iter()
-        .filter(|provider| provider.provider_kind == api::AuthProviderKind::ModelApiKey)
+        .filter(|provider| {
+            matches!(
+                provider.provider_kind,
+                api::AuthProviderKind::ModelApiKey
+                    | api::AuthProviderKind::ModelOAuth
+                    | api::AuthProviderKind::ModelEndpoint
+            )
+        })
         .collect();
     if args.json {
         println!("{}", serde_json::to_string_pretty(&providers)?);

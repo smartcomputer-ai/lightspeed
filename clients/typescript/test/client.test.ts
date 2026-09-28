@@ -20,6 +20,20 @@ function decodeBody(init: RequestInit | undefined): Record<string, unknown> {
 }
 
 describe("LightspeedClient", () => {
+  it("omits universe selection on connection and deployment calls", async () => {
+    const captured: Headers[] = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      captured.push(new Headers(init?.headers));
+      return jsonResponse({ id: decodeBody(init).id, result: { result: {}, notifications: [] } });
+    }) as unknown as typeof fetch;
+    const client = new LightspeedClient({ endpoint: "http://localhost/rpc", fetch: fetchImpl,
+      headers: { authorization: "Bearer fixture", "x-lightspeed-universe": "universe" } });
+    await client.call("initialize", {});
+    await client.call("deployment/universes/list", {});
+    await client.call("models/list", {});
+    expect(captured.map(h => h.get("x-lightspeed-universe"))).toEqual([null, null, "universe"]);
+    expect(captured.every(h => h.get("authorization") === "Bearer fixture")).toBe(true);
+  });
   it("ships canonical method documentation from the Rust manifest", () => {
     expect(METHOD_INFO["session/config/put"]).toEqual({
       scope: "universe",

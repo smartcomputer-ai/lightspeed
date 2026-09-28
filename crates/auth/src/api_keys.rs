@@ -87,6 +87,36 @@ pub enum ApiKeyError {
 /// and display prefix are meant to be persisted. Groups must be allowed in
 /// the key's scope: only a deployment key holds deployment groups.
 pub fn mint_api_key(spec: ApiKeySpec, created_at_ms: u64) -> Result<MintedApiKey, ApiKeyError> {
+    import_api_key(
+        spec,
+        created_at_ms,
+        &generate_prefixed_secret(API_KEY_SECRET_PREFIX),
+    )
+}
+
+/// Register an operator-supplied random key through the ordinary key store.
+/// Accept the same 32-byte base64url representation used by generated keys.
+pub fn import_api_key(
+    spec: ApiKeySpec,
+    created_at_ms: u64,
+    secret: &str,
+) -> Result<MintedApiKey, ApiKeyError> {
+    use base64::Engine as _;
+    let valid = secret
+        .strip_prefix(API_KEY_SECRET_PREFIX)
+        .and_then(|value| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(value)
+                .ok()
+        })
+        .is_some_and(|bytes| bytes.len() == 32);
+    if !valid {
+        return Err(ApiKeyError::Invalid {
+            message:
+                "expected lsk_ followed by 32 random bytes encoded as base64url without padding"
+                    .into(),
+        });
+    }
     let allowed = MethodGroup::allowed_in(spec.scope);
     let groups = spec.groups.unwrap_or_else(|| allowed.clone());
     if groups.is_empty() {
@@ -99,10 +129,9 @@ pub fn mint_api_key(spec: ApiKeySpec, created_at_ms: u64) -> Result<MintedApiKey
             message: format!("a universe key cannot hold {}", group.as_str()),
         });
     }
-    let secret = generate_prefixed_secret(API_KEY_SECRET_PREFIX);
-    let key_hash = api_key_hash(&secret);
+    let key_hash = api_key_hash(secret);
     let record = ApiKeyRecord {
-        key_prefix: api_key_display_prefix(&secret),
+        key_prefix: api_key_display_prefix(secret),
         scope: spec.scope,
         groups,
         assert_actor: spec.assert_actor,
@@ -113,7 +142,7 @@ pub fn mint_api_key(spec: ApiKeySpec, created_at_ms: u64) -> Result<MintedApiKey
         last_used_at_ms: None,
     };
     Ok(MintedApiKey {
-        secret: SecretValue::new(secret),
+        secret: SecretValue::new(secret.to_owned()),
         key_hash,
         record,
     })
@@ -146,6 +175,25 @@ mod tests {
     fn universe() -> AccessScope {
         AccessScope::Universe {
             universe_id: Uuid::from_u128(7),
+        }
+    }
+
+    #[test]
+    fn supplied_keys_use_the_same_representation_and_hash() {
+        let generated = mint_api_key(spec(AccessScope::Deployment, None), 1).unwrap();
+        let imported = import_api_key(
+            spec(AccessScope::Deployment, None),
+            2,
+            generated.secret.expose(),
+        )
+        .unwrap();
+        assert_eq!(generated.key_hash, imported.key_hash);
+        assert_eq!(generated.record.key_prefix, imported.record.key_prefix);
+        for invalid in ["", "lsk_password", "other_abcdefghijklmnopqrstuvwxyz"] {
+            assert!(matches!(
+                import_api_key(spec(AccessScope::Deployment, None), 1, invalid),
+                Err(ApiKeyError::Invalid { .. })
+            ));
         }
     }
 

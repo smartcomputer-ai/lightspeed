@@ -55,7 +55,7 @@ enum RegistrationKeyCommand {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyCreateArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -85,7 +85,7 @@ enum IdentityModeArg {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyResourceArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -152,7 +152,7 @@ struct IdlePolicyArgs {
 
 #[derive(Args, Debug, Clone)]
 struct ResourceArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -168,7 +168,7 @@ struct EnvListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct EnvironmentResourceArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -177,7 +177,7 @@ struct EnvironmentResourceArgs {
 
 #[derive(Args, Debug, Clone)]
 struct SessionArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -207,7 +207,7 @@ enum CredentialCommand {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialListArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     #[arg(long)]
     json: bool,

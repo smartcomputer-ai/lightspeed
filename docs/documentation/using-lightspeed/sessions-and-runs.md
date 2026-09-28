@@ -160,6 +160,9 @@ from the same profile.
 
 ## Continue from the CLI
 
+For saved connections, `connect dev`, terminal-only provider setup and universe
+switching, see [Use Lightspeed from the terminal](cli.md).
+
 The CLI can open the same session as the web app. On Linux x86_64,
 [download the prebuilt CLI](../deployment/self-hosting.md#download-standalone-binaries)
 from the release matching your server. You can also build it from the repository:

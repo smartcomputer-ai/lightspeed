@@ -16,6 +16,7 @@ import type {
   MethodResult,
   RpcCaller,
 } from "./generated/methods.js";
+import { METHOD_INFO } from "./generated/methods.js";
 import { LightspeedRpcError, LightspeedTransportError, type JsonRpcErrorPayload } from "./errors.js";
 
 export type RequestId = number | string;
@@ -112,6 +113,9 @@ export class LightspeedClient implements RpcCaller {
   ): Promise<MethodResult<M>> {
     const id = this.nextRequestId();
     const headers = await this.buildHeaders(options.headers);
+    if (METHOD_INFO[method].scope === "connection" || METHOD_INFO[method].scope === "deployment") {
+      headers.delete("x-lightspeed-universe");
+    }
     const init: RequestInit = {
       method: "POST",
       headers,

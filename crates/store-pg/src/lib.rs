@@ -358,8 +358,8 @@ pub use cas_sweep::{
 };
 pub use channels::list_channel_accounts_all;
 pub use deployment::{
-    UniverseStats, create_universe, delete_universe, list_universe_object_keys,
-    list_universe_session_ids, list_universe_stats, read_universe_stats,
+    UniverseStats, create_universe, create_universe_with_slug, delete_universe,
+    list_universe_object_keys, list_universe_session_ids, list_universe_stats, read_universe_stats,
 };
 pub use environment_registration::{
     find_registered_environment_universe, find_registration_key_universe,

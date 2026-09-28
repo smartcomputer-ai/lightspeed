@@ -47,6 +47,7 @@ export default defineConfig({
         ] },
         { label: 'Using Lightspeed', items: [
           { slug: 'using-lightspeed/sessions-and-runs' },
+          { slug: 'using-lightspeed/cli' },
           { slug: 'using-lightspeed/models-and-credentials' },
           { slug: 'using-lightspeed/profiles-and-instructions' },
           { slug: 'using-lightspeed/workspaces-and-skills' },

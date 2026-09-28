@@ -8,6 +8,7 @@ use tracing::Instrument as _;
 /// The key that authenticated a request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyContext {
+    pub scope: AccessScope,
     /// Non-secret display prefix, for attribution and logs.
     pub prefix: String,
     pub groups: BTreeSet<MethodGroup>,
@@ -51,10 +52,14 @@ impl RequestContext {
     pub fn caller_access(&self) -> CallerAccess {
         match &self.key {
             Some(key) => CallerAccess {
+                scope: key.scope,
+                single: false,
                 key_prefix: Some(key.prefix.clone()),
                 groups: key.groups.iter().copied().collect(),
             },
             None => CallerAccess {
+                scope: self.scope,
+                single: true,
                 key_prefix: None,
                 groups: MethodGroup::ALL.to_vec(),
             },
@@ -119,6 +124,7 @@ mod tests {
         RequestContext {
             scope: AccessScope::Deployment,
             key: Some(KeyContext {
+                scope: AccessScope::Deployment,
                 prefix: format!("lsk_{id}"),
                 groups: Default::default(),
             }),
@@ -159,6 +165,7 @@ mod tests {
                 universe_id: Uuid::from_u128(1),
             },
             key: Some(KeyContext {
+                scope: AccessScope::Deployment,
                 prefix: "lsk_abcdefgh".into(),
                 groups: groups.iter().copied().collect(),
             }),
@@ -186,6 +193,8 @@ mod tests {
         assert_eq!(
             connector.caller_access(),
             CallerAccess {
+                scope: AccessScope::Deployment,
+                single: false,
                 key_prefix: Some("lsk_abcdefgh".into()),
                 groups: vec![MethodGroup::BlobsPut, MethodGroup::ChannelsInbound],
             }
@@ -214,4 +223,30 @@ mod tests {
             Attribution::Local
         );
     }
+}
+
+/// Connection discovery does not load or require universe state.
+pub fn initialize_response(caller: CallerAccess) -> api::AgentApiOutcome<api::InitializeResponse> {
+    use api::*;
+    AgentApiOutcome::new(InitializeResponse {
+        protocol_version: api::PROTOCOL_VERSION.to_owned(),
+        server_info: ServerInfo {
+            name: "lightspeed-agent".to_owned(),
+            version: format!("{}+{}", release_info::VERSION, release_info::GIT_SHA),
+            git_sha: release_info::GIT_SHA.to_owned(),
+            envd: EnvironmentDaemonInfo {
+                version: release_info::VERSION.to_owned(),
+                git_sha: release_info::GIT_SHA.to_owned(),
+                protocol_version: environment_protocol::shared::CURRENT_PROTOCOL_VERSION,
+                targets: release_info::envd_targets().map(str::to_owned).collect(),
+            },
+        },
+        capabilities: ServerCapabilities {
+            notifications: false,
+            history_read: true,
+            event_log: true,
+            local_execution: false,
+        },
+        caller,
+    })
 }

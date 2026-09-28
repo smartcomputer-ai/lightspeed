@@ -72,7 +72,6 @@ export const METHOD_ROLES: Readonly<Record<string, UniverseRole>> = {
   "environments/registration-keys/revoke": "operator",
   "environments/templates/list": "viewer",
   "environments/templates/read": "viewer",
-  "initialize": "viewer",
   "mcp/servers/auth/discover": "operator",
   "mcp/servers/delete": "operator",
   "mcp/servers/list": "viewer",
@@ -168,4 +167,5 @@ export const UNMEMBERED_METHODS: ReadonlySet<string> = new Set([
   "deployment/universes/delete",
   "deployment/universes/list",
   "deployment/universes/read",
+  "initialize",
 ]);

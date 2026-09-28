@@ -1,6 +1,8 @@
+mod administration_cli;
 mod api_client;
 mod auth_cli;
 mod chat;
+mod connection;
 mod env_cli;
 mod mcp_cli;
 mod profile_cli;
@@ -10,7 +12,7 @@ mod vfs_cli;
 mod vfs_transfer;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -19,12 +21,26 @@ use clap::{Parser, Subcommand};
     about = "Lightspeed command-line tools"
 )]
 struct Cli {
+    /// Use a saved runtime connection for this invocation.
+    #[arg(long, global = true)]
+    connection: Option<String>,
+    /// Universe UUID or slug for this invocation.
+    #[arg(long, global = true)]
+    universe: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Manage local runtime connections.
+    Connect(connection::ConnectArgs),
+    /// Select and administer runtime universes.
+    Universe(administration_cli::UniverseArgs),
+    /// Administer runtime gateway API keys.
+    ApiKey(administration_cli::ApiKeyArgs),
+    /// Discover models on configured provider connections.
+    Models(administration_cli::ModelsArgs),
     /// Chat through a Lightspeed API gateway.
     Chat(chat::ChatArgs),
     /// Work with CAS-backed VFS snapshots.
@@ -46,8 +62,42 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches)?;
+    if let Command::Connect(args) = cli.command {
+        return connection::handle(args, cli.connection.as_deref(), cli.universe.as_deref()).await;
+    }
+    let mut leaf = &matches;
+    let mut url = None;
+    loop {
+        if leaf
+            .try_get_one::<String>("api_url")
+            .ok()
+            .flatten()
+            .is_some()
+            && leaf.value_source("api_url") == Some(clap::parser::ValueSource::CommandLine)
+        {
+            url = leaf
+                .try_get_one::<String>("api_url")
+                .ok()
+                .flatten()
+                .map(String::as_str);
+        }
+        match leaf.subcommand() {
+            Some((_, child)) => leaf = child,
+            None => break,
+        }
+    }
+    let active =
+        connection::resolve(cli.connection.as_deref(), url, cli.universe.as_deref()).await?;
+    connection::ACTIVE
+        .set(active)
+        .map_err(|_| anyhow::anyhow!("connection already initialized"))?;
     match cli.command {
+        Command::Connect(_) => unreachable!(),
+        Command::Universe(args) => administration_cli::universe(args).await,
+        Command::ApiKey(args) => administration_cli::api_key(args).await,
+        Command::Models(args) => administration_cli::models(args).await,
         Command::Chat(args) => chat::handle(args).await,
         Command::Vfs(args) => vfs_cli::handle(args).await,
         Command::Skills(args) => skills_cli::handle(args).await,

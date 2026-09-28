@@ -340,6 +340,8 @@ pub enum UniverseAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "action", rename_all = "snake_case")]
 pub enum MethodAccess {
+    /// Connection discovery, authenticated independently of universe selection.
+    Connection,
     /// A universe method, and the action internal work is held to when it
     /// calls it.
     Universe(UniverseAction),
@@ -354,6 +356,7 @@ pub enum MethodAccess {
 impl MethodAccess {
     pub const fn scope(self) -> MethodScope {
         match self {
+            Self::Connection => MethodScope::Connection,
             Self::Universe(_) => MethodScope::Universe,
             Self::Service => MethodScope::Service,
             Self::Deployment => MethodScope::Deployment,

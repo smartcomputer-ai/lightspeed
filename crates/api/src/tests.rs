@@ -1835,6 +1835,10 @@ impl AgentApiService for TestService {
                 local_execution: false,
             },
             caller: CallerAccess {
+                scope: AccessScope::Universe {
+                    universe_id: uuid::Uuid::nil(),
+                },
+                single: true,
                 key_prefix: None,
                 groups: MethodGroup::ALL.to_vec(),
             },

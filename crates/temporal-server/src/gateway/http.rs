@@ -240,6 +240,22 @@ impl GatewayState {
     }
 
     async fn dispatch(&self, context: &RequestContext, request: JsonRpcRequest) -> JsonRpcResponse {
+        if request.method == api::METHOD_INITIALIZE {
+            let params = request.params.unwrap_or_else(|| serde_json::json!({}));
+            return match serde_json::from_value::<api::InitializeParams>(params) {
+                Ok(_) => JsonRpcResponse::success(
+                    request.id,
+                    serde_json::to_value(request_context::initialize_response(
+                        context.caller_access(),
+                    ))
+                    .expect("serializable handshake"),
+                ),
+                Err(error) => JsonRpcResponse::failure(
+                    request.id,
+                    AgentApiError::invalid_request(error.to_string()).into(),
+                ),
+            };
+        }
         if is_deployment_method(&request.method) {
             return match &self.resolution {
                 UniverseResolution::Multi { deployment, .. } => {

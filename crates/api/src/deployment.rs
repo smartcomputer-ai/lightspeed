@@ -65,6 +65,9 @@ pub struct DeploymentUniverseView {
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentUniverseCreateParams {
     pub universe_id: String,
+    /// Optional core universe slug, set only when the universe is first created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

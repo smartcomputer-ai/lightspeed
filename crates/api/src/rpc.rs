@@ -248,6 +248,7 @@ impl From<AgentApiError> for JsonRpcError {
 /// service callers at the HTTP edge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MethodScope {
+    Connection,
     Universe,
     Service,
     Deployment,
@@ -260,6 +261,7 @@ pub fn is_service_method(method: &str) -> bool {
 impl MethodScope {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Connection => "connection",
             Self::Universe => "universe",
             Self::Service => "service",
             Self::Deployment => "deployment",
@@ -346,7 +348,7 @@ api_methods! {
     METHOD_VFS_WORKSPACES_FILES_READ => read_vfs_workspace_file(VfsWorkspaceFileReadParams) -> BlobReadResponse =>
         ["Read a workspace file", "Reads bytes at a path in the current workspace head."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse =>
-        ["Inspect the Lightspeed protocol", "Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it."], access: MethodAccess::Universe(UniverseAction::Read),
+        ["Inspect the Lightspeed protocol", "Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted."], access: MethodAccess::Connection,
     METHOD_SESSION_START => start_session(SessionStartParams) -> SessionStartResponse =>
         ["Create or reopen a session", "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience."], access: MethodAccess::Universe(UniverseAction::CreateSession),
     METHOD_SESSION_MANAGED_START => start_managed_session(ManagedSessionStartParams) -> SessionStartResponse =>

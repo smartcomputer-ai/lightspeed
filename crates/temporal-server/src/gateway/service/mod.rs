@@ -2041,27 +2041,7 @@ impl AgentApiService for GatewayAgentApi {
             experimental_api: false,
         });
         let caller = crate::gateway::request_context::request_context()?.caller_access();
-        Ok(AgentApiOutcome::new(InitializeResponse {
-            protocol_version: api::PROTOCOL_VERSION.to_owned(),
-            server_info: ServerInfo {
-                name: "lightspeed-agent".to_owned(),
-                version: format!("{}+{}", release_info::VERSION, release_info::GIT_SHA),
-                git_sha: release_info::GIT_SHA.to_owned(),
-                envd: EnvironmentDaemonInfo {
-                    version: release_info::VERSION.to_owned(),
-                    git_sha: release_info::GIT_SHA.to_owned(),
-                    protocol_version: environment_protocol::shared::CURRENT_PROTOCOL_VERSION,
-                    targets: release_info::envd_targets().map(str::to_owned).collect(),
-                },
-            },
-            capabilities: ServerCapabilities {
-                notifications: false,
-                history_read: true,
-                event_log: true,
-                local_execution: false,
-            },
-            caller,
-        }))
+        Ok(super::request_context::initialize_response(caller))
     }
 
     /// Idempotent on a client-supplied session id: when the session already

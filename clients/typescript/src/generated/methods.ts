@@ -145,10 +145,10 @@ export const METHOD_INFO = {
     description: "Reads bytes at a path in the current workspace head.",
   },
   "initialize": {
-    scope: "universe",
-    access: {"action":"read","kind":"universe"},
+    scope: "connection",
+    access: {"kind":"connection"},
     summary: "Inspect the Lightspeed protocol",
-    description: "Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it.",
+    description: "Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.",
   },
   "session/start": {
     scope: "universe",
@@ -945,7 +945,7 @@ export interface MethodMap {
   /**
    * Inspect the Lightspeed protocol
    *
-   * Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it.
+   * Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.
    */
   "initialize": {
     params: Api.InitializeParams;
@@ -2124,7 +2124,7 @@ export const rpc = {
   /**
    * Inspect the Lightspeed protocol
    *
-   * Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it.
+   * Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.
    */
   initialize(client: RpcCaller, params: Api.InitializeParams): Promise<Api.AgentApiOutcomeOfInitializeResponse> {
     return client.call("initialize", params);

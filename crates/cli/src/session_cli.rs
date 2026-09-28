@@ -38,7 +38,7 @@ enum SessionCommand {
 
 #[derive(Args, Debug, Clone)]
 struct CommonArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Print the API response as JSON.
     #[arg(long)]

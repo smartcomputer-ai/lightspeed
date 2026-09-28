@@ -169,9 +169,24 @@ impl DeploymentApiService for GatewayDeploymentApi {
     ) -> Result<AgentApiOutcome<DeploymentUniverseCreateResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_CREATE, async {
             let universe_id = parse_universe_id(&params.universe_id)?;
-            let created = store_pg::create_universe(self.pool(), universe_id)
-                .await
-                .map_err(map_store_error)?;
+            if params.slug.as_ref().is_some_and(|slug| {
+                slug.is_empty()
+                    || slug.len() > 128
+                    || !slug
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+            }) {
+                return Err(AgentApiError::invalid_request(
+                    "slug must contain 1-128 letters, digits, hyphens or underscores",
+                ));
+            }
+            let created = store_pg::create_universe_with_slug(
+                self.pool(),
+                universe_id,
+                params.slug.as_deref(),
+            )
+            .await
+            .map_err(map_store_error)?;
             let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
                 AgentApiError::internal(format!("universe disappeared after create: {universe_id}"))
             })?;

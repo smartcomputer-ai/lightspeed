@@ -160,11 +160,15 @@ daemon's working directory. It does not start the services. The complete
 override table is in the
 [environment-variable reference](../reference/environment-variables.md#local-development).
 
-The full profile uses authenticated runtime access and bootstraps a
-deployment key when no Platform key is configured. The runtime-only profile
-uses `single`: no key or actor, with ordinary requests pinned to the configured
-universe. Keep that listener private. See
-[API keys and service access](../access-and-security/api-keys-and-service-access.md).
+Both full and runtime-only profiles default to authenticated access. The
+launcher provisions a persistent CLI deployment key and, for full, a separate
+Platform service key when none is supplied. From a second terminal, run
+`target/debug/lightspeed connect dev` after building the CLI. No browser or
+manual key copying is required. Use `--no-api-key-bootstrap` to supply your
+own keys; migrations and universe setup still run. Explicit
+`LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available for private
+local access. See [Use Lightspeed from the terminal](../using-lightspeed/cli.md)
+for setup, key replacement and universe selection.
 
 Telegram and WhatsApp connector processes are opt-in. For example,
 `LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh` enables Telegram account

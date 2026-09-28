@@ -112,6 +112,39 @@ async fn exercise(pool: &sqlx::PgPool) {
         MethodGroup::ALL.into_iter().collect::<BTreeSet<_>>()
     );
 
+    assert_eq!(
+        api_keys.provision_api_key(&gate_key, false).await.unwrap(),
+        gate_key.record
+    );
+    assert_eq!(
+        api_keys.provision_api_key(&gate_key, true).await.unwrap(),
+        gate_key.record
+    );
+    let mut changed = gate_key.clone();
+    changed.record.assert_actor = false;
+    assert!(matches!(
+        api_keys.provision_api_key(&changed, false).await,
+        Err(auth::ApiKeyError::Invalid { .. })
+    ));
+    let absent = minted(AccessScope::Deployment, None, false, 14);
+    assert!(api_keys.provision_api_key(&absent, true).await.is_err());
+    let provisioned = api_keys.provision_api_key(&absent, false).await.unwrap();
+    api_keys
+        .revoke_api_key(&provisioned.key_prefix, 15)
+        .await
+        .unwrap();
+    assert!(matches!(
+        api_keys.provision_api_key(&absent, false).await,
+        Err(auth::ApiKeyError::Invalid { .. })
+    ));
+    assert!(
+        api_keys
+            .resolve_api_key(&absent.key_hash, 16)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
     // Resolution is a read; the usage stamp is coarse so a busy key is not
     // rewritten on every request.
     let resolved = api_keys

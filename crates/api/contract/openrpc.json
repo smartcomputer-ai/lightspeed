@@ -6352,9 +6352,23 @@
               "string",
               "null"
             ]
+          },
+          "scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AccessScope"
+              }
+            ],
+            "description": "Credential scope, independent of a selected request universe."
+          },
+          "single": {
+            "description": "True only for explicitly unauthenticated local development access.",
+            "type": "boolean"
           }
         },
         "required": [
+          "scope",
+          "single",
           "groups"
         ],
         "type": "object"
@@ -8560,6 +8574,13 @@
       },
       "DeploymentUniverseCreateParams": {
         "properties": {
+          "slug": {
+            "description": "Optional core universe slug, set only when the universe is first created.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "universeId": {
             "type": "string"
           }
@@ -11593,6 +11614,19 @@
       },
       "MethodAccess": {
         "oneOf": [
+          {
+            "description": "Connection discovery, authenticated independently of universe selection.",
+            "properties": {
+              "kind": {
+                "const": "connection",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
           {
             "description": "A universe method, and the action internal work is held to when it\ncalls it.",
             "properties": {
@@ -17879,7 +17913,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it.",
+      "description": "Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.",
       "name": "initialize",
       "paramStructure": "by-name",
       "params": [
@@ -17899,11 +17933,10 @@
       },
       "summary": "Inspect the Lightspeed protocol",
       "x-lightspeed-access": {
-        "action": "read",
-        "kind": "universe"
+        "kind": "connection"
       },
       "x-lightspeed-group": null,
-      "x-lightspeed-role": "viewer",
+      "x-lightspeed-role": null,
       "x-lightspeed-target": null
     },
     {

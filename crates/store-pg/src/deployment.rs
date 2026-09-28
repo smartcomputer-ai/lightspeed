@@ -44,14 +44,23 @@ const UNIVERSE_STATS_SELECT: &str = r#"
 
 /// Create the universe row; `false` when it already existed.
 pub async fn create_universe(pool: &PgPool, universe_id: Uuid) -> Result<bool, PgStoreError> {
+    create_universe_with_slug(pool, universe_id, None).await
+}
+
+pub async fn create_universe_with_slug(
+    pool: &PgPool,
+    universe_id: Uuid,
+    slug: Option<&str>,
+) -> Result<bool, PgStoreError> {
     let result = sqlx::query(
         r#"
-        INSERT INTO universes (universe_id)
-        VALUES ($1)
+        INSERT INTO universes (universe_id, slug)
+        VALUES ($1, $2)
         ON CONFLICT (universe_id) DO NOTHING
         "#,
     )
     .bind(universe_id)
+    .bind(slug)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() > 0)

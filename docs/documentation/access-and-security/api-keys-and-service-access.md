@@ -32,6 +32,10 @@ In authenticated mode, scope determines how the request selects its target:
 | Deployment key, universe operation | Required; selects the target universe UUID. |
 | Deployment key, deployment operation | Omit it; the operation addresses the deployment. |
 
+`initialize` accepts either key scope before universe selection and requires
+that the universe header be omitted. It reports key scope and groups without
+listing universe resources.
+
 A universe key cannot call deployment operations. A deployment key can reach
 any universe, but only through its assigned method groups. Groups cover API
 families such as `session`, `profiles`, `mcp`, and `environments`; they are not
@@ -46,6 +50,21 @@ asserting a user does not reduce the key to that person's permissions. The
 Platform checks membership, role, and session visibility before asserting its
 user's ID. Any other service allowed to assert actors must make its own
 authorization decisions.
+
+## Bootstrap without Platform
+
+Use `lightspeed-server api-key provision` on the server host after migrations
+to generate a deployment administrator key, or supply its secret through
+`LIGHTSPEED_BOOTSTRAP_API_KEY`. The command prints JSON for protected capture.
+The key uses the ordinary hash store and remains revocable. Repeated
+provisioning never restores a revoked key or changes its authority. The
+initial deployment key does not require an existing universe.
+
+Connect with `lightspeed connect add`, select with `connect use`, and create
+universes through the CLI. Both development launcher profiles provide an
+automatic `connect dev` handoff. See
+[Use Lightspeed from the terminal](../using-lightspeed/cli.md) for the complete
+standalone and Platform-compatible setup.
 
 ## Bootstrap the Platform
 

@@ -91,6 +91,7 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
     calling(
         RequestContext::local(api::AccessScope::Deployment),
         operator.create_universe(DeploymentUniverseCreateParams {
+            slug: None,
             universe_id: universe_id.to_string(),
         }),
     )

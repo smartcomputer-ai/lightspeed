@@ -6352,9 +6352,23 @@
             "string",
             "null"
           ]
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AccessScope"
+            }
+          ],
+          "description": "Credential scope, independent of a selected request universe."
+        },
+        "single": {
+          "description": "True only for explicitly unauthenticated local development access.",
+          "type": "boolean"
         }
       },
       "required": [
+        "scope",
+        "single",
         "groups"
       ],
       "type": "object"
@@ -8560,6 +8574,13 @@
     },
     "DeploymentUniverseCreateParams": {
       "properties": {
+        "slug": {
+          "description": "Optional core universe slug, set only when the universe is first created.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "universeId": {
           "type": "string"
         }
@@ -11593,6 +11614,19 @@
     },
     "MethodAccess": {
       "oneOf": [
+        {
+          "description": "Connection discovery, authenticated independently of universe selection.",
+          "properties": {
+            "kind": {
+              "const": "connection",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
         {
           "description": "A universe method, and the action internal work is held to when it\ncalls it.",
           "properties": {

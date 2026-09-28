@@ -112,7 +112,7 @@ mod secrets;
 pub use api_keys::{
     API_KEY_DISPLAY_PREFIX_LEN, API_KEY_LAST_USED_RESOLUTION_MS, API_KEY_SECRET_PREFIX,
     ApiKeyError, ApiKeyRecord, ApiKeySpec, MintedApiKey, api_key_display_prefix, api_key_hash,
-    mint_api_key,
+    import_api_key, mint_api_key,
 };
 pub use broker::{
     AuthBrokerError, AuthTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GrantTokenSource,

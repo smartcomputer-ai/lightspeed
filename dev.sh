@@ -32,7 +32,7 @@ for argument in "$@"; do
   case "${argument}" in
     --plan) plan_only=true ;;
     --help|-h) help_only=true ;;
-    --allow-missing-api-keys|--require-api-keys|--no-envd|--debug) ;;
+    --allow-missing-api-keys|--require-api-keys|--no-envd|--no-api-key-bootstrap|--debug) ;;
     --volumes|-v) ;;
     -*) fail "Unknown option: ${argument}" "Run ./dev.sh --help for supported options." ;;
     *) positionals+=("${argument}") ;;

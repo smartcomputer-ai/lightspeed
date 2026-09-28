@@ -56,6 +56,40 @@ impl PgApiKeyStore {
         Ok(())
     }
 
+    /// Idempotent host-side provisioning. Conflicts never resurrect revoked
+    /// credentials or change their scope, groups, or actor authority.
+    pub async fn provision_api_key(
+        &self,
+        key: &auth::MintedApiKey,
+        require_existing: bool,
+    ) -> Result<ApiKeyRecord, ApiKeyError> {
+        if !require_existing {
+            match self.create_api_key(&key.key_hash, &key.record).await {
+                Ok(()) => return Ok(key.record.clone()),
+                Err(ApiKeyError::AlreadyExists { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let row = sqlx::query(&format!(
+            "SELECT {KEY_COLUMNS} FROM api_keys WHERE key_hash = $1"
+        ))
+        .bind(&key.key_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        let record = row
+            .as_ref()
+            .map(record_from_row)
+            .transpose()?
+            .ok_or_else(|| ApiKeyError::Invalid {
+                message:
+                    "bootstrap key is absent from this store; explicitly provision a replacement"
+                        .into(),
+            })?;
+        validate_provisioned_key(&record, &key.record)?;
+        Ok(record)
+    }
+
     /// Resolve an unrevoked key by secret hash; `None` for unknown and
     /// revoked keys alike.
     pub async fn resolve_api_key(
@@ -191,4 +225,24 @@ fn map_sqlx_error(error: sqlx::Error) -> ApiKeyError {
     ApiKeyError::Store {
         message: error.to_string(),
     }
+}
+
+fn validate_provisioned_key(
+    existing: &ApiKeyRecord,
+    requested: &ApiKeyRecord,
+) -> Result<(), ApiKeyError> {
+    if existing.revoked_at_ms.is_some() {
+        return Err(ApiKeyError::Invalid {
+            message: "bootstrap key was revoked; explicitly provision a different key".into(),
+        });
+    }
+    if existing.scope != requested.scope
+        || existing.groups != requested.groups
+        || existing.assert_actor != requested.assert_actor
+    {
+        return Err(ApiKeyError::Invalid {
+            message: "bootstrap key already exists with different authority".into(),
+        });
+    }
+    Ok(())
 }

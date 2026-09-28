@@ -59,7 +59,7 @@ enum McpServerAuthCommand {
 
 #[derive(Args, Debug, Clone)]
 struct McpServerAuthSetArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -72,7 +72,7 @@ struct McpServerAuthSetArgs {
 
 #[derive(Args, Debug, Clone)]
 struct McpServerAuthClearArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -82,7 +82,7 @@ struct McpServerAuthClearArgs {
 
 #[derive(Args, Debug, Clone)]
 struct McpServerLoginArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -99,7 +99,7 @@ struct McpServerLoginArgs {
 #[derive(Args, Debug, Clone)]
 struct McpServerPutArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the stored server as JSON.
     #[arg(long)]
@@ -245,7 +245,7 @@ fn auth_policy_from_args(args: &McpServerPutArgs) -> Result<api::McpServerAuthPo
 #[derive(Args, Debug, Clone)]
 struct McpServerListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit servers as JSON.
     #[arg(long)]
@@ -258,7 +258,7 @@ struct McpServerListArgs {
 #[derive(Args, Debug, Clone)]
 struct McpServerReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the server as JSON.
     #[arg(long)]
@@ -270,7 +270,7 @@ struct McpServerReadArgs {
 #[derive(Args, Debug, Clone)]
 struct McpServerDeleteArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the deleted server as JSON.
     #[arg(long)]
@@ -282,7 +282,7 @@ struct McpServerDeleteArgs {
 #[derive(Args, Debug, Clone)]
 struct McpLinkArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the link response as JSON.
     #[arg(long)]
@@ -301,7 +301,7 @@ struct McpLinkArgs {
 #[derive(Args, Debug, Clone)]
 struct McpUnlinkArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit the unlink response as JSON.
     #[arg(long)]
@@ -316,7 +316,7 @@ struct McpUnlinkArgs {
 #[derive(Args, Debug, Clone)]
 struct McpListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     /// Emit links as JSON.
     #[arg(long)]

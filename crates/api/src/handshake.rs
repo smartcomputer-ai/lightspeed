@@ -60,6 +60,10 @@ pub struct InitializeResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CallerAccess {
+    /// Credential scope, independent of a selected request universe.
+    pub scope: AccessScope,
+    /// True only for explicitly unauthenticated local development access.
+    pub single: bool,
     /// Display prefix of the calling key; absent for a request without a
     /// key, such as local development.
     #[serde(default, skip_serializing_if = "Option::is_none")]

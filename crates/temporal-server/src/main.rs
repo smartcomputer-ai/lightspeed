@@ -77,6 +77,18 @@ enum UniverseCommand {
 
 #[derive(Debug, Subcommand)]
 enum ApiKeyCommand {
+    /// Provision a deployment administrator key; reuse never changes authority.
+    /// Reads LIGHTSPEED_BOOTSTRAP_API_KEY when set, otherwise generates a key.
+    /// Prints the credential as JSON; store it securely.
+    Provision {
+        #[arg(long, default_value = "Deployment bootstrap")]
+        name: String,
+        #[arg(long)]
+        assert_actor: bool,
+        /// Validate an existing supplied key without creating it (launcher restart).
+        #[arg(long)]
+        require_existing: bool,
+    },
     #[command(about = "Mint an API key; the secret prints exactly once")]
     Create {
         /// The one universe the key reaches.
@@ -322,6 +334,33 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
         cause: command.into(),
     };
     match command {
+        ApiKeyCommand::Provision {
+            name,
+            assert_actor,
+            require_existing,
+        } => {
+            let spec = auth::ApiKeySpec {
+                scope: api::AccessScope::Deployment,
+                groups: None,
+                assert_actor,
+                created_by: host("api-key provision"),
+                display_name: Some(name),
+            };
+            let supplied = std::env::var("LIGHTSPEED_BOOTSTRAP_API_KEY").ok();
+            if require_existing && supplied.is_none() {
+                anyhow::bail!("--require-existing needs LIGHTSPEED_BOOTSTRAP_API_KEY");
+            }
+            let key = match supplied {
+                Some(secret) => auth::import_api_key(spec, now_ms, secret.trim())?,
+                None => auth::mint_api_key(spec, now_ms)?,
+            };
+            let record = api_keys.provision_api_key(&key, require_existing).await?;
+            println!(
+                "{}",
+                serde_json::json!({ "keyPrefix": record.key_prefix, "secret": key.secret.expose() })
+            );
+            Ok(())
+        }
         ApiKeyCommand::Create {
             universe_id,
             name,

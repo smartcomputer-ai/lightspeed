@@ -69,6 +69,7 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
             calling(
                 deployment_caller.clone(),
                 operator.create_universe(DeploymentUniverseCreateParams {
+                    slug: None,
                     universe_id: universe_id.to_string(),
                 }),
             )

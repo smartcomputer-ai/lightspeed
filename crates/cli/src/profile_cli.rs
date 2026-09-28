@@ -22,7 +22,7 @@ use crate::vfs_transfer::{SnapshotUploadOptions, upload_snapshot_directory};
 #[derive(Args, Debug)]
 pub(crate) struct ProfilesArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
     api_url: String,
     #[command(subcommand)]
     command: ProfilesCommand,

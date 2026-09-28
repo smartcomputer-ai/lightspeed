@@ -208,7 +208,7 @@ async fn exercise(pool: &sqlx::PgPool) {
     )
     .await;
     allowed(headers(&connector, Some(universe), None), "blobs/put").await;
-    allowed(headers(&connector, Some(universe), None), "initialize").await;
+    allowed(headers(&connector, None, None), "initialize").await;
     allowed(
         headers(&connector, None, None),
         "deployment/channels/accounts/list",

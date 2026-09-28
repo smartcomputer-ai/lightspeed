@@ -4,6 +4,7 @@
 //
 // Stateful dependencies run in Docker Compose. Rust and TypeScript processes
 // run from the checkout so cargo, tsx, and Vite retain their normal edit loops.
+import { prepareCliConnection } from "./cli-connection.mjs";
 import { spawnSync } from "node:child_process";
 import {
   closeSync,
@@ -85,24 +86,13 @@ async function main() {
     await runChecked(preparation.name, preparation.command, preparation.args, preparation.env);
   }
 
-  if (plan.profile === "full") {
-    const runtime = plan.processes.find((p) => p.name === "runtime");
-    if (runtime.env.LIGHTSPEED_AUTH_MODE === "authenticated" && !runtime.env.LIGHTSPEED_PLATFORM_API_KEY) {
-      phase = "bootstrapping the development universe and API key";
-      const result = await runChecked("development key bootstrap", "cargo",
-        ["run", "-p", "temporal-server", "--", "api-key", "bootstrap", "--universe-id", runtime.env.LIGHTSPEED_PG_UNIVERSE_ID],
-        { ...runtime.env, RUST_LOG: "off" }, { captureStdout: true });
-      let credential;
-      try {
-        credential = JSON.parse(result.stdout);
-        if (typeof credential.secret !== "string" || !credential.secret) throw new Error("missing secret");
-      } catch {
-        throw new DevError("Development key bootstrap returned an invalid credential response.", {
-          hint: "Check that the runtime and launcher are from the same checkout. Bootstrap output is withheld because it may contain a secret.",
-        });
-      }
-      for (const processPlan of plan.processes) processPlan.env.LIGHTSPEED_PLATFORM_API_KEY = credential.secret;
+  if (plan.profile === "full" || plan.profile === "runtime") {
+    phase = "preparing the development CLI connection";
+    const prepared = await prepareCliConnection({ root: repoRoot, env: plan.env, full: plan.profile === "full", noBootstrap: cli.noApiKeyBootstrap, run: runChecked });
+    if (prepared.platformSecret) {
+      for (const processPlan of plan.processes) processPlan.env.LIGHTSPEED_PLATFORM_API_KEY = prepared.platformSecret;
     }
+    plan.cliHandoff = prepared.handoff;
   }
   phase = `starting services for ${plan.profile}`;
   await startProcesses(plan.processes, { start: startProcess, wait: waitForService, isStopping: () => stopping });
@@ -111,6 +101,8 @@ async function main() {
   await waitForReadiness(plan);
   if (!stopping) {
     printRunning(plan);
+    if (plan.cliHandoff) console.log("CLI connection ready: lightspeed connect dev");
+    else if (plan.profile === "runtime" || plan.profile === "full") console.log("No CLI credential prepared; use lightspeed connect add with your own key.");
     phase = `running the ${plan.profile} profile`;
   }
 }
@@ -131,6 +123,7 @@ function parseCli(argv) {
   removeFlag(args, "--allow-missing-api-keys");
   const requireApiKeys = removeFlag(args, "--require-api-keys");
   const noEnvd = removeFlag(args, "--no-envd");
+  const noApiKeyBootstrap = removeFlag(args, "--no-api-key-bootstrap");
   let action = "start";
   let profile = "full";
 
@@ -155,7 +148,8 @@ function parseCli(argv) {
     throw new TypeError("--no-envd is supported only when starting a profile");
   }
 
-  return { action, profile, planOnly, help, volumes, requireApiKeys, noEnvd };
+  if (noApiKeyBootstrap && action !== "start") throw new TypeError("--no-api-key-bootstrap is supported only when starting a profile");
+  return { action, profile, planOnly, help, volumes, requireApiKeys, noEnvd, noApiKeyBootstrap };
 }
 
 function removeFlag(args, flag) {
@@ -209,7 +203,7 @@ function createPlan(profile, sourceEnv) {
   // names; the frontend-only loop is `npm run demo` (in-browser backend).
   const platformApiUrl = runtimeRpc;
   const runtimeAuthMode =
-    sourceEnv.LIGHTSPEED_AUTH_MODE ?? (profile === "full" ? "authenticated" : "single");
+    sourceEnv.LIGHTSPEED_AUTH_MODE ?? "authenticated";
   // Local environment daemon: a directly attached `lightspeed-envd` on the
   // developer machine (no provider; registered as an external environment).
   const envdEnabled =
@@ -820,6 +814,7 @@ function printHelp() {
   ./dev.sh [profile] --require-api-keys    Fail full/runtime startup without provider keys
                                            (default only warns; keys can be added per
                                            universe under Models -> Add provider)
+  ./dev.sh [profile] --no-api-key-bootstrap  Use existing API keys; do not provision keys
   ./dev.sh [profile] --no-envd             Do not start the local environment daemon
                                            (same as LIGHTSPEED_DEV_ENVD=off)
   ./dev.sh [profile] --debug              Include launcher stack traces in errors

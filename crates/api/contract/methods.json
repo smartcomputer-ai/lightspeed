@@ -27,10 +27,9 @@
     },
     {
       "access": {
-        "action": "read",
-        "kind": "universe"
+        "kind": "connection"
       },
-      "description": "Returns protocol version, server identity, supported capabilities, and the method groups the caller's key may call, without changing universe state. Every key may call it.",
+      "description": "Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.",
       "group": null,
       "method": "initialize",
       "params": {
@@ -45,8 +44,8 @@
         },
         "type": "AgentApiOutcome<InitializeResponse>"
       },
-      "role": "viewer",
-      "scope": "universe",
+      "role": null,
+      "scope": "connection",
       "summary": "Inspect the Lightspeed protocol",
       "target": null
     },
