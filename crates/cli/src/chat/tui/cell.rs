@@ -374,10 +374,6 @@ enum ToolChainDisplay {
 }
 
 impl ToolChainCell {
-    pub(crate) fn new(id: impl Into<String>, chains: Vec<ChatToolChainView>) -> Self {
-        Self::expanded(id, chains)
-    }
-
     pub(crate) fn collapsed(id: impl Into<String>, chains: Vec<ChatToolChainView>) -> Self {
         Self {
             id: id.into(),
@@ -414,8 +410,8 @@ impl ChatCell for ToolChainCell {
                 lines.extend(reasoning_lines(&reasoning.content, width, false));
             }
             lines.push(tool_chain_header(chain));
-            lines.extend(tool_activity_lines(chain, width));
             if matches!(self.display, ToolChainDisplay::Collapsed) {
+                lines.extend(tool_activity_lines(chain, width));
                 if let Some(error) = chain
                     .calls
                     .iter()
@@ -426,19 +422,8 @@ impl ChatCell for ToolChainCell {
                 continue;
             }
 
-            let grouped = group_tool_calls(&chain.calls);
-            for group in grouped {
-                if let Some(group_index) = group.group_index {
-                    let label = if group.calls.len() > 1 {
-                        format!("  group {group_index} parallel")
-                    } else {
-                        format!("  group {group_index}")
-                    };
-                    lines.push(Line::styled(label, Style::default().fg(Color::DarkGray)));
-                }
-                for call in group.calls {
-                    lines.extend(tool_call_lines(call, width));
-                }
+            for call in &chain.calls {
+                lines.extend(tool_call_lines(call, width));
             }
         }
         lines
@@ -517,37 +502,6 @@ fn text_width(value: &str) -> usize {
                 .max(1)
         })
         .sum()
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ToolGroup<'a> {
-    group_index: Option<u64>,
-    calls: &'a [ChatToolCallView],
-}
-
-fn group_tool_calls(calls: &[ChatToolCallView]) -> Vec<ToolGroup<'_>> {
-    if calls.is_empty() {
-        return Vec::new();
-    }
-
-    let mut groups = Vec::new();
-    let mut start = 0usize;
-    let mut current_group = calls[0].group_index;
-    for (index, call) in calls.iter().enumerate().skip(1) {
-        if call.group_index != current_group {
-            groups.push(ToolGroup {
-                group_index: current_group,
-                calls: &calls[start..index],
-            });
-            start = index;
-            current_group = call.group_index;
-        }
-    }
-    groups.push(ToolGroup {
-        group_index: current_group,
-        calls: &calls[start..],
-    });
-    groups
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -659,7 +613,7 @@ fn tool_chain_header(chain: &ChatToolChainView) -> Line<'static> {
     } else {
         chain.title.clone()
     };
-    let mut spans = vec![
+    let spans = vec![
         Span::styled("tools ", Style::default().fg(Color::Yellow)),
         Span::styled(
             title
@@ -676,13 +630,6 @@ fn tool_chain_header(chain: &ChatToolChainView) -> Line<'static> {
             progress_style(chain.status).add_modifier(Modifier::BOLD),
         ),
     ];
-    if let Some(summary) = chain.summary.as_ref().filter(|summary| !summary.is_empty()) {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            summary.clone(),
-            Style::default().fg(Color::DarkGray),
-        ));
-    }
     Line::from(spans)
 }
 
@@ -896,8 +843,8 @@ mod tests {
     }
 
     #[test]
-    fn tool_chain_groups_parallel_calls() {
-        let cell = ToolChainCell::new(
+    fn expanded_tool_chain_lists_calls_without_execution_group_labels() {
+        let cell = ToolChainCell::expanded(
             "tools:1",
             vec![ChatToolChainView {
                 id: "chain".into(),
@@ -943,7 +890,8 @@ mod tests {
             .join("\n");
 
         assert!(rendered.contains("tools 2 calls"));
-        assert!(rendered.contains("group 1 parallel"));
+        assert!(!rendered.contains("group"));
+        assert_eq!(rendered.matches("read cell.rs").count(), 1);
         assert!(rendered.contains("rg SessionInput"));
         assert!(rendered.contains("read cell.rs"));
     }

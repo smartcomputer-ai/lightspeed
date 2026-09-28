@@ -147,7 +147,7 @@ impl TranscriptState {
                         self.flush_terminal_active_tool_chains();
                     }
                     self.active_tool_chains = Some(chains.clone());
-                    self.active_cell = Some(Box::new(ToolChainCell::new(id, chains)));
+                    self.active_cell = Some(Box::new(self.tool_cell(id, chains)));
                     self.active_cell_revision = self.active_cell_revision.wrapping_add(1);
                 }
             }
@@ -293,9 +293,6 @@ impl TranscriptState {
             lines.extend(cell.display_lines(area.width, &render_state));
             lines.push(Line::default());
         }
-        if let Some(activity) = &self.activity {
-            lines.extend(activity.display_lines(area.width, &render_state));
-        }
         if let Some(active_cell) = self.active_cell.as_ref() {
             let _ = (
                 active_cell.kind(),
@@ -303,6 +300,9 @@ impl TranscriptState {
                 active_cell.is_stream_continuation(),
             );
             lines.extend(active_cell.display_lines(area.width, &render_state));
+        }
+        if let Some(activity) = &self.activity {
+            lines.extend(activity.display_lines(area.width, &render_state));
         }
         let visible = visible_tail(lines, area.height);
         Paragraph::new(visible)
@@ -362,7 +362,7 @@ impl TranscriptState {
                                 }
                             } else {
                                 self.push_committed_cell_if_changed(Box::new(
-                                    self.completed_tool_cell(
+                                    self.tool_cell(
                                         tool_history_cell_id(chain),
                                         vec![chain.clone()],
                                     ),
@@ -469,7 +469,7 @@ impl TranscriptState {
             .first()
             .map(tool_history_cell_id)
             .unwrap_or_else(|| "tools".to_string());
-        self.push_committed_cell_if_changed(Box::new(self.completed_tool_cell(id, chains)));
+        self.push_committed_cell_if_changed(Box::new(self.tool_cell(id, chains)));
         true
     }
 
@@ -486,7 +486,7 @@ impl TranscriptState {
             .first()
             .map(|chain| format!("active-tools:{}", chain.id))
             .unwrap_or_else(|| "active-tools".to_string());
-        self.active_cell = Some(Box::new(ToolChainCell::new(id, chains)));
+        self.active_cell = Some(Box::new(self.tool_cell(id, chains)));
         self.active_cell_revision = self.active_cell_revision.wrapping_add(1);
         true
     }
@@ -502,11 +502,7 @@ impl TranscriptState {
         }
     }
 
-    fn completed_tool_cell(
-        &self,
-        id: impl Into<String>,
-        chains: Vec<ChatToolChainView>,
-    ) -> ToolChainCell {
+    fn tool_cell(&self, id: impl Into<String>, chains: Vec<ChatToolChainView>) -> ToolChainCell {
         if self.options.show_tool_details {
             ToolChainCell::expanded(id, chains)
         } else {
@@ -751,6 +747,36 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n");
             assert!(lines.contains("list_dir"));
+            assert!(!lines.contains("group"));
+            assert!(!lines.contains("args"));
+            let area = Rect::new(0, 0, 80, state.desired_height(80));
+            let mut buffer = Buffer::empty(area);
+            state.render(area, &mut buffer);
+            let rows = (0..area.height)
+                .map(|y| {
+                    (0..area.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            let tool_row = rows
+                .iter()
+                .position(|row| row.contains("list_dir"))
+                .unwrap();
+            let thinking_row = rows
+                .iter()
+                .position(|row| row.contains("thinking"))
+                .unwrap();
+            assert!(tool_row < thinking_row, "{rows:?}");
+            let clipped_area = Rect::new(0, 0, 80, 1);
+            let mut clipped = Buffer::empty(clipped_area);
+            state.render(clipped_area, &mut clipped);
+            assert!(
+                (0..80)
+                    .map(|x| clipped[(x, 0)].symbol())
+                    .collect::<String>()
+                    .contains("thinking")
+            );
             assert!(
                 lines.contains(if status == ChatProgressStatus::Running {
                     "running"
@@ -1069,6 +1095,32 @@ mod tests {
             .expect("assistant history");
         assert!(tool < assistant);
         assert!(state.active_cell.is_none());
+    }
+
+    #[test]
+    fn tool_detail_preference_applies_while_tools_are_running() {
+        for show_tool_details in [false, true] {
+            let mut state = TranscriptState::new(TranscriptOptions {
+                show_tool_details,
+                ..Default::default()
+            });
+            state.apply_chat_event(ChatEvent::ToolChainsChanged {
+                session_id: "s-1".into(),
+                chains: vec![test_tool_chain("run-1:1", ChatProgressStatus::Running)],
+            });
+            let lines = state
+                .active_cell
+                .as_ref()
+                .unwrap()
+                .display_lines(80, &CellRenderState)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(lines.contains("args"), show_tool_details);
+            assert!(!lines.contains("group"));
+            assert_eq!(lines.matches("list_dir").count(), 1);
+        }
     }
 
     #[test]

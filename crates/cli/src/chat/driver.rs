@@ -94,7 +94,7 @@ pub(crate) struct ChatArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
-    /// Show full completed tool call arguments and results in the TUI.
+    /// Show tool call arguments and results in the TUI.
     #[arg(long)]
     show_tool_details: bool,
     /// Show run statistics: timing, token usage and context details (toggle with /stats).

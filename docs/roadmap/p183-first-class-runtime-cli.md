@@ -598,3 +598,8 @@ The local `/stats [on|off]` command toggles both existing and future statistics
 without changing retained run data. One-shot text output follows the same flag;
 JSON output remains complete. Tests cover default visibility, transcript reflow,
 local toggling and command parsing.
+
+Tool activity now uses the same compact layout while running and after completion,
+with arguments and results controlled by `--show-tool-details`. Execution-group
+labels and duplicate detail rows are removed. The activity indicator stays below
+the tool rows and remains visible when the available transcript height shrinks.

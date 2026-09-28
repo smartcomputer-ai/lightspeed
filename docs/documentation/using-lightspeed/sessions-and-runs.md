@@ -217,7 +217,9 @@ then the runtime endpoint and useful slash commands. Model and effort remain
 in the footer; `lightspeed --version` shows the build version.
 The TUI shows live tool activity as calls run and finish, including individual
 running, done, failed and cancelled states. An animated thinking/working
-indicator remains separate from the tool rows. Session refreshes preserve
+indicator stays below the latest tool activity, just above the composer.
+Live and completed tools use the same compact layout; `--show-tool-details`
+adds arguments and results. Execution-group numbers are not displayed. Session refreshes preserve
 observed tool activity while the model continues; completed run details provide
 the final transcript. Following a run also leaves chat commands available, and
 opening an already-active session resumes live updates.
