@@ -11,7 +11,10 @@ pub struct UniverseArgs {
 }
 #[derive(Debug, Subcommand)]
 enum UniverseCommand {
+    /// List universes; * marks the active universe for this invocation.
     List,
+    /// Show the active universe's UUID and current runtime slug.
+    Status,
     /// Persist this connection's universe selection.
     Use {
         target: String,
@@ -40,6 +43,14 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
             let id = connection::resolve_universe(active, &target).await?;
             connection::select_universe(active, id)?;
         }
+        UniverseCommand::Status => {
+            let status = connection::universe_status(active).await?;
+            if args.json {
+                print_json(&status)?;
+            } else {
+                status.print("Universe");
+            }
+        }
         UniverseCommand::List => {
             let response: api::DeploymentUniverseListResponse = client
                 .request(
@@ -48,12 +59,34 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 )
                 .await?
                 .result;
+            let active_id = active.active_universe_id();
             if args.json {
-                print_json(&response)?;
+                #[derive(serde::Serialize)]
+                struct ListedUniverse {
+                    #[serde(flatten)]
+                    universe: api::DeploymentUniverseView,
+                    active: bool,
+                }
+                let universes: Vec<_> = response
+                    .universes
+                    .into_iter()
+                    .map(|universe| ListedUniverse {
+                        active: active_id.as_deref() == Some(universe.universe_id.as_str()),
+                        universe,
+                    })
+                    .collect();
+                print_json(
+                    &serde_json::json!({ "universes": universes, "activeUniverseId": active_id }),
+                )?;
             } else {
                 for u in response.universes {
                     println!(
-                        "{}  {}",
+                        "{} {}  {}",
+                        if active_id.as_deref() == Some(u.universe_id.as_str()) {
+                            "*"
+                        } else {
+                            " "
+                        },
                         u.universe_id,
                         u.slug.as_deref().unwrap_or("(no slug)")
                     );

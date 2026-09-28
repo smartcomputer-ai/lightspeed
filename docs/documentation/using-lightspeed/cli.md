@@ -101,6 +101,7 @@ lightspeed connect status
 lightspeed connect use production
 lightspeed universe list
 lightspeed universe use personal
+lightspeed universe status
 lightspeed universe set-slug personal my-personal
 lightspeed --connection production --universe staging session list
 lightspeed connect remove production
@@ -122,8 +123,17 @@ for old overrides there if the effective connection is unexpected.
 
 Saved connections live in `$XDG_CONFIG_HOME/lightspeed` or
 `$HOME/.config/lightspeed`. `LIGHTSPEED_CONFIG_DIR` overrides that directory.
-`connect status` shows the effective endpoint, key scope, allowed groups and
-universe selection. `connect list` and `connect status` support `--json`.
+`connect status` groups the effective connection and key authority, followed by
+the selected universe's current slug and UUID. `universe status` shows just the
+active universe. Both resolve the effective selection, including environment
+and command-line overrides or a universe bound by the server. Status reports
+when no universe is selected, or when its slug cannot be read with the current
+key. Slug lookup requires deployment authority and the `deployment/universes`
+group (or single mode); a universe key still shows its bound UUID.
+`universe list` marks the active universe with `*`; it marks none if there is no
+selection. These commands support `--json`, as does `connect list`. JSON status
+includes the slug and UUID; JSON universe lists include each row's `active`
+flag and the effective `activeUniverseId`.
 
 | Authority | Universe selection |
 | --- | --- |

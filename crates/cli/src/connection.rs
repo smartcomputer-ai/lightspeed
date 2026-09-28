@@ -44,6 +44,15 @@ pub struct ResolvedConnection {
 }
 
 impl ResolvedConnection {
+    /// The universe requests actually address, including server-bound keys
+    /// and single mode even when no local selection was saved.
+    pub fn active_universe_id(&self) -> Option<String> {
+        match self.caller.as_ref().map(|caller| caller.scope) {
+            Some(AccessScope::Universe { universe_id }) => Some(universe_id.to_string()),
+            _ => self.universe.clone(),
+        }
+    }
+
     pub fn headers(&self, method: &str) -> Result<reqwest::header::HeaderMap> {
         use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
         let mut headers = HeaderMap::new();
@@ -77,6 +86,71 @@ impl ResolvedConnection {
         }
         Ok(headers)
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UniverseStatus {
+    pub universe_id: Option<String>,
+    pub slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slug_unavailable_reason: Option<String>,
+}
+
+impl UniverseStatus {
+    pub fn print(&self, heading: &str) {
+        println!("{heading}:");
+        match &self.universe_id {
+            None => println!("  None selected. Use `lightspeed universe use <slug-or-uuid>`."),
+            Some(id) => {
+                match &self.slug_unavailable_reason {
+                    Some(reason) => println!("  Slug: unavailable ({reason})"),
+                    None => println!("  Slug: {}", self.slug.as_deref().unwrap_or("(no slug)")),
+                }
+                println!("  UUID: {id}");
+            }
+        }
+    }
+}
+
+/// Status must remain useful for restricted keys and stale selections. Fetch
+/// the slug only when permitted, and distinguish unnamed from unavailable.
+pub async fn universe_status(connection: &ResolvedConnection) -> Result<UniverseStatus> {
+    let caller = connection
+        .caller
+        .as_ref()
+        .context("connection has not been verified")?;
+    let mut status = UniverseStatus {
+        universe_id: connection.active_universe_id(),
+        slug: None,
+        slug_unavailable_reason: None,
+    };
+    let Some(id) = &status.universe_id else {
+        return Ok(status);
+    };
+    if !caller.single
+        && (caller.scope != AccessScope::Deployment
+            || !caller
+                .groups
+                .contains(&api::MethodGroup::DeploymentUniverses))
+    {
+        status.slug_unavailable_reason =
+            Some("requires a deployment key with deployment/universes permission".into());
+        return Ok(status);
+    }
+    let response = HttpAgentApi::with_connection(connection.clone())
+        .request::<_, api::DeploymentUniverseReadResponse>(
+            api::METHOD_DEPLOYMENT_UNIVERSES_READ,
+            api::DeploymentUniverseReadParams {
+                universe_id: id.clone(),
+            },
+        )
+        .await;
+    match response {
+        Ok(response) => status.slug = response.result.universe.slug,
+        Err(error) => status.slug_unavailable_reason = Some(error.to_string()),
+    }
+    Ok(status)
 }
 
 pub fn config_dir() -> Result<PathBuf> {
@@ -518,12 +592,13 @@ pub async fn handle(
         ConnectCommand::Status { json } => {
             let c = resolve(selected, None, universe).await?;
             let caller = c.caller.as_ref().unwrap();
-            let value = serde_json::json!({"connection": c.name, "endpoint": c.endpoint, "selectedUniverse": c.universe, "caller": caller});
+            let status = universe_status(&c).await?;
+            let value = serde_json::json!({"connection": c.name, "endpoint": c.endpoint, "selectedUniverse": c.universe, "activeUniverse": status, "caller": caller});
             if json {
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "Connection: {}\nRuntime: {}\nMode: {}\nKey: {}\nScope: {}\nSelected universe: {}\nGroups: {}",
+                    "Connection: {}\n  Runtime: {}\n  Mode: {}\n\nAPI key:\n  Prefix: {}\n  Scope: {}\n  Groups: {}\n",
                     c.name.as_deref().unwrap_or("environment"),
                     c.endpoint,
                     if caller.single {
@@ -532,8 +607,11 @@ pub async fn handle(
                         "authenticated"
                     },
                     caller.key_prefix.as_deref().unwrap_or("none"),
-                    serde_json::to_string(&caller.scope)?,
-                    c.universe.as_deref().unwrap_or("none (or bound by scope)"),
+                    match caller.scope {
+                        AccessScope::Deployment => "deployment".to_owned(),
+                        AccessScope::Universe { universe_id } =>
+                            format!("universe ({universe_id})"),
+                    },
                     caller
                         .groups
                         .iter()
@@ -541,6 +619,7 @@ pub async fn handle(
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
+                status.print("Selected universe");
             }
         }
         ConnectCommand::Remove { name } => {

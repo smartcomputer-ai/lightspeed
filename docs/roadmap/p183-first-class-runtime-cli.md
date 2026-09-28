@@ -526,3 +526,11 @@ key-scope enforcement. An earlier local full-stack acceptance run created a univ
 through Platform, renamed it through the CLI, verified runtime slug propagation,
 rejected a collision and adopted named and unnamed runtime universes.
 Temporary universes were removed and test-started host processes stopped.
+
+CLI universe visibility now follows the effective connection: `universe status`
+shows its UUID and current runtime slug, `universe list` marks the active row,
+and grouped `connect status` ends with the universe details. JSON output exposes
+the same identity and active-row information. Slug lookup respects deployment
+permissions; restricted keys retain useful UUID status with an explicit reason
+when metadata is unavailable. Process tests cover selections, overrides,
+renames, unnamed/missing universes, restricted keys and single mode.
